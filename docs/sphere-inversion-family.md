@@ -1376,3 +1376,100 @@ being baked into the table.
 - **Zoom floor.** Every view keeps its closest detail well inside the
   compute cores' f32 floor (about 10R magnification). No settled frame shows
   thickening at its nearest pearls or window rims.
+
+## Controls (2026-09-15, delegated)
+
+The panel's **Sphere inversion** section. Every call below is DELEGATED
+(lead agent, owner to ratify). Modules: `src/app/sphere-inversion-controls.ts`
+(ranges, write rule, per-row disclosures; pure and tested),
+`control-spec.ts` (nine table-driven entries), `ui.ts` (painting). User-facing
+account: `docs/controls.md`; placement record: `docs/panel-ia.md`.
+
+### Placement and gesture
+
+- **Home: Scene / Look**, as its own section directly after Transforms. The
+  block is the scene's subject and replaces the transform system. That only
+  Points and Surface draw it is a consumer fact, not a home.
+- **Add/remove: one enable checkbox**, the Space tiling pattern, rather than
+  a "Subject: Transforms / Sphere inversion" select. The two are equivalent for
+  a single optional block; the checkbox matches the section beside it.
+- **The seeded block is a showcase's own form**, read from
+  `PRESET_SPHERE_INVERSIONS` so it cannot drift. A flat scene gets Kissing
+  Pearls (oct6, rf .99, ball .28, D8). A 4D scene gets 600-Cell Medallions
+  (cell600, shell 1.1 ± .03, D5), so adding a block does not silently turn a
+  4D scene 3D. Removing clears the whole block; undo restores it.
+
+### Controls and ranges
+
+| Control              | Field(s)         | Public span                    | Notes                                                                                    |
+| -------------------- | ---------------- | ------------------------------ | ---------------------------------------------------------------------------------------- |
+| Arrangement (select) | `arrangement`    | all seven ids, grouped 3D / 4D | decides the dimension; leaving 4D drops a present `cutDirectionW` (no control clears it) |
+| Sphere radius        | `radiusFraction` | 0.6–0.99, step .01             | 1.0 stays document-only                                                                  |
+| Seed (select)        | `seed.kind`      | ball / shell / cut shell       | crossing ball <-> shell removes a present `size` (its meaning and default change)        |
+| Ball / Shell radius  | `seed.size`      | ball .15–.8; shell .7–1.3      | the 4D shell uses the 3D span (4D measured at .9 and 1.1 only)                           |
+| Shell half-thickness | `seed.thickness` | .01–.1, step .005              | shell kinds only                                                                         |
+| Cut radius           | `seed.cutRadius` | 2–50, step .5                  | cut shell only                                                                           |
+| Cut offset           | `seed.cutOffset` | 3D −.5–.8; 4D −.4–.8           | cut shell only                                                                           |
+| Depth                | `depth`          | 0–12, integer                  | both dimensions; documents keep up to 32                                                 |
+
+The cut DIRECTION has no control: no public range was measured for it, so it
+stays document-only.
+
+### Edit behavior
+
+- **Points** follows Auto-update, one regenerate per edit (latest wins).
+- **Surface** restarts through the existing construction-change rule, which
+  compares the block's authored JSON. It restarts without refitting the camera.
+  The enable checkbox and both selects restart at once. A slider restarts on
+  RELEASE (its `commit`), or on the numeric field's commit. A restart per
+  drag tick would rebuild the construction's tables (472 KiB at the 600-cell)
+  dozens of times.
+- **Flame and Sampled Solid.** With a block present they are already refused
+  beside the mode switch, and the app leaves them. With no block, every
+  control in the section is disabled, with the reason beside it.
+
+### Absent means default, refusals preserved
+
+- **Writes.** A field is written only once its control moves. Moving it onto
+  the resolver's default for the CURRENT seed kind removes the key, and an
+  emptied seed object goes with it.
+- **Out-of-span values.** A value outside a slider's span but admitted by the
+  resolver widens the slider and its numeric field to itself; nothing is
+  clamped. The row says `N is outside this slider's range A to B; kept as
+authored.` While a slider is focused its span only widens, so the track
+  never rescales under a drag.
+- **Refused values.** A value the resolver refuses is kept verbatim. The
+  resolver's reason lands beside the row it names, with a repair action:
+  - `depth …`, `seed size …` and the other single-field reasons go to their
+    own row.
+  - An unknown id shows as the select's `Authored: "…"` option.
+  - A seed-geometry refusal naming no single field sits below the seed
+    lengths. The 4D shell `1.1 ± .1` plane image is one; so are an
+    empty-orbit seed and a cut-direction fault.
+  - Unknown keys go to the section note.
+  - A non-number shows the default on the thumb, with the refusal naming the
+    authored value.
+
+### Dormant sections
+
+The replaced system's editors stay EDITABLE rather than disabled. A
+transform edit authors state for when the block is removed, and costs no
+renderer work under a block (below). Each section discloses adjacently, in
+both dimensions:
+
+- The **Transforms, Xaos, Symmetry and Hybrid schedule** hints, which their
+  controls already reference, read "Kept but not drawn while Sphere inversion
+  is the subject; edits apply once it is turned off". The existing
+  kaleidoscope note keeps its dormant wording.
+- The **final-transform lens** gets its own note beside its toggle, shown
+  while a lens is authored.
+- **Per-transform finishes and patterns** key their dormant note on the
+  block's PRESENCE, not only on the Surface route kind. A refused block
+  previously fell through to "Surface render unavailable".
+- **Background → Flame backdrop** discloses its plain-gradient fallback beside
+  the select.
+
+**Transform edits under a block** no longer regenerate Points or re-enter
+Surface (`planTransformEdit`'s `sphereInversionSubject`, pinned in
+`transform-edit-effects.test.ts`). Nothing on screen reads the transforms.
+Eligibility still refreshes, because its note names the dormant settings.
