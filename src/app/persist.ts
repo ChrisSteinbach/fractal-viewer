@@ -695,12 +695,6 @@ function round4(n: number): number {
   return Math.round(n * 10000) / 10000;
 }
 
-/** Deep camera framing needs sub-0.0001 focus coordinates to survive a share
- * link. Kept camera-only so ordinary scene fields retain the compact v1 wire. */
-function round10(n: number): number {
-  return Math.round(n * 10_000_000_000) / 10_000_000_000;
-}
-
 /** Encode exactly three coordinates with the caller's geometry precision. */
 function encodeGeometryVec3(
   v: Vec3,
@@ -3223,7 +3217,9 @@ function encodePaletteWire(
 /**
  * Produce a compact, URL-safe `v1=<base64url>` string for `s`. Floats are
  * rounded to 4 decimal places, except geometry in a scene with a pure swirl
- * final (its radius admission must survive reload). Transform ids are omitted
+ * final (its radius admission must survive reload) and the `camera`/`fourD`
+ * view framing, which is written at full precision so a reloaded frame
+ * reproduces the sender's. Transform ids are omitted
  * and reassigned from the array index on decode.
  */
 export function encodeScene(s: SceneSnapshot): string {
@@ -3629,19 +3625,26 @@ export function encodeScene(s: SceneSnapshot): string {
   // Written only when present, like finalTransform/customPalette above — an
   // undo-history snapshot (which never carries a camera — see
   // SceneSnapshot.camera's doc) stays byte-identical.
+  //
+  // Every field is written UNROUNDED, as JSON's shortest round-trip form,
+  // like the fourD pose below and unlike the round4 floats elsewhere in this
+  // file. A pose rounded here moved the f32 view matrix the frame is traced
+  // with, and a 4D preset loaded from the menu then rendered different
+  // pixels from its own share link — the two sessions carrying byte-
+  // identical documents. The decoder's clamps are idempotent, so
+  // decode→encode is a fixed point. Old rounded links still decode.
   if (s.camera) {
     const fov = s.camera.fov ?? DEFAULT_CAMERA_FOV;
     const deep = s.camera.infiniteZoom === true || fov < DEFAULT_CAMERA_FOV;
     const authoredLens = deep || fov !== DEFAULT_CAMERA_FOV;
-    const roundCamera = authoredLens ? round10 : round4;
     payload.camera = {
-      target: s.camera.target.map(roundCamera),
-      radius: roundCamera(s.camera.radius),
-      theta: roundCamera(s.camera.theta),
-      phi: roundCamera(s.camera.phi),
+      target: [...s.camera.target],
+      radius: s.camera.radius,
+      theta: s.camera.theta,
+      phi: s.camera.phi,
       ...(authoredLens
         ? {
-            fov: round10(fov),
+            fov,
             ...(deep ? { infiniteZoom: true } : {}),
           }
         : {}),
