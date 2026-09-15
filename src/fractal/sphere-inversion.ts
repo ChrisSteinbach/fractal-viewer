@@ -256,14 +256,14 @@ export const SPHERE_INVERSION_ARRANGEMENTS: Readonly<
   cell600: arrangement(4, cell600Centers()),
 });
 
-/** The seed kinds. `ball` (the pearls) lies inside `F`; `cap` is the same
- * single ball grown until it meets a generator (its `∩ F` is a
- * sphairahedron); `shell` is `size − thickness <= |x| <= size + thickness`;
- * `cutShell` is a shell with one side removed by a large complement ball
- * (the vaults). */
+/** The seed kinds. `ball` is `B(0, size)`: inside the central void it seeds
+ * the pearls, and grown across the generators its `∩ F` is a sphairahedron
+ * (the pre-gate sheets' "cap") — ONE kind, because the seed is always
+ * `K ∩ F` and two document spellings for one object would be a defect.
+ * `shell` is `size − thickness <= |x| <= size + thickness`; `cutShell` is a
+ * shell with one side removed by a large complement ball (the vaults). */
 export const SPHERE_INVERSION_SEED_KINDS = [
   "ball",
-  "cap",
   "shell",
   "cutShell",
 ] as const;
@@ -276,7 +276,7 @@ export type SphereInversionSeedKind =
  * refused, so switching kinds keeps the other kinds' lengths. */
 export interface SphereInversionAuthoredSeed {
   kind?: string;
-  /** Ball/cap radius, or the shell's mid radius. */
+  /** Ball radius, or the shell's mid radius. */
   size?: number;
   /** Shell half-thickness. */
   thickness?: number;
@@ -305,14 +305,13 @@ export interface SphereInversionAuthored {
 }
 
 /** Absent-field values. The seed lengths are the pre-gate sheets' panels
- * (pearls ball .28 is inside every shipped arrangement's central void at the
+ * (pearls ball .28 is inside every 3D arrangement's central void at the
  * default fraction; shells 1 ± .03; the vault cut at .25 with radius 10). */
 export const SPHERE_INVERSION_DEFAULTS = Object.freeze({
   radiusFraction: 0.99,
   depth: 8,
   seedKind: "ball",
   ballSize: 0.28,
-  capSize: 1.15,
   shellSize: 1,
   shellThickness: 0.03,
   cutShellThickness: 0.06,
@@ -509,8 +508,8 @@ function isFiniteNumber(v: unknown): v is number {
  * Domain: `arrangement` a registry id; `radiusFraction` in `(0, 1]`; `depth`
  * an integer in `[0, SPHERE_INVERSION_MAX_DEPTH]`; `seed.kind` one of
  * {@link SPHERE_INVERSION_SEED_KINDS}; `size > 0`; shell `thickness` in
- * `(0, size)`; a `ball` must not meet any open generator ball (tangency
- * admitted) and a `cap` must meet one; `cutDirection` a nonzero finite
+ * `(0, size)`; a `ball` may cross the generators (its seed is `K ∩ F`);
+ * `cutDirection` a nonzero finite
  * 3-vector, `cutDirectionW` finite and zero on a 3D arrangement,
  * `cutRadius > 0`, `|cutOffset| < size + thickness`.
  */
@@ -564,9 +563,7 @@ export function resolveSphereInversion(
     );
   }
   const isShell = kind === "shell" || kind === "cutShell";
-  const size =
-    s.size ??
-    (kind === "cap" ? D.capSize : kind === "ball" ? D.ballSize : D.shellSize);
+  const size = s.size ?? (kind === "ball" ? D.ballSize : D.shellSize);
   if (knownKind && !(isFiniteNumber(size) && size > 0)) {
     reasons.push(`seed size ${String(size)} must be finite and positive`);
   }
@@ -629,21 +626,8 @@ export function resolveSphereInversion(
   }));
   const origin = new Array<number>(dim).fill(0);
   const seed: SphereInversionSeedMember[] = [];
-  if (kind === "ball" || kind === "cap") {
+  if (kind === "ball") {
     seed.push({ center: origin, radius: size, complement: false });
-    const meets = generators.some(
-      (g) => Math.hypot(...g.center) < size + g.radius,
-    );
-    if (kind === "ball" && meets) {
-      reasons.push(
-        `ball seed ${size} meets a generator ball; a seed that crosses the generators is a cap`,
-      );
-    }
-    if (kind === "cap" && !meets) {
-      reasons.push(
-        `cap seed ${size} meets no generator ball; a seed inside the central void is a ball`,
-      );
-    }
   } else {
     seed.push({ center: origin, radius: size + thickness, complement: false });
     seed.push({
@@ -659,7 +643,6 @@ export function resolveSphereInversion(
       });
     }
   }
-  if (reasons.length > 0) return { ok: false, reasons };
   const construction: SphereInversionConstruction = {
     dim,
     generators,

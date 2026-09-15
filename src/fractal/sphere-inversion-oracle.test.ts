@@ -297,11 +297,11 @@ describe("nearestPointOnPiece (the query algorithm)", () => {
       3,
     ],
     [
-      "oct6 cap depth-1 pieces (3D)",
+      "oct6 generator-crossing ball depth-1 pieces (3D)",
       {
         arrangement: "oct6",
         radiusFraction: 0.93,
-        seed: { kind: "cap" },
+        seed: { size: 1.15 },
         depth: 1,
       },
       3,
