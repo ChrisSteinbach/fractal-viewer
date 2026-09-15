@@ -1315,6 +1315,43 @@ const foldValueFormGlsl = (shadeDeWidth: number): string =>
  * (the 4D kernel packs this slice-adjusted value as its visibleRadius
  * slot), never the full unsliced radius. */
 const transportDomainRadius3D = `  float radiusX = uVisibleRadius * 1.02;`;
+
+/** The closed-solid field (opticsBackend "closedSolid"), per dimension —
+ * the compute kernel's transportSolidField mirrored term for term. In 3D
+ * it is the condensation term at the root, the same SAFETY-scaled
+ * certified bound the primary march reads (the GLSL term carries SAFETY
+ * inside, as the WGSL's does). In 4D the term's hypot form is a distance
+ * to the shape flat and reads ZERO throughout its interior — no negative
+ * region for a signed traversal — so the field is the ADDITIVE-PENALTY
+ * form (condensation-de.ts's condensationSignedDistance4, mirrored):
+ * sigmaMin · sdShape + |local w|, union min, SAFETY-scaled once — the
+ * textbook max-form intersection SDF is REFUSED here, because at w = 0 it
+ * reads max(sd, 0) = 0 inside; the penalty form is exact at the canonical
+ * pose where the member's measure vanishes identically and degrades to
+ * honest refusals off it. The displayed point embeds through the live
+ * rotor/slice exactly as the descent's prologue does. Chaos and hybrid
+ * schedules are refused for this backend, so the emitter loop needs
+ * neither gate. */
+const transportSolidField3D = (): string => `float transportSolidField(vec3 p) {
+  return condensationTerm(p, 1.0, 0).x;
+}`;
+const transportSolidField4D =
+  (): string => `// The 4D signed field: sigmaMin · sdShape + |local w|, union min —
+// condensationSignedDistance4 mirrored; SAFETY scales it once here.
+float transportSolidField(vec3 p) {
+  vec4 q = uInvRotor * vec4(p, uW0);
+  float best = 1.0e30;
+  for (int e = 0; e < uCondCount; e++) {
+    int slot = uMapCount + e;
+    vec4 local = uInvM[slot] * q + uInvT[slot];
+    float sd = condensation4ShapeSdf(uCondShape[e], local.xyz);
+    float d = uMapColorSigma[slot].w * sd + abs(local.w);
+    if (d < best) {
+      best = d;
+    }
+  }
+  return best * ${SHAPE_MARCH_SAFETY};
+}`;
 const transportDomainRadius4D = `  // The 4D query domain is the SLICE ball: |p| <= sliceVisR for the
   // marched slab (the 4D kernel packs this slice-adjusted value as its
   // visibleRadius slot), never the full unsliced radius — a child query
@@ -1420,12 +1457,119 @@ ${domainRadius}
     return dot(grad, grad) > 1.0e-12 ? normalize(grad) : -dir;
   }
 
-  // The production boundary query (module doc): a bounded march of the
-  // composed PUBLIC estimator from the query origin, crossing at the
-  // optical scale, with the anchored same-boundary suppression. The medium
-  // state is the caller's and stays the caller's — the query never infers
-  // it from a distance sign; the crossing's medium flip is definitional
-  // (entering = !inside, taken by the trace, not here).
+  // The production boundary query (module doc), one of TWO backends the
+  // resolver picks: the estimator march (absent's meaning — a bounded
+  // march of the composed PUBLIC estimator from the query origin,
+  // crossing at the optical scale, with the anchored same-boundary
+  // suppression; the medium state is the caller's and stays the
+  // caller's — the query never infers it from a distance sign) or the
+  // closed-solid signed query over the session's condensation union,
+  // whose sign is what unlocks the inside traversal a refracted child
+  // needs.
+#if SURFACE_OPTICS_CLOSED_SOLID
+  const int TRANSPORT_REASON_STATE_MISMATCH = 3;
+${fourD ? transportSolidField4D() : transportSolidField3D()}
+
+  // The closed-solid normal: the SAME tetrahedron-tap discipline as the
+  // estimator normal, on the signed field — a smooth closed solid has no
+  // tied-plane corners to resolve, and a vanishing gradient still faces
+  // the incident ray.
+  vec3 transportSolidNormal(vec3 p, vec3 dir, float eps) {
+    vec2 e = vec2(1.0, -1.0) * 0.5773;
+    vec3 grad = e.xyy * transportSolidField(p + e.xyy * eps) +
+      e.yyx * transportSolidField(p + e.yyx * eps) +
+      e.yxy * transportSolidField(p + e.yxy * eps) +
+      e.xxx * transportSolidField(p + e.xxx * eps);
+    return dot(grad, grad) > 1.0e-12 ? normalize(grad) : -dir;
+  }
+
+  // The closed-solid boundary query (option doc): the estimator query's
+  // march structure over the SIGNED union field. The sign unlocks the
+  // inside traversal a refracted child needs: outside, the field
+  // understates the distance and the march steps it forward; inside, |f|
+  // is the deepest containing part's certified depth — a lower bound on
+  // the distance to the union's complement, because the merged interval
+  // along the ray ends at the LAST containing part's exit — so a step
+  // cannot cross the boundary without sampling its band. The medium
+  // state is the caller's and is now CHECKED: at the anchored restart,
+  // beyond the anchor envelope, a field whose membership contradicts the
+  // caller's medium refuses state-mismatch (the qualified fixture's
+  // exact-occupancy discipline, made real by the sign). The crossing
+  // band is two-sided (|f| < eps); an inside crossing is reported at the
+  // query point, an outside one advanced to the band's edge. The anchor
+  // envelope, crossing scale, step budget and domain gate are the
+  // estimator query's own definitions.
+  TransportBoundary transportNextBoundary(
+    vec3 origin,
+    vec3 dir,
+    int anchorPresent,
+    vec3 anchorPoint,
+    int inside,
+    float eps
+  ) {
+    TransportBoundary result;
+    result.kind = 3;
+    result.reason = TRANSPORT_REASON_VISIT_CAP;
+    result.t = 0.0;
+    result.normal = vec3(0.0);
+    vec3 p = origin;
+    float t = 0.0;
+    if (anchorPresent == 1) {
+      // Same-boundary suppression, part 1 (the estimator query's rule).
+      float skip = 2.0 * eps;
+      p = p + dir * skip;
+      t = t + skip;
+      // The medium cross-check: just past the anchored boundary the
+      // field's membership must agree with the caller's medium beyond
+      // the anchor envelope — within it, the boundary's own band is
+      // consistent with either medium (a grazing child rides it).
+      float f0 = transportSolidField(p);
+      if (f0 > -1.0e30 &&
+          ((inside == 1 && f0 > TRANSPORT_ANCHOR_ENVELOPE_REL * eps) ||
+           (inside == 0 && f0 < -TRANSPORT_ANCHOR_ENVELOPE_REL * eps))) {
+        result.reason = TRANSPORT_REASON_STATE_MISMATCH;
+        return result;
+      }
+    }
+    float tFar = transportDomainExit(origin, dir);
+    for (int i = 0; i < TRANSPORT_QUERY_MAX_STEPS; i++) {
+      if (tFar < 0.0 || t >= tFar) {
+        result.kind = 2;
+        result.reason = 0;
+        result.t = t;
+        return result;
+      }
+      float f = transportSolidField(p);
+      if (!(f > -1.0e30)) {
+        result.kind = 3;
+        result.reason = TRANSPORT_REASON_INVALID_INPUT;
+        return result;
+      }
+      if (abs(f) < eps) {
+        float dd = max(f, 0.0);
+        vec3 hitP = p + dir * dd;
+        float tc = t + dd;
+        if (anchorPresent == 1 &&
+            distance(hitP, anchorPoint) <= TRANSPORT_ANCHOR_ENVELOPE_REL * eps) {
+          // Same-boundary suppression, part 2 (the estimator query's rule).
+          float skip = 2.0 * eps;
+          p = hitP + dir * skip;
+          t = tc + skip;
+          continue;
+        }
+        result.kind = 1;
+        result.reason = 0;
+        result.t = tc;
+        result.normal = transportSolidNormal(hitP, dir, eps);
+        return result;
+      }
+      float stride = abs(f) * uStepScale;
+      p = p + dir * stride;
+      t = t + stride;
+    }
+    return result;
+  }
+#else
   TransportBoundary transportNextBoundary(
     vec3 origin,
     vec3 dir,
@@ -1490,6 +1634,7 @@ ${domainRadius}
     }
     return result;
   }
+#endif
 
   // The rear scene's radiance behind an escaped ray, in LINEAR light —
   // the environment only in this emission: the pixel's backdrop, plus the
@@ -1645,13 +1790,25 @@ ${domainRadius}
         break;
       }
       processed = processed + 1;
-      TransportBoundary hit = transportNextBoundary(
-        path.origin,
-        path.dir,
-        path.anchorPresent,
-        path.anchorPoint,
-        eps
-      );
+      TransportBoundary hit =
+#if SURFACE_OPTICS_CLOSED_SOLID
+        transportNextBoundary(
+          path.origin,
+          path.dir,
+          path.anchorPresent,
+          path.anchorPoint,
+          path.inside,
+          eps
+        );
+#else
+        transportNextBoundary(
+          path.origin,
+          path.dir,
+          path.anchorPresent,
+          path.anchorPoint,
+          eps
+        );
+#endif
       if (hit.kind == 3) {
         residual = residual + path.bound;
         result.status = TRANSPORT_STATUS_UNRESOLVED;
@@ -8462,6 +8619,14 @@ export function surfaceFragmentResolvedFor(
   // wire, exactly where the compute kernel's own fold refusal and
   // `admitOptics: false` routing live.
   optics = 0,
+  // The transport's boundary backend: 0 = the estimator march (absent's
+  // meaning), 1 = the closed-solid signed query over the session's
+  // condensation union — the compute kernel's opticsBackend option, with
+  // the same refusal list (enforced above). The app does not route
+  // closedSolid yet; the parameter exists so the arm's source, pins and
+  // future routing share one resolver.
+  opticsBackend = 0,
+): string {
   if (sphereInversion !== 0) {
     // The arm replaces the descent bodies wholesale (the escape/bulb
     // precedent) and has no wrapper, trap or tiling composition; the
@@ -8508,6 +8673,46 @@ export function surfaceFragmentResolvedFor(
     throw new RangeError(
       "SURFACE_OPTICS cannot compile into the cinematic lighting variant",
     );
+  }
+  if (optics !== 0 && opticsBackend === 1) {
+    // The closed-solid backend's gate — the compute codegen's own refusal
+    // list, mirrored: the signed field IS the condensation union, so the
+    // backend needs emitters and cannot follow any composition that moves
+    // or wraps the union the field describes. Those sessions keep the
+    // estimator query and its disclosed vacuous-optics state.
+    if (condensation === null) {
+      throw new RangeError(
+        "SURFACE_OPTICS_CLOSED_SOLID needs condensation emitters — the signed field IS their union",
+      );
+    }
+    if (chaos !== 0) {
+      throw new RangeError(
+        "SURFACE_OPTICS_CLOSED_SOLID cannot follow graph-directed selection",
+      );
+    }
+    if (schedule !== 0) {
+      throw new RangeError(
+        "SURFACE_OPTICS_CLOSED_SOLID cannot follow a hybrid schedule — the B prefix moves the union the field describes",
+      );
+    }
+    if (lens !== 0) {
+      throw new RangeError(
+        "SURFACE_OPTICS_CLOSED_SOLID cannot follow the fold-final lens",
+      );
+    }
+    if (tiling !== null) {
+      throw new RangeError("SURFACE_OPTICS_CLOSED_SOLID cannot follow tiling");
+    }
+    if (balloon !== 0) {
+      throw new RangeError(
+        "SURFACE_OPTICS_CLOSED_SOLID cannot follow the balloon echo",
+      );
+    }
+    if (condensation.some((shape) => shapeMeshIds(shape).length > 0)) {
+      throw new RangeError(
+        "SURFACE_OPTICS_CLOSED_SOLID refuses mesh-bearing emitter shapes — the mesh lattice's interior band is not a certified stepping bound",
+      );
+    }
   }
   if (escape !== 0 && bulb !== 0) {
     // The two forward-orbit variants are alternatives, not a composition:
@@ -8586,6 +8791,7 @@ export function surfaceFragmentResolvedFor(
     SURFACE_POST: post,
     SURFACE_SPHERE_INVERSION: sphereInversion,
     SURFACE_OPTICS: optics,
+    SURFACE_OPTICS_CLOSED_SOLID: opticsBackend,
     "SURFACE_CONDENSATION || SURFACE_SCHEDULE":
       condensation !== null || schedule !== 0 ? 1 : 0,
     "SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS":
@@ -8704,6 +8910,7 @@ export function surfaceFragmentFor(
   lighting = 0,
   sphereInversion = 0,
   optics = 0,
+  opticsBackend = 0,
 ): string {
   const resolved = surfaceFragmentResolvedFor(
     escape,
@@ -8725,6 +8932,7 @@ export function surfaceFragmentFor(
     lighting,
     sphereInversion,
     optics,
+    opticsBackend,
   );
   return plane !== 0 || resolved.length > SURFACE_GLSL_STRIP_BYTES
     ? stripGlslSource(resolved)

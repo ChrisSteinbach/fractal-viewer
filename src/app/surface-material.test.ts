@@ -35,6 +35,7 @@ import {
   SURFACE_MAX_MAPS,
   SURFACE_SHADE_DE_WIDTH,
 } from "./surface-material";
+import { surface4FragmentResolvedFor } from "./surface-material-4d";
 import { resolveSurfaceFinish } from "../fractal/surface-finish";
 import {
   DIELECTRIC_ANCHOR_ENVELOPE_REL,
@@ -6085,5 +6086,345 @@ describe("qualified swirl final lens fragment mirror", () => {
     expect(source).toContain("return min(shell, vec2(fractal.y));");
     expect(source).toContain("float d = marchSample.y;");
     expect(source).toContain("t += marchSample.x * uStepScale;");
+  });
+});
+
+describe("SURFACE_OPTICS_CLOSED_SOLID (the signed closed-solid backend)", () => {
+  /** An emitter-only condensation union's shapes — the emitter-only
+   * admission the backend serves (the signed field IS their union). */
+  const emitterShapes: readonly ShapeSpec[] = [
+    {
+      parts: [
+        { primitive: { kind: "box", half: [0.3, 0.3, 0.3] }, combine: "union" },
+      ],
+    },
+  ];
+
+  it("refuses every composition the signed field cannot follow — the compute codegen's list, mirrored", () => {
+    // Needs emitters: the signed field IS their union.
+    expect(() =>
+      surfaceFragmentResolvedFor(
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        null,
+        false,
+        0,
+        0,
+        0,
+        null,
+        0,
+        0,
+        1,
+        1,
+      ),
+    ).toThrow(/needs condensation emitters/);
+    // Chaos / schedule / fold-final lens / tiling / balloon.
+    expect(() =>
+      surfaceFragmentResolvedFor(
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        emitterShapes,
+        false,
+        0,
+        0,
+        1,
+        null,
+        0,
+        0,
+        1,
+        1,
+      ),
+    ).toThrow(/graph-directed selection/);
+    expect(() =>
+      surfaceFragmentResolvedFor(
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        emitterShapes,
+        false,
+        0,
+        1,
+        0,
+        null,
+        0,
+        0,
+        1,
+        1,
+      ),
+    ).toThrow(/hybrid schedule/);
+    expect(() =>
+      surfaceFragmentResolvedFor(
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        emitterShapes,
+        false,
+        0,
+        0,
+        0,
+        null,
+        0,
+        0,
+        1,
+        1,
+      ),
+    ).toThrow(/fold-final lens/);
+    expect(() =>
+      surfaceFragmentResolvedFor(
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        emitterShapes,
+        false,
+        0,
+        0,
+        0,
+        resolveTiling({ group: "f4" }),
+        0,
+        0,
+        1,
+        1,
+      ),
+    ).toThrow(/tiling/);
+    expect(() =>
+      surfaceFragmentResolvedFor(
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        emitterShapes,
+        false,
+        0,
+        0,
+        0,
+        null,
+        0,
+        0,
+        1,
+        1,
+      ),
+    ).toThrow(/balloon echo/);
+  });
+
+  it("refuses mesh-bearing emitter shapes and resolves the analytic union", () => {
+    const meshShapes: readonly ShapeSpec[] = [
+      {
+        parts: [
+          {
+            primitive: { kind: "mesh", meshId: MESH_ASSET_IDS[0] },
+            combine: "union",
+          },
+        ],
+      },
+    ];
+    expect(() =>
+      surfaceFragmentResolvedFor(
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        meshShapes,
+        false,
+        0,
+        0,
+        0,
+        null,
+        0,
+        0,
+        1,
+        1,
+      ),
+    ).toThrow(/mesh-bearing/);
+    // The analytic union resolves: the signed query over the condensation
+    // term at the root.
+    const src = surfaceFragmentResolvedFor(
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      undefined,
+      null,
+      emitterShapes,
+      false,
+      0,
+      0,
+      0,
+      null,
+      0,
+      0,
+      1,
+      1,
+    );
+    expect(src).toContain("float transportSolidField(vec3 p) {");
+    expect(src).toContain("return condensationTerm(p, 1.0, 0).x;");
+    expect(src).toContain("TRANSPORT_REASON_STATE_MISMATCH");
+    expect(src).toContain("if (abs(f) < eps) {");
+    // The estimator query is gone — the backend REPLACES it.
+    expect(src).not.toContain("float d = surfaceDE(p, 0.0);");
+  });
+
+  it("keeps the estimator backend the default: absent means the estimator march, byte for byte", () => {
+    expect(
+      surfaceFragmentResolvedFor(
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        emitterShapes,
+        false,
+        0,
+        0,
+        0,
+        null,
+        0,
+        0,
+        1,
+      ),
+    ).not.toContain("transportSolidField");
+    expect(
+      surfaceFragmentResolvedFor(
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        emitterShapes,
+        false,
+        0,
+        0,
+        0,
+        null,
+        0,
+        0,
+        1,
+        0,
+      ),
+    ).toBe(
+      surfaceFragmentResolvedFor(
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        emitterShapes,
+        false,
+        0,
+        0,
+        0,
+        null,
+        0,
+        0,
+        1,
+      ),
+    );
+  });
+
+  it("the 4D arm mirrors the ADDITIVE-PENALTY signed field through the live rotor/slice", () => {
+    const src = surface4FragmentResolvedFor(
+      0,
+      0,
+      0,
+      0,
+      emitterShapes,
+      0,
+      0,
+      null,
+      0,
+      0,
+      1,
+      1,
+    );
+    expect(src).toContain("float transportSolidField(vec3 p) {");
+    // The penalty form, not the hypot: sigmaMin · sdShape + |local w|.
+    // (The descent's own condensationTerm4 keeps its hypot estimator —
+    // only the signed FIELD is the penalty form.)
+    const field = src.slice(
+      src.indexOf("float transportSolidField(vec3 p) {"),
+      src.indexOf(
+        "return best *",
+        src.indexOf("float transportSolidField(vec3 p) {"),
+      ),
+    );
+    expect(field).toContain("vec4 q = uInvRotor * vec4(p, uW0);");
+    expect(field).toContain("uMapColorSigma[slot].w * sd + abs(local.w)");
+    expect(field).toContain("condensation4ShapeSdf(uCondShape[e], local.xyz)");
+    expect(field).not.toContain("length(vec2");
+  });
+
+  it("refuses the 4D swirl final under the closed-solid backend", () => {
+    expect(() =>
+      surface4FragmentResolvedFor(
+        0,
+        0,
+        0,
+        0,
+        emitterShapes,
+        0,
+        0,
+        null,
+        1,
+        0,
+        1,
+        1,
+      ),
+    ).toThrow(/swirl-final lens/);
   });
 });
