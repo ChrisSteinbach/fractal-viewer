@@ -33,6 +33,7 @@ import { surfacePatternShadeSource } from "../fractal/surface-pattern-shade";
 import {
   CLASSIC_SURFACE_MATERIAL,
   surfaceMaterialLanes,
+  surfaceMaterialOpticsLanes,
   type SurfaceMaterialSlots,
 } from "../fractal/surface-material-wire";
 import type { Vec3 } from "../fractal/types";
@@ -49,6 +50,7 @@ import {
   surfaceShapeMeshSdfUniform,
   surfaceFragmentFor,
   surfaceFragmentResolvedFor,
+  surfaceTransportSource,
 } from "./surface-material";
 import type {
   SurfaceBalloonSpec,
@@ -285,6 +287,12 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     // The POST-AFFINE inverses — see the UniformsGroup for the full why.
     mat4 uInvPostM[MAX_MAPS];
     vec4 uInvPostT[MAX_MAPS];
+    /** The optical transport's frozen lane pair per slot
+     * (surface-material-wire.ts's surfaceMaterialOpticsLanes): lane 2j =
+     * (ior, radius, absorption.r, absorption.g), lane 2j+1 =
+     * (absorption.b, reserved×3). UNCONDITIONAL member APPENDED LAST, read
+     * only under the optics arm — no earlier offset can move on a toggle. */
+    vec4 uMapOptics[2 * MAX_MAPS];
   };
   uniform int uMapCount;
 #if SURFACE_SCHEDULE
@@ -2465,6 +2473,18 @@ uniform float uBalloonPaletteEnabled;
   }
 
 #endif
+#if SURFACE_OPTICS
+  // The optical transport — spliced AFTER every public-DE redefinition so
+  // its boundary query marches the composed object, and before main(),
+  // whose shade site routes optical hits through the trace below. The SAME
+  // shared math text the 3D tracer splices (surfaceTransportSource); the
+  // only dimension parameter is the domain radius, the SLICE ball here.
+  // The directives stay the 3D names (the resolver's keys) while the
+  // material's define key is SURFACE4_OPTICS — the twin-file convention.
+  // The mirrored lattice carrier rewrites the domain exit after splicing,
+  // the same way it rewrites the march's own sphere gate.
+${surfaceTransportSource(true)}
+#endif
   void main() {
     // The shared background shape at full-image coordinates; see the 3D
     // twin.
@@ -2682,6 +2702,77 @@ uniform float uBalloonPaletteEnabled;
     );
 #else
     surfaceDE(pos, firstChoice, trap, rings, sheets, sStar);
+#endif
+#if SURFACE_OPTICS
+    // The optical transport's lane — the 3D twin's branch one dimension
+    // up. The slab rides the trace untouched (the 4D estimator's segment
+    // form is the public surfaceDE both march); the fog's radius is the
+    // SLICE ball, the value the 4D kernel packs as its visibleRadius slot.
+    // The lattice's own march rewrite retargets the domain gate; the fog
+    // here matches the 4D kernel's non-lattice paint (the wrapper's
+    // full-radius rule applies to the classic tail only, as there).
+    int oSlot = clamp(firstChoice, 0, uMapCount - 1);
+#if SURFACE_CONDENSATION
+    oSlot = clamp(firstChoice, 0, uShadeCount - 1);
+#endif
+    vec4 opticsLane0 = uMapOptics[oSlot * 2];
+    vec4 opticsLane1 = uMapOptics[oSlot * 2 + 1];
+    if (opticsLane0.x > 0.0) {
+      float iorO = opticsLane0.x;
+      float radiusO = opticsLane0.y;
+      vec3 absorbO = vec3(opticsLane0.z, opticsLane0.w, opticsLane1.x);
+      for (int pass = 0; pass < TRANSPORT_REPLAY_PASSES; pass++) {
+        float thetaO = dielectricReplayTheta(float(pass), TRANSPORT_INITIAL_THETA);
+        TransportTrace traced = transportTrace(
+          pos,
+          rd,
+          thetaO,
+          iorO,
+          radiusO,
+          absorbO,
+          background
+        );
+        if (traced.status == TRANSPORT_STATUS_INVALID) {
+          // Never retried, never presented as background: black.
+          outColor = vec4(0.0, 0.0, 0.0, 1.0);
+          outTraceLayer = traceLayer(1.0, 0.0, dot(pos - ro, uFocusPlane.xyz));
+          return;
+        }
+        if ((traced.status == TRANSPORT_STATUS_COMPLETE ||
+             traced.status == TRANSPORT_STATUS_RESIDUAL) &&
+            traced.residual <= TRANSPORT_ERROR_BUDGET) {
+          // The accepted paint: 2.2-encode + the hit fog at the slice
+          // ball's own sphere entry (the compute lane's lines).
+          vec3 displayT = pow(max(traced.radiance, vec3(0.0)), vec3(1.0 / 2.2));
+          float radiusG = sliceVisR * 1.02;
+          float bqT = dot(ro, rd);
+          float cqT = dot(ro, ro) - radiusG * radiusG;
+          float sqT = sqrt(max(bqT * bqT - cqT, 0.0));
+          float tEnterT = min(max(-bqT - sqT, 0.0), t);
+          float fogT =
+            1.0 - exp(-0.12 * pow((t - tEnterT) * uFogDensity / max(sliceVisR, 1.0e-6), 2.0));
+          outColor = vec4(
+            mix(displayT, mix(background, uFogTint, uFogTintStrength), clamp(fogT, 0.0, 1.0)),
+            1.0
+          );
+          outTraceLayer = traceLayer(
+            1.0,
+            clamp(fogT, 0.0, 1.0),
+            dot(pos - ro, uFocusPlane.xyz)
+          );
+          return;
+        }
+        // Still pending: the replay schedule re-traces this sample from
+        // scratch at the next pass's halved theta; falling out of the loop
+        // is the schedule exhausted — final UNRESOLVED work. Black, never
+        // background.
+      }
+      outColor = vec4(0.0, 0.0, 0.0, 1.0);
+      outTraceLayer = traceLayer(1.0, 0.0, dot(pos - ro, uFocusPlane.xyz));
+      return;
+    }
+    // A classic slot: the classic shade site owns this pixel exactly as
+    // before.
 #endif
 
     // --- shade --------------------------------------------------------------
@@ -3147,6 +3238,12 @@ export function surface4FragmentFor(
   tiling: ResolvedTiling | null = null,
   swirlLens = 0,
   lighting = 0,
+  // The optical transport's compile gate — the wire's third gate one
+  // dimension up. The 4D tracer is the affine ladder (no fold GLSL
+  // exists here), so the only resolver-visible refusals are the forward
+  // arms (which never appear in this source) and the cinematic rig,
+  // both inherited from the 3D resolver this forwards into.
+  optics = 0,
 ): string {
   return surfaceFragmentFor(
     0,
@@ -3166,6 +3263,7 @@ export function surface4FragmentFor(
     tiling,
     0,
     lighting,
+    optics,
   );
 }
 
@@ -3185,6 +3283,7 @@ export function surface4FragmentResolvedFor(
   tiling: ResolvedTiling | null = null,
   swirlLens = 0,
   lighting = 0,
+  optics = 0,
 ): string {
   return surfaceFragmentResolvedFor(
     0,
@@ -3204,6 +3303,7 @@ export function surface4FragmentResolvedFor(
     tiling,
     0,
     lighting,
+    optics,
   );
 }
 
@@ -3232,6 +3332,10 @@ interface Surface4MapBuffers {
   /** MAX_MAPS * 4 floats: material lane B (transmit, reflectionTint,
    * patternConfig, scale). */
   readonly finishB: Float32Array;
+  /** MAX_MAPS * 8 floats: the optical transport's frozen lane pair per
+   * slot, appended after the finish pair — written by
+   * {@link setSurface4Materials}, zeros (ior 0 = classic) until then. */
+  readonly optics: Float32Array;
 }
 
 /** The classic+none material's two lanes, derived through `surfaceMaterialLanes`
@@ -3276,6 +3380,7 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
     trap: new Float32Array(SURFACE4_MAX_MAPS * 4),
     finishA: new Float32Array(SURFACE4_MAX_MAPS * 4),
     finishB: new Float32Array(SURFACE4_MAX_MAPS * 4),
+    optics: new Float32Array(SURFACE4_MAX_MAPS * 8),
   };
   // Placeholder slots: identity inverse, unit contraction — the same "no
   // system yet" values the pre-block uniform arrays held. Nothing reads them
@@ -3324,6 +3429,13 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
   // feature's own arrival.
   maps.add(new THREE.Uniform(buffers.invPostM));
   maps.add(new THREE.Uniform(buffers.invPostT));
+  // The optical transport's lane pair rides UNCONDITIONALLY (the post
+  // pair's rule) and APPENDED LAST: the block declares it whether or not
+  // the optics arm compiles, so no earlier member's std140 offset ever
+  // moves. 768 B more of the block — still 6144 B against the 16 KiB
+  // every WebGL2 device guarantees. Zeros (ior 0 = classic) until
+  // setSurfaceMaterials writes the slots.
+  maps.add(new THREE.Uniform(buffers.optics));
   const material = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     uniforms: {
@@ -3724,6 +3836,7 @@ export function setSurfaceSystem4(
       tiling,
       wantSwirlLens,
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
+      material.defines.SURFACE4_OPTICS === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -3968,6 +4081,7 @@ export function setSurface4Balloon(
       tiling,
       material.defines.SURFACE4_SWIRL_LENS === 1 ? 1 : 0,
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
+      material.defines.SURFACE4_OPTICS === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -4015,6 +4129,7 @@ export function setSurface4GroundPlane(
           materialSurfaceTiling(material, true),
           material.defines.SURFACE4_SWIRL_LENS === 1 ? 1 : 0,
           material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
+          material.defines.SURFACE4_OPTICS === 1 ? 1 : 0,
         );
   const u = material.uniforms;
   if (spec) {
@@ -4077,6 +4192,21 @@ export function setSurface4Materials(
       `${materials.slots.length} surface materials, but the material carries at most ${SURFACE4_MAX_MAPS}`,
     );
   }
+  if (materials?.optics) {
+    // The packer's own uniformity rule, one dimension down
+    // (packSurfaceGpuOpticsMaps): an optics gate covers EVERY slot — a
+    // mixed wire is the packer's thrown range error on every engine, not
+    // a silent mix. (The 4D tracer has no fold GLSL, so the 3D setter's
+    // fold refusal has no twin here.)
+    const classic = materials.slots.findIndex(
+      (slot) => slot.optics === undefined,
+    );
+    if (classic >= 0) {
+      throw new RangeError(
+        `surface-material-4d: slot ${classic} resolves no optics under a live optics gate — the opticsMaps lane pair must cover every slot uniformly`,
+      );
+    }
+  }
   const maps = mapBuffers.get(material);
   if (!maps) {
     throw new TypeError(
@@ -4090,6 +4220,20 @@ export function setSurface4Materials(
         : CLASSIC_MATERIAL_LANES;
     maps.finishA.set(lanes.a, j * 4);
     maps.finishB.set(lanes.b, j * 4);
+    // The frozen opticsMaps lane pair: listed slots to their lanes, every
+    // unreached slot back to all-zero (ior 0 = classic; the trace routes
+    // per hit). Under a live gate a listed slot always resolves one — the
+    // uniformity throw above ran first.
+    const opticsLanes =
+      materials && j < materials.slots.length
+        ? surfaceMaterialOpticsLanes(materials.slots[j])
+        : null;
+    if (opticsLanes) {
+      maps.optics.set(opticsLanes[0], j * 8);
+      maps.optics.set(opticsLanes[1], j * 8 + 4);
+    } else {
+      maps.optics.fill(0, j * 8, j * 8 + 8);
+    }
   }
   const calibration = material.uniforms.uPatternCalibration
     .value as THREE.Vector4;
@@ -4101,14 +4245,19 @@ export function setSurface4Materials(
   }
   const wantFinish = materials?.finish ? 1 : 0;
   const wantPattern = materials?.pattern ? 1 : 0;
+  const wantOptics = materials?.optics ? 1 : 0;
   const currentPattern = material.defines.SURFACE4_PATTERN === 1 ? 1 : 0;
+  const currentOptics = material.defines.SURFACE4_OPTICS === 1 ? 1 : 0;
   if (
     material.defines.SURFACE4_FINISH !== wantFinish ||
-    currentPattern !== wantPattern
+    currentPattern !== wantPattern ||
+    currentOptics !== wantOptics
   ) {
     material.defines.SURFACE4_FINISH = wantFinish;
     if (wantPattern) material.defines.SURFACE4_PATTERN = 1;
     else delete material.defines.SURFACE4_PATTERN;
+    if (wantOptics) material.defines.SURFACE4_OPTICS = 1;
+    else delete material.defines.SURFACE4_OPTICS;
     material.fragmentShader = surface4FragmentFor(
       material.defines.SURFACE4_BALLOON === 1 ? 1 : 0,
       material.defines.SURFACE4_GROUND_PLANE === 1 ? 1 : 0,
@@ -4120,6 +4269,7 @@ export function setSurface4Materials(
       materialSurfaceTiling(material, true),
       material.defines.SURFACE4_SWIRL_LENS === 1 ? 1 : 0,
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
+      wantOptics,
     );
     material.needsUpdate = true;
   }
@@ -4146,6 +4296,7 @@ export function setSurface4Lighting(
     materialSurfaceTiling(material, true),
     material.defines.SURFACE4_SWIRL_LENS === 1 ? 1 : 0,
     enabled ? 1 : 0,
+    material.defines.SURFACE4_OPTICS === 1 ? 1 : 0,
   );
   material.needsUpdate = true;
 }
