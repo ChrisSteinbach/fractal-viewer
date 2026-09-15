@@ -8294,13 +8294,15 @@ ${surfacePatternShadeSourceWgsl()}`
   // condensation term at the root (the signed certified bound the primary
   // march reads). In 4D the term's hypot form is a distance to the shape
   // flat and reads ZERO throughout its interior — no negative region for
-  // a signed traversal — so the 4D field is the max form
+  // a signed traversal — so the 4D field is the ADDITIVE-PENALTY form
   // (condensation-de.ts's condensationSignedDistance4, mirrored):
-  // sigmaMin · max(sdShape, |local w|), sign-exact, the 3D solid field
-  // exactly at the canonical pose where the slice carries the flat, and
-  // the honest empty interior where a tilted slice cuts the flat into a
-  // sheet. Graph-directed selection and hybrid schedules are refused for
-  // this backend, so the emitter loop needs neither gate.
+  // sigmaMin · sdShape + |local w|, union min — the textbook max-form
+  // intersection SDF is REFUSED here, because at w = 0 it reads
+  // max(sd, 0) = 0 inside (a zero-thickness member kills the negative
+  // region); the penalty form is exact at the canonical pose where the
+  // member's measure vanishes identically and degrades to honest
+  // refusals off it. Graph-directed selection and hybrid schedules are
+  // refused for this backend, so the emitter loop needs neither gate.
   const transportSolidFieldWgsl = !solidQuery
     ? ""
     : core4
