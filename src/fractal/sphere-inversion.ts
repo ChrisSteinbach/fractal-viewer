@@ -79,9 +79,10 @@ export const SPHERE_INVERSION_POLE_FLOOR = 1e-12;
 export const SPHERE_INVERSION_STEP_SCALE = 1;
 
 /** Structural depth cap: it sizes the fold's transport scratch and the fixed
- * loop a later shader mirror will need. NOT a measured public range — the
- * candidate public range (6–12 in 3D, 5–10 in 4D) waits on the cost
- * measurement. */
+ * loop of both shader mirrors. NOT the public range: the measured public
+ * depth range is 0–12 in both dimensions (settle cost is flat in depth to
+ * this cap; `docs/sphere-inversion-family.md`, "Cost and exhaustion"), and a
+ * document may still carry any depth up to this cap. */
 export const SPHERE_INVERSION_MAX_DEPTH = 32;
 
 /** A seed sphere whose depth-1 image scale `r_j² / | |c − c_j|² − r² |`
