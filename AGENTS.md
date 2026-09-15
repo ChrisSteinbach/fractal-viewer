@@ -562,7 +562,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     showcase: four corner maps under a boxfold lens, three finishes and
     one deliberately UNAUTHORED control, since a showcase that authors
     every map cannot show what absence renders) + add-transform, plus
-    seven
+    nine
     `Partial<Record<Preset, …>>` SIDE TABLES main.ts's preset handler
     consumes: `PRESET_SCAFFOLDS` (4D wireframes), `PRESET_RENDER_HINTS`
     (the renderer a preset was authored for), and `PRESET_FINALS`
@@ -576,8 +576,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     load-bearing in both directions since `analyzeBulbSystem` refuses any
     order above 1 and `analyzeEscapeSystem` refuses one that rotates into
     4D; main.ts also clears the twist, and no entry may carry one),
-    `PRESET_TRAPS` (absent means CLEAR), and `PRESET_SURFACE_PALETTES`
-    (set-never-clear). Side tables rather than a wider `PRESETS` signature
+    `PRESET_TRAPS` (absent means CLEAR), `PRESET_SURFACE_PALETTES`
+    (set-never-clear), `PRESET_SPHERE_INVERSIONS` (absent means CLEAR) and
+    `PRESET_VIEWS` (saved camera + 4D rotor/slice landed with the cloud;
+    absent means AUTO-FIT). Side tables rather than a wider `PRESETS` signature
     keep every preset from declaring what it does not carry.
   - `project4.ts` — SO(4) rotor→matrix + camera projection, `FourDView`,
     `sliceWeight`, `SLICE_GHOST_FLOOR` (`0.06`).
