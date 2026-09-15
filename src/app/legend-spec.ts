@@ -13,6 +13,10 @@ import { to255 } from "../fractal/vec";
 import type { AppState } from "./state";
 import { surfaceColorLUT } from "./control-spec";
 import { deriveSurfaceEligibility } from "./surface-eligibility";
+import {
+  resolveSphereInversion,
+  sphereInversionGenerationSlots,
+} from "../fractal/sphere-inversion";
 
 /**
  * The color legend as DATA: what the panel's unobtrusive key for "what do the
@@ -245,6 +249,50 @@ function transformSwatches(transforms: readonly Transform[]): LegendSpec {
 }
 
 /**
+ * The sphere-inversion "By Transform" strip: one chip per GENERATION (word
+ * length), `sphereInversionGenerationSlots(D)` of them — the count and the
+ * unauthored `transformColors` spread both the Points sample
+ * (`cloud-worker-core.ts`'s `sphereInversionColorSlots`) and the Surface
+ * session (`surface-slots.ts`'s `sphereInversionShadeSlots`) colour by, so
+ * the key cannot drift from either. Captioned "seed" before generation 0,
+ * "gen 1" before generation 1, and the last shown generation after its chip,
+ * so the strip reads as a range; the same cap and "+N" as the transform strip.
+ */
+function generationSwatches(count: number): LegendSpec {
+  const palette = transformColors(count);
+  const items: LegendSwatchItem[] = [];
+  const shown = Math.min(count, LEGEND_MAX_SWATCHES);
+  for (let i = 0; i < shown; i++) {
+    if (i === 0) items.push({ kind: "label", text: "seed" });
+    if (i === 1) items.push({ kind: "label", text: "gen 1" });
+    const [r, g, b] = palette[i];
+    items.push({ kind: "swatch", color: cssRgb(r, g, b) });
+  }
+  if (shown > 2) items.push({ kind: "label", text: `gen ${shown - 1}` });
+  if (count > LEGEND_MAX_SWATCHES) {
+    items.push({ kind: "label", text: `+${count - LEGEND_MAX_SWATCHES}` });
+  }
+  return { kind: "swatches", items };
+}
+
+/**
+ * The by-transform key for the document's SUBJECT: its transforms, or — while
+ * a sphere-inversion block replaces them — the block's generations. A block
+ * the resolver refuses hides the key: Points draws an empty cloud for it and
+ * Surface refuses to enter, so there are no colours to explain.
+ */
+function transformKey(state: AppState): LegendSpec {
+  if (state.sphereInversion === undefined) {
+    return transformSwatches(state.transforms);
+  }
+  const resolution = resolveSphereInversion(state.sphereInversion);
+  if (!resolution.ok) return { kind: "hidden" };
+  return generationSwatches(
+    sphereInversionGenerationSlots(resolution.construction.depth),
+  );
+}
+
+/**
  * The position mode's key: the three axis colors, each tagged with its axis
  * letter — the live pickers' colors, so the legend can never drift from the
  * rendered mapping (the default identity reads X:red Y:green Z:blue, the old
@@ -307,7 +355,7 @@ export function deriveLegend({
   // described nothing on screen.
   if (state.renderMode === "surface") {
     const source = state.surface.colorSource;
-    if (source === "transform") return transformSwatches(state.transforms);
+    if (source === "transform") return transformKey(state);
     // The shape-trap source renders as "transform" wherever the trap is
     // not LIVE — no document block, or a session outside the escape
     // family, whose shaders carry no trap channel (scene.ts's
@@ -332,7 +380,7 @@ export function deriveLegend({
           ).kind
         : null;
       if (kind !== "escape" && kind !== "bulb" && kind !== "escape4") {
-        return transformSwatches(state.transforms);
+        return transformKey(state);
       }
     }
     // The key samples the EXACT ramp the tracer samples: surfaceColorLUT
@@ -388,7 +436,7 @@ export function deriveLegend({
   if (nonFlat) {
     const mode = state.fourDColor;
     if (mode === "uniform") return { kind: "hidden" };
-    if (mode === "transform") return transformSwatches(state.transforms);
+    if (mode === "transform") return transformKey(state);
     if (mode === "height" || mode === "radius") {
       // The ONE coordinate ramp (buildColorModeLUT): raw authored Y for
       // Height, or 4D distance from the cloud center for Radius. Both consume
@@ -429,7 +477,7 @@ export function deriveLegend({
       mode,
     );
   }
-  if (mode === "transform") return transformSwatches(state.transforms);
+  if (mode === "transform") return transformKey(state);
   // position: the three axis colors, labeled — not a 1-D ramp.
   return axisSwatches(state.positionAxisColors ?? LEGACY_POSITION_AXIS_COLORS);
 }
