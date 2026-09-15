@@ -3648,6 +3648,12 @@ interface SurfaceSectionConfig {
    * rehearsal can never be mistaken for a real one. 0 (the default) =
    * off. */
   canaryTrip: number;
+  /** Opt-in (`--surface-sphere-inversion-only=1`,
+   * `surfaceSphereInversionOnly=1`): run ONLY the sphere-inversion legs
+   * (`sphere-inversion-legs.ts`) after the canary arms — the iteration and
+   * cost-sweep path. Its verdict is "fail" or "skipped", never "pass": a run
+   * that skipped every other leg certifies nothing about the section. */
+  sphereInversionOnly: boolean;
 }
 
 interface SurfaceKernelConfig {
@@ -5437,7 +5443,8 @@ function parseSurfaceShadeWidths(raw: string | null): {
  * `runSurfaceAff4SweepLeg`'s doc), `surfacePlaneFrame` (opt-in
  * ground-plane frame leg, "1" = on; default off — see
  * `runSurfaceComputeFramePlaneLeg`'s doc), `surfaceCanaryTrip` (opt-in
- * synthetic device-sanity trip at the Nth check; default 0 = off). */
+ * synthetic device-sanity trip at the Nth check; default 0 = off),
+ * `surfaceSphereInversionOnly` ("1" runs only the sphere-inversion legs). */
 function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
   const variants = (params.get("surfaceVariants") ?? "shared,private")
     .split(",")
@@ -5472,6 +5479,7 @@ function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
     shadeWidthNotes: shadeWidths.notes,
     aff4Sweep: params.get("surfaceAff4Sweep") === "1",
     planeFrame: params.get("surfacePlaneFrame") === "1",
+    sphereInversionOnly: params.get("surfaceSphereInversionOnly") === "1",
     canaryTrip:
       Number.isInteger(canaryTripParsed) && canaryTripParsed >= 1
         ? canaryTripParsed
@@ -16951,6 +16959,103 @@ async function runSurfaceDeSection(
       await canary?.check(boundary);
     };
 
+    // ----- The sphere-inversion cores (sphereInv / sphereInv4) -----
+    // Pinned against the f64 seed-orbit estimator on their own fixtures
+    // (sphere-inversion.ts's module doc). The timing subjects run the
+    // existing fold (mandelboxKifs, production width) and escape4 kernels on
+    // the SAME eval harness, so the µs/query rows compare like with like.
+    const runSphereInversionLegs = async (): Promise<void> => {
+      try {
+        activity.setState("gpu", "Surface sphere-inversion legs");
+        const timingSubjects: SiTimingSubject[] = [];
+        const kifs = systems.find(
+          (s) => s.name === "mandelboxKifs" && s.core === "fold",
+        );
+        if (kifs) {
+          timingSubjects.push({
+            name: "mandelboxKifs",
+            core: `fold w${SURFACE_FOLD_BEAM_WIDTH}`,
+            code: surfaceDeKernelWgsl({
+              mode: "eval",
+              core: "fold",
+              width: SURFACE_FOLD_BEAM_WIDTH,
+              workgroupSize: 16,
+              sharedFrontier: false,
+              bnbStage2: false,
+            }),
+            packParams: (itemCount) =>
+              packSurfaceGpuParams(kifs.de, {
+                itemCount,
+                cutoff: 0,
+                footprint: 0,
+              }),
+            maps: new Float32Array(packSurfaceGpuMaps(kifs.de)),
+            queries: kifs.queries,
+          });
+        }
+        const esc4 = escape4Systems[0];
+        if (esc4) {
+          timingSubjects.push({
+            name: esc4.name,
+            core: "escape4",
+            code: surfaceDeKernelWgsl({
+              mode: "eval",
+              core: "escape4",
+              width: SURFACE_FOLD_BEAM_WIDTH,
+              workgroupSize: 16,
+              sharedFrontier: false,
+              bnbStage2: false,
+            }),
+            packParams: (itemCount) =>
+              packEscape4GpuParams(esc4.de, esc4.view4, {
+                itemCount,
+                cutoff: 0,
+              }),
+            maps: new Float32Array(packEscape4GpuMaps(esc4.de)),
+            queries: esc4.queries,
+          });
+        }
+        const si = await runSphereInversionBench({
+          device,
+          software: acquired.software,
+          tol: surfaceEvalTol,
+          status,
+          update: (partial) => {
+            results.sphereInversion = partial;
+            render();
+          },
+          onFrame: (label, caption, pixels, width, height) => {
+            drawSurfaceComputeFrame(
+              surfaceLabeledCanvas(dom, label, caption, width, height),
+              pixels,
+              width,
+              height,
+            );
+          },
+          timingSubjects,
+        });
+        results.sphereInversion = si;
+        for (const note of si.notes) results.notes.push(note);
+        if (si.failed) sphereInversionFailed = true;
+      } catch (e) {
+        sphereInversionFailed = true;
+        results.notes.push(`sphere-inversion legs: ${describeError(e)}`);
+      }
+      render();
+    };
+
+    if (config.sphereInversionOnly) {
+      await runSphereInversionLegs();
+      await canaryCheck("the sphere-inversion legs");
+      results.verdict = sphereInversionFailed ? "fail" : "skipped";
+      results.reason = sphereInversionFailed
+        ? "sphere-inversion compile/eval/march/frame failure — see sphereInversion and notes"
+        : "surfaceSphereInversionOnly: only the sphere-inversion legs ran (and passed); every other leg was skipped, so this certifies nothing about the section";
+      render();
+      status(results.verdict + ` — ${results.reason}`);
+      return results;
+    }
+
     // Zero recursive maps must still evaluate C0, preserve its winning
     // material, and shade through the production entry in both dimensions.
     try {
@@ -21104,85 +21209,7 @@ async function runSurfaceDeSection(
 
       await canaryCheck("the transport envelope leg");
     }
-    // ----- The sphere-inversion cores (sphereInv / sphereInv4) -----
-    // Pinned against the f64 seed-orbit estimator on their own fixtures
-    // (sphere-inversion.ts's module doc). The timing subjects run the
-    // existing fold (mandelboxKifs, production width) and escape4 kernels on
-    // the SAME eval harness, so the µs/query rows compare like with like.
-    try {
-      activity.setState("gpu", "Surface sphere-inversion legs");
-      const timingSubjects: SiTimingSubject[] = [];
-      const kifs = systems.find(
-        (s) => s.name === "mandelboxKifs" && s.core === "fold",
-      );
-      if (kifs) {
-        timingSubjects.push({
-          name: "mandelboxKifs",
-          core: `fold w${SURFACE_FOLD_BEAM_WIDTH}`,
-          code: surfaceDeKernelWgsl({
-            mode: "eval",
-            core: "fold",
-            width: SURFACE_FOLD_BEAM_WIDTH,
-            workgroupSize: 16,
-            sharedFrontier: false,
-            bnbStage2: false,
-          }),
-          packParams: (itemCount) =>
-            packSurfaceGpuParams(kifs.de, {
-              itemCount,
-              cutoff: 0,
-              footprint: 0,
-            }),
-          maps: new Float32Array(packSurfaceGpuMaps(kifs.de)),
-          queries: kifs.queries,
-        });
-      }
-      const esc4 = escape4Systems[0];
-      if (esc4) {
-        timingSubjects.push({
-          name: esc4.name,
-          core: "escape4",
-          code: surfaceDeKernelWgsl({
-            mode: "eval",
-            core: "escape4",
-            width: SURFACE_FOLD_BEAM_WIDTH,
-            workgroupSize: 16,
-            sharedFrontier: false,
-            bnbStage2: false,
-          }),
-          packParams: (itemCount) =>
-            packEscape4GpuParams(esc4.de, esc4.view4, { itemCount, cutoff: 0 }),
-          maps: new Float32Array(packEscape4GpuMaps(esc4.de)),
-          queries: esc4.queries,
-        });
-      }
-      const si = await runSphereInversionBench({
-        device,
-        software: acquired.software,
-        tol: surfaceEvalTol,
-        status,
-        update: (partial) => {
-          results.sphereInversion = partial;
-          render();
-        },
-        onFrame: (label, caption, pixels, width, height) => {
-          drawSurfaceComputeFrame(
-            surfaceLabeledCanvas(dom, label, caption, width, height),
-            pixels,
-            width,
-            height,
-          );
-        },
-        timingSubjects,
-      });
-      results.sphereInversion = si;
-      for (const note of si.notes) results.notes.push(note);
-      if (si.failed) sphereInversionFailed = true;
-    } catch (e) {
-      sphereInversionFailed = true;
-      results.notes.push(`sphere-inversion legs: ${describeError(e)}`);
-    }
-    render();
+    await runSphereInversionLegs();
 
     await canaryCheck("the sphere-inversion legs");
 
