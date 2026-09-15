@@ -3,6 +3,7 @@ import {
   PRESET_NAMES,
   PRESET_RENDER_HINTS,
   PRESET_SCHEDULES,
+  PRESET_SPHERE_INVERSIONS,
   PRESET_SYMMETRIES,
   PRESET_TILINGS,
   PRESET_TRAPS,
@@ -255,6 +256,7 @@ function presetDocument(preset: Preset): SurfaceEligibilityDocument {
     schedule: PRESET_SCHEDULES[preset]?.() ?? null,
     shapeTrap: PRESET_TRAPS[preset]?.() ?? null,
     tiling: PRESET_TILINGS[preset] ?? null,
+    sphereInversion: PRESET_SPHERE_INVERSIONS[preset]?.() ?? null,
   };
 }
 
@@ -274,6 +276,7 @@ function derivePreset(
     document.shapeTrap ?? null,
     document.tiling ?? null,
     document.condensationDepthBand,
+    document.sphereInversion ?? null,
   );
 }
 
@@ -356,6 +359,21 @@ describe("deriveSurfaceEligibility over the shipped presets", () => {
     expect(result.status).toBe("ineligible");
     expect(result.kind).toBe(null);
     expect(result.note).toContain("WebGPU compute");
+  });
+
+  it("routes the sphere-inversion showcases to the family's kinds by their block's dimension, not the placeholder transforms'", () => {
+    for (const [preset, kind] of [
+      ["inversionPearls", "sphereInversion"],
+      ["inversionCubePearls", "sphereInversion"],
+      ["inversionVault", "sphereInversion"],
+      ["inversionLace", "sphereInversion"],
+      ["inversionVault4", "sphereInversion4"],
+      ["inversionMedallions4", "sphereInversion4"],
+    ] as const) {
+      const result = derivePreset(preset);
+      expect(result.status, `${preset}: ${result.note}`).not.toBe("ineligible");
+      expect(result.kind, preset).toBe(kind);
+    }
   });
 
   it("keeps a plain 4D IFS eligible without compute (the fragment fallback exists)", () => {

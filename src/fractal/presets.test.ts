@@ -65,10 +65,12 @@ import {
   PRESET_PALETTES,
   PRESET_RENDER_HINTS,
   PRESET_SCAFFOLDS,
+  PRESET_SPHERE_INVERSIONS,
   PRESET_SYMMETRIES,
   PRESET_TILINGS,
   PRESET_TRAPS,
   PRESET_SURFACE_ROOMS,
+  PRESET_VIEWS,
   presetTransforms,
   type Preset,
   radiolarian,
@@ -87,6 +89,10 @@ import {
   woodGrain,
 } from "./presets";
 import { mulberry32 } from "./rng";
+import {
+  resolveSphereInversion,
+  sphereInversionAuthoredDimension,
+} from "./sphere-inversion";
 import { analyzeSurfaceSystem, buildSurfaceDE } from "./surface-de";
 import { analyzeSurfaceSystem4, buildSurfaceDE4 } from "./surface-de-4d";
 import { SURFACE_LENS_SWIRL, SWIRL_LENS_MAX_RADIUS } from "./swirl-lens";
@@ -822,6 +828,95 @@ describe("Surface swirl showcases", () => {
       expect(PRESET_SCAFFOLDS[name]).toBeUndefined();
     });
   }
+});
+
+describe("PRESET_SPHERE_INVERSIONS", () => {
+  const blockPresets = Object.keys(PRESET_SPHERE_INVERSIONS) as Preset[];
+
+  it("keys only real preset names", () => {
+    for (const key of blockPresets) expect(PRESET_NAMES).toContain(key);
+  });
+
+  // ABSENT MEANS CLEAR (see the table's doc): main.ts clears the block on
+  // every load with no entry, so the table is exactly the family's showcases.
+  it("carries a block only for the sphere-inversion showcases", () => {
+    expect(blockPresets.sort()).toEqual([
+      "inversionCubePearls",
+      "inversionLace",
+      "inversionMedallions4",
+      "inversionPearls",
+      "inversionVault",
+      "inversionVault4",
+    ]);
+  });
+
+  it("ships at least four showcases, at least two of them native 4D", () => {
+    const dims = blockPresets.map((p) =>
+      sphereInversionAuthoredDimension(PRESET_SPHERE_INVERSIONS[p]!()),
+    );
+    expect(dims.length).toBeGreaterThanOrEqual(4);
+    expect(dims.filter((d) => d === 4).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("resolves every block to an eligible construction, clear of tangency", () => {
+    for (const preset of blockPresets) {
+      const resolution = resolveSphereInversion(
+        PRESET_SPHERE_INVERSIONS[preset]!(),
+      );
+      if (!resolution.ok) {
+        throw new Error(`${preset}: ${resolution.reasons.join("; ")}`);
+      }
+      expect(resolution.eligibility.status, preset).toBe("eligible");
+    }
+  });
+
+  it("builds a fresh block per load, so the document never aliases the table", () => {
+    const factory = PRESET_SPHERE_INVERSIONS.inversionVault!;
+    expect(factory()).not.toBe(factory());
+    expect(factory().seed).not.toBe(factory().seed);
+  });
+
+  it("opens every showcase in Surface over a flat, surface-eligible placeholder system", () => {
+    for (const preset of blockPresets) {
+      expect(PRESET_RENDER_HINTS[preset], preset).toBe("surface");
+      const transforms = presetTransforms(preset);
+      expect(transforms, preset).toEqual(sierpinskiTetrahedron());
+      expect(analyzeSurfaceSystem(transforms).status, preset).toBe("eligible");
+    }
+  });
+});
+
+describe("PRESET_VIEWS", () => {
+  it("keys only real preset names", () => {
+    for (const key of Object.keys(PRESET_VIEWS)) {
+      expect(PRESET_NAMES).toContain(key);
+    }
+  });
+
+  // ABSENT MEANS AUTO-FIT: a view is part of a composition whose silhouette
+  // was chosen, so every sphere-inversion showcase carries one.
+  it("gives every sphere-inversion showcase a saved view, with a 4D pose exactly for the 4D ones", () => {
+    for (const preset of Object.keys(PRESET_SPHERE_INVERSIONS) as Preset[]) {
+      const view = PRESET_VIEWS[preset];
+      expect(view, preset).toBeDefined();
+      const dim = sphereInversionAuthoredDimension(
+        PRESET_SPHERE_INVERSIONS[preset]!(),
+      );
+      expect(view!.fourD !== undefined, preset).toBe(dim === 4);
+    }
+  });
+
+  it("authors a usable camera: distinct eye and target, an ordinary field of view", () => {
+    for (const [preset, view] of Object.entries(PRESET_VIEWS)) {
+      const { eye, target, fov } = view.camera;
+      expect(
+        Math.hypot(eye[0] - target[0], eye[1] - target[1], eye[2] - target[2]),
+        preset,
+      ).toBeGreaterThan(0.1);
+      expect(fov, preset).toBeGreaterThan(20);
+      expect(fov, preset).toBeLessThanOrEqual(90);
+    }
+  });
 });
 
 describe("PRESET_PALETTES", () => {

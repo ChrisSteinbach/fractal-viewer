@@ -220,6 +220,43 @@ describe("PendingLoadHints", () => {
     });
   });
 
+  describe("view hints", () => {
+    const view = {
+      camera: {
+        eye: [0, 0, 2] as [number, number, number],
+        target: [0, 0, 0] as [number, number, number],
+        fov: 60,
+      },
+    };
+
+    it("survives a stale replaced arrival and lands on the awaited load's own", () => {
+      const counter = { id: 4 };
+      const hints = hintsAt(counter);
+      hints.clearAll();
+      hints.armView(view);
+      expect(hints.takeView({ id: 3, replaced: true })).toBeNull();
+      expect(hints.view).toBe(view);
+      expect(hints.takeView({ id: 4, replaced: true })).toBe(view);
+      expect(hints.view).toBeNull();
+    });
+
+    it("passes over a morph's replaced:false intermediates", () => {
+      const hints = hintsAt({ id: 4 });
+      hints.clearAll();
+      hints.armView(view);
+      expect(hints.takeView({ id: 9, replaced: false })).toBeNull();
+      expect(hints.view).toBe(view);
+    });
+
+    it("is dropped by the next load's clear", () => {
+      const hints = hintsAt({ id: 4 });
+      hints.clearAll();
+      hints.armView(view);
+      hints.clearAll();
+      expect(hints.takeView({ id: 4, replaced: true })).toBeNull();
+    });
+  });
+
   describe("takeSeed", () => {
     it("takes unconditionally and disarms — the session start the mode hint triggered consumes it, whenever that runs", () => {
       const hints = hintsAt({ id: 1 });

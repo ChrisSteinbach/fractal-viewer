@@ -151,6 +151,7 @@ import type {
 } from "./surface-grid-worker-core";
 import type { CloudParams } from "./cloud-generator";
 import { generateCloud, sphereInversionColorSlots } from "./cloud-worker-core";
+import { presetCameraPose, presetFourDPose } from "./preset-view";
 import type {
   CloudRequest,
   CloudResult,
@@ -166,11 +167,14 @@ import {
   PRESET_SCAFFOLDS,
   PRESET_NAMES,
   PRESET_SCHEDULES,
+  PRESET_SPHERE_INVERSIONS,
   PRESET_SYMMETRIES,
   PRESET_SURFACE_PALETTES,
   PRESET_SURFACE_ROOMS,
   PRESET_TILINGS,
   PRESET_TRAPS,
+  PRESET_VIEWS,
+  type PresetView,
   presetTransforms,
 } from "../fractal/presets";
 import type { Preset } from "../fractal/presets";
@@ -2796,11 +2800,19 @@ async function main(): Promise<void> {
     // grab just cancelled (cancelTween); once the hand lifts, the next
     // arrival resumes the follow, which is the same fit intent the terminal
     // sample lands anyway.
-    if (request.fit) {
+    // A preset's authored view (PRESET_VIEWS) takes the fit's place on its
+    // own replaced landing, and the chase stands down while one waits: the
+    // morph would otherwise follow the attractor toward a framing the
+    // landing is about to replace.
+    const presetView = loadHints.takeView(request);
+    if (presetView) {
+      applyPresetView(presetView);
+    } else if (request.fit) {
       fitCameraToAttractor();
     } else if (
       morphTween.active &&
       morphFinalFit &&
+      loadHints.view === null &&
       !gestures.gestureActive()
     ) {
       trackCameraToAttractor();
@@ -3234,6 +3246,20 @@ async function main(): Promise<void> {
     orbit.infiniteZoom =
       pose.infiniteZoom === true || orbit.fov < DEFAULT_CAMERA_FOV;
     syncContinuousZoomUi();
+  }
+
+  /**
+   * Land a preset's authored view (PRESET_VIEWS) on its cloud's arrival:
+   * the camera, and for a 4D scene the rotor and slice, normalized against
+   * the landed cloud's own bounds (preset-view.ts) — the bounds the Surface
+   * tracer multiplies the slice back out by. A view whose scene landed flat
+   * keeps only its camera.
+   */
+  function applyPresetView(view: PresetView): void {
+    applyCameraPose(presetCameraPose(view));
+    if (view.fourD && viewIs4D && fourDResult) {
+      applyFourDPose(presetFourDPose(view.fourD, fourDResult.bounds));
+    }
   }
 
   // Grabbing the camera mid-glide should feel like a normal orbit, not a
@@ -10119,11 +10145,15 @@ async function main(): Promise<void> {
         // would route the arriving system through a group it was never
         // composed with).
         state = setTiling(state, PRESET_TILINGS[preset] ?? null);
-        // A preset names a transform-system subject, and a sphere-inversion
-        // block would replace it in Surface: every preset load CLEARS the
-        // block (the tiling table's absent-means-clear rule; no preset
-        // carries one yet).
-        state = setSphereInversion(state, null);
+        // The sphere-inversion block a preset IS (PRESET_SPHERE_INVERSIONS)
+        // — the tiling table's absent-means-clear rule: the family's
+        // showcases install their block, and every other preset CLEARS one,
+        // because it names a transform-system subject a leftover block
+        // would replace.
+        state = setSphereInversion(
+          state,
+          PRESET_SPHERE_INVERSIONS[preset]?.() ?? null,
+        );
         // The flame palette a preset was composed against
         // (PRESET_PALETTES) — set, never cleared: absent means "the user's
         // palette is fine", which is every preset that predates the table.
@@ -10153,6 +10183,10 @@ async function main(): Promise<void> {
       // arriving cloud consumes it — see applyCloudResult — so the showcase
       // preset actually shows up in the renderer its menu group promises.
       loadHints.armMode(PRESET_RENDER_HINTS[preset] ?? null);
+      // The saved view a preset is composed at (PRESET_VIEWS) replaces the
+      // arrival's auto-fit, and lands with the cloud for the same reason the
+      // mode hint does: its 4D slice normalizes against that cloud's bounds.
+      loadHints.armView(PRESET_VIEWS[preset] ?? null);
     },
     // The Hybrid schedule trio. Installs go through setSchedule (which
     // strips to the affine part and clamps depth), as ordinary undoable
