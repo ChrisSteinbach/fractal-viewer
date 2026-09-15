@@ -941,10 +941,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     reload/export and held Points. The Flame proposal-CDF refusal's sheet is
     `scripts/flame-tiling-4d.harness.ts`. Full contract and proof:
     `docs/tiling-contract.md`.
-  - `surface-finish.ts` owns the finish domain and absent-means-classic
-    (0.4/32/0/0/0; shininess floors at 0.01), the compile predicate and ONE
-    shader body for both dialects. Both engines share material lane order;
-    CPU values and classic shader bytes are pinned. Finish
+  - `surface-finish.ts` owns the finish domain, absent-means-classic
+    (0.4/32/0/0/0; shininess floors 0.01), the compile predicate and ONE
+    both-dialect shader body. Both engines share lane order; classic bytes
+    pinned. Finish
     persists/morphs/mutates like fold lengths; random-system never rolls
     it (optics likewise). TRANSMISSION: owner selected finite-solid 3D/4D
     glass; envelope DECIDED. `surface-dielectric.ts` is the ONE
@@ -952,18 +952,21 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `docs/surface-dielectric-transport.md`. The optical vocabulary
     (`surface-optics.ts`: `Transform.optics` selector + scale, per-slot,
     scene-derived radius) is LIVE on compute for affine/affine4/fold4 (WGSL
-    gate + replay lane; fold REFUSED on a measured GPU-job timeout; forward
-    unadmitted). The renderer envelope leg MEETS the delegated timing
-    lines; its scope wall: every transport sample resolves UNRESOLVED on
-    IFS hits — the estimator-march boundary query cannot traverse an
-    interior; the closed-solid backend is the recorded blocker.
-    Pattern-albedo remains REFUSED (`scripts/finish-pattern.harness.ts`).
-    Authored rigs (`surface-lighting.ts`) share ONE shader emitter in both
-    dimensions/engines: absent state is legacy, visibility uses the displayed DE,
-    unresolved rays stay dark, HDR averages before clipping. NO PARTICIPATING
-    MEDIUM — REMOVED on measured cost; its return is a look call.
-    Points authors the rig in both dimensions with transient displayed-space
-    disk/aim guides, excluded from PNGs and thumbnails.
+    gate + replay lane; fold REFUSED on its measured GPU-job timeout; forward
+    unadmitted). The closed-solid backend
+    (`opticsBackend: closedSolid`: the SIGNED
+    condensation-union query — the sign IS the inside traversal; hypot's flat
+    4D interior is the penalty `sigmaMin·sd+|w|`)
+    RESOLVES: the envelope's closed-solid arms meet each line in
+    BOTH dimensions; estimator arms stay vacuous on IFS hits,
+    disclosed. App routing: the starter-scene task.
+    Pattern-albedo REFUSED (`scripts/finish-pattern.harness.ts`).
+    Authored rigs (`surface-lighting.ts`): ONE shader emitter, both
+    dimensions/engines; absent legacy, visibility the displayed DE,
+    unresolved rays dark, HDR averages pre-clip. NO PARTICIPATING
+    MEDIUM (measured cost; its return is a look call).
+    Points authors the rig in both dimensions (transient displayed-space disk/aim
+    guides; never in PNGs/thumbnails).
     Record: `docs/cinematic-surface-lighting.md`.
   - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its
