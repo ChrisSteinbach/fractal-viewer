@@ -566,7 +566,7 @@ The production CPU core that follows the gate. Modules:
 - `scripts/sphere-inversion-oracle.harness.ts` — the increased-depth
   reference.
 
-Nothing is wired into Surface eligibility, persistence or a shader yet.
+Persistence and Surface eligibility are now wired (section "Persistence, scene dimension and Surface routing" below); no shader route exists yet.
 
 ### Authored form and resolver
 
@@ -773,3 +773,131 @@ the decision identity a written argument rather than a sampled one. The
 folded threshold's comment is also corrected: ignoring the `1 + 2^-20` margin
 puts it slightly below the true threshold (an exit may be tried late, never
 wrongly), not above it.
+
+## Persistence, scene dimension and Surface routing (2026-09-15)
+
+The document half of the family. Nothing here renders: no Surface session,
+renderer route, UI control or preset exists, and Surface entry for such a
+document is refused with an honest reason.
+
+### The document field
+
+`sphereInversion?: SphereInversionAuthored` on `AppState` and `SceneSnapshot`
+(`src/app/state.ts`, `src/app/persist.ts`). When present it REPLACES the
+transform system as the scene's Surface subject; the transforms stay in the
+document untouched, so clearing the block restores the IFS scene. Absent, the
+document is byte-identical to every document predating the field: the hash
+payload omits the key, and `toSnapshot` omits it too, because evolution's
+content digest counts an own `undefined` key and would otherwise change for
+block-less scenes.
+
+**Preservation mechanism.** The wire is the authored JSON VERBATIM:
+
+- `encodeScene` writes the block as-is, with no `round4` (a rounded radius
+  fraction or seed length can move a document across a resolver refusal).
+- `decodeSphereInversion` keeps any plain JSON object exactly as `JSON.parse`
+  produced it, key order included, so decode then encode reproduces the hash
+  byte for byte. A non-object (array, scalar, `null`) names no block and drops
+  to absent without rejecting the scene. This is deliberately NOT the other
+  blocks' whole-block-or-nothing fallback.
+- A block this version cannot render survives: an unknown arrangement, an
+  out-of-domain or wrongly typed value, or a field a newer version wrote. The
+  resolver now REFUSES unknown top-level and seed keys by name (ignoring them
+  would render a different object than the document names), refuses non-object
+  blocks and seeds, and refuses wrong types rather than coercing them. Its
+  reasons reach the user through the Surface gate's note.
+- Every other persistence consumer (collection, timeline, JSON scene files,
+  undo history) stores encoded strings, so it inherits the rule. Evolution
+  crossover carries the block whole from the PRIMARY parent (a subject is
+  never mixed) and validates it only as a plain object of finite JSON values.
+
+### Scene dimensionality
+
+`src/fractal/scene-dimension.ts`'s `scenePartsAreNonFlat` is the one
+derivation: a present block whose arrangement id names a registry entry decides
+(3D or native 4D); otherwise the transform system's `systemPartsAreNonFlat`.
+`sphereInversionAuthoredDimension` reads only the arrangement, so a block
+refused for another reason still names its dimension, and repairing that reason
+never flips the scene. An unknown arrangement names no dimension, and the scene
+keeps the transforms'.
+
+Routed through it:
+
+- `surface-eligibility.ts` (the route kind's dimension);
+- the Surface session door in `main.ts` (its 4D branch);
+- `state.ts`'s `sceneIsNonFlat`, and `displayedIsNonFlat`, which the panel's
+  dimensional gating in `ui.ts` (4D view rows, 4D color, legend, title) now
+  reads;
+- evolution crossover's child 4D pose.
+
+**NOT routed, by decision:** the IFS renderers' engine choice (the Points
+chaos-game request's `fourD`, the Flame and Solid workers, the symmetry and
+tiling edit guards, transform-edit planning, mutation thumbnails). Until the
+family has a Points/Flame/Solid representation, those modes draw the PRESERVED
+transforms, and their engines must follow the transforms' own flatness. The 3D
+engine cannot run a non-flat system (`chaos-game.ts`'s `symmetryRotation`
+throws on a w-plane kaleidoscope). `displayedIsNonFlat` therefore reads the
+scene's dimension in Surface and the transforms' in Points, Flame and Solid.
+Without a block the two agree everywhere, so no existing document changes. A
+document whose block dimension differs from its transforms' shows the
+transforms' dimension outside Surface. That is the interim seam the
+Points/Flame/Solid representation work owns.
+
+### Surface eligibility
+
+A present block takes precedence over every other gate and is disjoint from
+them: they read a `Transform[]`, and it reads a construction no transform list
+expresses. Its route kinds are `"sphereInversion"` (3D) and
+`"sphereInversion4"` (native 4D).
+
+- **Refused block:** ineligible, note `Sphere-inversion scene refused:
+<resolver reasons>`.
+- **Admissible block, no renderer:** ineligible, note `The sphere-inversion
+Surface renderer is not yet available; this 3D|native 4D construction
+resolves (…disclosures)`. `opts.sphereInversionRenderer` is absent in the
+  app; the renderer work supplies its real availability, and tests set it to
+  pin the kinds.
+- **With a renderer:** `eligible`, or `degraded` for tangency (the cusp
+  disclosure), with the kind carrying the dimension.
+
+### Combination policy
+
+| Feature                        | Policy                   | Reason                                                                                                                                                                                                  | Lift's shape                                                                                                                                                       |
+| ------------------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Space tiling                   | REFUSED (document)       | No tiling wrapper certifies this estimator; the lattice arm's authority radius is not wired.                                                                                                            | Resolve the tiling against the DE's origin-centred `boundingRadius`; fold the query into the canonical cell before the inversion fold.                             |
+| Kaleidoscope (order > 1)       | REFUSED (document)       | The arrangement carries its own symmetry; a sector sweep over the inversion group has no certificate, and a rotation outside the arrangement's group moves generators into overlap with their images.   | Admit exactly rotations in the arrangement's symmetry group (no-ops), or fold the query into a sector with a union-of-copies argument.                             |
+| Final transform lens           | REFUSED (document)       | No lens wrapper certifies this estimator.                                                                                                                                                               | `descendLens`'s fold-final branch sweep around `estimateSphereInversionDistance` at cutoff 0 on the inner term.                                                    |
+| Shape trap                     | REFUSED (document)       | The inversion fold has no trap accumulator.                                                                                                                                                             | Accumulate the trap SDF over the fold's `k` visited points, like the escape family's orbit runners (colour only).                                                  |
+| Balloon                        | REFUSED (session)        | The echo would invert this estimator: sub-cutoff returns are decisions, so inner queries run at cutoff 0 (a full scan at 120 generators), and a ball seed reaching the ball centre swallows the camera. | `min(DE(p), (\|p−c\|/ρ)·DE(I(p)))` with the inner term at cutoff 0 and the origin ball at `boundingRadius`; measure the doubled 600-cell cost and the camera case. |
+| 4D slice thickness             | REFUSED, clamped to zero | `d − h` is unsound for the slab's shadow (CPU core section).                                                                                                                                            | Transport the segment's enclosing ball per inversion with a two-branch enumeration where it straddles a generator sphere.                                          |
+| Ground plane                   | COMPOSES                 | The floor reads only the session ball (`boundingRadius`, the full 4D radius in 4D), and its penumbra/AO probes need only a certified lower bound.                                                       | —                                                                                                                                                                  |
+| Per-transform finishes         | NOT READ, disclosed      | Material lanes keyed on transform slots the subject does not have (its attribution is generator, word and seed member). They stay dormant on the preserved transforms instead of blocking entry.        | Map finishes onto `SphereInversionHit` attribution (the shader scoping's material question).                                                                       |
+| Schedule, band, emitters, xaos | NOT READ                 | Structure of the replaced transform system.                                                                                                                                                             | —                                                                                                                                                                  |
+
+The session half lives in `sphereInversionSessionRefusal` (Balloon) and
+`SPHERE_INVERSION_SLAB_REFUSAL`, which the thickness row's refusal note
+(`ui.ts`, reason `"sphereInversion"`) and the gate's note share. Neither is
+wired into a session yet, because no session exists.
+
+### Morph, mutation, random, flame, presets
+
+- **Morph: pop at first push.** The block is not part of `MorphSystem` and
+  never interpolates; a replace-load applies the target's block from the leg's
+  first push, the scheduled-hybrid placement. Interpolation is not trivially
+  sound even within one arrangement: a length moving between two admitted
+  values can pass through a refused one (a shell sphere through a generator
+  centre, a seed entering one generator ball), and the depth is an integer.
+- **Mutation.** `mutateSphereInversionBlock` nudges only PRESENT continuous
+  lengths (radius fraction ±0.01 capped at kissing; seed size, thickness and
+  cut radius ±3%; cut offset ±0.02). It never moves the arrangement, kind,
+  depth or cut direction, and never writes an absent field. Every candidate
+  must resolve (8 attempts, then the block itself), and a refused block is
+  returned by reference. The `MorphSystem` mutation grid cannot carry a block
+  at all, so it can never materialize one.
+- **Random.** `randomSystem` never rolls a block.
+- **Flame.** No mapping exists (a seed orbit is neither an xform list nor a
+  variation). Export writes the preserved transform system byte-identically
+  and warns; import never produces a block.
+- **Presets and Surprise Me** clear the block (absent means clear), because
+  each names a new transform-system subject that a leftover block would
+  replace in Surface.
