@@ -1018,3 +1018,204 @@ documents:
   pearl windows are a SLICE phenomenon (this document's native 4D search), so a
   projected Points cloud of the same set shows its extent and not its windows.
   That is a presentation limit of projection, not a different set.
+
+## Cost and exhaustion (measured, 2026-09-15)
+
+The public control ranges come from this sweep. Every range call below is
+DELEGATED (lead agent, owner to ratify).
+
+**Machine and conditions.** Mesa Intel Iris Xe Graphics (TGL GT2) on `:0`,
+WebGPU adapter `intel gen-12lp` (software = false, as the session itself
+reported). Playwright Chromium, headed, 1920×1080 viewport at DSF 1
+(2,073,600 rays), the app's default 8 antialiasing passes, reduced motion
+(identity rotor unless a pose is authored). The production bundle was built
+from the branch's committed source before the preset work landed. All 234
+measured cells were preceded by a per-process machine-quiet sample reading
+`quiet=YES`. These are this Iris's numbers; they are not expectations for
+another machine.
+
+**Instrument.** `scripts/sphere-inversion-cost.probe.mjs`: one fresh context
+per cell, a minted `#v1=` document, Surface entered with a trusted click.
+Settle time is the click to the `?surfacestate` settled latch. Then comes a
+3 s trusted orbit drag. The rung is the drag previews' raster width over the
+settle raster. Preview exhaustion is read from the renderer's own preview
+lines, and per-dispatch work and shade share from `?surfacetrace`. Raw rows
+go to `scripts/out/sphere-inversion-cost*.json` (regenerate).
+
+Seeds used as representatives: 3D ball .28, shell 1 ± .03, cut shell
+1 ± .06; 4D ball .28, medallion shell 1.1 ± .03, vault cut shell .9 ± .04.
+Every cut uses the default cut. 4D slices were set in world `w` through the
+cloud's own bounds support, and the slider step quantizes them (recorded
+`w0` .095–.158 for the .1 and `1/(4φ)` targets).
+
+### Depth: not a cost lever
+
+Settle seconds, compute, radius fraction .99, identity pose. `pruned` means
+the probe's 60 s prune rule stopped the row.
+
+| 3D    | seed     |  D3 |   D5 |  D8 | D12 | D20 | D32 | preview exh max % | max dispatch ms | shade share % |
+| ----- | -------- | --: | ---: | --: | --: | --: | --: | ----------------: | --------------: | ------------: |
+| oct6  | ball     | 8.0 | 10.3 | 9.0 | 8.9 | 9.0 | 8.9 |              2.68 |              41 |         43–50 |
+| oct6  | shell    | 9.4 |  9.3 | 9.6 | 9.5 | 9.4 | 9.5 |              0.95 |              31 |         65–67 |
+| oct6  | cutShell | 9.1 |  9.2 | 9.1 | 9.1 | 9.2 | 9.0 |              1.13 |              31 |         64–66 |
+| cube8 | ball     | 9.2 |  9.3 | 9.3 | 9.4 | 9.4 | 9.3 |              3.12 |              58 |         35–41 |
+| cube8 | shell    | 7.2 |  7.3 | 7.4 | 7.2 | 7.4 | 7.1 |              0.41 |              21 |         66–69 |
+| cube8 | cutShell | 7.8 |  7.9 | 7.9 | 8.0 | 8.0 | 8.0 |              0.40 |              25 |         66–68 |
+| ico12 | ball     | 8.5 |  9.2 | 9.1 | 9.0 | 9.1 | 9.5 |              3.90 |              47 |         40–50 |
+| ico12 | shell    | 7.6 |  7.5 | 7.3 | 7.6 | 7.4 | 7.4 |              0.51 |              24 |         67–69 |
+| ico12 | cutShell | 8.0 |  8.3 | 8.5 | 8.4 | 8.4 | 8.4 |              1.09 |              33 |         63–67 |
+
+| 4D      | seed     |   D3 |    D5 |    D8 |    D12 |  D20 |  D32 | preview exh max % | max dispatch ms | shade share % |
+| ------- | -------- | ---: | ----: | ----: | -----: | ---: | ---: | ----------------: | --------------: | ------------: |
+| tess16  | ball     |  7.1 |   7.2 |   7.0 |    7.0 |      |      |              0.15 |              34 |         29–32 |
+| tess16  | shell    | 13.3 |  13.4 |  13.6 |   13.7 | 13.9 | 13.9 |              1.00 |              35 |         79–80 |
+| tess16  | cutShell | 12.3 |  12.3 |  12.4 |   12.5 |      |      |              0.49 |              38 |         75–76 |
+| cross8  | ball     | 13.3 |  14.5 |  14.5 |   14.7 |      |      |             10.30 |              92 |         54–58 |
+| cross8  | shell    | 13.0 |  13.0 |  13.1 |   13.3 |      |      |              1.22 |              51 |         70–73 |
+| cross8  | cutShell | 12.7 |  13.1 |  13.0 |   13.2 |      |      |              4.34 |              58 |         64–66 |
+| cell24  | ball     | 14.7 |  16.7 |  16.8 |   17.1 |      |      |              9.05 |             161 |         46–57 |
+| cell24  | shell    | 14.5 |  14.8 |  14.9 |   14.5 |      |      |              0.80 |              58 |         74–75 |
+| cell24  | cutShell | 16.4 |  17.7 |  17.8 |   18.6 |      |      |              3.67 |             118 |         71–75 |
+| cell600 | ball     | 55.1 |  62.5 |  65.3 | pruned |      |      |              9.26 |             364 |         60–65 |
+| cell600 | shell    | 28.1 |  28.2 |  27.7 |   27.8 | 29.1 | 29.1 |              0.77 |             122 |         85–86 |
+| cell600 | cutShell | 76.6 | 102.7 | 101.3 | pruned |      |      |              5.28 |             305 |         79–80 |
+
+Settle cost is flat in depth within the row's noise, from D3 to D32 in 3D
+and from D3 to D12 in 4D (to D32 on the tess16 and 600-cell shells). The one step is the
+600-cell's ball and vault from D3 to D5. That is consistent with pieces past a few generations falling below the hit-acceptance footprint (not measured directly). Coverage agrees: the oct6 pearls read 7.45 / 8.54 / 8.90 / 8.81 / 8.95 / 8.95% hit
+from D3 to D32, so nothing changes on screen past D12.
+
+### Radius fraction and pose: where preview exhaustion lives
+
+Settle s / preview exhausted max %. 3D at D8, 4D at D5, identity pose.
+
+| 3D D8 | seed     |     rf 0.6 |     rf 0.8 |     rf 0.9 |    rf 0.99 |
+| ----- | -------- | ---------: | ---------: | ---------: | ---------: |
+| oct6  | ball     | 5.1 / 0.03 | 6.1 / 0.11 | 6.4 / 0.43 | 9.0 / 2.59 |
+| oct6  | shell    | 7.5 / 0.28 | 8.1 / 0.48 | 8.6 / 0.62 | 9.6 / 0.71 |
+| oct6  | cutShell | 7.6 / 0.11 | 8.0 / 0.21 | 8.2 / 0.39 | 9.1 / 1.02 |
+| cube8 | ball     | 6.6 / 0.07 | 7.2 / 0.19 | 7.7 / 0.60 | 9.3 / 3.05 |
+| cube8 | shell    | 7.1 / 0.25 | 7.1 / 0.39 | 7.1 / 0.38 | 7.4 / 0.40 |
+| cube8 | cutShell | 7.6 / 0.11 | 7.8 / 0.18 | 7.4 / 0.25 | 7.9 / 0.38 |
+| ico12 | ball     | 5.7 / 0.03 | 6.3 / 0.23 | 7.4 / 0.71 | 9.1 / 3.60 |
+| ico12 | shell    | 7.1 / 0.16 | 7.1 / 0.24 | 7.2 / 0.29 | 7.3 / 0.32 |
+| ico12 | cutShell | 7.6 / 0.11 | 7.6 / 0.16 | 7.6 / 0.28 | 8.5 / 0.93 |
+
+| 4D D5   | seed     |      rf 0.8 |      rf 0.9 |      rf 0.99 |
+| ------- | -------- | ----------: | ----------: | -----------: |
+| tess16  | ball     |  6.5 / 0.06 |  6.8 / 0.07 |   7.2 / 0.15 |
+| tess16  | shell    | 13.1 / 0.71 | 13.6 / 0.76 |  13.4 / 1.00 |
+| tess16  | cutShell | 12.3 / 0.25 | 12.7 / 0.43 |  12.3 / 0.45 |
+| cross8  | ball     |  8.2 / 0.56 | 10.8 / 1.83 | 14.5 / 10.30 |
+| cross8  | shell    | 13.2 / 0.62 | 13.4 / 0.73 |  13.0 / 0.88 |
+| cross8  | cutShell | 12.9 / 1.03 | 13.0 / 1.58 |  13.1 / 3.26 |
+| cell24  | ball     |  9.4 / 0.57 | 11.7 / 1.88 |  16.7 / 8.66 |
+| cell24  | shell    | 13.7 / 0.75 | 14.5 / 0.86 |  14.8 / 0.71 |
+| cell24  | cutShell | 13.8 / 0.84 | 15.7 / 1.25 |  17.7 / 3.52 |
+| cell600 | ball     | 26.4 / 0.65 | 39.7 / 1.92 |  62.5 / 9.09 |
+| cell600 | shell    | 22.5 / 0.74 | 25.7 / 0.72 |  28.2 / 0.72 |
+| cell600 | cutShell | 49.0 / 0.94 | 62.5 / 1.62 | 102.7 / 5.19 |
+
+4D poses at D5, rf .99 (settle s / preview exh max %):
+
+| arrangement | seed     |     identity | `xw` .3, `w0` .1 | medallion (`xw` .4 `yw` .3 `zw` .2, `w0` 1/(4φ)) |
+| ----------- | -------- | -----------: | ---------------: | -----------------------------------------------: |
+| tess16      | ball     |   7.2 / 0.15 |       7.0 / 0.14 |                                       7.3 / 0.65 |
+| tess16      | shell    |  13.4 / 1.00 |      13.5 / 0.83 |                                      13.5 / 0.79 |
+| tess16      | cutShell |  12.3 / 0.45 |      12.2 / 0.59 |                                      11.8 / 0.61 |
+| cross8      | ball     | 14.5 / 10.30 |      10.6 / 4.48 |                                      10.0 / 3.37 |
+| cross8      | shell    |  13.0 / 0.88 |      12.7 / 0.73 |                                      12.5 / 0.86 |
+| cross8      | cutShell |  13.1 / 3.26 |      12.7 / 1.97 |                                      12.6 / 1.42 |
+| cell24      | ball     |  16.7 / 8.66 |      11.3 / 4.68 |                                      10.0 / 3.17 |
+| cell24      | shell    |  14.8 / 0.71 |      14.2 / 0.65 |                                      14.2 / 0.71 |
+| cell24      | cutShell |  17.7 / 3.52 |      14.9 / 1.78 |                                      14.4 / 1.49 |
+| cell600     | ball     |  62.5 / 9.09 |      40.8 / 6.53 |                                      39.5 / 7.28 |
+| cell600     | shell    |  28.2 / 0.72 |      26.4 / 0.75 |                                      25.8 / 0.58 |
+| cell600     | cutShell | 102.7 / 5.19 |      60.4 / 3.79 |                                      57.4 / 4.32 |
+
+Off-centre slices and rotor poses are never MORE expensive than the identity
+slice. The identity slice holds the most generators, so the 600-cell vault
+drops from 103 s to 57–60 s.
+
+Exhaustion is a preview phenomenon only. Every settle in the sweep
+resolved every ray (at most one exhausted ray in 2.07M). Preview exhaustion
+above 1% concentrates on ball (pearl) seeds and the 4D vault near kissing.
+There, grazing rays run out of the preview tier's march budget at the emergency rungs the drag drops to (0.07 on every 600-cell row and on many cell24 rows, 0.10 on most others). It falls steeply with the radius fraction: every 3D
+row is at or under 0.71% by rf .9, and every 4D row at or under 1.03% by
+rf .8.
+
+### Seed geometry
+
+One length moved off the representative seed. 3D oct6 / ico12 at D8, 4D
+cell24 / cell600 at D5, all rf .99, identity. Settle s / preview exh max %.
+
+| variant                  |        oct6 |      ico12 |      cell24 |     cell600 |
+| ------------------------ | ----------: | ---------: | ----------: | ----------: |
+| ball .15                 |  8.3 / 3.17 | 9.0 / 3.49 | 15.5 / 9.21 | 61.1 / 9.02 |
+| ball .5                  |  9.2 / 1.56 | 9.4 / 2.18 | 19.6 / 5.65 | 68.4 / 8.75 |
+| ball .8                  |  8.8 / 0.69 | 8.9 / 1.13 | 18.4 / 3.86 | 74.7 / 4.02 |
+| shell size .7            | 10.1 / 0.85 | 9.2 / 1.35 |             |             |
+| shell size 1.3           |  8.2 / 0.19 | 7.2 / 0.12 |             |             |
+| shell half-thickness .01 | 10.0 / 0.80 | 7.7 / 0.37 | 14.8 / 0.84 | 29.4 / 0.71 |
+| shell half-thickness .1  |  9.2 / 0.42 | 7.4 / 0.16 |     refused |     refused |
+| cut radius 2             |  9.5 / 0.88 | 8.0 / 0.70 | 17.6 / 3.04 | 78.0 / 4.84 |
+| cut radius 50            |  9.2 / 1.07 | 8.5 / 0.98 | 17.7 / 3.15 | 80.6 / 5.38 |
+| cut offset −.5 (4D −.4)  |  8.2 / 1.73 | 9.0 / 2.21 | 19.5 / 6.53 | 81.6 / 7.68 |
+| cut offset .8            |  9.5 / 0.80 | 7.5 / 0.43 | 17.2 / 2.68 | 62.2 / 3.23 |
+
+The 4D shell `1.1 ± .1` is not a cost row. Its inner sphere has radius 1,
+the generator-centre distance, so the resolver refuses it as a plane image
+(checked against `resolveSphereInversion`). A refused block draws an empty
+Points cloud, which the probe now records as `refused-document`. Seed
+lengths move 3D cost by at most 25% and 4D cost by at most 40%. The 600-cell ball and vault stay between 61 and 103 s (the representative vault) wherever the lengths go, and its shell seed stays near 29 s.
+
+### Engines, raster and bounds
+
+- **WebGL fallback (`?surfacegl`, 3D).** oct6 / ico12 × ball / cut shell ×
+  D5 / D8 / D12 settle in 3.9–7.9 s, with no ray exhausted and no strip
+  measured over 500 ms. The WebGL arm publishes a census for settles alone,
+  so its PREVIEW exhaustion was not observable and is not recorded.
+- **Raster.** The 600-cell at rf .99, D5, identity, at 1280×720 (44% of the
+  rays): ball 34.6 s (vs 62.5), shell 13.9 s (vs 28.2), vault 39.8 s (vs
+  102.7). Cost tracks the ray count roughly linearly; on the vault it falls somewhat faster than the rays.
+- **Watchdog and fence bounds were never approached.** The worst per-dispatch
+  device work was 364 ms and the worst wall share 369 ms (600-cell ball D3
+  settle). That is 5.4× under the ~2 s single-job cut recorded for the compute renderer on the AMD box; no Iris job-cut figure is on record, so the headroom on this machine is inferred, not measured. Every group
+  measured on the GPU currency, no preview was truncated, and no settle
+  failed to complete (the one 90 s timeout completed in 102.7 s given
+  250 s).
+
+### Public ranges (delegated)
+
+- **Arrangements.** All seven stay public. No arrangement is refused on
+  cost.
+- **Depth.** Public slider `[0, 12]` in both dimensions, the same for every
+  arrangement. Cost does not bound it: settle is flat to D32. The cap is
+  where the image stops changing at a 1080p pane. The resolver's structural
+  32 stays the document domain, so the public range NARROWS it for the
+  control only; a document with a deeper depth still loads. This replaces
+  the pre-gate candidate "6–12 (3D), 5–10 (4D)", whose lower ends had no
+  cost reason.
+- **Radius fraction.** Public `[0.6, 0.99]`. The lower end is the measured
+  bottom (cost only falls below it). Kissing 1.0 was not measured and stays
+  a document-only, degraded value. The suggested policy "preview never
+  exhausts more than 1%" was NOT adopted. It would cap 3D at .9 and 4D at
+  .8, excluding the gate's primary near-kissing pearl subjects, to fix a
+  transient speckle that every settle clears. Coarse drag previews near
+  kissing are disclosed as such instead.
+- **Seed lengths (measured span, not narrowed on cost).** Ball size
+  `[0.15, 0.8]`. Shell size `[0.7, 1.3]` in 3D; 4D was measured at .9 and
+  1.1 only. Shell half-thickness `[0.01, 0.1]`. Cut radius `[2, 50]`. Cut
+  offset `[−0.5, 0.8]` (3D) and `[−0.4, 0.8]` (4D). The resolver's own
+  refusals stay inside these spans: a shell sphere through a generator
+  centre (`size ± thickness` equal to the centre distance 1) is a plane
+  image. A slider crossing that value hits a refusal point, which the
+  controls must disclose rather than clamp.
+- **Refused on cost: none.** The 600-cell with a ball or cut-shell seed
+  settles in 26–103 s at 1080p on this Iris (39–103 s at rf .9 or .99). That
+  is over a 30 s budget at every depth and every pose. It stays admitted
+  under the no-automatic-give-up line: its settle always completes, its
+  progress row discloses coverage, and nothing approaches a watchdog bound.
+  Refusing it would remove the family's primary native 4D subject. The
+  600-cell shell (medallion) settles in 22–29 s. Every other arrangement
+  and seed settles in 20 s or less.

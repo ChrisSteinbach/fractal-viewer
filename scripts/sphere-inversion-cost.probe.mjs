@@ -519,14 +519,32 @@ async function runCell(browser, r, depth) {
       waitUntil: "load",
       timeout: 60_000,
     });
-    await page.waitForFunction(
-      () => {
-        const el = document.getElementById("pointCount");
-        return !!el && Number((el.textContent || "").replace(/[^\d]/g, "")) > 0;
-      },
-      undefined,
-      { timeout: 60_000, polling: 100 },
-    );
+    // A REFUSED block draws an empty Points cloud, so the count never rises;
+    // the Surface button's own reason is the row's verdict then, not a timeout.
+    const booted = await page
+      .waitForFunction(
+        () => {
+          const el = document.getElementById("pointCount");
+          if (Number((el?.textContent || "").replace(/[^\d]/g, "")) > 0)
+            return "points";
+          const b = document.getElementById("modeSurfaceBtn");
+          return b?.disabled && b.title && performance.now() > 8000
+            ? "refused"
+            : false;
+        },
+        undefined,
+        { timeout: 60_000, polling: 100 },
+      )
+      .then((h) => h.jsonValue());
+    if (booted === "refused") {
+      out.status = "refused-document";
+      out.note = String(
+        await page.evaluate(
+          () => document.getElementById("modeSurfaceBtn")?.title,
+        ),
+      ).slice(0, 300);
+      return out;
+    }
     if (r.dim === 4) {
       const w0 = POSES[r.pose].w0;
       await page.waitForFunction(() => !!window.__probeHalfExtents, undefined, {
