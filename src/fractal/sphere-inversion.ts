@@ -199,6 +199,38 @@ function tess16Centers(): number[][] {
   return out;
 }
 
+/** The 600-cell's 120 vertices at unit distance: the 8 axis units `±e_k`,
+ * the 16 `(±½)⁴`, and the 96 EVEN permutations of `(±φ, ±1, ±1/φ, 0)/2`.
+ * The edge is `1/φ`, so the kissing radius is `1/(2φ) ≈ 0.309`. The native
+ * 4D beauty search's construction, copied from its prototype. */
+function cell600Centers(): number[][] {
+  const out = [...cross8Centers(), ...tess16Centers()];
+  const evenPerms = [
+    [0, 1, 2, 3],
+    [0, 2, 3, 1],
+    [0, 3, 1, 2],
+    [1, 0, 3, 2],
+    [1, 2, 0, 3],
+    [1, 3, 2, 0],
+    [2, 0, 1, 3],
+    [2, 1, 3, 0],
+    [2, 3, 0, 1],
+    [3, 0, 2, 1],
+    [3, 1, 0, 2],
+    [3, 2, 1, 0],
+  ];
+  const base = [PHI / 2, 0.5, 1 / (2 * PHI), 0];
+  for (const perm of evenPerms) {
+    for (let m = 0; m < 8; m++) {
+      const v = base.map((b, i) => (i < 3 && (m >> i) & 1 ? -b : b));
+      const c = [0, 0, 0, 0];
+      perm.forEach((dst, src) => (c[dst] = v[src]));
+      out.push(c);
+    }
+  }
+  return out;
+}
+
 /**
  * The named arrangements. EXTENSIBLE: a new id is one entry here, and every
  * consumer reads the registry rather than a closed union.
@@ -209,6 +241,8 @@ function tess16Centers(): number[][] {
  * - `cross8`: the 16-cell's vertices `±e_k`, k = x,y,z,w.
  * - `cell24`: the 24-cell's vertices, permutations of `(±1,±1,0,0)/√2`.
  * - `tess16`: the tesseract's vertices `(±½,±½,±½,±½)`.
+ * - `cell600`: the 600-cell's 120 vertices — the native 4D subjects' (the
+ *   pearl-window vault and the medallion sphere) arrangement.
  */
 export const SPHERE_INVERSION_ARRANGEMENTS: Readonly<
   Record<string, SphereInversionArrangement>
@@ -219,6 +253,7 @@ export const SPHERE_INVERSION_ARRANGEMENTS: Readonly<
   cell24: arrangement(4, cell24Centers()),
   tess16: arrangement(4, tess16Centers()),
   cross8: arrangement(4, cross8Centers()),
+  cell600: arrangement(4, cell600Centers()),
 });
 
 /** The seed kinds. `ball` (the pearls) lies inside `F`; `cap` is the same

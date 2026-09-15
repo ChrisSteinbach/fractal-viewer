@@ -333,4 +333,71 @@ describe("sphere-inversion increased-depth reference", () => {
       expect(row.viol, `${label}: worst ${row.worst}x`).toBe(0);
     }
   });
+
+  it("(c) the 600-cell subjects: oracle to depth 2 and CPU cost per query at the subjects' depth", () => {
+    console.log(
+      "\n  (c) 600-cell (120 generators): D2 is 14,401 pieces at ~170 ms per" +
+        " oracle query, so its rows sample 60 queries",
+    );
+    const SUBJECTS: [string, SphereInversionAuthored][] = [
+      [
+        "4D cell600 vault .9 +- .04 cut",
+        {
+          arrangement: "cell600",
+          seed: { kind: "cutShell", size: 0.9, thickness: 0.04 },
+          depth: 5,
+        },
+      ],
+      [
+        "4D cell600 medallion 1.1 +- .03",
+        {
+          arrangement: "cell600",
+          seed: { kind: "shell", size: 1.1, thickness: 0.03 },
+          depth: 5,
+        },
+      ],
+    ];
+    for (const [label, authored] of SUBJECTS) {
+      const base = construction(authored);
+      const deep = enumerateSeedOrbit(base, 2);
+      for (let depth = 0; depth <= 2; depth++) {
+        const c = { ...base, depth };
+        const pieces = deep.filter((p) => p.word.length <= depth);
+        const qs = generalQueries(
+          c,
+          pieces,
+          depth < 2 ? 300 : 60,
+          0x600 + depth,
+        );
+        const row = measure(c, pieces, qs);
+        console.log(fmt(label, depth, pieces.length, row));
+        expect(row.viol, `${label} D${depth}: worst ${row.worst}x`).toBe(0);
+      }
+      // Cost at the subject's own depth: uniform queries in the bound ball,
+      // and the NEAR subset (0 < d < 0.01) a march spends most steps in.
+      const { estimate, boundingRadius } = estimator(base);
+      const rng = mulberry32(0xc057);
+      const uniform: number[][] = [];
+      const near: number[][] = [];
+      while (uniform.length < 50_000 || near.length < 20_000) {
+        const p = unit(rng, 4).map(
+          (x) => x * boundingRadius * rng() ** (1 / 4),
+        );
+        if (uniform.length < 50_000) uniform.push(p);
+        const shell = base.seed[0].radius - 0.05 + 0.1 * rng();
+        const l = Math.hypot(...p) || 1;
+        const q = p.map((x) => (x / l) * shell);
+        const d = estimate(q);
+        if (d > 0 && d < 0.01 && near.length < 20_000) near.push(q);
+      }
+      const time = (qs: number[][]) => {
+        const t0 = performance.now();
+        for (let rep = 0; rep < 3; rep++) for (const q of qs) estimate(q);
+        return ((performance.now() - t0) / (3 * qs.length)) * 1e3;
+      };
+      console.log(
+        `      D${base.depth} cost: ${time(uniform).toFixed(2)} us/eval uniform, ${time(near).toFixed(2)} us/eval near (0 < d < .01)`,
+      );
+    }
+  });
 });

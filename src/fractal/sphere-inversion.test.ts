@@ -41,6 +41,7 @@ describe("sphere-inversion arrangements", () => {
       cell24: [4, 24],
       tess16: [4, 16],
       cross8: [4, 8],
+      cell600: [4, 120],
     };
     for (const [id, [dim, count]] of Object.entries(expected)) {
       const arr = SPHERE_INVERSION_ARRANGEMENTS[id];
@@ -61,6 +62,24 @@ describe("sphere-inversion arrangements", () => {
     expect(t("cross8")).toBeCloseTo(Math.SQRT1_2, 14);
     expect(t("cell24")).toBeCloseTo(0.5, 14);
     expect(t("tess16")).toBeCloseTo(0.5, 14);
+    expect(t("cell600")).toBeCloseTo(1 / (1 + Math.sqrt(5)), 14);
+  });
+
+  it("builds the 600-cell as 120 distinct unit vertices, each with exactly 12 nearest neighbours at the edge 1/phi", () => {
+    const centers = SPHERE_INVERSION_ARRANGEMENTS.cell600.centers;
+    const edge = 2 / (1 + Math.sqrt(5));
+    let minDistance = Infinity;
+    for (let i = 0; i < centers.length; i++) {
+      let neighbours = 0;
+      for (let j = 0; j < centers.length; j++) {
+        if (i === j) continue;
+        const d = Math.hypot(...centers[i].map((x, a) => x - centers[j][a]));
+        minDistance = Math.min(minDistance, d);
+        if (Math.abs(d - edge) < 1e-12) neighbours++;
+      }
+      expect(neighbours).toBe(12);
+    }
+    expect(minDistance).toBeCloseTo(edge, 14);
   });
 });
 
@@ -121,6 +140,25 @@ describe("resolveSphereInversion", () => {
       seed: { kind: "cutShell", cutDirection: [0, 0, 0], cutDirectionW: 1 },
     });
     expect(r.construction.seed[2].center).toEqual([0, 0, 0, 10.25]);
+  });
+
+  it("resolves the 600-cell pearl-window vault and medallion sphere subjects as eligible 4D constructions", () => {
+    const vault = resolved({
+      arrangement: "cell600",
+      seed: { kind: "cutShell", size: 0.9, thickness: 0.04 },
+      depth: 5,
+    });
+    const medallion = resolved({
+      arrangement: "cell600",
+      seed: { kind: "shell", size: 1.1, thickness: 0.03 },
+      depth: 5,
+    });
+    for (const r of [vault, medallion]) {
+      expect(r.construction.dim).toBe(4);
+      expect(r.construction.generators).toHaveLength(120);
+      expect(r.eligibility.status).toBe("eligible");
+    }
+    expect(vault.construction.seed[2].center[3]).toBe(0);
   });
 
   it("reports exact kissing as degraded, not refused", () => {
