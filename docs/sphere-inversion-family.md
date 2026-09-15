@@ -1278,22 +1278,31 @@ Intel Iris Xe (TGL GT2), WebGPU `intel gen-12lp` (software = false),
 `quiet=YES` before launch. These figures are that machine's. The build
 includes the per-generation colour-slot fix (D + 3 hues in compute).
 
-| Preset (menu label)                               | Construction                                                             | View                                                                        | Settle | Covered |
-| ------------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------- | -----: | ------: |
-| `inversionPearls` (Kissing Pearls)                | oct6, rf .99, ball .28, D8                                               | eye (.26, .34, 1.42) → origin, fov 62                                       | 10.7 s |   22.0% |
-| `inversionCubePearls` (Cube Pearls)               | cube8, rf .99, ball .42, D8                                              | eye (.39, 1.6, .52) → origin, fov 62                                        | 10.1 s |   22.3% |
-| `inversionVault` (Octahedral Vault)               | oct6, rf .99, cut shell 1 ± .06 (default cut), D8                        | eye (.15, .3, .1) → (−.6, −1, .1), fov 81                                   | 21.3 s |   95.9% |
-| `inversionLace` (Icosahedral Lace)                | ico12, rf .99, shell 1 ± .03, D6                                         | eye (1.2, .87, 1.42) → origin, fov 62                                       | 12.6 s |   39.9% |
-| `inversionVault4` (600-Cell Vault (4D))           | cell600, rf .99, cut shell .9 ± .04 (default cut, `cutDirectionW` 0), D5 | eye (.35, −.05, .06) → (−.99, .15, −.18), fov 77; `xw` .3, `yw` .2, `w0` .1 | 51.6 s |   83.7% |
-| `inversionMedallions4` (600-Cell Medallions (4D)) | cell600, rf .99, shell 1.1 ± .03, D5                                     | eye (1.32, .96, 1.56) → origin, fov 62; `xw` .3, `w0` .1                    | 23.0 s |   40.5% |
+| Preset (menu label)                               | Construction                                                             | View                                                           |                                    Settle | Covered |
+| ------------------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------- | ----------------------------------------: | ------: |
+| `inversionPearls` (Kissing Pearls)                | oct6, rf .99, ball .28, D8                                               | eye (.26, .34, 1.42) → origin, fov 62                          |                                    10.7 s |   22.0% |
+| `inversionCubePearls` (Cube Pearls)               | cube8, rf .99, ball .42, D8                                              | eye (.39, 1.6, .52) → origin, fov 62                           |                                    10.1 s |   22.3% |
+| `inversionVault` (Octahedral Vault)               | oct6, rf .99, cut shell 1 ± .06 (default cut), D8                        | eye (.15, .3, .1) → (−.6, −1, .1), fov 81                      |                                    21.3 s |   95.9% |
+| `inversionLace` (Icosahedral Lace)                | ico12, rf .99, shell 1 ± .03, D6                                         | eye (1.2, .87, 1.42) → origin, fov 62                          |                                    12.6 s |   39.9% |
+| `inversionVault4` (600-Cell Vault (4D))           | cell600, rf .99, cut shell .9 ± .04 (default cut, `cutDirectionW` 0), D5 | eye (1.9, 1.3, .2) → origin, fov 55; `xw` .3, `yw` .2, `w0` .1 | 42.2 s quiet; 53.7 s contended (see note) |   29.0% |
+| `inversionMedallions4` (600-Cell Medallions (4D)) | cell600, rf .99, shell 1.1 ± .03, D5                                     | eye (1.32, .96, 1.56) → origin, fov 62; `xw` .3, `w0` .1       |                                    23.0 s |   40.5% |
 
 Every parameter lies inside the public ranges above.
 
 **4D nudges.** Nudging the slice slider by +.06 normalized re-settles to a
 different arrangement, not a turned copy of the same one:
 
-- **Vault.** Windows change size, some empty out, and the rosettes regroup.
-  Settles in 52.9 s, with 47.2% of pixels differing.
+- **Vault.** Windows on the far inner wall regroup, rosettes change their
+  pearl counts, and fragments move along the rim. Settles in 47.5 s
+  (contended), with 24.0% of pixels differing.
+
+**The vault's two settle figures.** 42.2 s is Surface click to settle on a
+quiet machine (load1 0.66), measured when the pose was explored. 53.7 s is
+the menu gate: a clean git worktree build at the preset commit, measured
+while another agent's SwiftShader browser gate ran on the CPU (load1 3.6–4.3).
+The GPU baseline read `quiet=YES` both times, but it cannot see CPU
+contention. Treat 53.7 s as an upper bound, not the pose's cost.
+
 - **Medallions.** Medallions change their pearl counts and centre rosettes.
   Settles in 20.5 s, with 16.1% of pixels differing.
 
@@ -1319,25 +1328,43 @@ being baked into the table.
 - **Cube pearls at D8, not the sheet's D12.** D10 and D8 are visually
   identical at this pane. D8 settles in 9–10 s, and one D10 run took 34.5 s,
   which is within this Iris's run-to-run spread for the cell but buys nothing.
-- **600-cell vault: the grazing view A, not the 4D search's view B.** B sits
-  close to the wall and reads as flat red and yellow walls with small
-  rosettes. A, from near the centre, looks along the wall away from the cut:
-  the cut rim and a horizon above, rows of pearl-window rosettes below.
+- **600-cell vault: an oblique EXTERIOR view over the cut, not an interior
+  view (review verdict, delegated).** Every interior framing read as a flat
+  red wall with circular medallions: no curvature, no enclosure, no depth
+  cue. That covers the 4D search's close view B, the grazing view A from near
+  the centre (identity rotor at the kiss slice, 53.0 s; rotated, 48.9–51.6 s),
+  a camera just inside the rim looking down across the bowl (61.0 s), and a
+  low wide view across the bowl (55.7 s). The lead's review rejected the
+  interior preset on those grounds.
+
+  The follow-up compared these candidates. All share the cut shell
+  `.9 ± .04`, D5, `xw` .3 `yw` .2 `w0` .1, except cell24, which uses `xw` .3
+  only. The contact sheet is `scripts/out/si-vault4-candidates.png`
+  (gitignored); settle is Surface click to latch at 1600×900, 0 exhausted.
+
+  | Candidate                                              | Settle | Reading                                                                                        |
+  | ------------------------------------------------------ | -----: | ---------------------------------------------------------------------------------------------- |
+  | 600-cell, oblique exterior, eye (1.9, 1.3, .2), fov 55 | 42.2 s | **Chosen.** Rim, bowl curvature, rosette windows on the far inner wall                         |
+  | 600-cell, straight through the cut, fov 55             | 40.8 s | A bowl, but frontal and flatter; the rim reads as a ring                                       |
+  | 600-cell, oblique, closer, fov 50                      | 64.8 s | The most striking detail, but 50% slower                                                       |
+  | 600-cell, just inside the rim, fov 90                  | 61.0 s | A wall again                                                                                   |
+  | 600-cell, across the bowl, fov 90                      | 55.7 s | Some horizon, still mostly wall                                                                |
+  | cell24 cut shell, same oblique view                    | 11.9 s | A clear cut polyhedral bowl, genuinely 4D (the nudge regroups the central rosette), but sparse |
+  | tess16 cut shell, same oblique view                    |  9.7 s | A plain bowl with a handful of windows                                                         |
+  - **Why the 600-cell and not cell24.** Both read as 3D objects and both are
+    genuinely 4D. They are not equals on the image: the 600-cell's far wall
+    carries rows of rosettes, and cell24's carries a few. The 600-cell is
+    also faster than every interior vault pose. cell24 remains the fast
+    native 4D cut shell if a cheaper vault is ever wanted.
   - **Posed off the identity rotor.** The cost section records the identity
-    slice as the costliest (it holds the most generators). The preset takes a
-    double rotation, `xw` .3 then `yw` .2, at `w0` .1. Rotated variants from
-    view A settled in 48.9–51.2 s (`xw` .3 `w0` .1; `xw` .15 at the kiss
-    slice; `xw` .3 `yw` .2 `w0` .1). The double rotation was kept: its
-    rosettes are asymmetric, an outward window opens at left, and the cut rim
-    and horizon stay. The identity rotor at the kiss slice (53.0 s) looked
-    comparable and is rejected on the cost rule, not on looks.
-  - D4 is indistinguishable from D5 but saves only 4 s. Every vault variant
-    tried, identity or rotated, settled in 49–58 s at this pane; the cost
-    section's 1080p rows put rotated vault poses at 57–60 s.
-  - **The vault is over the ~30 s preset target on this Iris.** It stays a
-    preset under the no-automatic-give-up line: it is the family's primary
-    native 4D subject, and its interior view is a different image from the
-    medallion sphere's exterior, which settles in about 23 s.
+    slice as the costliest (it holds the most generators), so the preset
+    keeps the double rotation, which also makes the rosettes asymmetric.
+  - D4 is indistinguishable from D5 but saves only 4 s.
+  - **The vault is still over the ~30 s preset target on this Iris.** It
+    stays a preset under the no-automatic-give-up line. It is the family's
+    primary native 4D subject, and its bowl is a different image from the
+    medallion sphere, which settles in about 23 s.
+
 - **Medallions at `xw` .3, `w0` .1, not the double rotation at the kiss
   slice.** Both are genuine slices at the same cost (21–23 s). The single
   `xw` turn gives fuller medallions, pearl rings round a central rosette,
