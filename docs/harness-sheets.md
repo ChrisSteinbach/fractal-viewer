@@ -1126,6 +1126,43 @@ own slice dominates).
 The argument for why slices dust, exact parameters and pose sequences:
 `docs/sphere-inversion-family.md` ("Native 4D beauty search").
 
+### sphere-inversion-oracle
+
+The production sphere-inversion estimators
+(`src/fractal/sphere-inversion-de.ts` and its 4D twin) against the independent
+explicit-orbit oracle (`src/fractal/sphere-inversion-oracle.ts`) at every depth
+the oracle affords, plus the stress fixtures where a conservative step is most
+likely to fail. About 30 s on one core. Violations are reported per fixture and
+per depth, and any one fails the sheet.
+
+MEASURED VERDICT: 0 violations on every row, 3D and 4D; the true distance
+converges geometrically with depth; the stride COLLAPSES at kissing cusps
+without ever overshooting.
+
+- **Depth sweep** (about 400 off-set queries per row, half uniform and half on
+  rays toward pieces at 1e-5..1 of the ray). oct6 r .70 and kissing to D5
+  (4,687 pieces), cube8 kissing to D4 (3,201), ico12 .99 to D3 (1,597), the
+  cube8 shell to D3, the oct6 vault to D4, tess16 kissing to D3 (3,857),
+  cross8 kissing to D4 and the cell24 shell to D2: 0 violations. Estimate/true
+  p05 0.26–0.45 and p50 0.64–0.93 at depth >= 2 (1.000 at depth 0 for ball
+  seeds, where the bound is the exact seed SDF).
+- **Convergence.** The largest drop of the true distance at 120 uniform
+  queries when depth D is added falls about 2x per level: oct6 kissing
+  0.33/0.14/0.067/0.033/0.018 for D = 1..5, cube8 kissing
+  0.35/0.12/0.057/0.029, tess16 0.31/0.099/0.034, cross8
+  0.33/0.14/0.061/0.028.
+- **Cusps** (rays onto kissing tangency points, 1e-1..1e-7 away; oct6, cube8,
+  cross8 at D4, tess16 at D3): 0/300 violations each, ratio p50
+  1.8e-4..3.2e-4 and min 4e-9..1.6e-7. Sound, and the reason a ray aimed at a
+  cusp creeps.
+- **Near-tangent generators** (oct6 .999 and .9999, cube8 .9999 at D4, tess16
+  .999 at D3): 0 violations, p05 0.26–0.42, p50 0.65–0.80.
+- **Narrow openings** (shells crossing .995-kissing generators, queried
+  across the openings; oct6 D4, cube8 D3, tess16 D2): 0 violations, p05
+  0.69–0.79.
+
+Full record: `docs/sphere-inversion-family.md`'s CPU core section.
+
 ## The space-tiling sheet
 
 ### tiling
