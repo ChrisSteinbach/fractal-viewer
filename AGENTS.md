@@ -518,23 +518,22 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     bound degrades conservatively — when the region swallows the centre.
     `signedInversionBallScale` keeps the sign for generalized balls (a ball
     holding the centre maps to a complement).
-  - `sphere-inversion.ts` — the sphere-inversion family's ONE shared
-    vocabulary: an authored form (registry arrangement id, radius fraction
-    of tangency in (0, 1], ball/shell/cutShell seed, depth <= 32)
-    resolved into the explicit `{dim, generators, seed, depth}`
-    construction. Out-of-domain values REFUSE with reasons, never clamp, and
-    the authored block is never mutated. `analyzeSphereInversionSystem`
-    refuses overlap, depth-1 plane seed images and empty or unbounded seeds,
-    and reports tangency degraded; NOT yet wired into
-    `surface-eligibility.ts` or persistence. `sphere-inversion-de.ts` and
-    `-de-4d.ts` are the twins (only arithmetic duplicated): the TRANSPORTED
+  - `sphere-inversion.ts` — the family's ONE shared vocabulary: an authored
+    form (registry arrangement id, radius fraction of tangency in (0, 1],
+    ball/shell/cutShell seed, depth <= 32) resolved into the explicit
+    `{dim, generators, seed, depth}` construction. Out-of-domain values and
+    unknown keys REFUSE with reasons, never clamp. The scene's optional
+    `sphereInversion` block persists VERBATIM (refused blocks included),
+    REPLACES the transform system as the Surface subject, and its
+    arrangement decides the scene's dimension (`scene-dimension.ts`; IFS
+    engines keep the transforms'). `surface-eligibility.ts` routes it first,
+    as `sphereInversion(4)`, refused until a renderer ships.
+    `sphere-inversion-de.ts` and `-de-4d.ts` are the twins: the TRANSPORTED
     CERTIFIED BOUND on the depth-D SEED ORBIT (never the limit set), step
-    scale 1, `<= 0` a member signal, `surface-de.ts`'s cutoff contract (an
-    exit transports the running minimum, never a shortened distance), and
-    hit-info attribution. The 4D flat embedding equals 3D bit for bit; the
-    slab is REFUSED; f64 only. `sphere-inversion-oracle.ts` is the
-    independent explicit-orbit oracle pinning both. Record:
-    `docs/sphere-inversion-family.md`.
+    scale 1, `<= 0` a member signal, `surface-de.ts`'s cutoff contract (a
+    sub-cutoff return is a decision, never a distance), and hit-info
+    attribution. The slab is REFUSED; f64 only. `sphere-inversion-oracle.ts`
+    pins both. Policies and record: `docs/sphere-inversion-family.md`.
   - `morph.ts` — pure interpolation (`lerpSystem`): endpoint-exact at t=0/1,
     rotation lerped nearest-turn, transform-count mismatches fade surplus by
     weight, flat↔4D continuous via derived w-scale, kaleidoscope crossfade
