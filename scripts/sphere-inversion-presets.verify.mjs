@@ -194,9 +194,8 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   await guardFreshDist({ url: args.url });
   fs.mkdirSync(args.outdir, { recursive: true });
-  const wanted = args.only
-    ? PRESETS.filter((p) => p.key === args.only)
-    : PRESETS;
+  const only = args.only ? args.only.split(",") : null;
+  const wanted = only ? PRESETS.filter((p) => only.includes(p.key)) : PRESETS;
   if (wanted.length === 0) throw new Error(`unknown --only ${args.only}`);
   const browser = await launchSurfaceBrowser(args.mode);
   const failures = [];
@@ -231,8 +230,21 @@ async function main() {
             `${preset.key}: document block ${JSON.stringify(doc?.sphereInversion)} is not a ${preset.dim}D arrangement`,
           );
         }
-        if (preset.dim === 4 && !(doc?.fourD && doc.fourD.sliceOn === true)) {
-          fail(`${preset.key}: document carries no slice-on 4D pose`);
+        // The view lands with the cloud, AFTER the load's own debounced save,
+        // so the hash can predate it (as it predates every preset's
+        // auto-fit): read the 4D pose off the live slice controls instead.
+        if (preset.dim === 4) {
+          const slice = await page.evaluate(() => ({
+            on: document.getElementById("fourDSliceToggle")?.checked ?? null,
+            value: Number(
+              document.getElementById("fourDSliceSlider")?.value ?? NaN,
+            ),
+          }));
+          if (slice.on !== true || !(Math.abs(slice.value) > 0)) {
+            fail(
+              `${preset.key}: the authored slice did not land (${JSON.stringify(slice)})`,
+            );
+          }
         }
         if (st.engine !== "compute") {
           fail(`${preset.key}: engine=${st.engine}, expected compute`);
@@ -281,7 +293,12 @@ async function main() {
                 `si-preset-${preset.key}-nudge.png`,
               );
               await page.screenshot({ path: nudgeShot });
-              const frac = await differingFraction(page, shot, nudgeShot);
+              // Decoded on a blank page: the app's own isolation headers
+              // refuse the data: fetch the decoder uses.
+              const diffPage = await context.newPage();
+              await diffPage.goto("about:blank");
+              const frac = await differingFraction(diffPage, shot, nudgeShot);
+              await diffPage.close();
               log(
                 `${preset.key}: slice ${picked.toFixed(2)} settled ${((Date.now() - t1) / 1000).toFixed(1)}s,` +
                   ` ${(100 * frac).toFixed(1)}% of pixels differ -> ${path.relative(process.cwd(), nudgeShot)}`,
