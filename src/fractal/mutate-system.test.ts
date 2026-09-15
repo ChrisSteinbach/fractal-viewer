@@ -2,9 +2,11 @@ import { systemIsFlat, systemPartsAreNonFlat } from "./affine4";
 import {
   MUTATION_DOMAINS,
   SEEDED_MUTATION_ALGORITHM_VERSION,
+  mutateSphereInversionBlock,
   mutateSystem,
   mutateSystemSeeded,
 } from "./mutate-system";
+import { resolveSphereInversion } from "./sphere-inversion";
 import type { MutationDomain } from "./mutate-system";
 import type { MorphSystem } from "./morph";
 import { doubleRotation, sierpinskiTetrahedron, swirlFlame } from "./presets";
@@ -1383,6 +1385,73 @@ describe("mutateSystemSeeded versioned domain streams", () => {
       }),
     ).toThrow(
       `Unsupported seeded mutation algorithm version: ${SEEDED_MUTATION_ALGORITHM_VERSION + 1}`,
+    );
+  });
+});
+
+describe("mutateSphereInversionBlock", () => {
+  it("perturbs the present continuous lengths and keeps the block resolvable", () => {
+    const block = {
+      arrangement: "cell600",
+      radiusFraction: 0.99,
+      seed: { kind: "cutShell", size: 0.9, thickness: 0.04, cutOffset: 0.25 },
+      depth: 5,
+    };
+    const mutant = mutateSphereInversionBlock(block, mulberry32(3));
+    expect(mutant.radiusFraction).not.toBe(0.99);
+    expect(mutant.seed!.size).not.toBe(0.9);
+    expect(mutant.seed!.thickness).not.toBe(0.04);
+    expect(mutant.seed!.cutOffset).not.toBe(0.25);
+    expect(resolveSphereInversion(mutant).ok).toBe(true);
+  });
+
+  it("never moves the arrangement, seed kind, depth or cut direction", () => {
+    const block = {
+      arrangement: "ico12",
+      radiusFraction: 0.97,
+      seed: { kind: "cutShell", cutDirection: [1, 0, 0], size: 1 },
+      depth: 6,
+    };
+    const mutant = mutateSphereInversionBlock(block, mulberry32(9));
+    expect(mutant.arrangement).toBe("ico12");
+    expect(mutant.seed!.kind).toBe("cutShell");
+    expect(mutant.seed!.cutDirection).toEqual([1, 0, 0]);
+    expect(mutant.depth).toBe(6);
+  });
+
+  it("never materializes an absent field", () => {
+    const mutant = mutateSphereInversionBlock(
+      { arrangement: "oct6", seed: { size: 0.28 } },
+      mulberry32(5),
+    );
+    expect(Object.keys(mutant)).toEqual(["arrangement", "seed"]);
+    expect(Object.keys(mutant.seed!)).toEqual(["size"]);
+  });
+
+  it("returns a refused block by reference, untouched", () => {
+    const refused = { arrangement: "dodeca20", radiusFraction: 0.5 };
+    expect(mutateSphereInversionBlock(refused, mulberry32(1))).toBe(refused);
+    expect(refused.radiusFraction).toBe(0.5);
+  });
+
+  it("stays inside the domain at the kissing edge across many seeds", () => {
+    const block = {
+      arrangement: "cube8",
+      radiusFraction: 0.999,
+      seed: { size: 0.41 },
+      depth: 4,
+    };
+    for (let seed = 0; seed < 200; seed++) {
+      const mutant = mutateSphereInversionBlock(block, mulberry32(seed));
+      expect(resolveSphereInversion(mutant).ok).toBe(true);
+      expect(mutant.radiusFraction).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("is a pure function of the seed", () => {
+    const block = { arrangement: "tess16", radiusFraction: 0.95 };
+    expect(mutateSphereInversionBlock(block, mulberry32(42))).toEqual(
+      mutateSphereInversionBlock(block, mulberry32(42)),
     );
   });
 });

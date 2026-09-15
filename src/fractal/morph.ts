@@ -89,6 +89,14 @@
  *   surplus map, emitter included, and only its weight animates. See
  *   {@link lerpEmitter}; endpoints stay exact by {@link lerpSystem}'s
  *   by-reference returns.
+ * - The scene's sphere-inversion block (`sphere-inversion.ts`'s authored
+ *   form) is NOT part of {@link MorphSystem} and never interpolates: a
+ *   replace-load applies the TARGET's block from the leg's first push, the
+ *   scheduled-hybrid placement. Interpolating even within one arrangement is
+ *   not trivially sound — a radius fraction or seed length moving between two
+ *   admitted values can pass through a refused one (a shell sphere through a
+ *   generator centre is a plane image; a seed can enter one generator ball
+ *   and empty the orbit), and the depth is an integer.
  */
 import { isFlatTransform, meanContraction } from "./affine4";
 import type { Affine } from "./types";

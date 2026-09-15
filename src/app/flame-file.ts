@@ -1261,6 +1261,16 @@ export function encodeFlameFile(
       "The hybrid schedule (system B) has no .flame equivalent and was dropped — the file holds system A alone",
     );
   }
+  // The sphere-inversion block has no flam3 mapping at all: a flame is an
+  // IFS of 2D xforms, and an iterated sphere-inversion seed orbit is neither
+  // an xform list nor a variation. The export writes the PRESERVED transform
+  // system the block replaces in Surface and says so; import never produces
+  // a block.
+  if (s.sphereInversion !== undefined) {
+    warnings.add(
+      "The sphere-inversion scene has no .flame equivalent and was dropped — the file holds the preserved transform system",
+    );
+  }
   // A shape emitter (condensation) has no faithful flam3 equivalent either —
   // the lossy disc-emitter ≈ gaussian_blur idea is recorded in the epic's
   // brief and deliberately deferred — so an emitter transform exports as its
