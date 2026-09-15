@@ -144,10 +144,12 @@ export interface SurfaceEligibilityDocument {
  * shows a note only for a degraded or ineligible route: a dormant setting
  * disclosed on an "eligible" result would never reach the user.
  *
- * ENGINE: WebGPU compute (`core: "sphereInv"` / `"sphereInv4"`). Neither
- * dimension has a fragment arm yet ({@link sphereInversionHasFragmentArm}),
- * so without compute the route is refused with that reason — never handed to
- * a WebGL tracer, which would draw the transform system instead.
+ * ENGINE: WebGPU compute (`core: "sphereInv"` / `"sphereInv4"`), preferred.
+ * 3D falls back to the SURFACE_SPHERE_INVERSION fragment arm
+ * (`surface-material.ts`, the WGSL core's GLSL twin); 4D has no fragment arm
+ * ({@link sphereInversionHasFragmentArm}), so without compute a 4D route is
+ * refused with that reason — never handed to a WebGL tracer, which would draw
+ * the transform system instead.
  */
 function deriveSphereInversionEligibility(
   block: SphereInversionAuthored,
@@ -209,18 +211,20 @@ function deriveSphereInversionEligibility(
 
 /**
  * The ONE routing predicate a sphere-inversion fragment arm flips: whether
- * the WebGL tracers can draw a block of dimension `dim`. False in both today
- * — the scene is COMPUTE-ONLY, refused at the gate without compute and
- * exited with a toast on a mid-session device loss. The 3D GLSL arm
- * (`docs/sphere-inversion-gpu.md` section 6) changes the 3D answer to true;
- * the 4D answer stays false (the 600-cell tables fit no uniform block).
+ * the WebGL tracers can draw a block of dimension `dim`. TRUE in 3D: the
+ * SURFACE_SPHERE_INVERSION arm's uniform block holds every 3D registry
+ * construction (`sphereInversionFitsFragmentArm`), so `?surfacegl`, no
+ * adapter and a device loss fall back to it. FALSE in 4D — COMPUTE-ONLY,
+ * refused at the gate without compute and exited with a toast on a
+ * mid-session device loss (the 600-cell's tables fit no uniform block;
+ * `docs/sphere-inversion-gpu.md` records the data-texture lift's shape).
  */
 export function sphereInversionHasFragmentArm(dim: 3 | 4): boolean {
   return SPHERE_INVERSION_FRAGMENT_ARMS[dim];
 }
 
 const SPHERE_INVERSION_FRAGMENT_ARMS: Readonly<Record<3 | 4, boolean>> = {
-  3: false,
+  3: true,
   4: false,
 };
 

@@ -1557,27 +1557,35 @@ describe("the sphere-inversion route", () => {
     expect(result.note).toBe(SPHERE_INVERSION_SLAB_REFUSAL);
   });
 
-  it("has no fragment arm in either dimension yet", () => {
-    expect(sphereInversionHasFragmentArm(3)).toBe(false);
+  it("has a fragment arm in 3D only", () => {
+    expect(sphereInversionHasFragmentArm(3)).toBe(true);
     expect(sphereInversionHasFragmentArm(4)).toBe(false);
   });
 
+  it("routes a 3D block without compute to its fragment arm", () => {
+    expect(route(pearls3, noCompute)).toEqual({
+      status: "eligible",
+      note: null,
+      kind: "sphereInversion",
+    });
+  });
+
+  it("refuses a 4D block without compute, naming compute as the reason", () => {
+    const result = route(vault4, noCompute);
+    expect(result).toMatchObject({ status: "ineligible", kind: null });
+    expect(result.note).toMatch(
+      /native 4D sphere-inversion scenes render on WebGPU compute, which is unavailable here/,
+    );
+  });
+
+  it("never routes a 4D block to the transform system's renderer without compute", () => {
+    const result = route(vault4, noCompute, {
+      transforms: sierpinskiTetrahedron(),
+    });
+    expect(result.kind).toBeNull();
+  });
+
   for (const [label, block] of bothDimensions) {
-    it(`refuses a ${label} block without compute, naming compute as the reason`, () => {
-      const result = route(block, noCompute);
-      expect(result).toMatchObject({ status: "ineligible", kind: null });
-      expect(result.note).toMatch(
-        /sphere-inversion scenes render on WebGPU compute, which is unavailable here/,
-      );
-    });
-
-    it(`never routes a ${label} block to the transform system's renderer without compute`, () => {
-      const result = route(block, noCompute, {
-        transforms: sierpinskiTetrahedron(),
-      });
-      expect(result.kind).toBeNull();
-    });
-
     it(`keeps a ${label} kaleidoscope dormant and disclosed instead of refusing`, () => {
       const result = route(block, withCompute, {
         symmetry: { order: 4, plane: "xy" },

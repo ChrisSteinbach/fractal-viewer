@@ -6019,11 +6019,33 @@ async function main(): Promise<void> {
             );
             queueMicrotask(() => surfaceSession.exit());
           } else {
-            // The fragment arm's install goes here when
-            // sphereInversionHasFragmentArm admits this dimension.
-            throw new Error(
-              "sphere-inversion fragment arm is admitted but not installed",
+            // ?surfacegl, no adapter or a device loss in 3D: the
+            // SURFACE_SPHERE_INVERSION fragment arm, the WGSL core's GLSL
+            // twin over the same table wire and generation slots. The
+            // gate admits no other dimension here.
+            if (fourD) {
+              throw new Error(
+                "sphere-inversion fragment arm is 3D only; 4D is compute-only",
+              );
+            }
+            surfaceWebglDetailToken = surfaceWebglDetail({
+              computeShaped: true,
+              supported: SurfaceComputeRenderer.supported(),
+              block: surfaceComputeBlock,
+            });
+            const slots = sphereInversionShadeSlots(
+              sphereInversionGenerationSlots(de.depth),
             );
+            // One material for every generation: the arm reads slot 0 for
+            // the shared lanes, so one slot carries it under the 24-slot
+            // material cap at any depth.
+            if (sessionMaterials) {
+              sessionMaterials = {
+                ...sessionMaterials,
+                slots: sessionMaterials.slots.slice(0, 1),
+              };
+            }
+            scene.setSphereInversionSystem(de, slots.colors);
           }
           // No camera refit: the forward families glide out to their
           // bailout ball because their explorer cloud is escape-reset

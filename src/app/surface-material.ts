@@ -43,6 +43,20 @@ import {
 import { swirlLensShaderSource } from "../fractal/swirl-lens-shader";
 import { inversionDistanceShaderSource } from "../fractal/inversion";
 import {
+  SPHERE_INVERSION_FOLD_DOMAIN,
+  SPHERE_INVERSION_FOLD_EXHAUSTED,
+  SPHERE_INVERSION_FOLD_POLE,
+  SPHERE_INVERSION_MAX_DEPTH,
+  SPHERE_INVERSION_STEP_SCALE,
+  sphereInversionGenerationSlots,
+  type SphereInversionTables,
+} from "../fractal/sphere-inversion";
+import {
+  SPHERE_INVERSION_GPU_POLE_FLOOR,
+  SPHERE_INVERSION_GPU_SLACK,
+  packSphereInversionGpuTables,
+} from "../fractal/surface-sphere-inversion-gpu";
+import {
   SWIRL_BALLOON_STRIDE_TRANSITION,
   validatedSwirlLensRadius,
   validatedSwirlLensLipschitz,
@@ -833,6 +847,347 @@ const stripGlslComments = (glsl: string): string =>
 function stripGlslSource(glsl: string): string {
   return stripGlslComments(glsl.replace(/\/\*[\s\S]*?\*\//g, ""));
 }
+
+/**
+ * The sphere-inversion generator cap the 3D fragment arm's uniform block is
+ * sized to: the largest 3D registry arrangement (`ico12`). A construction
+ * past it would route compute-only; none does today.
+ */
+export const SURFACE_SPHERE_INVERSION_MAX_GENERATORS = 12;
+
+/** The seed-member cap: the largest seed kind (`cutShell`'s outer ball,
+ * inner complement and cutting complement). */
+export const SURFACE_SPHERE_INVERSION_MAX_SEED_MEMBERS = 3;
+
+/** Table entries at both caps, in `packSphereInversionGpuTables`' 3D wire
+ * (one vec4 `(c.xyz, ±r)` per entry): `n + s + n·(s + n − 1)` = 183 vec4 =
+ * 2,928 B of the std140 block. The count is monotone in `n` and `s`, so
+ * every construction under both caps fits. */
+export const SURFACE_SPHERE_INVERSION_TABLE_ENTRIES =
+  SURFACE_SPHERE_INVERSION_MAX_GENERATORS +
+  SURFACE_SPHERE_INVERSION_MAX_SEED_MEMBERS +
+  SURFACE_SPHERE_INVERSION_MAX_GENERATORS *
+    (SURFACE_SPHERE_INVERSION_MAX_SEED_MEMBERS +
+      SURFACE_SPHERE_INVERSION_MAX_GENERATORS -
+      1);
+
+/** One "By Transform" colour per generation at the deepest legal depth
+ * (`sphereInversionGenerationSlots`): 35 vec4 = 560 B. Past the 24
+ * `uMapColor` slots, which is why the colours ride the block too. */
+export const SURFACE_SPHERE_INVERSION_COLOR_SLOTS =
+  sphereInversionGenerationSlots(SPHERE_INVERSION_MAX_DEPTH);
+
+/** Whether the 3D fragment arm's block can carry these tables. */
+export function sphereInversionFitsFragmentArm(
+  tables: Pick<SphereInversionTables, "dim" | "generatorCount" | "seedCount">,
+): boolean {
+  return (
+    tables.dim === 3 &&
+    tables.generatorCount <= SURFACE_SPHERE_INVERSION_MAX_GENERATORS &&
+    tables.seedCount <= SURFACE_SPHERE_INVERSION_MAX_SEED_MEMBERS
+  );
+}
+
+/** The WGSL kernel's acceptance clamp (`packSphereInversionGpuParams`'
+ * `max(R·hitFloor, slack)`) in the fragment tracer's form: the hit floor is
+ * a multiple of `uBoundingRadius`, so it may never read below
+ * `slack / R`, or a zoomed-in ray stalls where the slack zeroes the bound. */
+export function sphereInversionHitFloor(
+  hitFloor: number,
+  boundingRadius: number,
+): number {
+  return Math.max(hitFloor, SPHERE_INVERSION_GPU_SLACK / boundingRadius);
+}
+
+/**
+ * SURFACE_SPHERE_INVERSION: the sphere-inversion seed orbit's 3D fragment
+ * arm — `surface-sphere-inversion-gpu.ts`'s WGSL `siEstimate` in GLSL,
+ * statement for statement (a test normalizes the two dialects and compares
+ * them token for token), so it carries the same four recorded departures
+ * from the CPU oracle: the unit-arrangement radial reject + nearest-centre
+ * search, the absolute f32 slack, the `2^-20·r` pole floor, and the ignored
+ * cutoff. The tables are that module's deduplicated wire, packed unchanged
+ * into a std140 block. Replaces the descent bodies wholesale, so it is an
+ * ALTERNATIVE to the escape, bulb, lens and balloon arms.
+ */
+const sphereInversionArmGlsl = (): string => /* glsl */ `
+  /** The table wire (packSphereInversionGpuTables, 3D: one (c.xyz, ±r)
+   * vec4 per generalized ball — generators, seed members, then per
+   * generator its seed images and gap balls) and the per-generation
+   * "By Transform" colours. A block, not default uniforms: 218 vec4 would
+   * blow WebGL2's guaranteed 224 fragment uniform vectors on their own. */
+  layout(std140) uniform SurfaceSphereInv3 {
+    vec4 uSiTable[${SURFACE_SPHERE_INVERSION_TABLE_ENTRIES}];
+    vec4 uSiColor[${SURFACE_SPHERE_INVERSION_COLOR_SLOTS}];
+  };
+  /** (n, s, D, s + n - 1). */
+  uniform ivec4 uSiCounts;
+  /** (shared generator radius, its square, pole floor², slack). */
+  uniform vec4 uSiRadii;
+  /** 1 when the tables are a unit arrangement (the nearest-centre search). */
+  uniform int uSiUnit;
+
+  ${inversionDistanceShaderSource("glsl")}
+
+  struct SiResult {
+    float d;
+    vec3 x;
+    int k;
+    int status;
+    int parent;
+    int first;
+    int termJ;
+    int termGap;
+    float ring;
+  };
+
+  vec3 siCenter(int i) {
+    return uSiTable[i].xyz;
+  }
+
+  // Signed radius: the member's sign rides the radius lane.
+  float siRadius(int i) {
+    return uSiTable[i].w;
+  }
+
+  float siMember(vec3 x, int i) {
+    float rs = siRadius(i);
+    float v = length(x - siCenter(i)) - abs(rs);
+    return (rs < 0.0 ? -v : v);
+  }
+
+  // sphere-inversion-de.ts's evaluate3 in f32, cutoff ignored.
+  SiResult siEstimate(vec3 q) {
+    int n = uSiCounts.x;
+    int s = uSiCounts.y;
+    int depth = uSiCounts.z;
+    int stride = uSiCounts.w;
+    float slack = uSiRadii.w;
+    vec3 x = q;
+    int k = 0;
+    int parent = -1;
+    int first = -1;
+    int status = ${SPHERE_INVERSION_FOLD_DOMAIN};
+    float foldR[${SPHERE_INVERSION_MAX_DEPTH}];
+    float foldR2[${SPHERE_INVERSION_MAX_DEPTH}];
+    float ring = 1.0;
+    // THE FOLD: each pass breaks or spends one inversion of the D budget.
+    for (int it = 0; it <= ${SPHERE_INVERSION_MAX_DEPTH}; it++) {
+      int found = -1;
+      float foundD2 = 0.0;
+      if (uSiUnit != 0) {
+        if (abs(length(x) - 1.0) < uSiRadii.x + slack) {
+          float bestDot = -3.0e38;
+          int bestJ = -1;
+          for (int j = 0; j < n; j++) {
+            if (j == parent) {
+              continue;
+            }
+            float dd = dot(x, siCenter(j));
+            if (dd > bestDot) {
+              bestDot = dd;
+              bestJ = j;
+            }
+          }
+          if (bestJ >= 0) {
+            vec3 dv = x - siCenter(bestJ);
+            float d2 = dot(dv, dv);
+            float rj = siRadius(bestJ);
+            if (d2 < rj * rj) {
+              found = bestJ;
+              foundD2 = d2;
+            }
+          }
+        }
+      } else {
+        for (int j = 0; j < n; j++) {
+          if (j == parent) {
+            continue;
+          }
+          vec3 dv = x - siCenter(j);
+          float d2 = dot(dv, dv);
+          float rj = siRadius(j);
+          if (d2 < rj * rj) {
+            found = j;
+            foundD2 = d2;
+            break;
+          }
+        }
+      }
+      if (found < 0) {
+        break;
+      }
+      if (k == depth) {
+        status = ${SPHERE_INVERSION_FOLD_EXHAUSTED};
+        break;
+      }
+      vec3 c = siCenter(found);
+      float rf = siRadius(found);
+      float r2 = rf * rf;
+      if (foundD2 <= uSiRadii.z * r2) {
+        status = ${SPHERE_INVERSION_FOLD_POLE};
+        break;
+      }
+      x = c + (r2 / foundD2) * (x - c);
+      foldR[k] = sqrt(foundD2);
+      foldR2[k] = r2;
+      ring = min(ring, foldR[k] / rf);
+      if (k == 0) {
+        first = found;
+      }
+      k++;
+      parent = found;
+    }
+    SiResult res = SiResult(0.0, x, k, status, parent, first, -1, -1, ring);
+    if (status == ${SPHERE_INVERSION_FOLD_POLE}) {
+      return res;
+    }
+    int m = depth - k;
+    // THE COVER: the folded seed, then each admissible generator's one-step
+    // copy and depth-2 gap balls in one pass over the deduplicated wire.
+    float best = -3.0e38;
+    for (int i = 0; i < s; i++) {
+      best = max(best, siMember(x, n + i));
+    }
+    float gd[${SURFACE_SPHERE_INVERSION_MAX_GENERATORS}];
+    for (int i = 0; i < n; i++) {
+      float di = length(x - siCenter(i));
+      gd[i] = di;
+      best = max(best, siRadius(i) - di);
+    }
+    int termJ = -1;
+    int termGap = -1;
+    if (best > 0.0) {
+      for (int j = 0; j < n; j++) {
+        bool isParent = j == parent;
+        if (!isParent && m < 1) {
+          continue;
+        }
+        float rj = siRadius(j);
+        if (gd[j] - rj >= best) {
+          continue;
+        }
+        int base = n + s + j * stride;
+        float copy = gd[j] - rj;
+        for (int i = 0; i < s; i++) {
+          copy = max(copy, siMember(x, base + i));
+        }
+        float minGap = 3.0e38;
+        int gapArg = 0;
+        for (int i = 0; i + 1 < n; i++) {
+          int e = base + s + i;
+          float v = length(x - siCenter(e)) - siRadius(e);
+          if (v < minGap) {
+            minGap = v;
+            gapArg = i;
+          }
+        }
+        copy = max(copy, -minGap);
+        if (copy < best) {
+          best = copy;
+          termJ = j;
+          termGap = -1;
+        }
+        if (best <= 0.0) {
+          break;
+        }
+        if ((isParent || m >= 2) && minGap < best) {
+          best = minGap;
+          termJ = j;
+          termGap = gapArg;
+        }
+      }
+    }
+    // THE TRANSPORT, innermost first, then the absolute f32 slack. A return
+    // <= 0 is the folded member signal, untransported, as on the CPU.
+    float v = best;
+    if (best > 0.0) {
+      for (int i = k; i > 0; i--) {
+        v = inversionDistanceLowerBound(foldR[i - 1], foldR2[i - 1], v);
+      }
+      v = max(0.0, v - slack);
+    }
+    res.d = v;
+    res.termJ = termJ;
+    res.termGap = termGap;
+    return res;
+  }
+
+  // The winning term's word length (GENERATION).
+  int siGeneration(SiResult res) {
+    if (res.termJ < 0) {
+      return res.k;
+    }
+    if (res.termGap < 0) {
+      return res.k + 1;
+    }
+    return res.k + 2;
+  }
+
+  // The binding seed member of the winning intersection, else -1.
+  int siSeedMember(SiResult res) {
+    if (res.status == ${SPHERE_INVERSION_FOLD_POLE} || res.termGap >= 0) {
+      return -1;
+    }
+    int n = uSiCounts.x;
+    int s = uSiCounts.y;
+    vec3 x = res.x;
+    int seedBase = n;
+    float rest = -3.0e38;
+    if (res.termJ < 0) {
+      for (int i = 0; i < n; i++) {
+        rest = max(rest, siRadius(i) - length(x - siCenter(i)));
+      }
+    } else {
+      int j = res.termJ;
+      seedBase = n + s + j * uSiCounts.w;
+      rest = length(x - siCenter(j)) - siRadius(j);
+      for (int i = 0; i + 1 < n; i++) {
+        int e = seedBase + s + i;
+        rest = max(rest, siRadius(e) - length(x - siCenter(e)));
+      }
+    }
+    float seedMax = -3.0e38;
+    int seedArg = -1;
+    for (int i = 0; i < s; i++) {
+      float v = siMember(x, seedBase + i);
+      if (v > seedMax) {
+        seedMax = v;
+        seedArg = i;
+      }
+    }
+    return (seedMax >= rest ? seedArg : -1);
+  }
+
+  float surfaceDE(vec3 p, float cutoff) {
+    return siEstimate(p).d;
+  }
+
+  float surfaceDE(vec3 p) {
+    return siEstimate(p).d;
+  }
+
+  /** Hit-shading overload, the WGSL core's surfaceDEHitInfo: firstChoice is
+   * the GENERATION (main() colours it from uSiColor), trap = generation over
+   * D + 2, rings = the fold's closest normalized radial approach, sheets =
+   * the binding seed member (0 for a wall, gap ball or pole). */
+  float surfaceDE(
+    vec3 p,
+    out int firstChoice,
+    out float trap,
+    out float rings,
+    out float sheets
+  ) {
+    SiResult res = siEstimate(p);
+    int generation = siGeneration(res);
+    int member = siSeedMember(res);
+    firstChoice = generation;
+    trap = clamp(float(generation) / float(uSiCounts.z + 2), 0.0, 1.0);
+    rings = clamp(res.ring, 0.0, 1.0);
+    sheets = member < 0 ? 0.0 : float(member + 1) / float(uSiCounts.y + 1);
+    return res.d;
+  }
+`;
 
 /** The probe instance, emitted only when the width differs from
  * the beam's and only into the NON-lens source: its taps keep full-width
@@ -1652,6 +2007,9 @@ uniform sampler2D uBalloonColorLUT;
 uniform float uBalloonPaletteEnabled;
 #define surfaceDE surfaceDEFractal
 #endif
+#if SURFACE_SPHERE_INVERSION
+${sphereInversionArmGlsl()}
+#else
 #if SURFACE_ESCAPE
   /** Escape-time render, a LIST: the FORWARD affine (M, t) of every CHAIN
    * LINK and its (kind, w, |w|·sigma_max(M), unused) quartet, uMapCount
@@ -4351,6 +4709,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
 // NEITHER forward-orbit variant (escape, bulb) is on.
 #endif
 #endif
+#endif
 
 #if SURFACE_BALLOON
 #undef surfaceDE
@@ -4945,10 +5304,14 @@ ${foldValueFormGlsl(shadeDeWidth)}
     // pre-normalized from the descent.
     vec3 base;
     if (uColorSource == 0) {
+#if SURFACE_SPHERE_INVERSION
+      base = uSiColor[clamp(firstChoice, 0, uSiCounts.z + 2)].rgb;
+#else
 #if SURFACE_CONDENSATION
       base = uMapColor[clamp(firstChoice, 0, uShadeCount - 1)];
 #else
       base = uMapColor[clamp(firstChoice, 0, uMapCount - 1)];
+#endif
 #endif
     } else {
       float u;
@@ -5246,6 +5609,37 @@ function installSurfacePostBlock(
   if (!buffers) {
     throw new TypeError(
       "surface material has no post block — build it with createSurfaceMaterial",
+    );
+  }
+  const attached = material.uniformsGroups.includes(buffers.group);
+  if (attached === enabled) return false;
+  material.uniformsGroups = enabled
+    ? [...material.uniformsGroups, buffers.group]
+    : material.uniformsGroups.filter((group) => group !== buffers.group);
+  return true;
+}
+
+interface SurfaceSphereInversionBuffers {
+  group: THREE.UniformsGroup;
+  table: Float32Array;
+  colors: Float32Array;
+}
+
+const surfaceSphereInversionBuffers = new WeakMap<
+  THREE.ShaderMaterial,
+  SurfaceSphereInversionBuffers
+>();
+
+/** Attach the sphere-inversion block exactly while the resolved shader
+ * declares it — the post block's rule. */
+function installSphereInversionBlock(
+  material: THREE.ShaderMaterial,
+  enabled: boolean,
+): boolean {
+  const buffers = surfaceSphereInversionBuffers.get(material);
+  if (!buffers) {
+    throw new TypeError(
+      "surface material has no sphere-inversion block — build it with createSurfaceMaterial",
     );
   }
   const attached = material.uniformsGroups.includes(buffers.group);
@@ -5845,6 +6239,13 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
     writeSurfacePostSlot(postBuffers, j, null, null);
   }
   writeSurfaceLensPost(postBuffers, null, null);
+  const siTable = new Float32Array(SURFACE_SPHERE_INVERSION_TABLE_ENTRIES * 4);
+  const siColors = new Float32Array(SURFACE_SPHERE_INVERSION_COLOR_SLOTS * 4);
+  const sphereInversionGroup = new THREE.UniformsGroup();
+  sphereInversionGroup.setName("SurfaceSphereInv3");
+  sphereInversionGroup.setUsage(THREE.DynamicDrawUsage);
+  sphereInversionGroup.add(new THREE.Uniform(siTable));
+  sphereInversionGroup.add(new THREE.Uniform(siColors));
   const material = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     uniforms: {
@@ -6040,6 +6441,12 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uGroundPattern: { value: 0 },
       uGroundTileScale: { value: 0.64 },
       uGroundEmission: { value: 0 },
+      // Sphere-inversion header: inert unless SURFACE_SPHERE_INVERSION
+      // (setSphereInversionSystem); the tables ride the SurfaceSphereInv3
+      // block, attached only while the arm is compiled.
+      uSiCounts: { value: [0, 0, 0, 1] },
+      uSiRadii: { value: new THREE.Vector4() },
+      uSiUnit: { value: 0 },
       // The live tiling selector plus the lattice half-cell. Finite roots and
       // either arm's optional clip remain baked source. h = 1 is an inert,
       // non-dividing placeholder while lattice is absent, and the
@@ -6135,6 +6542,12 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
     depthWrite: false,
   });
   surfacePostBuffers.set(material, postBuffers);
+  surfaceSphereInversionBuffers.set(material, {
+    group: sphereInversionGroup,
+    table: siTable,
+    colors: siColors,
+  });
+  material.addEventListener("dispose", () => sphereInversionGroup.dispose());
   // The group is deliberately not attached until a system carries a live
   // post; the post-free shader has no matching block and keeps its historic
   // source/arithmetic path.
@@ -6352,6 +6765,7 @@ export function setSurfaceSystem(
     material.defines.SURFACE_ESCAPE !== 0 ||
     material.defines.SURFACE_BULB !== 0 ||
     material.defines.SURFACE_GROUND_PLANE !== plane ||
+    material.defines.SURFACE_SPHERE_INVERSION === 1 ||
     (material.defines.SURFACE_SCHEDULE === 1 ? 1 : 0) !== wantSchedule ||
     (material.defines.SURFACE_CHAOS === 1 ? 1 : 0) !== wantChaos ||
     (material.defines.SURFACE_POST === 1 ? 1 : 0) !== wantPost ||
@@ -6367,6 +6781,9 @@ export function setSurfaceSystem(
     // one, so the ESCAPE/BULB flip above always accompanies this).
     material.defines.SURFACE_ESCAPE = 0;
     material.defines.SURFACE_BULB = 0;
+    // A previous sphere-inversion session hands the bodies back too.
+    delete material.defines.SURFACE_SPHERE_INVERSION;
+    installSphereInversionBlock(material, false);
     if (wantPost) material.defines.SURFACE_POST = 1;
     else delete material.defines.SURFACE_POST;
     material.defines.SURFACE_SHAPE_TRAP = 0;
@@ -7327,7 +7744,35 @@ export function surfaceFragmentResolvedFor(
   tiling: ResolvedTiling | null = null,
   post = 0,
   lighting = 0,
+  // The sphere-inversion seed orbit's arm, appended last so every
+  // positional caller keeps its meaning.
+  sphereInversion = 0,
 ): string {
+  if (sphereInversion !== 0) {
+    // The arm replaces the descent bodies wholesale (the escape/bulb
+    // precedent) and has no wrapper, trap or tiling composition; the
+    // WGSL core refuses the same set. Ground plane, finish and lighting
+    // compose.
+    const clashes = [
+      escape !== 0 && "SURFACE_ESCAPE",
+      bulb !== 0 && "SURFACE_BULB",
+      lens !== 0 && "SURFACE_FOLD_LENS",
+      balloon !== 0 && "SURFACE_BALLOON",
+      pattern !== 0 && "SURFACE_PATTERN",
+      trap !== null && "SURFACE_SHAPE_TRAP",
+      condensation !== null && "SURFACE_CONDENSATION",
+      condensation4 && "the 4D source",
+      schedule !== 0 && "SURFACE_SCHEDULE",
+      chaos !== 0 && "SURFACE_CHAOS",
+      post !== 0 && "SURFACE_POST",
+      tiling !== null && "SURFACE_TILING",
+    ].filter((clash): clash is string => clash !== false);
+    if (clashes.length > 0) {
+      throw new RangeError(
+        `SURFACE_SPHERE_INVERSION cannot compile with ${clashes.join(", ")}`,
+      );
+    }
+  }
   if (plane !== 0 && balloon !== 0) {
     throw new RangeError(
       "SURFACE_GROUND_PLANE cannot compile into the balloon variant",
@@ -7408,6 +7853,7 @@ export function surfaceFragmentResolvedFor(
     SURFACE_SCHEDULE: schedule,
     SURFACE_CHAOS: chaos,
     SURFACE_POST: post,
+    SURFACE_SPHERE_INVERSION: sphereInversion,
     "SURFACE_CONDENSATION || SURFACE_SCHEDULE":
       condensation !== null || schedule !== 0 ? 1 : 0,
     "SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS":
@@ -7524,6 +7970,7 @@ export function surfaceFragmentFor(
   tiling: ResolvedTiling | null = null,
   post = 0,
   lighting = 0,
+  sphereInversion = 0,
 ): string {
   const resolved = surfaceFragmentResolvedFor(
     escape,
@@ -7543,6 +7990,7 @@ export function surfaceFragmentFor(
     tiling,
     post,
     lighting,
+    sphereInversion,
   );
   return plane !== 0 || resolved.length > SURFACE_GLSL_STRIP_BYTES
     ? stripGlslSource(resolved)
@@ -7854,6 +8302,7 @@ export function setEscapeSystem(
     material.defines.SURFACE_ESCAPE !== 1 ||
     material.defines.SURFACE_BULB !== 0 ||
     material.defines.SURFACE_FOLDS !== 0 ||
+    material.defines.SURFACE_SPHERE_INVERSION === 1 ||
     material.defines.SURFACE_FOLD_LENS !== 0 ||
     material.defines.SURFACE_SCHEDULE === 1 ||
     material.defines.SURFACE_CHAOS === 1 ||
@@ -7871,6 +8320,9 @@ export function setEscapeSystem(
     // The two forward-orbit variants are exclusive: a previous Mandelbulb
     // session must hand the bodies back here too.
     material.defines.SURFACE_BULB = 0;
+    // A previous sphere-inversion session hands the bodies back too.
+    delete material.defines.SURFACE_SPHERE_INVERSION;
+    installSphereInversionBlock(material, false);
     if (wantPost) material.defines.SURFACE_POST = 1;
     else delete material.defines.SURFACE_POST;
     material.defines.SURFACE_FOLDS = 0;
@@ -7991,6 +8443,7 @@ export function setBulbSystem(
     material.defines.SURFACE_BULB !== 1 ||
     material.defines.SURFACE_ESCAPE !== 0 ||
     material.defines.SURFACE_FOLDS !== 0 ||
+    material.defines.SURFACE_SPHERE_INVERSION === 1 ||
     material.defines.SURFACE_FOLD_LENS !== 0 ||
     material.defines.SURFACE_SCHEDULE === 1 ||
     material.defines.SURFACE_CHAOS === 1 ||
@@ -8004,6 +8457,9 @@ export function setBulbSystem(
   ) {
     material.defines.SURFACE_BULB = 1;
     material.defines.SURFACE_ESCAPE = 0;
+    // A previous sphere-inversion session hands the bodies back too.
+    delete material.defines.SURFACE_SPHERE_INVERSION;
+    installSphereInversionBlock(material, false);
     delete material.defines.SURFACE_POST;
     material.defines.SURFACE_FOLDS = 0;
     material.defines.SURFACE_FOLD_LENS = 0;
@@ -8062,6 +8518,166 @@ export interface SurfaceBalloonSpec {
   R: number;
   /** March far cap: `BALLOON_FAR_CAP_RHO * raw ball radius`. */
   far: number;
+}
+
+/**
+ * Pack a 3D sphere-inversion estimator (`buildSphereInversionDE`, or any
+ * `buildSphereInversionTables` output) and flip the material onto the
+ * SURFACE_SPHERE_INVERSION arm — {@link setBulbSystem}'s shape. The tables
+ * are `packSphereInversionGpuTables`' wire unchanged (the WGSL core's
+ * binding, which the f32 twin's tests pin to the CPU oracle), the header
+ * mirrors the WGSL params header (`(n, s, D, stride)`, `(r, r², pole
+ * floor², slack)`, the unit flag), and `colors` is one sRGB colour per
+ * generation (`sphereInversionGenerationSlots(D)`). The descent's shared
+ * uniforms are packed inert with the origin ball as both marching and
+ * visible sphere and step scale 1. Throws for 4D tables, tables past the
+ * block's caps ({@link sphereInversionFitsFragmentArm}) and a colour count
+ * that is not one per generation.
+ *
+ * Ground plane, finish and lighting defines are preserved; the balloon is
+ * dropped (it never composes with this family) and the pattern define is
+ * cleared (refused for this family). Neither is session state this arm can
+ * carry.
+ */
+export function setSphereInversionSystem(
+  material: THREE.ShaderMaterial,
+  tables: SphereInversionTables,
+  colors: readonly Vec3[],
+): void {
+  if (!sphereInversionFitsFragmentArm(tables)) {
+    throw new RangeError(
+      `sphere-inversion tables (${tables.dim}D, ${tables.generatorCount} generators, ${tables.seedCount} seed members) do not fit the 3D fragment arm`,
+    );
+  }
+  const slots = sphereInversionGenerationSlots(tables.depth);
+  if (colors.length !== slots) {
+    throw new RangeError(
+      `sphere-inversion depth ${tables.depth} needs ${slots} generation colours, got ${colors.length}`,
+    );
+  }
+  const buffers = surfaceSphereInversionBuffers.get(material);
+  if (!buffers) {
+    throw new TypeError(
+      "surface material has no sphere-inversion block — build it with createSurfaceMaterial",
+    );
+  }
+  if (material.defines.SURFACE_BALLOON === 1) setSurfaceBalloon(material, null);
+  const gpu = packSphereInversionGpuTables(tables);
+  buffers.table.fill(0);
+  buffers.table.set(gpu.data);
+  buffers.colors.fill(0);
+  colors.forEach((c, g) => buffers.colors.set([c[0], c[1], c[2], 1], g * 4));
+  const tilingChanged = installSurfaceTiling(
+    material,
+    null,
+    false,
+    tables.boundingRadius,
+  );
+  const postBlockChanged = installSurfacePostBlock(material, false);
+  const blockChanged = installSphereInversionBlock(material, true);
+  setSurfaceGrid(material, null);
+  const u = material.uniforms;
+  const counts = u.uSiCounts.value as number[];
+  counts[0] = gpu.generatorCount;
+  counts[1] = gpu.seedCount;
+  counts[2] = gpu.depth;
+  counts[3] = gpu.termStride;
+  (u.uSiRadii.value as THREE.Vector4).set(
+    gpu.uniformRadius,
+    gpu.uniformRadius * gpu.uniformRadius,
+    SPHERE_INVERSION_GPU_POLE_FLOOR ** 2,
+    SPHERE_INVERSION_GPU_SLACK,
+  );
+  u.uSiUnit.value = gpu.uniformUnit ? 1 : 0;
+  const R = tables.boundingRadius;
+  (u.uMapColor.value as THREE.Vector3[])[0].set(...colors[0]);
+  (u.uTrapIndex.value as number[])[0] = 0;
+  // One slot for the shared lanes: the finish fetch clamps firstChoice to
+  // uMapCount - 1, so every generation reads slot 0 — the ONE material.
+  u.uMapCount.value = 1;
+  u.uSymOrder.value = 1;
+  u.uSymPlane.value = 1;
+  (u.uSymStep.value as THREE.Vector2).set(1, 0);
+  u.uBoundingRadius.value = R;
+  (u.uBoundCenter.value as THREE.Vector3).set(0, 0, 0);
+  u.uEscapeRadius.value = R * 2;
+  u.uMaxDepth.value = tables.depth;
+  u.uStepScale.value = SPHERE_INVERSION_STEP_SCALE;
+  u.uVisibleRadius.value = R;
+  (u.uFinalInvM.value as THREE.Matrix3).identity();
+  (u.uFinalInvT.value as THREE.Vector3).set(0, 0, 0);
+  u.uFinalSigmaMin.value = 1;
+  (u.uLensParams.value as THREE.Vector4).set(0, 1, 1, 1);
+  (u.uLensInvM.value as THREE.Matrix3).identity();
+  (u.uLensInvT.value as THREE.Vector3).set(0, 0, 0);
+  const plane = material.defines.SURFACE_GROUND_PLANE === 1 ? 1 : 0;
+  const finish = material.defines.SURFACE_FINISH === 1 ? 1 : 0;
+  const trapInstall = applyShapeTrapInstall(material, null);
+  setSurfaceShapeMeshSdf(material, []);
+  if (
+    material.defines.SURFACE_SPHERE_INVERSION !== 1 ||
+    material.defines.SURFACE_ESCAPE !== 0 ||
+    material.defines.SURFACE_BULB !== 0 ||
+    material.defines.SURFACE_FOLDS !== 0 ||
+    material.defines.SURFACE_FOLD_LENS !== 0 ||
+    material.defines.SURFACE_SCHEDULE === 1 ||
+    material.defines.SURFACE_CHAOS === 1 ||
+    material.defines.SURFACE_CONDENSATION !== 0 ||
+    material.defines.SURFACE_POST === 1 ||
+    material.defines.SURFACE_PATTERN === 1 ||
+    material.defines.SURFACE_SHAPE_TRAP !== 0 ||
+    materialTrapGeometry(material) !== 0 ||
+    trapInstall.changed ||
+    postBlockChanged ||
+    blockChanged ||
+    tilingChanged
+  ) {
+    material.defines.SURFACE_SPHERE_INVERSION = 1;
+    material.defines.SURFACE_ESCAPE = 0;
+    material.defines.SURFACE_BULB = 0;
+    delete material.defines.SURFACE_POST;
+    delete material.defines.SURFACE_PATTERN;
+    material.defines.SURFACE_FOLDS = 0;
+    material.defines.SURFACE_FOLD_LENS = 0;
+    delete material.defines.SURFACE_SCHEDULE;
+    delete material.defines.SURFACE_CHAOS;
+    u.uScheduleCount.value = 0;
+    u.uScheduleDepth.value = 0;
+    material.defines.SURFACE_SHAPE_TRAP = 0;
+    delete material.defines.SURFACE_TRAP_GEOMETRY;
+    material.defines.SURFACE_CONDENSATION = 0;
+    u.uCondCount.value = 0;
+    (
+      material.userData as {
+        surfaceCondensationShapeKey?: string | null;
+        surfaceCondensationShapes?: ShapeSpec[] | null;
+      }
+    ).surfaceCondensationShapeKey = null;
+    (
+      material.userData as { surfaceCondensationShapes?: ShapeSpec[] | null }
+    ).surfaceCondensationShapes = null;
+    material.fragmentShader = surfaceFragmentFor(
+      0,
+      0,
+      0,
+      plane,
+      0,
+      finish,
+      0,
+      undefined,
+      null,
+      null,
+      false,
+      0,
+      0,
+      0,
+      null,
+      0,
+      material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
+      1,
+    );
+    material.needsUpdate = true;
+  }
 }
 
 /**
@@ -8131,6 +8747,7 @@ export function setSurfaceBalloon(
       tiling,
       material.defines.SURFACE_POST === 1 ? 1 : 0,
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
+      material.defines.SURFACE_SPHERE_INVERSION === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -8265,6 +8882,7 @@ export function setSurfaceGroundPlane(
       materialSurfaceTiling(material),
       material.defines.SURFACE_POST === 1 ? 1 : 0,
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
+      material.defines.SURFACE_SPHERE_INVERSION === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -8334,6 +8952,7 @@ export function setSurfaceMaterials(
       materialSurfaceTiling(material),
       material.defines.SURFACE_POST === 1 ? 1 : 0,
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
+      material.defines.SURFACE_SPHERE_INVERSION === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -8367,6 +8986,7 @@ export function setSurfaceLighting(
     materialSurfaceTiling(material),
     material.defines.SURFACE_POST === 1 ? 1 : 0,
     enabled ? 1 : 0,
+    material.defines.SURFACE_SPHERE_INVERSION === 1 ? 1 : 0,
   );
   material.needsUpdate = true;
 }
