@@ -3679,7 +3679,9 @@ describe("SURFACE_SPHERE_INVERSION variant", () => {
   }
 
   function siBlock(material: THREE.ShaderMaterial) {
-    return material.uniformsGroups.find((g) => g.name === "SurfaceSphereInv3");
+    return material.uniformsGroups.find(
+      (g) => (g as { name?: string }).name === "SurfaceSphereInv3",
+    );
   }
 
   /** Both dialects reduced to one token stream: comments, declaration
