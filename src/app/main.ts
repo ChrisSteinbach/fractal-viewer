@@ -4,6 +4,13 @@ import {
   toTransform4,
 } from "../fractal/affine4";
 import { scenePartsAreNonFlat } from "../fractal/scene-dimension";
+import {
+  resolveSphereInversion,
+  sphereInversionGenerationSlots,
+  type SphereInversionConstruction,
+} from "../fractal/sphere-inversion";
+import { buildSphereInversionDE } from "../fractal/sphere-inversion-de";
+import { buildSphereInversionDE4 } from "../fractal/sphere-inversion-de-4d";
 import { wSupport } from "./rotor4";
 import { FourDTween, FourDView, viewTransition } from "./four-d-view";
 import type { FourDPose } from "./four-d-view";
@@ -56,10 +63,12 @@ import {
 } from "../fractal/solid-tiling-session";
 import {
   isForwardTarget,
+  isSphereInversionTarget,
   setSurfaceComputeSchedulePins,
   setSurfaceComputeTrace,
   SurfaceComputeRenderer,
   SurfaceComputeUnavailableError,
+  type SurfaceComputeAnyTarget,
   type SurfaceComputeTarget,
 } from "./surface-compute";
 import { surfaceComputeForceFrameKey } from "./surface-force-frame-key";
@@ -88,6 +97,7 @@ import {
   prepareFinalSwirlRadiusEdit,
 } from "./swirl-radius-control";
 import {
+  sphereInversionShadeSlots,
   surfaceSlotColors,
   surfaceForwardSlot,
   surfaceSlotMaterials,
@@ -98,7 +108,9 @@ import type { SurfaceNativeCalibration } from "../fractal/surface-pattern";
 import {
   deriveSurfaceDocumentEligibility,
   deriveSurfaceEligibility,
+  sphereInversionHasFragmentArm,
   sphereInversionRenderModeRefusal,
+  sphereInversionSessionRefusal,
   surfaceEligibilityHasRoute,
   type SurfaceEligibilityResult,
 } from "./surface-eligibility";
@@ -4785,21 +4797,40 @@ async function main(): Promise<void> {
   // the error state.
   function beginSurfaceComputeGate(
     token: number,
-    target: SurfaceComputeTarget,
+    target: SurfaceComputeAnyTarget,
     materials: SurfaceMaterialSlots | null,
   ): void {
+    // Per-slot shading inputs by kind: the IFS sessions (3D and 4D alike)
+    // shade de.maps[j] (the shared slot derivation); the two FORWARD
+    // sessions (escape and bulb) have ONE slot — the active map's color,
+    // trap index 0, the GLSL setEscapeSystem/setBulbSystem shape; a
+    // sphere-inversion session has one slot per GENERATION (its hit-info
+    // reports the word length as firstChoice).
+    let slotColors: Vec3[];
+    let slotTraps: number[];
+    if (isSphereInversionTarget(target)) {
+      const slots = sphereInversionShadeSlots(
+        sphereInversionGenerationSlots(target.de.depth),
+      );
+      slotColors = slots.colors;
+      slotTraps = slots.trapIndices;
+    } else if (isForwardTarget(target)) {
+      slotColors = [escapeSlotColor()];
+      slotTraps = [0];
+    } else {
+      slotColors = surfaceSlotColors(
+        state.transforms,
+        ifsShadeSlots(target.de),
+      );
+      slotTraps = surfaceTrapIndices(
+        state.transforms,
+        ifsShadeSlots(target.de),
+      );
+    }
     SurfaceComputeRenderer.create(
       target,
-      // Per-slot shading inputs by kind: the IFS sessions (3D and 4D alike)
-      // shade de.maps[j] (the shared slot derivation); the two FORWARD
-      // sessions (escape and bulb) have ONE slot — the active map's color,
-      // trap index 0, the GLSL setEscapeSystem/setBulbSystem shape.
-      isForwardTarget(target)
-        ? [escapeSlotColor()]
-        : surfaceSlotColors(state.transforms, ifsShadeSlots(target.de)),
-      isForwardTarget(target)
-        ? [0]
-        : surfaceTrapIndices(state.transforms, ifsShadeSlots(target.de)),
+      slotColors,
+      slotTraps,
       // The session's unified materials — null for classic+none — keeping
       // both codegen flags and stride-3 shadeMaps packing in lockstep.
       { materials, lighting: state.surface.lighting !== undefined },
@@ -5227,7 +5258,10 @@ async function main(): Promise<void> {
     const renderer = surfaceComputeRenderer;
     if (!renderer) return;
     const spec = scene.surfaceComputeFrameSpec("full");
-    const key = surfaceComputeForceFrameKey(spec);
+    const key = surfaceComputeForceFrameKey(
+      spec,
+      surfaceSessionSphereInversion,
+    );
     if (key === surfaceComputeForceKey) return;
     renderer.cancel();
     // Single-sampled on purpose: this is the OFFLINE VIDEO path, and its cost
@@ -5746,12 +5780,22 @@ async function main(): Promise<void> {
   // continuous inspection gesture. The start consumes this one-shot before
   // any routing arm can auto-fit an escape-family bailout ball.
   let preserveSurfaceCameraOnNextEntry = false;
+  // The sphere-inversion construction the live Surface session froze at
+  // create (null for every other kind), and the authored block JSON the
+  // session was entered with — the construction-edit restart's comparison
+  // (syncSphereInversionSurfaceSession) and the force-frame key's input.
+  let surfaceSessionSphereInversion: SphereInversionConstruction | null = null;
+  let surfaceSessionSphereInversionBlock = "null";
 
   const surfaceSession = new RenderSession<never>({
     start: () => {
       const preserveCamera = preserveSurfaceCameraOnNextEntry;
       preserveSurfaceCameraOnNextEntry = false;
       surfaceLatticePresentation = null;
+      surfaceSessionSphereInversion = null;
+      surfaceSessionSphereInversionBlock = JSON.stringify(
+        state.sphereInversion ?? null,
+      );
       // Re-run the shared document gate at the session door. The button has
       // already used this answer, but timeline/isolation restores and
       // mid-session document changes can bypass the button. In particular a
@@ -5808,7 +5852,7 @@ async function main(): Promise<void> {
       // Set when this session routes to the WebGPU compute path — fold 3D,
       // escape, ifs4 and bulb kinds alike — the gate below then awaits
       // device + pipeline instead of the GLSL link.
-      let computeTarget: SurfaceComputeTarget | null = null;
+      let computeTarget: SurfaceComputeAnyTarget | null = null;
       // Resolve the authored tiling block against ONE arm's estimator
       // authority radius — the exact rule the shader wrappers and packers
       // enforce (a lattice block resolved against a different radius
@@ -5893,11 +5937,114 @@ async function main(): Promise<void> {
       pendingSurfaceGrid = null;
       try {
         if (
+          sessionEligibility.kind === "sphereInversion" ||
+          sessionEligibility.kind === "sphereInversion4"
+        ) {
+          // A SPHERE-INVERSION block: the scene's subject, replacing the
+          // transform system (whose kaleidoscope, final lens and finishes
+          // stay dormant — the gate's note says so). The door above has
+          // already refused a refused block, tiling, a shape trap and, with
+          // no fragment arm, a missing compute adapter, so this arm reads the
+          // gate's kind rather than re-classifying. Balloon is the session
+          // half of the refusal.
+          const balloonRefusal = sphereInversionSessionRefusal({
+            balloonEcho: state.balloonEcho,
+          });
+          if (balloonRefusal) {
+            ui.flashToast(balloonRefusal);
+            queueMicrotask(() => surfaceSession.exit());
+            return {
+              post: () => {},
+              terminate: () => teardownSurfaceCompute(),
+            };
+          }
+          const resolution = resolveSphereInversion(state.sphereInversion!);
+          if (!resolution.ok) {
+            throw new Error(resolution.reasons.join("; "));
+          }
+          const construction = resolution.construction;
+          const fourD = construction.dim === 4;
+          // CONSTRUCTION FIXED AT CREATE: the kernel tables pack from this
+          // DE once, and a block edit restarts the session
+          // (syncSphereInversionSurfaceSession).
+          const de = fourD
+            ? buildSphereInversionDE4(construction)
+            : buildSphereInversionDE(construction);
+          surfaceSessionSphereInversion = construction;
+          surfaceSessionIs4D = fourD;
+          // One material shared by every generation slot; no block-level
+          // finish exists yet, so today this is the classic kernels.
+          sessionMaterials = sphereInversionShadeSlots(
+            sphereInversionGenerationSlots(de.depth),
+          ).materials;
+          ui.setSurfaceSessionKind("sphereInversion");
+          surfaceBlankNotice = () => {
+            ui.flashToast(
+              "This sphere-inversion scene rendered almost nothing — fewer than one ray in a thousand hit it. Try a larger seed, or a camera closer to the generators.",
+            );
+          };
+          const R = de.boundingRadius;
+          if (fourD) {
+            // Thickness is held at zero (SPHERE_INVERSION_SLAB_REFUSAL,
+            // disclosed on the row); the packer throws on any other value.
+            surface4SlabAvailable = false;
+            ui.setFourDSlabAvailable(false, "sphereInversion");
+          }
+          if (surfaceComputeAvailable()) {
+            computeTarget = {
+              kind: fourD ? "sphereInversion4" : "sphereInversion",
+              de,
+              groundPlane: state.groundPlane,
+            };
+            scene.enterSurfaceComputeSphereInversionSession(
+              fourD,
+              state.groundPlane,
+              R,
+              de.depth,
+            );
+            if (fourD) {
+              scene.setSurface4View(
+                fourDView.matrix(),
+                fourDView.sliceCenter,
+                0,
+              );
+            }
+          } else if (!sphereInversionHasFragmentArm(construction.dim)) {
+            // Reachable only through mid-session compute loss: the gate
+            // refuses ENTRY without compute while no fragment arm exists.
+            // Never hand the session to a WebGL tracer — it would draw the
+            // transform system instead of the block.
+            ui.flashToast(
+              "Surface render stopped: sphere-inversion scenes need WebGPU compute, which just became unavailable.",
+            );
+            queueMicrotask(() => surfaceSession.exit());
+          } else {
+            // The fragment arm's install goes here when
+            // sphereInversionHasFragmentArm admits this dimension.
+            throw new Error(
+              "sphere-inversion fragment arm is admitted but not installed",
+            );
+          }
+          surfaceGrid.cancel();
+          if (!preserveCamera) {
+            cameraTween.fitToBounds(
+              {
+                minX: -R,
+                maxX: R,
+                minY: -R,
+                maxY: R,
+                minZ: -R,
+                maxZ: R,
+                minR: 0,
+                maxR: R,
+              },
+              { fov: scene.camera.fov, aspect: scene.camera.aspect },
+            );
+          }
+        } else if (
           // The SCENE's dimension (scene-dimension.ts), which a
-          // sphere-inversion block decides. The door above refuses every
-          // such block today (no renderer), so this reads the transforms'
-          // flatness in practice; routing it here keeps the gate and the
-          // door on one derivation for the renderer work.
+          // sphere-inversion block decides — the arm above takes every
+          // routable block, so this reads the transforms' flatness here.
           scenePartsAreNonFlat(
             state.transforms,
             state.finalTransform ?? null,
@@ -6974,7 +7121,26 @@ async function main(): Promise<void> {
     ui.renderXaosSection(state.transforms);
     refreshSurfaceEligibility();
     syncSphereInversionModes();
+    syncSphereInversionSurfaceSession();
     if (!evolutionReconciliationPaused) reconcileEvolutionDocument();
+  }
+
+  // Decision 8 (docs/sphere-inversion-gpu.md): the construction is fixed at
+  // session create, so a live Surface session whose block changed — added,
+  // edited, removed, by undo, a timeline leg or an import alike — RESTARTS,
+  // and the door re-derives the route from the new document (a refused
+  // block exits with its reason). Compared on the authored JSON, the form
+  // the document persists; the session records it at start, so the restart
+  // itself cannot re-trigger.
+  function syncSphereInversionSurfaceSession(): void {
+    if (state.renderMode !== "surface") return;
+    if (
+      JSON.stringify(state.sphereInversion ?? null) ===
+      surfaceSessionSphereInversionBlock
+    ) {
+      return;
+    }
+    controlEffects.restartSurfaceRender();
   }
 
   // A sphere-inversion block has no Flame or Sampled Solid representation

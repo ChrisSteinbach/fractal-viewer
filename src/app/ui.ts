@@ -142,6 +142,8 @@ import {
 } from "./control-spec";
 import type { ScalarControlSpec } from "./control-spec";
 import {
+  SPHERE_INVERSION_BALLOON_SESSION_REASON,
+  SPHERE_INVERSION_DORMANT_KALEIDOSCOPE,
   SPHERE_INVERSION_SLAB_REFUSAL,
   surfaceTrapGeometryRestriction,
   type SurfaceEligibilityRecovery,
@@ -4508,9 +4510,11 @@ export class Ui {
     const refused = applicability.kind === "disabled" || solidRefused;
     const reason = solidRefused
       ? BALLOON_CENTRE_REFUSAL_REASON
-      : applicability.kind === "disabled"
-        ? applicability.reason
-        : "";
+      : context.surfaceKind === "sphereInversion"
+        ? SPHERE_INVERSION_BALLOON_SESSION_REASON
+        : applicability.kind === "disabled"
+          ? applicability.reason
+          : "";
     const showDependent = !refused && this.balloonEchoCheckbox.checked;
     const heldLattice =
       context.renderMode === "points" &&
@@ -5042,7 +5046,12 @@ export class Ui {
       state.symmetry.order,
       state.transforms.length,
     );
-    if (effectiveOrder !== state.symmetry.order) {
+    if (state.sphereInversion !== undefined && state.symmetry.order > 1) {
+      // The ownership split: the block's subject replaces the transform
+      // system, so its kaleidoscope is kept but not read.
+      this.symmetryNote.textContent = `Dormant in a sphere-inversion scene: ${SPHERE_INVERSION_DORMANT_KALEIDOSCOPE}. It applies again when the block is removed.`;
+      this.symmetryNote.classList.remove("hidden");
+    } else if (effectiveOrder !== state.symmetry.order) {
       this.symmetryNote.textContent = `Reduced to ${effectiveOrder}-fold (from ${state.symmetry.order}-fold) to fit the ${MAX_TRANSFORMS}-transform limit.`;
       this.symmetryNote.classList.remove("hidden");
     } else {
@@ -9547,8 +9556,18 @@ export class Ui {
     const inactiveIfs =
       (eligibility.kind === "ifs" || eligibility.kind === "ifs4") &&
       editor.geometry.weight <= 0;
-    const refused = fullyIneligible || headOnly || inactiveIfs;
+    // A sphere-inversion block replaces the transform system as the
+    // subject: every transform's material is kept but not read (the
+    // ownership split, surface-eligibility.ts).
+    const dormantUnderBlock =
+      eligibility.kind === "sphereInversion" ||
+      eligibility.kind === "sphereInversion4";
+    const refused =
+      fullyIneligible || headOnly || inactiveIfs || dormantUnderBlock;
     const reason = (feature: "finish" | "pattern"): string => {
+      if (dormantUnderBlock) {
+        return `A sphere-inversion scene replaces the transform system in Surface, so this ${feature} is not read there. It stays authored and applies again when the block is removed.`;
+      }
       if (fullyIneligible) {
         const detail = eligibility.note ?? "not marchable";
         const sentence = /[.!?]$/.test(detail) ? detail : `${detail}.`;

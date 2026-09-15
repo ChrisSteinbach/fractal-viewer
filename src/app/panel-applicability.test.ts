@@ -187,3 +187,20 @@ describe("panel applicability registry", () => {
     },
   );
 });
+
+describe("the sphere-inversion Surface session", () => {
+  it("disables Balloon, hides the trap and condensation rows, and keeps the inspector", () => {
+    const active = context("surface", "sphereInversion");
+    expect(resolvePanelApplicability("balloon", active).kind).toBe("disabled");
+    for (const id of [
+      "surfaceTrap",
+      "surfaceTrapGeometry",
+      "surfaceCondensation",
+    ] as const) {
+      expect(resolvePanelApplicability(id, active)).toEqual({ kind: "hidden" });
+    }
+    expect(resolvePanelApplicability("surfaceInspector", active)).toEqual({
+      kind: "enabled",
+    });
+  });
+});

@@ -1,5 +1,6 @@
 import { DEFAULT_BACKGROUND_SHAPE_CENTER } from "../fractal/background-shape";
 import { resolveShapeTrap } from "../fractal/shape-trap";
+import type { SphereInversionConstruction } from "../fractal/sphere-inversion";
 import { surfaceLightingLanes } from "../fractal/surface-lighting";
 import type { SurfaceComputeFrameSpec } from "./surface-compute";
 
@@ -51,6 +52,7 @@ import type { SurfaceComputeFrameSpec } from "./surface-compute";
  */
 export function surfaceComputeForceFrameKey(
   spec: SurfaceComputeFrameSpec,
+  sphereInversion: SphereInversionConstruction | null = null,
 ): string {
   return [
     Array.from(spec.invProjView).join(","),
@@ -286,6 +288,33 @@ export function surfaceComputeForceFrameKey(
             rt.fade,
           ];
         })()
+      : []),
+    // The sphere-inversion construction: session-frozen renderer state
+    // (the kernel tables pack from it once, at create), passed by the
+    // caller rather than riding the frame spec. A construction edit
+    // restarts the session, and the restart already clears the memo — this
+    // block makes the key say so on its own, so a leg that changes only the
+    // block under a parked camera can never re-present the previous
+    // construction's frame even if a future cut keeps the session alive.
+    // Keyed on the RESOLVED construction, so an absent-default field and
+    // its explicit default key identically, exactly as the packer sees
+    // them. Tag, dimension, depth, then the generator and seed COUNTS before
+    // their comma-tuples: self-delimiting like the finish block, and every
+    // element is numeric after the tag, so no element can read as a tag.
+    ...(sphereInversion
+      ? [
+          "sphereInversion",
+          sphereInversion.dim,
+          sphereInversion.depth,
+          sphereInversion.generators.length,
+          ...sphereInversion.generators.map((g) =>
+            [...g.center, g.radius].join(","),
+          ),
+          sphereInversion.seed.length,
+          ...sphereInversion.seed.map((m) =>
+            [...m.center, m.radius, m.complement ? 1 : 0].join(","),
+          ),
+        ]
       : []),
   ].join("|");
 }
