@@ -88,7 +88,8 @@ import { fileURLToPath } from "node:url";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
 import {
   READ_DOCUMENT,
-  SI_PRESETS,
+  READ_MENU_GROUP,
+  loadSiPresets,
   captureScene,
   compareFrames,
   contactSheet,
@@ -311,6 +312,7 @@ async function main() {
     phases.delete("tiled");
     phases.delete("gl");
   }
+  const SI_PRESETS = await loadSiPresets();
   const only = args.only ? args.only.split(",") : null;
   const wanted = only
     ? SI_PRESETS.filter((p) => only.includes(p.key))
@@ -343,6 +345,23 @@ async function main() {
   const diffContext = await browser.newContext();
   const diffPage = await diffContext.newPage();
   await diffPage.goto("about:blank");
+  // The menu group must be the table: a preset added to one and not the
+  // other would be silently skipped by every leg below.
+  {
+    const app = await openApp(browser, { url: args.url });
+    try {
+      const menu = await app.page.evaluate(READ_MENU_GROUP);
+      results.menuGroup = menu;
+      const keys = SI_PRESETS.map((p) => p.key);
+      if (!sameJson(menu, keys))
+        fail(
+          `the Sphere inversion menu group ${JSON.stringify(menu)} is not the table ${JSON.stringify(keys)}`,
+        );
+      else log(`menu group = table: ${keys.join(", ")}`);
+    } finally {
+      await app.context.close().catch(() => {});
+    }
+  }
   const frames = new Map();
   const exports = new Map();
   const sheet = [];
@@ -365,10 +384,13 @@ async function main() {
               .waitForFunction(
                 () => {
                   const s = window.__surfaceState?.();
-                  return s && s.mode === "surface" && s.engine ? s : null;
+                  // The probe reads "webgl" while the compute renderer
+                  // is still being created (it is null until then), so the
+                  // engine is only an answer once the first frame is up.
+                  return s && s.mode === "surface" && s.firstFrame ? s : null;
                 },
                 undefined,
-                { timeout: 120_000, polling: 250 },
+                { timeout: 300_000, polling: 250 },
               )
               .then((h) => h.jsonValue())
               .catch(() => null);

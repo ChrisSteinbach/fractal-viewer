@@ -8,92 +8,58 @@
  * check means.
  */
 import fs from "node:fs";
+import { build } from "esbuild";
+import { REPO_ROOT } from "./dist-freshness.mjs";
 import { pollSurfaceState } from "./surface-browser-runner.mjs";
 
 /**
- * The Sphere inversion menu group, in menu order. `block` is
- * `presets.ts`'s PRESET_SPHERE_INVERSIONS entry TRANSCRIBED (plain Node has
- * no loader for `src/`, the surface-teardown gate's precedent): the family
- * gate asserts the document's block equals it, so a table edit that is not
- * carried here fails that gate loudly instead of passing on a stale copy.
+ * The Sphere inversion menu group's presets, read from the checkout's own
+ * `presets.ts` rather than copied: `PRESET_SPHERE_INVERSIONS` in table order,
+ * each with its block and the block's dimension
+ * (`sphereInversionAuthoredDimension`). Bundled in memory with esbuild (the
+ * surface-light-guides gate's idiom), from the repository this module lives
+ * in, so a gate run from a worktree reads that worktree's table, the one its
+ * build was made from.
  */
-export const SI_PRESETS = Object.freeze([
-  {
-    key: "inversionPearls",
-    dim: 3,
-    block: {
-      arrangement: "oct6",
-      radiusFraction: 0.99,
-      seed: { kind: "ball", size: 0.28 },
-      depth: 8,
+export async function loadSiPresets() {
+  const result = await build({
+    stdin: {
+      contents: `import { PRESET_SPHERE_INVERSIONS } from "./src/fractal/presets.ts";
+import { sphereInversionAuthoredDimension } from "./src/fractal/sphere-inversion.ts";
+export default Object.entries(PRESET_SPHERE_INVERSIONS).map(([key, make]) => {
+  const block = make();
+  return { key, dim: sphereInversionAuthoredDimension(block), block };
+});`,
+      resolveDir: REPO_ROOT,
+      loader: "ts",
     },
-  },
-  {
-    key: "inversionCubePearls",
-    dim: 3,
-    block: {
-      arrangement: "cube8",
-      radiusFraction: 0.99,
-      seed: { kind: "ball", size: 0.42 },
-      depth: 8,
-    },
-  },
-  {
-    key: "inversionVault",
-    dim: 3,
-    block: {
-      arrangement: "oct6",
-      radiusFraction: 0.99,
-      seed: {
-        kind: "cutShell",
-        size: 1,
-        thickness: 0.06,
-        cutDirection: [0.35, 1, 0.55],
-        cutOffset: 0.25,
-        cutRadius: 10,
-      },
-      depth: 8,
-    },
-  },
-  {
-    key: "inversionLace",
-    dim: 3,
-    block: {
-      arrangement: "ico12",
-      radiusFraction: 0.99,
-      seed: { kind: "shell", size: 1, thickness: 0.03 },
-      depth: 6,
-    },
-  },
-  {
-    key: "inversionVault4",
-    dim: 4,
-    block: {
-      arrangement: "cell600",
-      radiusFraction: 0.99,
-      seed: {
-        kind: "cutShell",
-        size: 0.9,
-        thickness: 0.04,
-        cutDirection: [0.35, 1, 0.55],
-        cutDirectionW: 0,
-        cutOffset: 0.25,
-        cutRadius: 10,
-      },
-      depth: 5,
-    },
-  },
-  {
-    key: "inversionMedallions4",
-    dim: 4,
-    block: {
-      arrangement: "cell600",
-      radiusFraction: 0.99,
-      seed: { kind: "shell", size: 1.1, thickness: 0.03 },
-      depth: 5,
-    },
-  },
-]);
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    write: false,
+    logLevel: "silent",
+  });
+  const presets = (
+    await import(
+      `data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString("base64")}`
+    )
+  ).default;
+  if (presets.length === 0 || presets.some((p) => p.dim !== 3 && p.dim !== 4)) {
+    throw new Error(`unreadable preset table: ${JSON.stringify(presets)}`);
+  }
+  return presets;
+}
+
+/** The keys the live menu's Sphere inversion group offers, in menu order
+ * (runs in the page). */
+export const READ_MENU_GROUP = () => {
+  const group = [...document.querySelectorAll("#presetSelect optgroup")].find(
+    (g) => /sphere inversion/i.test(g.label),
+  );
+  return group
+    ? [...group.querySelectorAll("option")].map((o) => o.value)
+    : null;
+};
 
 /** The viewport both gates measure at (the presets' recorded settles). */
 export const SI_VIEWPORT = Object.freeze({ width: 1600, height: 900 });
