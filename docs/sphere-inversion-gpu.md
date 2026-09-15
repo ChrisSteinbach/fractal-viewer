@@ -573,3 +573,37 @@ The WGSL route item lands first; the GLSL item consumes its emitter.
 7. **Cutoff ignored** in the first cut (contract-trivial).
 8. **Construction is create-time** (restart on edit), so the force-frame key
    does not change.
+
+## Decisions (confirmed 2026-09-15, delegated)
+
+The owner delegated these calls to the program lead; they stand until the
+owner revisits them.
+
+1. **Two new cores**, `sphereInv` and `sphereInv4`, with the digest pin of the
+   seven existing cores' generated source committed BEFORE either new core.
+   A new `isDescentTarget` predicate replaces the `!isForwardTarget` checks
+   that assume "not forward" means "IFS descent".
+2. **3D: compute preferred, GLSL fallback arm. 4D: compute-only, disclosed**
+   (entry refused without an adapter, device loss exits with a toast), as
+   fold-shaped 4D already is. The data-texture 4D arm stays a recorded shape,
+   not owed work.
+3. **Composition:** ground plane, finishes, lighting rigs and supersampling
+   compose; balloon, final lens, space tiling, kaleidoscope, slab thickness,
+   shape trap, condensation, scheduled hybrid, xaos, pattern and optics are
+   refused, each with its reason in the eligibility note.
+4. **f32:** a fixed absolute slack of 1e-6 subtracted from the transported
+   bound plus a `2^-20·r` pole floor; no relative factor. CONSEQUENCE: hit
+   acceptance must never fall below that slack, or rays stall at deep zoom.
+   The kernel clamps its acceptance epsilon to at least the slack, and the
+   zoom floor this implies is disclosed beside the other cores' f32 floor.
+   The bench carries the one-sided real-GPU check.
+5. **Search:** linear scans with the nearest-centre and radius-test shortcuts;
+   spatial binning only if verified-hardware timing demands it.
+6. **Colour:** one material slot; "By Transform" colours by GENERATION (word
+   depth) across the palette slots; orbit trap = generation, rings = closest
+   radial approach, sheets = seed member.
+7. **Cutoff ignored** in the first kernel; the CPU cutoff contract still holds.
+8. **Construction fixed at session creation.** Every construction edit is a
+   session RESTART and the panel discloses it as such; a timeline leg that
+   changes the construction re-enters the session. The force-frame key is
+   unchanged.
