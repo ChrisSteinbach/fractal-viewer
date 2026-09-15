@@ -2874,11 +2874,6 @@ export const PRESET_SURFACE_ROOMS: Partial<
   },
 };
 
-/** `w0 = 1/(4φ)`: the 600-cell's KISS SLICE, where the equatorial
- * icosidodecahedron's generator caps kiss the next layer's
- * (`docs/sphere-inversion-family.md`, native 4D beauty search). */
-const CELL600_KISS_SLICE_W = 1 / (2 * (1 + Math.sqrt(5)));
-
 /**
  * The SPHERE-INVERSION block a preset IS — the family's authored form
  * (`sphere-inversion.ts`), which replaces the transform system as the
@@ -3013,12 +3008,22 @@ export const PRESET_VIEWS: Partial<Record<Preset, PresetView>> = {
   inversionVault4: {
     // From near the centre, grazing along the wall away from the cut: the
     // cut rim and its horizon above, rows of pearl-window rosettes below.
+    // A double rotation off the centre slice, never the identity pose: the
+    // identity slice holds the most generators and is the costliest (see
+    // the doc's cost section), and the xw/yw turn makes the rosettes
+    // asymmetric.
     camera: {
       eye: [0.35, -0.05, 0.06],
       target: [-0.99, 0.15, -0.18],
       fov: 77,
     },
-    fourD: { rotation: [], w0: CELL600_KISS_SLICE_W },
+    fourD: {
+      rotation: [
+        ["xw", 0.3],
+        ["yw", 0.2],
+      ],
+      w0: 0.1,
+    },
   },
   inversionMedallions4: {
     camera: { eye: [1.32, 0.96, 1.56], target: [0, 0, 0], fov: 62 },
