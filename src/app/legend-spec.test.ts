@@ -5,7 +5,14 @@ import type { AppState } from "./state";
 import { surfaceColorLUT } from "./control-spec";
 import { buildColorModeLUT } from "../fractal/color";
 import { buildPaletteLUT } from "../fractal/palette";
-import { defaultTransforms, mandelboxClassic } from "../fractal/presets";
+import {
+  defaultTransforms,
+  mandelboxClassic,
+  PRESET_SPHERE_INVERSIONS,
+  sierpinskiTetrahedron,
+} from "../fractal/presets";
+import { transformColors } from "../fractal/color";
+import { setSphereInversion } from "./state";
 import { PEACE_SIGN_SHAPE } from "../fractal/shapes";
 import { to255 } from "../fractal/vec";
 
@@ -859,5 +866,96 @@ describe("the surface shapeTrap color source", () => {
       surface: { ...base.surface, colorSource: "shapeTrap" },
     };
     expect(legendOf(wrongFamily).kind).toBe("swatches");
+  });
+});
+
+describe("deriveLegend under a sphere-inversion block", () => {
+  function chips(spec: LegendSpec): string[] {
+    return items(spec).flatMap((item) =>
+      item.kind === "swatch" ? [item.color] : [],
+    );
+  }
+  function captions(spec: LegendSpec): string[] {
+    return items(spec).flatMap((item) =>
+      item.kind === "label" ? [item.text] : [],
+    );
+  }
+  function generationColors(count: number): string[] {
+    return transformColors(count).map(
+      ([r, g, b]) => `rgb(${to255(r)}, ${to255(g)}, ${to255(b)})`,
+    );
+  }
+
+  it("keys D + 3 generations, not the placeholder transforms, in 3D Points and Surface", () => {
+    // Kissing Pearls: D8 over the four-map Sierpinski placeholder.
+    const base = setSphereInversion(
+      { ...initialState(true), transforms: sierpinskiTetrahedron() },
+      PRESET_SPHERE_INVERSIONS.inversionPearls!(),
+    );
+    const views: [string, AppState][] = [
+      ["points", { ...base, colorMode: "transform" }],
+      [
+        "surface",
+        {
+          ...base,
+          renderMode: "surface",
+          surface: { ...base.surface, colorSource: "transform" },
+        },
+      ],
+    ];
+
+    for (const [label, state] of views) {
+      const spec = legendOf(state);
+
+      expect(chips(spec), label).toEqual(generationColors(11));
+      expect(captions(spec), label).toEqual(["seed", "gen 1", "gen 10"]);
+    }
+  });
+
+  it("keys the native 4D block's generations in 4D Points and Surface", () => {
+    // 600-Cell Medallions: D5 -> 8 generations.
+    const base = setSphereInversion(
+      { ...initialState(true), transforms: sierpinskiTetrahedron() },
+      PRESET_SPHERE_INVERSIONS.inversionMedallions4!(),
+    );
+    const views: [string, AppState][] = [
+      ["points", { ...base, fourDColor: "transform" }],
+      [
+        "surface",
+        {
+          ...base,
+          renderMode: "surface",
+          surface: { ...base.surface, colorSource: "transform" },
+        },
+      ],
+    ];
+
+    for (const [label, state] of views) {
+      const spec = legendOf(state, { nonFlat: true });
+
+      expect(chips(spec), label).toEqual(generationColors(8));
+      expect(captions(spec), label).toEqual(["seed", "gen 1", "gen 7"]);
+    }
+  });
+
+  it("folds generations past the swatch cap into +N", () => {
+    const state = setSphereInversion(
+      { ...initialState(true), colorMode: "transform" },
+      { arrangement: "oct6", depth: 12 },
+    );
+
+    const spec = legendOf(state);
+
+    expect(chips(spec)).toEqual(generationColors(15).slice(0, 12));
+    expect(captions(spec)).toEqual(["seed", "gen 1", "gen 11", "+3"]);
+  });
+
+  it("hides the key for a block the resolver refuses", () => {
+    const state = setSphereInversion(
+      { ...initialState(true), colorMode: "transform" },
+      { arrangement: "oct6", depth: 40 },
+    );
+
+    expect(legendOf(state).kind).toBe("hidden");
   });
 });
