@@ -263,12 +263,18 @@ morphs into place instead of snapping (see **Presets** below).
   without resetting the view: selects restart it at once, sliders on release.
 
   While Sphere inversion is present, the replaced system's settings are kept
-  but not drawn, and each says so beside itself:
-  - **Transforms**, **Xaos**, **Symmetry** and **Hybrid schedule** stay
-    editable, and editing them costs no rendering.
-  - The final-transform lens and per-transform finishes carry their own notes.
-  - **Background → Flame backdrop** shows the plain gradient, because the
-    backdrop draws the transforms.
+  in the document but nothing draws them, so they are disabled, each with a
+  note saying to turn off Sphere inversion to edit:
+  - **Transforms** (everything but **Auto-update**), **Xaos**, **Symmetry** and
+    **Hybrid schedule**.
+  - The final-transform lens and per-transform finishes, which also carry their
+    own notes.
+  - **Background** stays usable, but its **Flame backdrop** choice is disabled,
+    because the backdrop draws the transforms. A scene already set to it shows
+    the plain gradient.
+
+  Turning Sphere inversion off re-enables all of them, with the transforms as
+  they were.
 
   The colour legend follows the subject too: **By Transform** keys the block's
   generations (**seed**, **gen 1** … ), one hue per inversion depth, in both
