@@ -10255,11 +10255,16 @@ describe("the closed-solid transport backend (opticsBackend)", () => {
     );
   });
 
-  it("embeds the displayed point through the live rotor/slice on the 4D core, exactly as the descent's prologue does", () => {
+  it("emits the 4D signed field — the intrinsic solid plus the flat's distance as a penalty, exact where the slice carries the flat", () => {
     const shade = surfaceDeKernelWgsl(solidOpts({ core: "affine4" }));
     expect(shade).toContain(
-      "return condensationTerm(rotorInvApply4(vec4f(p, params.w0)), 1.0, 0u);",
+      "fn transportSolidField(p: vec3f) -> f32 {\n  let q = rotorInvApply4(vec4f(p, params.w0));",
     );
+    expect(shade).toContain("let d = m.p0.x * sd + abs(local.w);");
+    // The 3D field stays the condensation term.
+    const solid3 = surfaceDeKernelWgsl(solidOpts());
+    expect(solid3).toContain("return condensationTerm(p, 1.0, 0u);");
+    expect(solid3).not.toContain("abs(local.w)");
   });
 
   it("keeps the estimator query's emitted text unchanged when the backend is absent or explicit", () => {

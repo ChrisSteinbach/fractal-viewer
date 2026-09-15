@@ -188,6 +188,44 @@ export function condensationTerm4(
     : Infinity;
 }
 
+/**
+ * The transport's SIGNED 4D closed-solid field. The hypot estimator above
+ * is a distance to the flat {sd ≤ 0, w = 0} — ZERO throughout that
+ * interior — so it has no negative region for a signed inside traversal
+ * to read (the measured 4D envelope arm resolved nothing off it; both
+ * engines crawled identically and the agreement was vacuous). The signed
+ * field is the intrinsic solid's field plus the flat's distance as a
+ * penalty: `sigmaMin · sdShape(xyz) + |w|`, union min over emitters.
+ * Where the displayed slice carries the flat (the canonical composition:
+ * w-untouched lifts, w0 = 0, a w-preserving rotor) the penalty vanishes
+ * IDENTICALLY and the field is exactly the 3D solid field. Off it the
+ * penalty forms a lens-shaped slab around the flat whose failures are
+ * honest refusals — never the invented interior the bare 3D form would
+ * have traversed. The CPU oracle for `surface-de-gpu.ts`'s core4
+ * `transportSolidField`.
+ */
+export function condensationSignedDistance4(
+  de: CondensationDE4,
+  x: number,
+  y: number,
+  z: number,
+  w: number,
+): number {
+  let best = Infinity;
+  for (const emitter of de.emitters) {
+    const m = emitter.invM;
+    const t = emitter.invT;
+    const qx = m[0] * x + m[1] * y + m[2] * z + m[3] * w + t[0];
+    const qy = m[4] * x + m[5] * y + m[6] * z + m[7] * w + t[1];
+    const qz = m[8] * x + m[9] * y + m[10] * z + m[11] * w + t[2];
+    const qw = m[12] * x + m[13] * y + m[14] * z + m[15] * w + t[3];
+    const sd = shapeSdf(emitter.shape, qx, qy, qz);
+    const d = emitter.sigmaMin * sd + Math.abs(qw);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
 export function condensationBoundingRadius4(de: CondensationDE4): number {
   let radius = 0;
   for (const emitter of de.emitters) {
