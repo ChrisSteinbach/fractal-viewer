@@ -2,6 +2,7 @@ import { composeAffine } from "./affine";
 import type { FlamePaletteId, PaletteSelection } from "./palette";
 import type { Rng } from "./rng";
 import { GEAR_SHAPE, PEACE_SIGN_SHAPE, STAR_PRISM_SHAPE } from "./shapes";
+import type { SphereInversionAuthored } from "./sphere-inversion";
 import type { TilingSpec } from "./tiling";
 import type {
   HybridSchedule,
@@ -2454,6 +2455,21 @@ const PRESETS = {
   mandelboxBrick,
   mandelboxColumn,
   hybridChainShells,
+  // The sphere-inversion family's showcases. Each one's SUBJECT is its
+  // PRESET_SPHERE_INVERSIONS block, which replaces the transform system as
+  // the scene's subject in every renderer that draws the family (Points
+  // samples the seed orbit, Surface traces it). The transforms underneath
+  // are a PLACEHOLDER the document still has to carry: the Sierpinski
+  // tetrahedron, the smallest contracting system every renderer and gate
+  // admits, and FLAT, so the block's arrangement alone decides whether the
+  // scene is 3D or 4D (scene-dimension.ts). Removing the block later (the
+  // next preset load clears it) leaves an ordinary, valid scene.
+  inversionPearls: sierpinskiTetrahedron,
+  inversionCubePearls: sierpinskiTetrahedron,
+  inversionVault: sierpinskiTetrahedron,
+  inversionLace: sierpinskiTetrahedron,
+  inversionVault4: sierpinskiTetrahedron,
+  inversionMedallions4: sierpinskiTetrahedron,
 } as const satisfies Record<string, () => Transform[]>;
 
 export type Preset = keyof typeof PRESETS;
@@ -2577,6 +2593,16 @@ export const PRESET_RENDER_HINTS: Partial<
   mandelboxBrick: "surface",
   mandelboxColumn: "surface",
   hybridChainShells: "surface",
+  // The sphere-inversion showcases' subject is a lit surface: Points draws
+  // the same set as a boundary sample, which reads as a dust ball in 4D (the
+  // windows and medallions are a SLICE phenomenon), and Flame/Solid refuse
+  // the family outright.
+  inversionPearls: "surface",
+  inversionCubePearls: "surface",
+  inversionVault: "surface",
+  inversionLace: "surface",
+  inversionVault4: "surface",
+  inversionMedallions4: "surface",
 };
 
 /**
@@ -2845,6 +2871,163 @@ export const PRESET_SURFACE_ROOMS: Partial<
     floorPattern: "checker",
     floorTileScale: 0.64,
     floorEmission: 1.4,
+  },
+};
+
+/** `w0 = 1/(4φ)`: the 600-cell's KISS SLICE, where the equatorial
+ * icosidodecahedron's generator caps kiss the next layer's
+ * (`docs/sphere-inversion-family.md`, native 4D beauty search). */
+const CELL600_KISS_SLICE_W = 1 / (2 * (1 + Math.sqrt(5)));
+
+/**
+ * The SPHERE-INVERSION block a preset IS — the family's authored form
+ * (`sphere-inversion.ts`), which replaces the transform system as the
+ * scene's subject. {@link PRESET_FINALS}' ABSENT-MEANS-CLEAR rule: main.ts
+ * installs the entry's block and CLEARS the block on every other preset
+ * load, because every other preset names a transform-system subject a
+ * leftover block would replace. Factories, like the lens table's, so the
+ * document never aliases the table.
+ *
+ * Every entry authors every field its kind reads, even where the value is
+ * the family's default: the block persists verbatim, so the preset document
+ * reads as the construction it is. All generators sit at `0.99` of the
+ * kissing radius, never `1`: at exact tangency a ray reaching a cusp is
+ * estimated at distance 0 without being a member, and stalls. Depths are
+ * the subjects' own (the gate sheets' and the 4D search's), bounded by the
+ * measured settle cost recorded in the doc's Presets section.
+ */
+export const PRESET_SPHERE_INVERSIONS: Partial<
+  Record<Preset, () => SphereInversionAuthored>
+> = {
+  // Near-kissing octahedral pearls: a seed ball in the central void,
+  // pearled along the six tangency circles into a lace cross.
+  inversionPearls: () => ({
+    arrangement: "oct6",
+    radiusFraction: 0.99,
+    seed: { kind: "ball", size: 0.28 },
+    depth: 8,
+  }),
+  // The cube's eight near-kissing generators seen down a four-fold axis:
+  // a lace square of pearl chains framing the central ball.
+  inversionCubePearls: () => ({
+    arrangement: "cube8",
+    radiusFraction: 0.99,
+    seed: { kind: "ball", size: 0.42 },
+    depth: 10,
+  }),
+  // The octahedral interior vault: a unit shell cut open toward the light,
+  // seen from inside, its six generator windows holding nested pearls.
+  inversionVault: () => ({
+    arrangement: "oct6",
+    radiusFraction: 0.99,
+    seed: {
+      kind: "cutShell",
+      size: 1,
+      thickness: 0.06,
+      cutDirection: [0.35, 1, 0.55],
+      cutOffset: 0.25,
+      cutRadius: 10,
+    },
+    depth: 8,
+  }),
+  // The icosahedral lace shell (secondary subject): a unit shell perforated
+  // by twelve near-kissing generators.
+  inversionLace: () => ({
+    arrangement: "ico12",
+    radiusFraction: 0.99,
+    seed: { kind: "shell", size: 1, thickness: 0.03 },
+    depth: 6,
+  }),
+  // The native 4D subject: the 600-cell's 120 hyperspheres cutting a
+  // hypershell, seen from inside at an off-centre slice.
+  inversionVault4: () => ({
+    arrangement: "cell600",
+    radiusFraction: 0.99,
+    seed: {
+      kind: "cutShell",
+      size: 0.9,
+      thickness: 0.04,
+      cutDirection: [0.35, 1, 0.55],
+      cutDirectionW: 0,
+      cutOffset: 0.25,
+      cutRadius: 10,
+    },
+    depth: 5,
+  }),
+  // The 600-cell medallion sphere: a hypershell outside the generators,
+  // double-rotated so its slice's medallions hold 2 to 5 pearls.
+  inversionMedallions4: () => ({
+    arrangement: "cell600",
+    radiusFraction: 0.99,
+    seed: { kind: "shell", size: 1.1, thickness: 0.03 },
+    depth: 5,
+  }),
+};
+
+/** A preset's authored camera: where the eye is, what it looks at, and the
+ * vertical field of view in degrees (`orbit.ts`'s `CameraPose.fov`). */
+export interface PresetCameraView {
+  eye: Vec3;
+  target: Vec3;
+  fov: number;
+}
+
+/** A preset's authored 4D view: plane rotations composed in the order
+ * listed (each on top of the previous — `rotor4.ts`'s `rotateInPlane`), and
+ * the slice position in WORLD `w`, which the app normalizes against the
+ * landed cloud (`preset-view.ts`). */
+export interface PresetFourDView {
+  rotation: readonly (readonly [keyof Rotation4, number])[];
+  w0: number;
+}
+
+/** A preset's authored framing. `fourD` only for a 4D scene. */
+export interface PresetView {
+  camera: PresetCameraView;
+  fourD?: PresetFourDView;
+}
+
+/**
+ * The saved VIEW a preset is composed at — for the compositions whose
+ * camera angle and silhouette are part of the deliverable. ABSENT MEANS
+ * AUTO-FIT, today's behaviour for every other preset: main.ts frames the
+ * arriving attractor. An entry replaces that fit at the same moment (the
+ * preset's cloud landing), and for a 4D scene also lands the rotor and the
+ * slice, on top of the fresh-visit reset rather than under it. Plain data in
+ * reader-checkable units (an eye, a look-at point, a world `w0`);
+ * `preset-view.ts` converts them to the app's pose vocabularies.
+ */
+export const PRESET_VIEWS: Partial<Record<Preset, PresetView>> = {
+  inversionPearls: {
+    camera: { eye: [0.26, 0.34, 1.42], target: [0, 0, 0], fov: 62 },
+  },
+  inversionCubePearls: {
+    camera: { eye: [0.39, 1.6, 0.52], target: [0, 0, 0], fov: 62 },
+  },
+  inversionVault: {
+    camera: { eye: [0.15, 0.3, 0.1], target: [-0.6, -1, 0.1], fov: 81 },
+  },
+  inversionLace: {
+    camera: { eye: [1.2, 0.87, 1.42], target: [0, 0, 0], fov: 62 },
+  },
+  inversionVault4: {
+    camera: {
+      eye: [-0.21, -0.41, 0.19],
+      target: [-0.42, -0.82, 0.38],
+      fov: 81,
+    },
+    fourD: { rotation: [], w0: CELL600_KISS_SLICE_W },
+  },
+  inversionMedallions4: {
+    camera: { eye: [1.32, 0.96, 1.56], target: [0, 0, 0], fov: 62 },
+    fourD: {
+      rotation: [
+        ["xw", 0.4],
+        ["yw", 0.3],
+        ["zw", 0.2],
+      ],
+      w0: CELL600_KISS_SLICE_W,
+    },
   },
 };
 

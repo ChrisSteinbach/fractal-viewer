@@ -1,10 +1,11 @@
 /**
  * The pending load-hint policy: a whole-system load arms up to
- * three hints that wait for the loaded cloud to actually LAND before they
+ * four hints that wait for the loaded cloud to actually LAND before they
  * fire — the render mode a preset/gallery entry/timeline step was authored
  * for, the deterministic accumulator seed a timeline render
- * keyframe pins, and the saved 4D rotor/slice pose a document
- * carries. Deferring them to arrival is the point: entering the
+ * keyframe pins, the saved 4D rotor/slice pose a document
+ * carries, and the authored view (camera, and 4D pose) a preset carries in
+ * place of the auto-fit. Deferring them to arrival is the point: entering the
  * hinted renderer THEN — not at click time — lets the flame's frozen
  * projection snapshot a camera already fitted to the NEW attractor, and
  * applying the pose THEN lands it on top of the fresh-visit reset instead of
@@ -63,6 +64,7 @@
  * standing extraction discipline; main.ts keeps only the wiring.
  */
 import type { RenderMode } from "./state";
+import type { PresetView } from "../fractal/presets";
 import type { FourDPose } from "./four-d-view";
 
 /** The two request fields consumption keys on — structurally satisfied by
@@ -79,6 +81,10 @@ export class PendingLoadHints {
   /** True while a loaded document's Saved-view 4D field — including an
    * explicit ABSENCE from a legacy/flat document — still waits to land. */
   private poseArmed = false;
+  /** A preset's authored view (`presets.ts`'s PRESET_VIEWS), replacing the
+   * arrival's camera auto-fit. Its 4D half needs the landed cloud's bounds,
+   * which is why it waits for the arrival rather than applying at click. */
+  private viewHint: PresetView | null = null;
   /** The request id the armed hints await — see the module doc. Stale (from
    * an older load) whenever nothing is armed, which is harmless: every take/
    * release no-ops on a null hint. */
@@ -108,6 +114,19 @@ export class PendingLoadHints {
   /** Arm the deterministic accumulator seed (timeline legs only). */
   armSeed(seed: number): void {
     this.seedHint = seed;
+  }
+
+  /** The armed preset view, un-consumed — the morph's camera chase stands
+   * down while one is waiting, since the landing replaces the fit it chases
+   * toward. */
+  get view(): PresetView | null {
+    return this.viewHint;
+  }
+
+  /** Arm a preset's authored view. `null` is a real arm (onPreset passes
+   * `PRESET_VIEWS[preset] ?? null`: most presets auto-fit). */
+  armView(view: PresetView | null): void {
+    this.viewHint = view;
   }
 
   /**
@@ -146,6 +165,7 @@ export class PendingLoadHints {
     this.seedHint = null;
     this.poseHint = null;
     this.poseArmed = false;
+    this.viewHint = null;
     this.awaitId = this.nextRequestId();
   }
 
@@ -167,6 +187,16 @@ export class PendingLoadHints {
     const mode = this.modeHint;
     this.modeHint = null;
     return mode;
+  }
+
+  /** Consume the view hint on the awaited load's own replaced landing —
+   * {@link takeMode}'s exact gate: a stale replaced arrival returns null and
+   * leaves the view armed for the real landing. */
+  takeView(arrival: HintArrival): PresetView | null {
+    if (!arrival.replaced || arrival.id < this.awaitId) return null;
+    const view = this.viewHint;
+    this.viewHint = null;
+    return view;
   }
 
   /** Consume the seed hint — unconditional, at whichever flame/solid session
