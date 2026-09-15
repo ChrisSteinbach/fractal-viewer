@@ -3242,9 +3242,17 @@ export function surface4FragmentFor(
   // dimension up. The 4D tracer is the affine ladder (no fold GLSL
   // exists here), so the only resolver-visible refusals are the forward
   // arms (which never appear in this source) and the cinematic rig,
-  // both inherited from the 3D resolver this forwards into.
+  // both inherited from the 3D resolver this forwards into — plus this
+  // wrapper's own: a swirl final is the fold-final lens's 4D twin, and
+  // the closed-solid backend refuses that composition.
   optics = 0,
+  opticsBackend = 0,
 ): string {
+  if (optics !== 0 && opticsBackend === 1 && swirlLens !== 0) {
+    throw new RangeError(
+      "SURFACE_OPTICS_CLOSED_SOLID cannot follow the swirl-final lens",
+    );
+  }
   return surfaceFragmentFor(
     0,
     0,
@@ -3264,6 +3272,7 @@ export function surface4FragmentFor(
     0,
     lighting,
     optics,
+    opticsBackend,
   );
 }
 
@@ -3284,7 +3293,13 @@ export function surface4FragmentResolvedFor(
   swirlLens = 0,
   lighting = 0,
   optics = 0,
+  opticsBackend = 0,
 ): string {
+  if (optics !== 0 && opticsBackend === 1 && swirlLens !== 0) {
+    throw new RangeError(
+      "SURFACE_OPTICS_CLOSED_SOLID cannot follow the swirl-final lens",
+    );
+  }
   return surfaceFragmentResolvedFor(
     0,
     0,
@@ -3304,6 +3319,7 @@ export function surface4FragmentResolvedFor(
     0,
     lighting,
     optics,
+    opticsBackend,
   );
 }
 
