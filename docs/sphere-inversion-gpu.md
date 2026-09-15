@@ -607,3 +607,15 @@ owner revisits them.
    session RESTART and the panel discloses it as such; a timeline leg that
    changes the construction re-enters the session. The force-frame key is
    unchanged.
+
+### Amendment to decision 3 (2026-09-15, delegated)
+
+Refusals split by OWNERSHIP. State the block's subject REPLACES — the
+transform system's kaleidoscope, its final lens and its per-transform
+finishes — is DORMANT while the block is present: not read, disclosed
+beside the control, and restored untouched when the block is removed. It
+does not refuse the scene, because a user should not have to delete the IFS
+scene's own settings to render the block. Scene-level renderer composition
+applied TO the subject — space tiling, balloon, shape trap, slab thickness —
+stays REFUSED with its reason. Ground plane, lighting rigs and supersampling
+compose.
