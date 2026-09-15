@@ -15,6 +15,11 @@ import {
   packSurfaceBalloonPalette,
   packSurfaceBalloonTint,
   setBulbSystem,
+  setSphereInversionSystem,
+  sphereInversionFitsFragmentArm,
+  sphereInversionHitFloor,
+  SURFACE_SPHERE_INVERSION_COLOR_SLOTS,
+  SURFACE_SPHERE_INVERSION_TABLE_ENTRIES,
   setEscapeSystem,
   setSurfaceBalloon,
   setSurfaceGrid,
@@ -88,6 +93,29 @@ import type { ShapeTrap, Transform, Vec3 } from "../fractal/types";
 import { createHash } from "node:crypto";
 import { PRE_PATTERN_SOURCE_HASHES } from "./surface-pattern-baseline";
 import { swirlLensShaderSource } from "../fractal/swirl-lens-shader";
+import { mulberry32 } from "../fractal/rng";
+import {
+  resolveSphereInversion,
+  SPHERE_INVERSION_ARRANGEMENTS,
+  SPHERE_INVERSION_MAX_DEPTH,
+  SPHERE_INVERSION_SEED_KINDS,
+  sphereInversionGenerationSlots,
+  type SphereInversionAuthored,
+} from "../fractal/sphere-inversion";
+import {
+  buildSphereInversionDE,
+  estimateSphereInversionDistance,
+  sphereInversionHitInfo,
+} from "../fractal/sphere-inversion-de";
+import { buildSphereInversionDE4 } from "../fractal/sphere-inversion-de-4d";
+import {
+  packSphereInversionGpuTables,
+  SPHERE_INVERSION_GPU_POLE_FLOOR,
+  SPHERE_INVERSION_GPU_SLACK,
+  sphereInversionF32,
+  sphereInversionWgslSource,
+  type SphereInversionGpuTables,
+} from "../fractal/surface-sphere-inversion-gpu";
 
 /** Intentional pattern-off source advance for the balloon palette arm. Kept
  * local to this feature test so the pre-pattern fixture remains the baseline
@@ -3610,6 +3638,538 @@ describe("SURFACE_BULB variant", () => {
     setSurfaceSystem(material, de3([map3()]), [black]);
     expect(material.defines.SURFACE_BULB).toBe(0);
     expect(material.fragmentShader).not.toContain("bulbPow8");
+  });
+});
+
+describe("SURFACE_SPHERE_INVERSION variant", () => {
+  function siDE(authored: SphereInversionAuthored) {
+    const r = resolveSphereInversion(authored);
+    if (!r.ok) throw new Error(r.reasons.join("; "));
+    return buildSphereInversionDE(r.construction);
+  }
+
+  function siSource(plane = 0, finish = 0, lighting = 0): string {
+    return surfaceFragmentFor(
+      0,
+      0,
+      0,
+      plane,
+      0,
+      finish,
+      0,
+      undefined,
+      null,
+      null,
+      false,
+      0,
+      0,
+      0,
+      null,
+      0,
+      lighting,
+      1,
+    );
+  }
+
+  function siColors(depth: number): Vec3[] {
+    return Array.from(
+      { length: sphereInversionGenerationSlots(depth) },
+      (_, g) => [g / 40, 0.5, 1 - g / 40] as Vec3,
+    );
+  }
+
+  function siBlock(material: THREE.ShaderMaterial) {
+    return material.uniformsGroups.find((g) => g.name === "SurfaceSphereInv3");
+  }
+
+  /** Both dialects reduced to one token stream: comments, declaration
+   * types, WGSL's let/var/fn/-> and u-suffixes, integer casts and the
+   * accessor spellings removed, WGSL select() spelled as GLSL's ternary. */
+  function siTokens(src: string): string[] {
+    let t = src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    t = t.replace(/\bfn\s+/g, "");
+    t = t.replace(/\)\s*->\s*\w+\s*\{/g, ") {");
+    t = t.replace(/:\s*array<[^>]*>/g, "");
+    t = t.replace(/(\w)\s*:\s*(?:vec3f|f32|i32|u32|bool|SiResult)\b/g, "$1");
+    t = t.replace(/\b(?:let|var)\s+/g, "");
+    t = t
+      .replace(/\bparams\.siCounts\b/g, "uSiCounts")
+      .replace(/\bparams\.siRadii\b/g, "uSiRadii")
+      .replace(/\bparams\.siFlags\.x\b/g, "uSiUnit")
+      .replace(/\bsiTable\b/g, "uSiTable");
+    t = t.replace(/\b(\d+)u\b/g, "$1");
+    t = t.replace(
+      /\bselect\(([^,()]+), ([^,()]+), ([^()]+)\)/g,
+      "($3 ? $2 : $1)",
+    );
+    t = t.replace(
+      /\b(?:float|int|bool|vec3|SiResult)\s+(\w+)\s*\[\s*\d+\s*\]/g,
+      "$1",
+    );
+    t = t.replace(/\b(?:float|int|bool|vec3|SiResult)\s+(?=\w)/g, "");
+    t = t.replace(/\b(?:i32|u32|int)\(([\w.]+)\)/g, "$1");
+    return (
+      t.match(
+        /[A-Za-z_]\w*|\d+(?:\.\d*)?(?:e[+-]?\d+)?|[<>=!]=|&&|\|\||\+\+|--|\S/g,
+      ) ?? []
+    );
+  }
+
+  const legacyPairings = [
+    [0, 0, 0, 0, 0],
+    [0, 1, 0, 0, 0],
+    [0, 0, 1, 0, 0],
+    [0, 0, 0, 1, 0],
+    [1, 0, 0, 0, 0],
+    [1, 0, 1, 0, 0],
+    [1, 0, 0, 1, 0],
+    [0, 0, 0, 0, 1],
+    [0, 0, 1, 0, 1],
+    [0, 0, 0, 1, 1],
+    [0, 1, 1, 0, 0],
+    [0, 1, 0, 1, 0],
+  ] as const;
+
+  it("adds no byte to any pre-existing 3D pairing while the flag is off", () => {
+    for (const finish of [0, 1]) {
+      for (const [escape, lens, balloon, plane, bulb] of legacyPairings) {
+        const omitted = surfaceFragmentResolvedFor(
+          escape,
+          lens,
+          balloon,
+          plane,
+          bulb,
+          finish,
+        );
+        const explicit = surfaceFragmentResolvedFor(
+          escape,
+          lens,
+          balloon,
+          plane,
+          bulb,
+          finish,
+          0,
+          undefined,
+          null,
+          null,
+          false,
+          0,
+          0,
+          0,
+          null,
+          0,
+          0,
+          0,
+        );
+        expect(explicit).toBe(omitted);
+        for (const token of [
+          "siEstimate",
+          "uSiTable",
+          "uSiColor",
+          "SurfaceSphereInv3",
+          "SURFACE_SPHERE_INVERSION",
+        ]) {
+          expect(omitted).not.toContain(token);
+        }
+      }
+    }
+  });
+
+  it("replaces the descent bodies wholesale, leaving no unresolved variant conditional", () => {
+    const source = siSource();
+    expect(countOccurrences(source, "float surfaceDE(")).toBe(3);
+    expect(source).toContain("layout(std140) uniform SurfaceSphereInv3 {");
+    expect(source).toContain(
+      `vec4 uSiTable[${SURFACE_SPHERE_INVERSION_TABLE_ENTRIES}];`,
+    );
+    expect(source).toContain(
+      `vec4 uSiColor[${SURFACE_SPHERE_INVERSION_COLOR_SLOTS}];`,
+    );
+    expect(source).toContain(
+      "base = uSiColor[clamp(firstChoice, 0, uSiCounts.z + 2)].rgb;",
+    );
+    expect(source).not.toContain("uMapColor[clamp(firstChoice");
+    expect(source).not.toContain("fcQ");
+    expect(source).not.toContain("surfaceDECore");
+    expect(source).not.toContain("bulbPow8");
+    expect(source).not.toContain("uEscParams");
+    for (const arm of [
+      "#if SURFACE_SPHERE_INVERSION",
+      "#if SURFACE_ESCAPE",
+      "#if SURFACE_BULB",
+      "#if SURFACE_FOLD_LENS",
+    ]) {
+      expect(source).not.toContain(arm);
+    }
+    expect(countOccurrences(source, "float inversionDistanceLowerBound(")).toBe(
+      1,
+    );
+  });
+
+  it("is the WGSL core's estimator statement for statement, the dialects normalized", () => {
+    const wgsl = sphereInversionWgslSource(3);
+    const wgslBody = wgsl.slice(wgsl.indexOf("fn siCenter("));
+    const glsl = siSource();
+    const glslBody = glsl.slice(
+      glsl.indexOf("vec3 siCenter(int i)"),
+      glsl.indexOf("float surfaceDE(vec3 p, float cutoff)"),
+    );
+    const w = siTokens(wgslBody);
+    const g = siTokens(glslBody);
+    // The comparison is not vacuous: it spans every helper and both scans.
+    expect(w.length).toBeGreaterThan(1200);
+    for (const name of [
+      "siCenter",
+      "siMember",
+      "siEstimate",
+      "siGeneration",
+      "siSeedMember",
+      "inversionDistanceLowerBound",
+    ]) {
+      expect(g).toContain(name);
+    }
+    expect(g).toEqual(w);
+  });
+
+  it("carries the WGSL hit-info's attribution: generation slot, trap over D + 2, fold ring, seed member", () => {
+    const source = siSource();
+    expect(source).toContain("firstChoice = generation;");
+    expect(source).toContain(
+      "trap = clamp(float(generation) / float(uSiCounts.z + 2), 0.0, 1.0);",
+    );
+    expect(source).toContain("rings = clamp(res.ring, 0.0, 1.0);");
+    expect(source).toContain(
+      "sheets = member < 0 ? 0.0 : float(member + 1) / float(uSiCounts.y + 1);",
+    );
+  });
+
+  it("keeps the arm unstripped and every pairing with the floor, finish and lighting under the Mesa cliff", () => {
+    for (const finish of [0, 1]) {
+      const resolved = surfaceFragmentResolvedFor(
+        0,
+        0,
+        0,
+        0,
+        0,
+        finish,
+        0,
+        undefined,
+        null,
+        null,
+        false,
+        0,
+        0,
+        0,
+        null,
+        0,
+        0,
+        1,
+      );
+      expect(resolved.length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+      expect(siSource(0, finish)).toBe(resolved);
+    }
+    for (const plane of [0, 1]) {
+      for (const finish of [0, 1]) {
+        for (const lighting of [0, 1]) {
+          const emitted = siSource(plane, finish, lighting);
+          expect(emitted.length).toBeLessThan(80 * 1024);
+          if (plane) expect(emitted).toContain("shadeGroundPlane");
+          if (finish) expect(emitted).toContain("finishShade(");
+          if (lighting) expect(emitted).toContain("cinematicSurface");
+        }
+      }
+    }
+  });
+
+  it("refuses to compile with every arm it replaces or cannot wrap", () => {
+    const base = [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      undefined,
+      null,
+      null,
+      false,
+      0,
+      0,
+      0,
+      null,
+      0,
+      0,
+      1,
+    ] as Parameters<typeof surfaceFragmentFor>;
+    const withArg = (i: number, v: unknown) => {
+      const args = [...base] as unknown[];
+      args[i] = v;
+      return args as Parameters<typeof surfaceFragmentFor>;
+    };
+    const sphere = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.3 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    for (const args of [
+      withArg(0, 1),
+      withArg(1, 1),
+      withArg(2, 1),
+      withArg(4, 1),
+      withArg(6, 1),
+      withArg(8, sphere),
+      withArg(9, [sphere]),
+      withArg(12, 1),
+      withArg(13, 1),
+      withArg(14, resolveTiling({ group: "a3" })!),
+      withArg(15, 1),
+    ]) {
+      expect(() => surfaceFragmentResolvedFor(...args)).toThrow(
+        /SURFACE_SPHERE_INVERSION cannot compile with/,
+      );
+    }
+  });
+
+  it("sizes its block to every 3D registry construction at the deepest legal depth, and to no 4D one", () => {
+    let fitted = 0;
+    for (const [id, arrangement] of Object.entries(
+      SPHERE_INVERSION_ARRANGEMENTS,
+    )) {
+      if (arrangement.dim !== 3) continue;
+      for (const kind of SPHERE_INVERSION_SEED_KINDS) {
+        const de = siDE({
+          arrangement: id,
+          seed: { kind },
+          depth: SPHERE_INVERSION_MAX_DEPTH,
+        });
+        expect(sphereInversionFitsFragmentArm(de)).toBe(true);
+        const gpu = packSphereInversionGpuTables(de);
+        expect(gpu.data.length).toBeLessThanOrEqual(
+          SURFACE_SPHERE_INVERSION_TABLE_ENTRIES * 4,
+        );
+        expect(sphereInversionGenerationSlots(de.depth)).toBeLessThanOrEqual(
+          SURFACE_SPHERE_INVERSION_COLOR_SLOTS,
+        );
+        fitted++;
+      }
+    }
+    expect(fitted).toBe(9);
+    // ico12 cut shell is the worst case, exactly at the caps; the block is
+    // 3,488 B against WebGL2's guaranteed 16,384 B.
+    expect(SURFACE_SPHERE_INVERSION_TABLE_ENTRIES).toBe(183);
+    expect(SURFACE_SPHERE_INVERSION_COLOR_SLOTS).toBe(35);
+    expect(
+      (SURFACE_SPHERE_INVERSION_TABLE_ENTRIES +
+        SURFACE_SPHERE_INVERSION_COLOR_SLOTS) *
+        16,
+    ).toBeLessThanOrEqual(16384);
+    const vault = resolveSphereInversion({
+      arrangement: "cell600",
+      seed: { kind: "cutShell", size: 0.9, thickness: 0.04 },
+      depth: 5,
+    });
+    if (!vault.ok) throw new Error(vault.reasons.join("; "));
+    expect(
+      sphereInversionFitsFragmentArm(
+        buildSphereInversionDE4(vault.construction),
+      ),
+    ).toBe(false);
+  });
+
+  it("setSphereInversionSystem packs the WGSL table wire unchanged and the header the WGSL params carry", () => {
+    const material = createSurfaceMaterial();
+    const de = siDE({
+      arrangement: "ico12",
+      seed: { kind: "cutShell" },
+      depth: 5,
+    });
+    const colors = siColors(5);
+    setSphereInversionSystem(material, de, colors);
+
+    expect(material.defines.SURFACE_SPHERE_INVERSION).toBe(1);
+    expect(material.defines.SURFACE_ESCAPE).toBe(0);
+    expect(material.defines.SURFACE_BULB).toBe(0);
+    expect(material.defines.SURFACE_FOLDS).toBe(0);
+    expect(material.fragmentShader).toContain("siEstimate");
+    const group = siBlock(material);
+    expect(group).toBeDefined();
+    const gpu = packSphereInversionGpuTables(de);
+    const table = group!.uniforms[0] as THREE.Uniform<Float32Array>;
+    const colorLane = group!.uniforms[1] as THREE.Uniform<Float32Array>;
+    expect(Array.from(table.value.slice(0, gpu.data.length))).toEqual(
+      Array.from(gpu.data),
+    );
+    expect(table.value.slice(gpu.data.length).every((v) => v === 0)).toBe(true);
+    expect(Array.from(colorLane.value.slice(0, 8))).toEqual(
+      Array.from(new Float32Array([...colors[0], 1, ...colors[1], 1])),
+    );
+    const u = material.uniforms;
+    expect(u.uSiCounts.value).toEqual([12, 3, 5, 14]);
+    const radii = u.uSiRadii.value as THREE.Vector4;
+    expect(radii.toArray()).toEqual([
+      gpu.uniformRadius,
+      gpu.uniformRadius * gpu.uniformRadius,
+      SPHERE_INVERSION_GPU_POLE_FLOOR ** 2,
+      SPHERE_INVERSION_GPU_SLACK,
+    ]);
+    expect(u.uSiUnit.value).toBe(1);
+    expect(u.uBoundingRadius.value).toBe(de.boundingRadius);
+    expect(u.uVisibleRadius.value).toBe(de.boundingRadius);
+    expect(u.uStepScale.value).toBe(1);
+    expect(u.uMapCount.value).toBe(1);
+  });
+
+  it("the wire on the material reproduces the CPU oracle through the kernel's f32 twin", () => {
+    for (const authored of [
+      { arrangement: "oct6", seed: { size: 0.28 }, depth: 8 },
+      { arrangement: "cube8", seed: { kind: "shell" }, depth: 7 },
+      { arrangement: "ico12", seed: { kind: "cutShell" }, depth: 5 },
+    ]) {
+      const material = createSurfaceMaterial();
+      const de = siDE(authored);
+      setSphereInversionSystem(material, de, siColors(de.depth));
+      const u = material.uniforms;
+      const [n, s, depth, stride] = u.uSiCounts.value as number[];
+      const table = (
+        siBlock(material)!.uniforms[0] as THREE.Uniform<Float32Array>
+      ).value;
+      const onMaterial: SphereInversionGpuTables = {
+        dim: 3,
+        data: table.slice(0, (n + s + n * stride) * 4),
+        generatorCount: n,
+        seedCount: s,
+        depth,
+        termStride: stride,
+        uniformUnit: u.uSiUnit.value === 1,
+        uniformRadius: (u.uSiRadii.value as THREE.Vector4).x,
+        boundingRadius: u.uBoundingRadius.value as number,
+      };
+      const rng = mulberry32(0x51ab);
+      let positive = 0;
+      for (let i = 0; i < 400; i++) {
+        const q: Vec3 = [
+          (2 * rng() - 1) * de.boundingRadius,
+          (2 * rng() - 1) * de.boundingRadius,
+          (2 * rng() - 1) * de.boundingRadius,
+        ];
+        const cpu = estimateSphereInversionDistance(de, q);
+        const hit = sphereInversionHitInfo(de, q);
+        const twin = sphereInversionF32(onMaterial, q);
+        expect(Math.abs(twin.d - cpu)).toBeLessThanOrEqual(
+          4 * SPHERE_INVERSION_GPU_SLACK,
+        );
+        if (cpu > 0) {
+          positive++;
+          expect(twin.d).toBeLessThanOrEqual(cpu);
+        }
+        expect([twin.generation, twin.seedMember]).toEqual([
+          hit.depth,
+          hit.seedMember,
+        ]);
+      }
+      expect(positive).toBeGreaterThan(200);
+    }
+  });
+
+  it("clamps the hit floor to the slack over the bounding radius, the WGSL packer's clamp", () => {
+    expect(sphereInversionHitFloor(1e-5, 1.7)).toBe(1e-5);
+    expect(sphereInversionHitFloor(1e-7, 1.7)).toBe(
+      SPHERE_INVERSION_GPU_SLACK / 1.7,
+    );
+    expect(1.7 * sphereInversionHitFloor(1e-7, 1.7)).toBeCloseTo(
+      SPHERE_INVERSION_GPU_SLACK,
+      15,
+    );
+  });
+
+  it("refuses 4D tables and a colour count that is not one per generation", () => {
+    const material = createSurfaceMaterial();
+    const de = siDE({ arrangement: "oct6", depth: 4 });
+    expect(() => setSphereInversionSystem(material, de, siColors(3))).toThrow(
+      RangeError,
+    );
+    const vault = resolveSphereInversion({ arrangement: "cross8", depth: 3 });
+    if (!vault.ok) throw new Error(vault.reasons.join("; "));
+    expect(() =>
+      setSphereInversionSystem(
+        material,
+        buildSphereInversionDE4(vault.construction),
+        siColors(3),
+      ),
+    ).toThrow(RangeError);
+  });
+
+  it("keeps the arm through floor, balloon-off and lighting rebuilds, and preserves an authored finish", () => {
+    const material = createSurfaceMaterial();
+    material.defines.SURFACE_FINISH = 1;
+    const de = siDE({ arrangement: "oct6", depth: 4 });
+    setSphereInversionSystem(material, de, siColors(4));
+    expect(material.fragmentShader).toContain("finishShade(");
+    setSurfaceGroundPlane(material, {
+      y: -1.5,
+      fadeStart: 3,
+      fadeEnd: 9,
+      ballCenter: [0, 0, 0],
+      ballRadius: de.boundingRadius,
+      albedo: [0.4, 0.5, 0.6],
+      pattern: 1,
+      tileScale: 0.64,
+      emission: 0,
+    });
+    expect(material.fragmentShader).toContain("siEstimate");
+    expect(material.fragmentShader).toContain("shadeGroundPlane");
+    setSurfaceBalloon(material, null);
+    setSurfaceGroundPlane(material, null);
+    expect(material.fragmentShader).toContain("siEstimate");
+    expect(material.fragmentShader).not.toContain("shadeGroundPlane");
+  });
+
+  it("drops a balloon it cannot compose with", () => {
+    const material = createSurfaceMaterial();
+    setSurfaceSystem(material, de3([map3()]), [black]);
+    setSurfaceBalloon(material, { center: [0, 0, 0], R: 1, rho: 1, far: 2 });
+    expect(material.defines.SURFACE_BALLOON).toBe(1);
+    setSphereInversionSystem(
+      material,
+      siDE({ arrangement: "oct6" }),
+      siColors(8),
+    );
+    expect(material.defines.SURFACE_BALLOON).toBe(0);
+    expect(material.fragmentShader).toContain("siEstimate");
+  });
+
+  it("hands the descent bodies back and detaches its block when another system installs over it", () => {
+    const material = createSurfaceMaterial();
+    const de = siDE({ arrangement: "cube8", depth: 3 });
+    setSphereInversionSystem(material, de, siColors(3));
+    expect(siBlock(material)).toBeDefined();
+
+    setSurfaceSystem(material, de3([map3()]), [black]);
+    expect(material.defines.SURFACE_SPHERE_INVERSION).toBeUndefined();
+    expect(siBlock(material)).toBeUndefined();
+    expect(material.fragmentShader).not.toContain("siEstimate");
+
+    setSphereInversionSystem(material, de, siColors(3));
+    setBulbSystem(
+      material,
+      buildBulbDE([
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "bulb", weight: 1 }],
+        },
+      ]),
+      black,
+    );
+    expect(material.defines.SURFACE_SPHERE_INVERSION).toBeUndefined();
+    expect(siBlock(material)).toBeUndefined();
+    expect(material.fragmentShader).toContain("bulbPow8");
   });
 });
 

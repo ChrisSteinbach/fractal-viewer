@@ -39,6 +39,7 @@ import {
 import { sliceColorRemap, SLICE_GHOST_FLOOR } from "../fractal/project4";
 import { clamp, clone3 } from "../fractal/vec";
 import type { ShapeTrap, Transform, Vec3, Vec4 } from "../fractal/types";
+import type { SphereInversionTables } from "../fractal/sphere-inversion";
 import type { Mat4 } from "../fractal/flame";
 import { presentationFloorSpec } from "../fractal/presentation-floor";
 import type { VoxelMaxHierarchy } from "../fractal/voxel-max-hierarchy";
@@ -91,6 +92,8 @@ import {
   setSurfaceGrid as packSurfaceGrid,
   setSurfaceGridEnabled as packSurfaceGridEnabled,
   setBulbSystem as packBulbSystem,
+  setSphereInversionSystem as packSphereInversionSystem,
+  sphereInversionHitFloor,
   setEscapeSystem as packEscapeSystem,
   setSurfaceShapeTrapUniforms as packSurfaceShapeTrapUniforms,
   setSurfaceBalloon as packSurfaceBalloon,
@@ -4848,6 +4851,43 @@ export class FractalScene {
   }
 
   /**
+   * The sphere-inversion seed orbit's WebGL fallback (`?surfacegl`, no
+   * adapter, device loss): {@link setBulbSystem}'s install with the
+   * construction's tables and one colour per generation, flipping the
+   * material onto the SURFACE_SPHERE_INVERSION arm. No grid (gridless by
+   * decision, like the compute route), no balloon (refused for this
+   * family), the origin ball as focus, lighting and floor ball — the
+   * compute entry's choices — and the construction depth as the preview
+   * clamp the arm itself does not read.
+   */
+  setSphereInversionSystem(
+    tables: SphereInversionTables,
+    colors: readonly Vec3[],
+  ): void {
+    this.renderNeeded = true;
+    this.dropSurfaceGridTexture();
+    this.surfaceShapeTrap = null;
+    this.surfaceShapeTrapLive = false;
+    packSphereInversionSystem(this.surfaceMaterial, tables, colors);
+    const R = tables.boundingRadius;
+    this.surfaceLightingBoundRadius = R;
+    this.surfaceFocusBall = { center: [0, 0, 0], radius: R };
+    this.surfaceBalloonBall = null;
+    this.applySurfaceBalloon();
+    this.surfaceGroundBall = { center: [0, 0, 0], radius: R };
+    this.applySurfaceGroundPlane();
+    this.activeSurfaceMaterial = this.surfaceMaterial;
+    this.surfaceQuad.material = this.surfaceMaterial;
+    this.installSurfaceDepth(tables.depth, null);
+    this.surfacePreviewGovernor.reset();
+    this.surfacePreviewPxCostMs = null;
+    this.surfaceFullPxCostMs = null;
+    this.surfaceDeFoldClass = false;
+    this.stripEvidence.reset();
+    this.flushStripBacklog();
+  }
+
+  /**
    * Mandelbulb sibling of {@link setEscapeSystem}: upload the
    * single triplex-power map's forward affine and flip the material onto
    * the SURFACE_BULB variant. Everything else about the mode — tiers,
@@ -7781,9 +7821,16 @@ export class FractalScene {
           ? SURFACE_PREVIEW_AO_TAPS
           : SURFACE_FULL_AO_TAPS
         : 0;
-    u.uHitFloor.value = preview
+    const hitFloor = preview
       ? SURFACE_PREVIEW_HIT_FLOOR
       : this.surfaceFullHitFloor();
+    // The sphere-inversion arm subtracts an absolute f32 slack from its
+    // bound, so acceptance may never fall below it (the WGSL packer's clamp,
+    // sphereInversionHitFloor): the zoom floor that implies is the family's.
+    u.uHitFloor.value =
+      this.activeSurfaceMaterial.defines.SURFACE_SPHERE_INVERSION === 1
+        ? sphereInversionHitFloor(hitFloor, u.uBoundingRadius.value as number)
+        : hitFloor;
     return background;
   }
 
