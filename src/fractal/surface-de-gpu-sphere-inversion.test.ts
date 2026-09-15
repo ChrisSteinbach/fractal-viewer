@@ -10,11 +10,16 @@ import {
   SURFACE_GPU_PARAMS4_SPHERE_INV_BYTES,
   SURFACE_GPU_PARAMS_PLANE_BYTES,
   SURFACE_GPU_PARAMS_SPHERE_INV_BYTES,
+  surfaceDeKernelWgsl,
 } from "./surface-de-gpu";
-import type { SurfaceGpuGroundPlane } from "./surface-de-gpu";
+import type {
+  SurfaceGpuGroundPlane,
+  SurfaceGpuKernelOptions,
+} from "./surface-de-gpu";
 import {
   packSphereInversionGpuTables,
   SPHERE_INVERSION_GPU_SLACK,
+  sphereInversionWgslSource,
 } from "./surface-sphere-inversion-gpu";
 
 function tables3(authored: SphereInversionAuthored) {
@@ -177,5 +182,119 @@ describe("packSphereInversion4GpuParams (4D, core sphereInv4)", () => {
         { itemCount: 1 },
       ),
     ).toThrow(/no slab/);
+  });
+});
+
+describe("surfaceDeKernelWgsl sphere-inversion cores", () => {
+  const opts = (
+    core: "sphereInv" | "sphereInv4",
+    mode: "eval" | "march" | "shade",
+    extra: Partial<SurfaceGpuKernelOptions> = {},
+  ): SurfaceGpuKernelOptions => ({
+    core,
+    mode,
+    width: 4,
+    workgroupSize: 16,
+    sharedFrontier: false,
+    bnbStage2: false,
+    ...extra,
+  });
+
+  it("emits the shared estimator body over a vec4f table at binding 1, with no descent maps or frontier", () => {
+    for (const [core, dim] of [
+      ["sphereInv", 3],
+      ["sphereInv4", 4],
+    ] as const) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        const src = surfaceDeKernelWgsl(opts(core, mode));
+        expect(src).toContain(sphereInversionWgslSource(dim));
+        expect(src).toContain(
+          "@group(0) @binding(1) var<storage, read> siTable: array<vec4f>;",
+        );
+        expect(src).not.toContain("struct GpuMap");
+        expect(src).not.toContain("frontierIx");
+        expect(src).toContain(
+          "fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32",
+        );
+      }
+    }
+    expect(surfaceDeKernelWgsl(opts("sphereInv4", "eval"))).toContain(
+      "return siEstimate(liftSphereInv4(pIn)).d;",
+    );
+  });
+
+  it("declares the header at the variant block and keeps the plane block's frozen offset through the pads", () => {
+    const plane3 = surfaceDeKernelWgsl(
+      opts("sphereInv", "shade", { groundPlane: true }),
+    );
+    expect(plane3).toMatch(
+      /fogDensity: f32,\s*\/\/[^\n]*\n\s*siCounts: vec4u,\s*\/\/[^\n]*\n\s*siRadii: vec4f,\s*\/\/[^\n]*\n\s*siFlags: vec4u,[\s\S]*?siPad: vec4f,\s*padF: vec4f,\s*groundY/,
+    );
+    const plane4 = surfaceDeKernelWgsl(
+      opts("sphereInv4", "shade", { groundPlane: true }),
+    );
+    expect(plane4).toMatch(
+      /pad4b: f32,[\s\S]*?siFlags: vec4u,[\s\S]*?siPad4: array<vec4f, 4>,\s*groundY/,
+    );
+    // Without a floor nothing needs to land past the header.
+    expect(surfaceDeKernelWgsl(opts("sphereInv4", "shade"))).not.toContain(
+      "siPad4",
+    );
+  });
+
+  it("attributes a hit by generation, closest radial approach and seed member", () => {
+    const src = surfaceDeKernelWgsl(opts("sphereInv", "shade"));
+    expect(src).toContain("info.firstChoice = i32(generation);");
+    expect(src).toContain(
+      "info.trap = clamp(f32(generation) / f32(params.siCounts.z + 2u), 0.0, 1.0);",
+    );
+    expect(src).toContain("info.rings = clamp(res.ring, 0.0, 1.0);");
+    // The 4D radius colour ramp lifts through this core's own view lift.
+    expect(surfaceDeKernelWgsl(opts("sphereInv4", "shade"))).toContain(
+      "let q4c = liftSphereInv4(pos);",
+    );
+  });
+
+  it("treats the frontier, probe-width, slab-extent and maps-address options as inert", () => {
+    for (const core of ["sphereInv", "sphereInv4"] as const) {
+      const base = surfaceDeKernelWgsl(opts(core, "shade"));
+      for (const extra of [
+        { width: 12 },
+        { shadeDeWidth: 1 },
+        { sharedFrontier: true },
+        { bnbStage2: true },
+        { slabExt: false },
+        { mapsUniform: true },
+      ]) {
+        expect(surfaceDeKernelWgsl(opts(core, "shade", extra))).toBe(base);
+      }
+    }
+  });
+
+  it("refuses every feature outside the first cut's composition, naming the reason", () => {
+    const refused: Partial<SurfaceGpuKernelOptions>[] = [
+      { lens: true },
+      { balloon: true },
+      { pattern: true },
+      { optics: true },
+      { slabCover: true },
+      { schedule: { mapCount: 1, scheduleMapCount: 1 } },
+      { chaos: { activeStateCount: 2, predecessorMasks: [3, 3] } },
+    ];
+    for (const core of ["sphereInv", "sphereInv4"] as const) {
+      for (const extra of refused) {
+        expect(() => surfaceDeKernelWgsl(opts(core, "shade", extra))).toThrow(
+          new RegExp(`the ${core} core refuses`),
+        );
+      }
+      for (const extra of [
+        { groundPlane: true, finish: true },
+        { lighting: true },
+      ]) {
+        expect(() =>
+          surfaceDeKernelWgsl(opts(core, "shade", extra)),
+        ).not.toThrow();
+      }
+    }
   });
 });
