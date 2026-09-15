@@ -531,6 +531,66 @@ same-boundary suppression (2·eps quantization; f32-vs-f64 field rounding
 near the band's edge moves the band exit by one step — disclosed, not
 absorbed).
 
+### The real-app invalidation sweep
+
+The envelope leg's mid-flight cancel probe is one renderer-level datum; the
+real-app question — do the app's own invalidation and teardown paths drain
+the transport state correctly — is its own sweep:
+`scripts/surface-transport-invalidation.verify.mjs` drives the BUILT app
+(`npm run build && npm run preview &`) through every path, entered FROM THE
+UI, on transmission-live sessions in BOTH dimensions — the Sierpinski tetra
+(`?surfacecompute` forces the compute tracer past the plain-affine WebGL
+verdict) and the w-lifted pentatope (4D routes compute on its own), the
+dielectric authored on every transform, pinned cameras, `reducedMotion:
+reduce` so the pinned pose is the only view mover (a camera glide is
+rAF-sampled; without the emulation its settled endpoint's last bits differ
+per boot and ~0.1% of grazing pixels flip hit/miss, which eats the identity
+claim). THE PREMISE IS ASSERTED PER RUN: `engine === "compute"` AND
+`?surfacetrace`'s ring carries `transport pass=` lines — otherwise exit 2.
+
+The app does not yet select the closed-solid backend (that routing is the
+starter-scene task's), so the sweep drives the ESTIMATOR query — the lane
+pays its buffers, dispatches, replay passes and cancellation generations
+whatever the samples resolve, and on IFS geometry every inside path refuses
+(the disclosed vacuous state). That is the right subject for THIS criterion:
+it is the invalidation/drain of the transport STATE under test, not optical
+resolution. The arms, all green on the quiet RX 7900 XTX (2026-09-15,
+launcher quiet=YES):
+
+- **settle + reload identity** (both dimensions): the transmission-live
+  session settles, draws, runs the lane; two fresh RELOADS of the same
+  document reproduce each other BYTE FOR BYTE (`maxDelta === 0`). The
+  identity claim is deliberately reload-vs-reload, not first-boot-vs-reload:
+  the first boot's surface entry auto-fits the camera once (the pinned pose
+  wins from the second boot on, measured as a ~0.3% edge-flip delta between
+  boot #1 and every later boot) — the camera-tween's concern, not the
+  transport state's. What the pair proves is the criterion's question: a
+  restart re-seeds the transport state, and a replay lane that retained
+  anything across sessions would show it.
+- **mid-trace edits** (camera drags in 3D; slice-toggle + slice-position in
+  4D), two rounds per page, fired while `previewActive || settleActive`:
+  each edit observably invalidates (`settled` goes false), the following
+  settle completes, and the lane runs again — the frame-token discard that
+  stops old-camera transport work from landing after an edit.
+- **mode exit mid-settle** (both dimensions): Points clicked while the
+  settle is in flight; the session exits (`RenderSession.terminate` — the
+  teardown the Floor checkbox reaches too), re-enters, settles again with
+  the lane live.
+- **restart storm** (3D): the Floor checkbox toggled 6x mid-settle — every
+  toggle lands against a renderer with transport buffers allocated;
+  post-storm settle completes with the lane live, no page errors.
+- **device failure** (3D): the browser's GPU process is SIGKILLed
+  mid-settle (found by ppid ancestry — the desktop's own browser runs one
+  too), a REAL `device.lost`. The page survives, the renderer's lost path
+  fires ("Surface compute device lost"; the onLost re-enter lands back in
+  surface mode), no uncaught errors. The WebGL fallback's CANVAS liveness
+  after a GPU-process death is deliberately NOT asserted: the main GL
+  context is lost with the same process and the app does not handle WebGL
+  context restoration.
+
+Exit codes: 0 pass, 3 fail, 2 inconclusive (the lane never went live), 1
+harness failure.
+
 ### Capability matrix, updated
 
 | Core / wrapper                                | Transport status now                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
@@ -584,6 +644,10 @@ export XAUTHORITY=$(ls -t /run/user/$(id -u)/.mutter-Xwaylandauth.* | head -1)
 export DISPLAY=:0
 glxinfo -B | grep "OpenGL renderer"   # must NOT be SwiftShader/llvmpipe
 npm run bench:surface -- --display=:0
+
+# The real-app invalidation sweep (built app, quiet real driver):
+npm run build && npm run preview &
+node scripts/surface-transport-invalidation.verify.mjs --display=:0
 ```
 
 The unit suite pins the optics (including the emitted `js` dialect executing
