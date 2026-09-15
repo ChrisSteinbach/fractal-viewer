@@ -119,29 +119,35 @@ export interface SurfaceEligibilityDocument {
  * is the arrangement's (`scene-dimension.ts`), carried in the kind:
  * `"sphereInversion"` (3D) or `"sphereInversion4"` (native 4D).
  *
- * COMBINATION POLICY with the scene features, decided here and recorded with
- * each lift's shape in `docs/sphere-inversion-family.md`:
- *   - REFUSED (document): Space tiling, a kaleidoscope (order > 1), a final
- *     transform lens, a shape trap. None has a composition argument over the
- *     inversion group yet, so each blocks the route with its reason rather
- *     than being silently ignored.
+ * COMBINATION POLICY with the scene features, split by OWNERSHIP
+ * (`docs/sphere-inversion-gpu.md`'s amendment to decision 3), each lift's
+ * shape recorded in `docs/sphere-inversion-family.md`:
+ *   - DORMANT, DISCLOSED: state the block's subject REPLACES — the transform
+ *     system's kaleidoscope, its final lens and its per-transform finishes.
+ *     The document keeps them, the render does not read them, the note says
+ *     so, and removing the block restores them untouched. A user should not
+ *     have to delete the IFS scene's own settings to render the block. The
+ *     hybrid schedule, condensation band, emitters and xaos rows are the
+ *     replaced system's structure and are not read either (not disclosed:
+ *     nothing about them could be mistaken for a setting of this subject).
+ *   - REFUSED (document): renderer composition applied TO the subject that
+ *     no certificate covers yet — Space tiling and a shape trap.
  *   - REFUSED (session, {@link sphereInversionSessionRefusal}): Balloon.
  *   - REFUSED AND CLAMPED (session): 4D slice thickness — the slab has no
  *     certificate for this family (`sphere-inversion-de-4d.ts`), so a 4D
  *     session holds it at zero and discloses {@link SPHERE_INVERSION_SLAB_REFUSAL}.
- *   - COMPOSES: the ground plane, which reads only the session ball (the
- *     estimator's origin-centred `boundingRadius`, the full 4D radius in 4D)
- *     and lights its floor with probe taps a certified lower bound serves.
- *   - NOT READ, DISCLOSED: per-transform finishes. They are material lanes of
- *     the replaced transform system, keyed on transform slots this subject
- *     does not have (its attribution is generator, word and seed member), so
- *     they stay dormant on the preserved transforms instead of blocking entry.
- *     The hybrid schedule, condensation band, emitters and xaos rows are the
- *     replaced system's structure and are not read either.
+ *   - COMPOSES: the ground plane (it reads only the session ball: the
+ *     estimator's origin-centred `boundingRadius`, the full 4D radius in 4D),
+ *     authored lighting rigs and supersampling.
  *
- * NO RENDERER SHIPS YET: `opts.sphereInversionRenderer` is absent in the app,
- * so an admissible block is refused with that reason; the renderer work
- * supplies its real availability. Tests set it to pin the kinds.
+ * Every disclosure rides the "degraded" channel, because the Surface gate
+ * shows a note only for a degraded or ineligible route: a dormant setting
+ * disclosed on an "eligible" result would never reach the user.
+ *
+ * ENGINE: WebGPU compute (`core: "sphereInv"` / `"sphereInv4"`). Neither
+ * dimension has a fragment arm yet ({@link sphereInversionHasFragmentArm}),
+ * so without compute the route is refused with that reason — never handed to
+ * a WebGL tracer, which would draw the transform system instead.
  */
 function deriveSphereInversionEligibility(
   block: SphereInversionAuthored,
@@ -166,16 +172,6 @@ function deriveSphereInversionEligibility(
       "Space tiling is not available with a sphere-inversion scene (no tiling wrapper certifies its estimator yet)",
     );
   }
-  if (symmetry.order > 1) {
-    refusals.push(
-      "a kaleidoscope is not available with a sphere-inversion scene (the arrangement carries its own symmetry, and a sector sweep over the inversion group has no certificate)",
-    );
-  }
-  if (finalTransform) {
-    refusals.push(
-      "a final transform lens is not available with a sphere-inversion scene (no lens wrapper certifies its estimator yet)",
-    );
-  }
   if (shapeTrap) {
     refusals.push(
       "a shape trap is not available with a sphere-inversion scene (the inversion fold has no trap accumulator)",
@@ -188,30 +184,76 @@ function deriveSphereInversionEligibility(
       kind: null,
     };
   }
-  const fourD = resolution.construction.dim === 4;
-  const disclosures = [...resolution.eligibility.degradations];
-  if (transforms.some((t) => t.finish !== undefined)) {
-    disclosures.push(
-      "per-transform finishes belong to the replaced transform system and are not read",
-    );
-  }
-  if (fourD) disclosures.push(SPHERE_INVERSION_SLAB_REFUSAL);
-  if (!opts.sphereInversionRenderer) {
+  const dim = resolution.construction.dim;
+  if (!opts.computeAvailable && !sphereInversionHasFragmentArm(dim)) {
     return {
       status: "ineligible",
-      note:
-        `The sphere-inversion Surface renderer is not yet available; this ${fourD ? "native 4D" : "3D"} construction resolves` +
-        (disclosures.length > 0 ? ` (${disclosures.join("; ")})` : ""),
+      note: `${dim === 4 ? "native 4D" : "3D"} sphere-inversion scenes render on WebGPU compute, which is unavailable here`,
       kind: null,
     };
   }
+  const disclosures = [...resolution.eligibility.degradations];
+  disclosures.push(
+    ...sphereInversionDormantDisclosures(transforms, finalTransform, symmetry),
+  );
+  if (dim === 4) disclosures.push(SPHERE_INVERSION_SLAB_REFUSAL);
   return {
     status:
-      resolution.eligibility.status === "degraded" ? "degraded" : "eligible",
+      disclosures.length > 0 || resolution.eligibility.status === "degraded"
+        ? "degraded"
+        : "eligible",
     note: disclosures.length > 0 ? disclosures.join("; ") : null,
-    kind: fourD ? "sphereInversion4" : "sphereInversion",
+    kind: dim === 4 ? "sphereInversion4" : "sphereInversion",
   };
 }
+
+/**
+ * The ONE routing predicate a sphere-inversion fragment arm flips: whether
+ * the WebGL tracers can draw a block of dimension `dim`. False in both today
+ * — the scene is COMPUTE-ONLY, refused at the gate without compute and
+ * exited with a toast on a mid-session device loss. The 3D GLSL arm
+ * (`docs/sphere-inversion-gpu.md` section 6) changes the 3D answer to true;
+ * the 4D answer stays false (the 600-cell tables fit no uniform block).
+ */
+export function sphereInversionHasFragmentArm(dim: 3 | 4): boolean {
+  return SPHERE_INVERSION_FRAGMENT_ARMS[dim];
+}
+
+const SPHERE_INVERSION_FRAGMENT_ARMS: Readonly<Record<3 | 4, boolean>> = {
+  3: false,
+  4: false,
+};
+
+/**
+ * The DORMANT half of the ownership split: which replaced-system settings
+ * the document carries but a sphere-inversion render does not read, one
+ * clause each. Shared by the Surface gate's note and the panel's
+ * beside-the-control notes so the wording cannot drift between them.
+ */
+export function sphereInversionDormantDisclosures(
+  transforms: readonly Transform[],
+  finalTransform: Transform | null,
+  symmetry: SymmetryParams,
+): string[] {
+  const dormant: string[] = [];
+  if (symmetry.order > 1) {
+    dormant.push(SPHERE_INVERSION_DORMANT_KALEIDOSCOPE);
+  }
+  if (finalTransform) {
+    dormant.push(SPHERE_INVERSION_DORMANT_LENS);
+  }
+  if (transforms.some((t) => t.finish !== undefined)) {
+    dormant.push(SPHERE_INVERSION_DORMANT_FINISHES);
+  }
+  return dormant;
+}
+
+export const SPHERE_INVERSION_DORMANT_KALEIDOSCOPE =
+  "the kaleidoscope belongs to the replaced transform system and is not read (the arrangement carries its own symmetry)";
+export const SPHERE_INVERSION_DORMANT_LENS =
+  "the final transform lens belongs to the replaced transform system and is not read";
+export const SPHERE_INVERSION_DORMANT_FINISHES =
+  "per-transform finishes belong to the replaced transform system and are not read";
 
 /** The 4D slab refusal every sphere-inversion disclosure shares — the
  * thickness row's note and the gate's. */
@@ -256,13 +298,10 @@ export function sphereInversionRenderModeRefusal(
   return `Flame and Sampled Solid are unavailable for a sphere-inversion scene: neither draws its seed orbit. Points samples the orbit's boundary exactly (at most ${SPHERE_INVERSION_POINTS_MAX.toLocaleString("en-US")} points), and Surface traces it.`;
 }
 
-/** The one machine fact plus the renderer availability the document cannot
- * answer (module doc and {@link deriveSurfaceEligibility}). */
+/** The one machine fact the document cannot answer (module doc and
+ * {@link deriveSurfaceEligibility}). */
 export interface SurfaceEligibilityOptions {
   computeAvailable: boolean;
-  /** Whether a sphere-inversion Surface renderer exists on this machine.
-   * Absent means no: none ships yet. */
-  sphereInversionRenderer?: boolean;
 }
 
 /**
