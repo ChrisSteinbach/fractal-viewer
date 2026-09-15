@@ -196,6 +196,19 @@ describe("normalizeRotorPair", () => {
     });
   });
 
+  it("copies a half that is already unit to rounding bit for bit instead of dividing it by its norm", () => {
+    // A rotor composed by rotateInPlane is unit to within a couple of ulps;
+    // dividing by that norm again would move its last bits.
+    let pair = identityRotorPair();
+    for (let i = 0; i < 40; i++) {
+      pair = rotateInPlane(pair, PLANES[i % PLANES.length], 0.37 + i * 0.11);
+    }
+
+    const restored = normalizeRotorPair(pair.p, pair.q);
+
+    expect(restored).toEqual(pair);
+  });
+
   it("returns fresh arrays: mutating the result doesn't touch the input", () => {
     const p = [2, 0, 0, 0];
     const q = [0, 3, 0, 0];

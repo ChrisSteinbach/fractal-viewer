@@ -219,10 +219,25 @@ export function normalizeRotorPair(
   q: readonly number[],
 ): RotorPair | null {
   if (!isNormalizableHalf(p) || !isNormalizableHalf(q)) return null;
-  return {
-    p: normalize([p[0], p[1], p[2], p[3]]),
-    q: normalize([q[0], q[1], q[2], q[3]]),
-  };
+  return { p: restoreUnitHalf(p), q: restoreUnitHalf(q) };
+}
+
+/** How far a half's norm may sit from 1 and still count as ALREADY unit.
+ * MEASURED: 500-step `rotateInPlane` chains and `slerpRotorPair` outputs
+ * stay within 4.4e-16 (2 ulps) of 1, so 1e-12 is headroom, while a rotor
+ * rounded to a few decimals (the pre-full-precision share link) misses it by
+ * orders of magnitude and is still rescaled. */
+const UNIT_HALF_TOLERANCE = 1e-12;
+
+/** A fresh copy of one validated half on the unit 3-sphere. A half already
+ * unit to rounding is copied BIT FOR BIT rather than divided by its norm:
+ * `q / |q|` moves the last bit of about one pair in fourteen, so an exact
+ * pair written to a share link and restored through here would otherwise
+ * not come back as itself, and the link would not be a fixed point. */
+function restoreUnitHalf(values: readonly number[]): Quat {
+  const half: Quat = [values[0], values[1], values[2], values[3]];
+  const len = Math.hypot(half[0], half[1], half[2], half[3]);
+  return Math.abs(len - 1) <= UNIT_HALF_TOLERANCE ? half : normalize(half);
 }
 
 /** Hamilton dot product of two quaternions, treated as plain 4-vectors — the

@@ -17,7 +17,8 @@ import {
   MAX_CUSTOM_PALETTE_STOPS,
   MIN_CUSTOM_PALETTE_STOPS,
 } from "../fractal/palette";
-import { woodGrain } from "../fractal/presets";
+import { PRESET_VIEWS, woodGrain } from "../fractal/presets";
+import { presetFourDPose } from "./preset-view";
 import {
   CRESCENT_MOON_SHAPE,
   FACETED_CRYSTAL_SHAPE,
@@ -5199,6 +5200,53 @@ describe("decodeScene fourD", () => {
     expect(q[1]).toBeCloseTo(0, 3);
     expect(q[2]).toBeCloseTo(0, 3);
     expect(q[3]).toBeCloseTo(0.2474, 3);
+  });
+
+  it.each(["inversionVault4", "inversionMedallions4"] as const)(
+    "restores %s's authored 4D pose exactly, so its share link is a fixed point",
+    (preset) => {
+      // The pose the preset lands with: an irrational rotor and a slice
+      // normalized against an asymmetric cloud's bounds. 4-decimal rounding
+      // moved its rotor matrix by ~8e-5 and its world w0 by ~6e-5.
+      const fourD = presetFourDPose(PRESET_VIEWS[preset]!.fourD!, {
+        minX: -1.23,
+        maxX: 1.17,
+        minY: -1.09,
+        maxY: 1.31,
+        minZ: -0.97,
+        maxZ: 1.02,
+        minW: -0.88,
+        maxW: 0.93,
+      });
+      const encoded = encodeScene({ ...baseSnapshot(), fourD });
+
+      const decoded = decodeScene(encoded)!;
+
+      expect(decoded.fourD).toEqual(fourD);
+      expect(encodeScene(decoded)).toBe(encoded);
+    },
+  );
+
+  it("still decodes a link whose rotor was written at 4 decimals, renormalizing each half", () => {
+    const raw = {
+      ...baseSnapshot(),
+      fourD: {
+        p: [0.9689, 0.2474, 0, 0],
+        q: [0.9689, 0, 0, 0.2474],
+        sliceOn: true,
+        sliceCenter: 0.0823,
+        sliceThickness: 0,
+        sliceRelColor: false,
+      },
+    };
+
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+
+    const pose = result!.fourD!;
+    const norm = Math.hypot(0.9689, 0.2474);
+    expect(pose.pair.p).toEqual([0.9689 / norm, 0.2474 / norm, 0, 0]);
+    expect(pose.pair.q).toEqual([0.9689 / norm, 0, 0, 0.2474 / norm]);
+    expect(pose.sliceCenter).toBe(0.0823);
   });
 
   it("omits fourD from the encoded payload and decodes back to undefined when the snapshot has none", () => {
