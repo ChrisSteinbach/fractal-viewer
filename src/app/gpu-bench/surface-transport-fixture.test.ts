@@ -9,8 +9,12 @@ import {
   DIELECTRIC_INITIAL_BRANCH_THETA,
   type DielectricMaterial,
 } from "../../fractal/surface-dielectric";
-import { SHAPE_MARCH_SAFETY, shapeSdf } from "../../fractal/shapes";
-import type { ShapeSpec, Vec3 } from "../../fractal/types";
+import {
+  SHAPE_MARCH_SAFETY,
+  shapeSdf,
+  type ShapeSpec,
+} from "../../fractal/shapes";
+import type { Vec3 } from "../../fractal/types";
 
 /**
  * The closed-solid boundary query's traversal laws, pinned against exact

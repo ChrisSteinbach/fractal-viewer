@@ -2635,6 +2635,15 @@ export class SurfaceComputeRenderer {
        * the hit path's output — the codegen throws). */
       materials?: SurfaceMaterialSlots | null;
       lighting?: boolean;
+      /** The optical transport's boundary backend (the kernel option's
+       * doc): `"estimator"` — absent's meaning — marches the composed
+       * public estimator; `"closedSolid"` swaps the signed closed-solid
+       * query over the session's condensation union, which is what
+       * resolves a refracted child. The codegen refuses the backend on
+       * sessions whose composition the base field cannot follow, so a
+       * caller may pass it whenever the session's geometry is the
+       * closed-solid vocabulary and let the throw police the rest. */
+      opticsBackend?: "estimator" | "closedSolid";
     } = {},
   ): Promise<SurfaceComputeRenderer> {
     if (!SurfaceComputeRenderer.supported()) {
@@ -2705,6 +2714,7 @@ export class SurfaceComputeRenderer {
         adapterStatus,
         opts.materials ?? null,
         opts.lighting ?? false,
+        opts.opticsBackend,
       );
       return renderer;
     } catch (e) {
@@ -2724,6 +2734,7 @@ export class SurfaceComputeRenderer {
     adapterStatus: { label: string | undefined; software: boolean },
     materials: SurfaceMaterialSlots | null,
     lighting = false,
+    opticsBackend?: "estimator" | "closedSolid",
   ): Promise<SurfaceComputeRenderer> {
     // The error-scope pair (out-of-memory outside, validation inside):
     // WebGPU's createBuffer never throws on allocation failure — it
@@ -2877,8 +2888,10 @@ export class SurfaceComputeRenderer {
           // The optical transport gate (create()'s opts doc): the wire's
           // own `optics` flag, frozen with the materials it derives from.
           // Structurally inert in march mode — one flag serves both
-          // kernels of the pair.
+          // kernels of the pair. The backend rides the same way; the
+          // codegen refuses compositions the signed field cannot follow.
           optics: materials?.optics ?? false,
+          opticsBackend,
         }),
       });
       const info = await module.getCompilationInfo();
