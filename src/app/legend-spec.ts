@@ -328,6 +328,7 @@ export function deriveLegend({
             state.shapeTrap ?? null,
             state.tiling ?? null,
             state.condensationDepthBand,
+            state.sphereInversion ?? null,
           ).kind
         : null;
       if (kind !== "escape" && kind !== "bulb" && kind !== "escape4") {
