@@ -37,7 +37,12 @@ import type {
  * kaleidoscope" either way. Like `finalTransform`, the consumer must apply
  * this field to the app's symmetry state INCLUDING resetting it to order 1
  * on `null`, so a previous session's kaleidoscope never survives a roll that
- * landed on no symmetry. */
+ * landed on no symmetry.
+ *
+ * NEVER a sphere-inversion block: a roll is a transform system, and the
+ * family's block is authored composition that replaces that system as the
+ * Surface subject — the space-tiling precedent (Surprise Me clears a leftover
+ * block rather than letting it hide the roll). */
 export interface RandomSystem {
   transforms: Transform[];
   finalTransform: Transform | null;

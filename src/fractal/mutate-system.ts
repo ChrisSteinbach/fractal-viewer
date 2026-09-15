@@ -26,6 +26,11 @@ import type { MorphSystem } from "./morph";
 import { MIN_OCCUPIED_CELLS, scoreSystem } from "./random-system";
 import { mulberry32 } from "./rng";
 import type { Rng } from "./rng";
+import { resolveSphereInversion } from "./sphere-inversion";
+import type {
+  SphereInversionAuthored,
+  SphereInversionAuthoredSeed,
+} from "./sphere-inversion";
 import { SURFACE_FINISH_SHININESS_FLOOR } from "./surface-finish";
 import {
   SURFACE_OPTICS_SCALE_CEILING,
@@ -1852,4 +1857,66 @@ export function mutateSystemSeeded(
     selectedAttempt,
     new Set(request.profile?.lockedDomains ?? []),
   );
+}
+
+/**
+ * Nudge a scene's sphere-inversion block (`sphere-inversion.ts`'s authored
+ * form) — the mutation policy for the family, for the full-scene mutation
+ * layer ({@link mutateSystem} reads a {@link MorphSystem}, which never
+ * carries the block, so a mutation grid can never MATERIALIZE one).
+ *
+ * - Only PRESENT continuous lengths move: `radiusFraction` (±0.01 absolute,
+ *   capped at kissing), and the seed's `size`, `thickness` and `cutRadius`
+ *   (±3% relative) and `cutOffset` (±0.02 absolute), each scaled by
+ *   `spread`. An absent field stays absent — its default is the resolver's,
+ *   and writing it would turn a default into authored state.
+ * - Discrete and structural fields never move: the arrangement, the seed
+ *   kind, the depth (an integer whose cost scales with the generator count)
+ *   and the cut direction (the subject's orientation, not a nudge).
+ * - Every candidate must RESOLVE: a nudge that lands out of domain is
+ *   rejected and redrawn, up to {@link MUTATION_MAX_ATTEMPTS} times, after
+ *   which the block itself is returned. A block the resolver already refuses
+ *   is returned by reference, untouched — it is preserved verbatim, never
+ *   repaired or perturbed.
+ *
+ * Draws only from the injected {@link Rng}; never mutates its input.
+ */
+export function mutateSphereInversionBlock(
+  block: SphereInversionAuthored,
+  rng: Rng,
+  spread = 1,
+): SphereInversionAuthored {
+  if (!resolveSphereInversion(block).ok) return block;
+  const nudge = (value: number | undefined, absolute: number) =>
+    value === undefined || !Number.isFinite(value)
+      ? value
+      : value + (rng() * 2 - 1) * absolute * spread;
+  const relative = (value: number | undefined, fraction: number) =>
+    value === undefined || !Number.isFinite(value)
+      ? value
+      : value * (1 + (rng() * 2 - 1) * fraction * spread);
+  for (let attempt = 0; attempt < MUTATION_MAX_ATTEMPTS; attempt++) {
+    const candidate: SphereInversionAuthored = { ...block };
+    if (block.radiusFraction !== undefined) {
+      const fraction = nudge(block.radiusFraction, 0.01);
+      candidate.radiusFraction =
+        fraction === undefined ? fraction : Math.min(1, fraction);
+    }
+    if (block.seed !== undefined) {
+      const seed: SphereInversionAuthoredSeed = { ...block.seed };
+      if (seed.size !== undefined) seed.size = relative(seed.size, 0.03);
+      if (seed.thickness !== undefined) {
+        seed.thickness = relative(seed.thickness, 0.03);
+      }
+      if (seed.cutRadius !== undefined) {
+        seed.cutRadius = relative(seed.cutRadius, 0.03);
+      }
+      if (seed.cutOffset !== undefined) {
+        seed.cutOffset = nudge(seed.cutOffset, 0.02);
+      }
+      candidate.seed = seed;
+    }
+    if (resolveSphereInversion(candidate).ok) return candidate;
+  }
+  return block;
 }

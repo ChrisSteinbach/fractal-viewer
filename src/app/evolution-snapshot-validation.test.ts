@@ -6,6 +6,7 @@ import {
   prepareEvolutionCrossover,
 } from "./evolution-crossover";
 import { createEvolutionCrossoverCandidate } from "./evolution-crossover-candidate";
+import { assertValidEvolutionSceneSnapshot } from "./evolution-snapshot-validation";
 import { toSnapshot, type SceneSnapshot } from "./persist";
 import type { RampPalette } from "../fractal/palette";
 import { initialState } from "./state";
@@ -649,5 +650,32 @@ describe("crossover-v1 exact SceneSnapshot validation", () => {
     ],
   ])("rejects document cap violations: %s", (_name, change) => {
     expectPreflightRefusal(change);
+  });
+});
+
+describe("crossover-v1 validation of the sphere-inversion block", () => {
+  it("accepts a block the resolver refuses, unknown keys included, because the document preserves it verbatim", () => {
+    const snapshot = toSnapshot(initialState(false));
+    snapshot.sphereInversion = {
+      arrangement: "dodeca20",
+      depth: 99,
+      future: [1, { nested: null }],
+    } as unknown as SceneSnapshot["sphereInversion"];
+    expect(() => {
+      assertValidEvolutionSceneSnapshot(snapshot);
+    }).not.toThrow();
+  });
+
+  it("rejects a block that is not a plain object of JSON values", () => {
+    const array = toSnapshot(initialState(false));
+    array.sphereInversion = [] as unknown as SceneSnapshot["sphereInversion"];
+    expect(() => {
+      assertValidEvolutionSceneSnapshot(array);
+    }).toThrow(/sphereInversion must be an object/);
+    const nonFinite = toSnapshot(initialState(false));
+    nonFinite.sphereInversion = { arrangement: "oct6", depth: Infinity };
+    expect(() => {
+      assertValidEvolutionSceneSnapshot(nonFinite);
+    }).toThrow(/JSON values/);
   });
 });
