@@ -450,6 +450,56 @@ function printSurfaceSummary(surfaceDe) {
         `max ${r.diff.maxAbsDelta}, hits ${r.baseline.counts.hit}/${r.cheap.counts.hit}${flags}`,
     );
   }
+  // The sphere-inversion cores' legs (sphere-inversion-legs.ts): compile
+  // matrix, eval agreement with its one-sided f32 margin and anti-vacuity
+  // census, march agreement, production frames and eval timing.
+  const si = surfaceDe.sphereInversion;
+  if (si) {
+    console.log(`  sphere-inversion: failed=${si.failed}`);
+    for (const c of si.compile ?? []) {
+      console.log(
+        `    compile ${c.core} ${c.config}: ${c.error ? `ERROR ${c.error}` : `${c.compileMs.toFixed(0)}ms`}`,
+      );
+    }
+    for (const r of si.eval ?? []) {
+      const k = r.census;
+      console.log(
+        `    si-eval ${r.system} ${r.core}: n=${r.n} fail=${r.failures} maxAbs=${r.maxAbsErr.toExponential(2)} ` +
+          `p99=${r.p99AbsErr.toExponential(2)} signed=[${r.minGpuMinusCpu.toExponential(2)}, ${r.maxGpuMinusCpu.toExponential(2)}] ` +
+          `excess+=${r.maxPositiveExcess.toExponential(2)} margin=${r.oneSidedMargin.toExponential(2)} oneSidedFail=${r.oneSidedFailures} ` +
+          `signFlips=${r.memberSignFlips} k3=${k.foldK3}/${r.floors.foldK3} copy=${k.copyWins}/${r.floors.copyWins} ` +
+          `gap=${k.gapWins}/${r.floors.gapWins} wall=${k.wallProximity} attr=${r.attributionCompared ?? "?"} ` +
+          `genMis=${r.generationMismatches ?? "?"} seedMis=${r.seedMemberMismatches ?? "?"}${r.pass ? "" : " FAIL"}`,
+      );
+    }
+    if (si.flat) {
+      console.log(
+        `    si-flat: n=${si.flat.n} maxDelta=${si.flat.maxDelta.toExponential(2)} mismatches=${si.flat.mismatches}`,
+      );
+    }
+    for (const m of si.march ?? []) {
+      console.log(
+        `    si-march ${m.system} ${m.rasterWidth}x${m.rasterHeight}: fail=${m.failures} hits gpu=${m.gpuHits} cpu=${m.cpuHits} ` +
+          `exh gpu=${m.gpuExhausted} cpu=${m.cpuExhausted} flips=${m.boundaryFlips}+${m.silhouetteFlips}/${m.flipCap} ` +
+          `maxAbsT=${m.maxAbsT.toExponential(2)} passes=${m.passes} gpu=${m.gpuMs.toFixed(0)}ms ` +
+          `(${((m.gpuMs * 1000) / m.rays).toFixed(1)}us/ray) compile=${m.compileMs.toFixed(0)}ms` +
+          `${m.truncated ? " TRUNCATED" : ""}${m.pass ? "" : " FAIL"}`,
+      );
+    }
+    for (const f of si.frames ?? []) {
+      console.log(
+        `    si-frame ${f.label} ${f.system} ${f.width}x${f.height}: wall=${f.wallMs.toFixed(0)}ms gpu=${f.gpuMs.toFixed(0)}ms ` +
+          `passes=${f.passes} hit=${f.counts.hit} miss=${f.counts.miss} plane=${f.counts.plane} exh=${f.counts.exhausted} ` +
+          `active=${f.counts.active} rate gpu=${f.gpuHitRate.toFixed(3)} cpu=${f.cpuHitRate.toFixed(3)}` +
+          `${f.truncated ? " TRUNCATED" : ""}${f.pass ? "" : ` FAIL(${f.reason})`}`,
+      );
+    }
+    for (const t of si.timing ?? []) {
+      console.log(
+        `    si-time ${t.name} ${t.core}: ${t.usPerQuery.toFixed(3)}us/query over ${t.queries}`,
+      );
+    }
+  }
   for (const note of surfaceDe.notes ?? []) {
     console.log(`  note: ${note}`);
   }
