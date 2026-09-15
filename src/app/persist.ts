@@ -3651,19 +3651,24 @@ export function encodeScene(s: SceneSnapshot): string {
   // snapshot (which never carries a 4D pose either — see SceneSnapshot.fourD's
   // doc) stays byte-identical. Wire form flattens the rotor pair to p/q (URL
   // compactness — no nested `pair` object). Quaternion components +
-  // sliceCenter/sliceThickness are rounded to 4 decimals like every other
-  // float in this file: the resulting angle error is far below visibility,
-  // and the decoder renormalizes the pair anyway. sliceThickness
-  // is written unconditionally, like the two booleans beside it — its
-  // absence is what a document predating the slab looks like, and the decoder
-  // already reads that as 0.
+  // sliceCenter/sliceThickness are written UNROUNDED, as JSON's shortest
+  // round-trip form, unlike the round4 floats elsewhere in this file: the
+  // 4D Surface tracer reads the rotor matrix and the slice's world w0
+  // directly, and 4-decimal rounding moved them by up to ~8e-5, enough to
+  // change a reloaded 4D frame's pixels (a 3D link reloaded byte-exact).
+  // With the decoder's rotor restore copying an already-unit half bit for
+  // bit (rotor4.ts's normalizeRotorPair), decode→encode is a fixed point.
+  // Old 4-decimal links still decode: their halves are renormalized.
+  // sliceThickness is written unconditionally, like the two booleans beside
+  // it — its absence is what a document predating the slab looks like, and
+  // the decoder already reads that as 0.
   if (s.fourD) {
     payload.fourD = {
-      p: s.fourD.pair.p.map(round4),
-      q: s.fourD.pair.q.map(round4),
+      p: [...s.fourD.pair.p],
+      q: [...s.fourD.pair.q],
       sliceOn: s.fourD.sliceOn,
-      sliceCenter: round4(s.fourD.sliceCenter),
-      sliceThickness: round4(s.fourD.sliceThickness),
+      sliceCenter: s.fourD.sliceCenter,
+      sliceThickness: s.fourD.sliceThickness,
       sliceRelColor: s.fourD.sliceRelColor,
     };
   }
