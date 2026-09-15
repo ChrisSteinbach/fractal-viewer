@@ -128,11 +128,13 @@ describe("condensation shape distances", () => {
     expect(condensationSignedDistance4(de, 0, 0, 0, 0)).toBeCloseTo(-1, 12);
     expect(condensationSignedDistance4(de, 0.5, 0, 0, 0)).toBeCloseTo(-0.5, 12);
     expect(condensationSignedDistance4(de, 2, 0, 0, 0)).toBeCloseTo(1, 12);
-    // Off the flat the penalty lifts the field: the lens-slab interior
-    // around the flat narrows with |w| and the deep interior reads
-    // positive (an honest empty interior, never the bare preimage).
+    // Off the flat the penalty forms a lens-shaped slab: the interior is
+    // {sigmaMin·sd < −|w|} — at w = 0.75 the unit sphere's centre is
+    // still 0.25 inside it, while the shallower point at radius 0.5 has
+    // left it. The deep interior the bare 3D form would have traversed
+    // is gone; the slab's walls are honest crossings.
     expect(condensationSignedDistance4(de, 0, 0, 0, 0.75)).toBeCloseTo(
-      0.75,
+      -0.25,
       12,
     );
     expect(condensationSignedDistance4(de, 0.5, 0, 0, 0.75)).toBeCloseTo(
