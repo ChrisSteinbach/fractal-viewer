@@ -4,6 +4,7 @@ import {
   analyzeSphereInversionSystem,
   buildSphereInversionTables,
   resolveSphereInversion,
+  sphereInversionAuthoredDimension,
 } from "./sphere-inversion";
 import type {
   SphereInversionAuthored,
@@ -290,12 +291,76 @@ describe("resolveSphereInversion", () => {
     const authored = deepFreeze({
       arrangement: "ico12",
       radiusFraction: 0.97,
-      seed: { kind: "cutShell", cutDirection: [1, 2, 3], extra: "kept" },
+      seed: { kind: "cutShell", cutDirection: [1, 2, 3] },
       depth: 5,
-    } as SphereInversionAuthored);
+    });
     const before = JSON.stringify(authored);
-    resolveSphereInversion(authored);
+    expect(resolveSphereInversion(authored).ok).toBe(true);
     expect(JSON.stringify(authored)).toBe(before);
+  });
+
+  it("refuses an unknown top-level field by name instead of ignoring what a newer version wrote", () => {
+    expect(
+      refusal({
+        arrangement: "oct6",
+        generators: [],
+      } as SphereInversionAuthored),
+    ).toMatch(/unknown field "generators"/);
+  });
+
+  it("refuses an unknown seed field by name", () => {
+    expect(
+      refusal({
+        arrangement: "oct6",
+        seed: { kind: "ball", twist: 0.2 },
+      } as SphereInversionAuthored),
+    ).toMatch(/unknown seed field "twist"/);
+  });
+
+  it("refuses wrongly typed values from an untrusted document rather than coercing them", () => {
+    const reasons = refusal({
+      arrangement: "oct6",
+      depth: "5",
+      seed: { size: "0.2" },
+    } as unknown as SphereInversionAuthored);
+    expect(reasons).toMatch(/depth 5 is not an integer/);
+    expect(reasons).toMatch(/seed size 0.2 must be finite and positive/);
+  });
+
+  it("refuses a seed that is not an object", () => {
+    expect(
+      refusal({
+        arrangement: "oct6",
+        seed: 3,
+      } as unknown as SphereInversionAuthored),
+    ).toMatch(/seed is not an object/);
+  });
+
+  it("refuses a block that is not an object", () => {
+    expect(refusal([] as unknown as SphereInversionAuthored)).toMatch(
+      /not an object/,
+    );
+  });
+});
+
+describe("sphereInversionAuthoredDimension", () => {
+  it("names the arrangement's dimension even when the block is refused for another reason", () => {
+    expect(sphereInversionAuthoredDimension({ arrangement: "oct6" })).toBe(3);
+    expect(
+      sphereInversionAuthoredDimension({ arrangement: "cell600", depth: 99 }),
+    ).toBe(4);
+  });
+
+  it("names no dimension for an unknown, absent or non-string arrangement", () => {
+    expect(sphereInversionAuthoredDimension({ arrangement: "dodeca20" })).toBe(
+      null,
+    );
+    expect(sphereInversionAuthoredDimension({})).toBe(null);
+    expect(sphereInversionAuthoredDimension({ arrangement: 4 })).toBe(null);
+    expect(sphereInversionAuthoredDimension("oct6")).toBe(null);
+    expect(sphereInversionAuthoredDimension({ arrangement: "toString" })).toBe(
+      null,
+    );
   });
 });
 
