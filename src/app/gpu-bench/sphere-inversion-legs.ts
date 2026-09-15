@@ -98,7 +98,9 @@ const TIMING_ROWS = [
   "si600Medallion4@XW.4YW.3ZW.2",
   "si600Snowflake4@W.06",
 ];
-const TIMING_PILOT = 4096;
+const TIMING_PILOT = 1024;
+/** The smallest timed batch a slow core may shrink to. */
+const TIMING_MIN = 256;
 const TIMING_TARGET_MS = 150;
 const TIMING_MAX = 262_144;
 const TIMING_REPS = 3;
@@ -1046,16 +1048,19 @@ async function timeEval(
     TIMING_PILOT,
     false,
   );
+  // Size the timed batch to the per-dispatch target from the pilot: whole
+  // pilot multiples when a core is fast, DOWN to TIMING_MIN when it is slow,
+  // so one submission stays far from a driver watchdog (the production-width
+  // fold eval measured ~1.3 s for a 4096-query batch on Iris). A software
+  // adapter keeps the pilot size.
   let count = TIMING_PILOT;
   if (!ctx.software) {
     const perQuery = Math.max(pilot.ms, 0.01) / TIMING_PILOT;
-    count = Math.min(
-      TIMING_MAX,
-      Math.max(
-        TIMING_PILOT,
-        Math.floor(TIMING_TARGET_MS / perQuery / 4096) * 4096,
-      ),
-    );
+    const fit = TIMING_TARGET_MS / perQuery;
+    count =
+      fit >= TIMING_PILOT
+        ? Math.min(TIMING_MAX, Math.floor(fit / TIMING_PILOT) * TIMING_PILOT)
+        : Math.max(TIMING_MIN, Math.floor(fit));
   }
   await runEval(
     ctx.device,
