@@ -150,6 +150,42 @@ describe("estimateSphereInversionDistance4 against the explicit orbit", () => {
     expect(expectNeverAboveTruth(c, qs)).toBeGreaterThan(30);
   });
 
+  // The 600-cell's 120 generators make the depth-2 oracle cost ~170 ms per
+  // query (14,401 pieces), so the unit tests pin depth 1 (121 pieces) with
+  // the usual half-targeted queries; the increased-depth sheet carries D2.
+  it("600-cell pearl-window vault, depth 1: never exceeds the true distance", () => {
+    const c = construction({
+      arrangement: "cell600",
+      seed: { kind: "cutShell", size: 0.9, thickness: 0.04 },
+      depth: 1,
+    });
+    expect(expectNeverAboveTruth(c, queries4(c, 120, 0x600a))).toBeGreaterThan(
+      40,
+    );
+  });
+
+  it("600-cell medallion sphere, depth 1: never exceeds the true distance, including just off the medallions' rims", () => {
+    const c = construction({
+      arrangement: "cell600",
+      seed: { kind: "shell", size: 1.1, thickness: 0.03 },
+      depth: 1,
+    });
+    // Targeted: on the outer shell sphere beside a generator whose ball the
+    // shell crosses, where a depth-1 copy (the medallion) meets the wall.
+    const rng = mulberry32(0x600b);
+    const targeted: Vec4[] = [];
+    for (let i = 0; i < 60; i++) {
+      const g = c.generators[Math.floor(rng() * c.generators.length)];
+      const u = randomUnit4(rng);
+      const p = g.center.map((x, a) => x + g.radius * 1.02 * u[a]);
+      const l = Math.hypot(...p);
+      targeted.push(p.map((x) => (x / l) * (1.13 + 1e-3 * rng())) as Vec4);
+    }
+    expect(
+      expectNeverAboveTruth(c, [...queries4(c, 80, 0x600c), ...targeted]),
+    ).toBeGreaterThan(60);
+  });
+
   it("tess16 cut shell with a w-tilted cut, depth 1: never exceeds the true distance", () => {
     const c = construction({
       arrangement: "tess16",

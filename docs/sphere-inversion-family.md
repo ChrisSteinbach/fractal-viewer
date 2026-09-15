@@ -570,15 +570,15 @@ Nothing is wired into Surface eligibility, persistence or a shader yet.
 
 ### Authored form and resolver
 
-| Field            | Default                                             | Domain (outside it: REFUSED with a reason)                              |
-| ---------------- | --------------------------------------------------- | ----------------------------------------------------------------------- |
-| `arrangement`    | none (required)                                     | a registry id: `oct6`, `cube8`, `ico12`, `cell24`, `tess16`, `cross8`   |
-| `radiusFraction` | 0.99                                                | `(0, 1]` of the arrangement's tangent radius; 1 is kissing (degraded)   |
-| `depth`          | 8                                                   | integer `[0, 32]` (structural cap, not a public range)                  |
-| `seed.kind`      | `ball`                                              | `ball`, `cap`, `shell`, `cutShell`                                      |
-| `seed.size`      | ball .28, cap 1.15, shells 1                        | `> 0`; a ball must not meet an open generator ball, a cap must meet one |
-| `seed.thickness` | shell .03, cut shell .06                            | `(0, size)`                                                             |
-| cut fields       | direction (.35, 1, .55), w 0, offset .25, radius 10 | direction nonzero; `w` nonzero only in 4D; radius `> 0`; `              | offset | < size + thickness` |
+| Field            | Default                                             | Domain (outside it: REFUSED with a reason)                                       |
+| ---------------- | --------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `arrangement`    | none (required)                                     | a registry id: `oct6`, `cube8`, `ico12`, `cell24`, `tess16`, `cross8`, `cell600` |
+| `radiusFraction` | 0.99                                                | `(0, 1]` of the arrangement's tangent radius; 1 is kissing (degraded)            |
+| `depth`          | 8                                                   | integer `[0, 32]` (structural cap, not a public range)                           |
+| `seed.kind`      | `ball`                                              | `ball`, `cap`, `shell`, `cutShell`                                               |
+| `seed.size`      | ball .28, cap 1.15, shells 1                        | `> 0`; a ball must not meet an open generator ball, a cap must meet one          |
+| `seed.thickness` | shell .03, cut shell .06                            | `(0, size)`                                                                      |
+| cut fields       | direction (.35, 1, .55), w 0, offset .25, radius 10 | direction nonzero; `w` nonzero only in 4D; radius `> 0`; `                       | offset | < size + thickness` |
 
 Every arrangement puts its centres at distance 1, so lengths are absolute. The
 registry is extensible: a new id is one entry. The resolver collects every
@@ -677,3 +677,45 @@ would transport the segment's enclosing ball through each inversion (exact by
 fold branches, which needs the branch enumeration this fold does not have. The
 4D estimator therefore takes no `halfExtent`, and a host must hold the slice
 thickness at zero for this family.
+
+## The 600-cell in the registry (2026-09-15)
+
+`cell600` is now a registry arrangement: the 120 unit vertices (8 axis units,
+16 `(±½)⁴`, 96 even permutations of `(±φ, ±1, ±1/φ, 0)/2`), kissing radius
+`1/(2φ) ≈ 0.309`. The unit test checks 120 distinct unit vertices with
+exactly 12 nearest neighbours each at the edge `1/φ`. The two qualifying
+native 4D subjects are ordinary authored blocks and resolve eligible:
+
+- pearl-window vault:
+  `{arrangement: "cell600", seed: {kind: "cutShell", size: 0.9, thickness: 0.04}, depth: 5}`
+  (the default radius fraction .99 and the default cut, direction
+  `(.35, 1, .55)`, offset .25, radius 10);
+- medallion sphere:
+  `{arrangement: "cell600", seed: {kind: "shell", size: 1.1, thickness: 0.03}, depth: 5}`.
+
+**Oracle.** Depth 2 is 14,401 pieces and costs about 170 ms per oracle query,
+so the unit tests pin DEPTH 1 (121 pieces): the vault on the usual half-uniform,
+half-ray-targeted queries, and the medallion on those plus 60 queries on the
+outer shell sphere just outside a crossing generator, where a medallion meets
+its wall. 0 violations. The increased-depth sheet's section (c) carries D0–D2
+(300/300/60 queries): 0 violations; estimate/true p05 0.39–0.40 and p50
+0.70–0.85 at D2.
+
+**CPU cost per query** at the subjects' depth 5 (section (c), one core;
+uniform in the bound ball / the near set `0 < d < 0.01` on the shell):
+
+| Subject                       | Uniform us/eval | Near us/eval |
+| ----------------------------- | --------------- | ------------ |
+| cell600 vault D5              | 3.5–3.9         | 2.4–2.7      |
+| cell600 medallion D5          | 2.4–2.5         | 1.5–1.7      |
+| oct6 pearls D8 (3D, scratch)  | 0.35            | 0.18         |
+| ico12 shell D6 (3D, scratch)  | 0.43            | 0.36         |
+| cell24 shell .98 D5 (scratch) | 0.63            | 0.40         |
+
+The 120-generator subjects cost 4–9x the 3D subjects and about 4–6x the
+shipped fold's 0.633 us/eval. The cost is the fold's linear generator scan
+plus the covering scan (`domainSeed` carries 120 exterior members, each copy
+122); a broad-phase over generators would cut both and is a kernel question
+for the shader scoping, not a CPU core change. The 3D and cell24 rows came
+from a one-off scratch probe on the same machine and are context, not a
+reproducing harness.

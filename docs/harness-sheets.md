@@ -1155,6 +1155,10 @@ without ever overshooting.
   cross8 at D4, tess16 at D3): 0/300 violations each, ratio p50
   1.8e-4..3.2e-4 and min 4e-9..1.6e-7. Sound, and the reason a ray aimed at a
   cusp creeps.
+- **600-cell subjects** (section (c): the pearl-window vault and medallion
+  sphere to D2, 14,401 pieces, 60 queries at D2): 0 violations, D2 p05
+  0.39–0.40, p50 0.70–0.85. CPU cost at D5: 3.5 / 2.4 us/eval uniform and
+  2.7 / 1.5 us/eval near the surface (vault / medallion).
 - **Near-tangent generators** (oct6 .999 and .9999, cube8 .9999 at D4, tess16
   .999 at D3): 0 violations, p05 0.26–0.42, p50 0.65–0.80.
 - **Narrow openings** (shells crossing .995-kissing generators, queried
