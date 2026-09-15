@@ -280,6 +280,9 @@ function surfaceTransformIndices(
   transforms: readonly Transform[],
   kind: SurfaceRouteKind,
 ): number[] {
+  // A sphere-inversion subject has no transform slots: the preserved
+  // transforms' material lanes are not read (surface-eligibility.ts).
+  if (kind === "sphereInversion" || kind === "sphereInversion4") return [];
   if (kind === "ifs" || kind === "ifs4") {
     const indices: number[] = [];
     transforms.forEach((transform, index) => {

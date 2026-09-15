@@ -130,7 +130,7 @@ import {
   detectXaosBlocks,
   detectXaosLeaks,
   resolveBalloonPalette,
-  systemIsNonFlat,
+  displayedIsNonFlat,
 } from "./state";
 import type { XaosLeak } from "./state";
 import {
@@ -142,6 +142,7 @@ import {
 } from "./control-spec";
 import type { ScalarControlSpec } from "./control-spec";
 import {
+  SPHERE_INVERSION_SLAB_REFUSAL,
   surfaceTrapGeometryRestriction,
   type SurfaceEligibilityRecovery,
   type SurfaceEligibilityResult,
@@ -2671,7 +2672,8 @@ export class Ui {
    * Session-scoped, set by main.ts's routing; true outside such
    * sessions. */
   private fourDSlabAvailable = true;
-  private fourDSlabRefusal: "swirl" | "tiling" | "condensation" | null = null;
+  private fourDSlabRefusal:
+    "swirl" | "tiling" | "condensation" | "sphereInversion" | null = null;
   /**
    * The ACTIVE surface session's shape: `"escape"` for the escape-time fold
    * render and `"bulb"` for the Mandelbulb — the two FORWARD-ORBIT objects,
@@ -4342,20 +4344,22 @@ export class Ui {
       : this.fourDSlabRefusal === "swirl"
         ? "A swirl final transform curves a thick slice. Surface currently " +
           "supports its zero-thickness slices."
-        : this.fourDSlabRefusal === "condensation"
-          ? "Slab thickness is unavailable with a condensation shape: its " +
-            "carried solid needs its own set-distance evaluator for a " +
-            "segment. A zero-thickness slice remains available."
-          : this.fourDSlabRefusal === "tiling"
-            ? "Slab thickness is unavailable with Space tiling: folding a " +
-              "segment bends it across cell walls. A zero-thickness slice " +
-              "remains available."
-            : this.surfaceSessionKind === "escape"
-              ? "Slab thickness is unavailable in the escape-time render: its " +
-                "orbit runs the maps FORWARD, with no branches to thread a " +
-                "segment through, so a slab has no certificate at any fold " +
-                "family. The IFS surface render keeps it."
-              : "";
+        : this.fourDSlabRefusal === "sphereInversion"
+          ? `Slab thickness is unavailable in a sphere-inversion scene: ${SPHERE_INVERSION_SLAB_REFUSAL}. A zero-thickness slice remains available.`
+          : this.fourDSlabRefusal === "condensation"
+            ? "Slab thickness is unavailable with a condensation shape: its " +
+              "carried solid needs its own set-distance evaluator for a " +
+              "segment. A zero-thickness slice remains available."
+            : this.fourDSlabRefusal === "tiling"
+              ? "Slab thickness is unavailable with Space tiling: folding a " +
+                "segment bends it across cell walls. A zero-thickness slice " +
+                "remains available."
+              : this.surfaceSessionKind === "escape"
+                ? "Slab thickness is unavailable in the escape-time render: its " +
+                  "orbit runs the maps FORWARD, with no branches to thread a " +
+                  "segment through, so a slab has no certificate at any fold " +
+                  "family. The IFS surface render keeps it."
+                : "";
     this.fourDSliceThicknessUnavailableNote.textContent =
       this.fourDSliceThicknessRow.title;
     this.fourDSliceThicknessUnavailableNote.classList.toggle(
@@ -4404,7 +4408,8 @@ export class Ui {
    * routing and resets it true on session end. */
   setFourDSlabAvailable(
     available: boolean,
-    reason: "swirl" | "tiling" | "condensation" | null = null,
+    reason:
+      "swirl" | "tiling" | "condensation" | "sphereInversion" | null = null,
   ): void {
     if (
       this.fourDSlabAvailable === available &&
@@ -5086,7 +5091,9 @@ export class Ui {
     // tracer poses the 4D attractor live. Flame and Solid accept settled
     // manual rotor/slice edits by restarting their active worker; Surface
     // re-poses and re-marches every frame.
-    const nonFlat = systemIsNonFlat(state);
+    // What the ACTIVE mode draws: a sphere-inversion block's dimension in
+    // Surface, the preserved transforms' in Points/Flame/Solid (state.ts).
+    const nonFlat = displayedIsNonFlat(state);
     this.viewIsNonFlat = nonFlat;
     this.pointsLayoutNote.textContent = nonFlat
       ? "X, Y, and Z stay axis-locked. Edit 4D transforms in the panel; only Current accepts view gestures. Bloom and EDL are shown in Current-only Single view. Saved images capture Current."

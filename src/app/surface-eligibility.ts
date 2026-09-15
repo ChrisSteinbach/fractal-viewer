@@ -40,6 +40,8 @@ import {
   transformHasEmitter,
 } from "../fractal/chaos-game";
 import { shapeMeshIds, shapeSdfSource } from "../fractal/shapes";
+import { resolveSphereInversion } from "../fractal/sphere-inversion";
+import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
 import type { ShapeSpec } from "../fractal/shapes";
 import { TILING_GROUP_INFO, isLatticeTilingSpec } from "../fractal/tiling";
 import type { TilingSpec } from "../fractal/tiling";
@@ -60,7 +62,14 @@ import { SURFACE4_MAX_MAPS } from "./surface-material-4d";
  * one). `null` exactly when the status is `"ineligible"`: a refused document
  * routes nowhere.
  */
-export type SurfaceRouteKind = "ifs" | "escape" | "bulb" | "ifs4" | "escape4";
+export type SurfaceRouteKind =
+  | "ifs"
+  | "escape"
+  | "bulb"
+  | "ifs4"
+  | "escape4"
+  | "sphereInversion"
+  | "sphereInversion4";
 
 /** A narrowly-scoped action the mode gate can offer to resolve the refusal
  * it is currently disclosing. This is structured analyzer output, never
@@ -96,6 +105,142 @@ export interface SurfaceEligibilityDocument {
   shapeTrap?: ShapeTrap | null;
   tiling?: TilingSpec | null;
   condensationDepthBand?: CondensationDepthBand;
+  sphereInversion?: SphereInversionAuthored | null;
+}
+
+/**
+ * The SPHERE-INVERSION ROUTE. A present block REPLACES the transform system
+ * as the Surface subject, so it takes precedence over every other gate and
+ * is disjoint from them by construction: the affine/fold, escape and bulb
+ * analyzers read a `Transform[]`, and nothing a transform list says reaches
+ * this route (`sphere-inversion.ts`'s representation verdict). Its dimension
+ * is the arrangement's (`scene-dimension.ts`), carried in the kind:
+ * `"sphereInversion"` (3D) or `"sphereInversion4"` (native 4D).
+ *
+ * COMBINATION POLICY with the scene features, decided here and recorded with
+ * each lift's shape in `docs/sphere-inversion-family.md`:
+ *   - REFUSED (document): Space tiling, a kaleidoscope (order > 1), a final
+ *     transform lens, a shape trap. None has a composition argument over the
+ *     inversion group yet, so each blocks the route with its reason rather
+ *     than being silently ignored.
+ *   - REFUSED (session, {@link sphereInversionSessionRefusal}): Balloon.
+ *   - REFUSED AND CLAMPED (session): 4D slice thickness — the slab has no
+ *     certificate for this family (`sphere-inversion-de-4d.ts`), so a 4D
+ *     session holds it at zero and discloses {@link SPHERE_INVERSION_SLAB_REFUSAL}.
+ *   - COMPOSES: the ground plane, which reads only the session ball (the
+ *     estimator's origin-centred `boundingRadius`, the full 4D radius in 4D)
+ *     and lights its floor with probe taps a certified lower bound serves.
+ *   - NOT READ, DISCLOSED: per-transform finishes. They are material lanes of
+ *     the replaced transform system, keyed on transform slots this subject
+ *     does not have (its attribution is generator, word and seed member), so
+ *     they stay dormant on the preserved transforms instead of blocking entry.
+ *     The hybrid schedule, condensation band, emitters and xaos rows are the
+ *     replaced system's structure and are not read either.
+ *
+ * NO RENDERER SHIPS YET: `opts.sphereInversionRenderer` is absent in the app,
+ * so an admissible block is refused with that reason; the renderer work
+ * supplies its real availability. Tests set it to pin the kinds.
+ */
+function deriveSphereInversionEligibility(
+  block: SphereInversionAuthored,
+  transforms: Transform[],
+  finalTransform: Transform | null,
+  symmetry: SymmetryParams,
+  shapeTrap: ShapeTrap | null,
+  tiling: TilingSpec | null,
+  opts: SurfaceEligibilityOptions,
+): SurfaceEligibilityResult {
+  const resolution = resolveSphereInversion(block);
+  if (!resolution.ok) {
+    return {
+      status: "ineligible",
+      note: `Sphere-inversion scene refused: ${resolution.reasons.join("; ")}`,
+      kind: null,
+    };
+  }
+  const refusals: string[] = [];
+  if (tiling) {
+    refusals.push(
+      "Space tiling is not available with a sphere-inversion scene (no tiling wrapper certifies its estimator yet)",
+    );
+  }
+  if (symmetry.order > 1) {
+    refusals.push(
+      "a kaleidoscope is not available with a sphere-inversion scene (the arrangement carries its own symmetry, and a sector sweep over the inversion group has no certificate)",
+    );
+  }
+  if (finalTransform) {
+    refusals.push(
+      "a final transform lens is not available with a sphere-inversion scene (no lens wrapper certifies its estimator yet)",
+    );
+  }
+  if (shapeTrap) {
+    refusals.push(
+      "a shape trap is not available with a sphere-inversion scene (the inversion fold has no trap accumulator)",
+    );
+  }
+  if (refusals.length > 0) {
+    return {
+      status: "ineligible",
+      note: `Sphere-inversion scene refused: ${refusals.join("; ")}`,
+      kind: null,
+    };
+  }
+  const fourD = resolution.construction.dim === 4;
+  const disclosures = [...resolution.eligibility.degradations];
+  if (transforms.some((t) => t.finish !== undefined)) {
+    disclosures.push(
+      "per-transform finishes belong to the replaced transform system and are not read",
+    );
+  }
+  if (fourD) disclosures.push(SPHERE_INVERSION_SLAB_REFUSAL);
+  if (!opts.sphereInversionRenderer) {
+    return {
+      status: "ineligible",
+      note:
+        `The sphere-inversion Surface renderer is not yet available; this ${fourD ? "native 4D" : "3D"} construction resolves` +
+        (disclosures.length > 0 ? ` (${disclosures.join("; ")})` : ""),
+      kind: null,
+    };
+  }
+  return {
+    status:
+      resolution.eligibility.status === "degraded" ? "degraded" : "eligible",
+    note: disclosures.length > 0 ? disclosures.join("; ") : null,
+    kind: fourD ? "sphereInversion4" : "sphereInversion",
+  };
+}
+
+/** The 4D slab refusal every sphere-inversion disclosure shares — the
+ * thickness row's note and the gate's. */
+export const SPHERE_INVERSION_SLAB_REFUSAL =
+  "slice thickness is held at zero: a thick slice has no certified estimator for sphere-inversion scenes";
+
+/**
+ * The session-level half of the combination policy
+ * ({@link deriveSphereInversionEligibility}'s module doc): what only the
+ * session knows. Balloon is REFUSED — the union bound would compose this
+ * estimator through an inversion whose inner query must run at cutoff 0 (its
+ * sub-cutoff returns are decision values, never distances), and a ball seed
+ * reaching the balloon centre swallows the camera exactly as the forward
+ * families' interiors do; neither is measured. Returns the refusal, or
+ * `null` when the session may proceed.
+ */
+export function sphereInversionSessionRefusal(session: {
+  balloonEcho: boolean;
+}): string | null {
+  return session.balloonEcho
+    ? "Balloon is not available with a sphere-inversion scene: its echo would invert this estimator, whose inner queries and far-field ball have not been measured. Turn Balloon off to enter Surface."
+    : null;
+}
+
+/** The one machine fact plus the renderer availability the document cannot
+ * answer (module doc and {@link deriveSurfaceEligibility}). */
+export interface SurfaceEligibilityOptions {
+  computeAvailable: boolean;
+  /** Whether a sphere-inversion Surface renderer exists on this machine.
+   * Absent means no: none ships yet. */
+  sphereInversionRenderer?: boolean;
 }
 
 /**
@@ -430,12 +575,26 @@ export function deriveSurfaceEligibility(
   transforms: Transform[],
   finalTransform: Transform | null,
   symmetry: SymmetryParams,
-  opts: { computeAvailable: boolean },
+  opts: SurfaceEligibilityOptions,
   schedule: HybridSchedule | null = null,
   shapeTrap: ShapeTrap | null = null,
   tiling: TilingSpec | null = null,
   condensationDepthBand?: CondensationDepthBand,
+  sphereInversion: SphereInversionAuthored | null = null,
 ): SurfaceEligibilityResult {
+  // A sphere-inversion block replaces the transform system as the subject:
+  // it takes precedence over, and is disjoint from, every gate below.
+  if (sphereInversion) {
+    return deriveSphereInversionEligibility(
+      sphereInversion,
+      transforms,
+      finalTransform,
+      symmetry,
+      shapeTrap,
+      tiling,
+      opts,
+    );
+  }
   const scheduleRecords = scheduleRecordCount(schedule);
   const hasSchedule = scheduleRecords > 0;
   const hasChaos = systemHasChaos(transforms);
@@ -830,5 +989,6 @@ export function deriveSurfaceDocumentEligibility(
     document.shapeTrap ?? null,
     document.tiling ?? null,
     document.condensationDepthBand,
+    document.sphereInversion ?? null,
   );
 }
