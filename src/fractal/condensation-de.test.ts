@@ -2,6 +2,7 @@ import {
   condensationBoundingRadius3,
   condensationDistance3,
   condensationDistance4,
+  condensationSignedDistance4,
   condensationHasFutureDepth,
   condensationTerm3,
   condensationTerm4,
