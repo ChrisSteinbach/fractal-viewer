@@ -161,6 +161,10 @@ import type {
   SurfaceDistanceSample,
 } from "../../fractal/surface-de";
 import {
+  condensationDistance3,
+  condensationDistance4,
+} from "../../fractal/condensation-de";
+import {
   analyzeSurfaceSystem4,
   buildSurfaceDE4,
   deHasFolds4,
@@ -245,7 +249,9 @@ import {
 } from "../../fractal/surface-dielectric";
 import {
   transportBoundaryQueryCPU,
+  transportSolidBoundaryQueryCPU,
   transportTraceCPU,
+  type TransportQueryFn,
 } from "./surface-transport-fixture";
 import type {
   TransportBoundaryKind,
@@ -4153,6 +4159,17 @@ interface SurfaceTransportAgreementRow {
   core: SurfaceKernelConfig["core"];
   /** The DE the leg drove (the section's own fixture system name). */
   system: string;
+  /** The boundary backend the leg pinned ({@link SurfaceTransportLegSpec}). */
+  backend: "estimator" | "closedSolid";
+  /** Whether the row's agreement certifies OPTICAL soundness. The
+   * estimator rows on IFS fixtures are `"vacuous-inside"`: every inside
+   * path refuses on BOTH sides identically (the renderer envelope's
+   * structural finding), so the rows' agreement certifies arithmetic,
+   * not optical soundness — the renderer-envelope leg's wording. The
+   * closed-solid rows are `"resolving"`: their inside paths traverse the
+   * signed union field, so the agreement certifies the thing glass
+   * needs. */
+  opticsSoundness: "vacuous-inside" | "resolving";
   compileMs: number;
   /** Total control queries dispatched: one trace + two boundary probes
    * per hit ray (padded to the workgroup multiple for dispatch). */
@@ -7431,7 +7448,14 @@ async function acquireSurfaceDevice(
  * created. The bounds discipline is the caller's: queries are padded to a
  * workgroup multiple so `gid.x` never indexes past the array.
  */
-const SURFACE_TRANSPORT_CONTROL_WGSL = `
+/** The transport control entry, per boundary backend: the emitted
+ * `transportNextBoundary` signature carries the caller-carried medium
+ * only under the closed-solid backend (the estimator query is
+ * sign-agnostic), so the mode-1 call site interpolates it. The `inside`
+ * word rides the query record's last slot (offset 92 of the 96-byte
+ * stride) in BOTH backends; the estimator legs pack 0 and never read it. */
+function surfaceTransportControlWgsl(closedSolid: boolean): string {
+  return `
 struct ControlQuery {
   origin: vec3f,
   dir: vec3f,
@@ -7443,6 +7467,7 @@ struct ControlQuery {
   theta: f32,
   anchorPresent: u32,
   mode: u32,
+  inside: u32,
 }
 struct ControlResult {
   a: vec4f,
@@ -7460,7 +7485,9 @@ fn controlTransport(
   let q = controlQueries[gid.x];
   var r: ControlResult;
   if (q.mode == 1u) {
-    let hit = transportNextBoundary(q.origin, q.dir, q.anchorPresent, q.anchorPoint, q.eps, li);
+    let hit = transportNextBoundary(q.origin, q.dir, q.anchorPresent, q.anchorPoint, ${
+      closedSolid ? "q.inside, " : ""
+    }q.eps, li);
     r.a = vec4f(f32(hit.kind), f32(hit.reason), hit.t, 0.0);
     r.b = vec4f(hit.normal, 0.0);
     r.c = vec4f(0.0);
@@ -7475,6 +7502,7 @@ fn controlTransport(
   controlResults[gid.x] = r;
 }
 `;
+}
 
 /**
  * Shader module + compute pipeline for one kernel config, under the
@@ -8051,6 +8079,11 @@ const TRANSPORT_BOUNDARY_KIND_CODES: Record<TransportBoundaryKind, number> = {
 interface SurfaceTransportLegSpec {
   core: SurfaceKernelConfig["core"];
   systemName: string;
+  /** The boundary backend this leg pins: `"estimator"` (the composed
+   * public estimator march — sound from OUTSIDE only, the envelope
+   * finding's own state) or `"closedSolid"` (the signed closed-solid
+   * query, whose inside traversal resolves a refracted child). */
+  backend: "estimator" | "closedSolid";
   options: SurfaceGpuKernelOptions;
   /** The kind's own params packer — the run params' `visibleRadius`/
    * `stepScale` come from the real DE (the packer's offsets 20/24), so the
@@ -8355,6 +8388,7 @@ async function runSurfaceTransportAgreementLegs(
     legs.push({
       core,
       systemName: sys.name,
+      backend: "estimator",
       options: {
         mode: "shade",
         core,
@@ -8397,6 +8431,7 @@ async function runSurfaceTransportAgreementLegs(
     legs.push({
       core,
       systemName: sys.name,
+      backend: "estimator",
       options: {
         mode: "shade",
         core,
@@ -8434,12 +8469,103 @@ async function runSurfaceTransportAgreementLegs(
   pushDescentLeg("affineTetra", "affine");
   pushSurface4Leg("aff4Tetra", "affine4");
 
+  // The closed-solid backend's legs (both dimensions, cheapest-first
+  // bisect order): the emitter-only union the backend serves — a posed
+  // sphere and a posed box, no maps, no schedule, no chaos — at the
+  // canonical identity pose both dimensions (the existing 4D transport
+  // legs' convention; the posed-lift agreement is their record and the
+  // envelope leg's). The fixture's `estimate` is the SIGNED closed-solid
+  // union field — the same SAFETY-scaled certified bound the kernel's
+  // transportSolidField evaluates — mirrored, not restated.
+  const pushClosedSolidLeg = (fourD: boolean): void => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.35, -0.1, 0.05],
+        rotation: [0.15, -0.2, 0.1],
+        scale: [0.35, 0.35, 0.35],
+        emitter: {
+          parts: [
+            { primitive: { kind: "sphere", radius: 1 }, combine: "union" },
+          ],
+        },
+      },
+      {
+        id: 1,
+        position: [-0.4, 0.25, -0.05],
+        rotation: [-0.1, 0.12, -0.2],
+        scale: [0.3, 0.3, 0.3],
+        emitter: {
+          parts: [
+            {
+              primitive: { kind: "box", half: [0.7, 0.5, 0.8] },
+              combine: "union",
+            },
+          ],
+        },
+      },
+    ];
+    const de3 = fourD
+      ? null
+      : buildSurfaceDE(transforms, null, { order: 1, plane: "xy" }, {});
+    const de4 = fourD
+      ? buildSurfaceDE4(transforms, null, { order: 1, plane: "xy" }, {})
+      : null;
+    const de = fourD ? de4 : de3;
+    if (!de || de.maps.length !== 0 || !de.condensation) {
+      throw new Error(
+        `transport closed-solid: the ${fourD ? "4D" : "3D"} fixture did not ` +
+          "build its emitter-only union",
+      );
+    }
+    legs.push({
+      core: fourD ? "affine4" : "affine",
+      systemName: fourD ? "emitterOnlyUnion4" : "emitterOnlyUnion3",
+      backend: "closedSolid",
+      options: {
+        mode: "shade",
+        core: fourD ? "affine4" : "affine",
+        width: SURFACE_AFFINE_LADDER_WIDTH,
+        workgroupSize: SURFACE_TRANSPORT_WG,
+        sharedFrontier: false,
+        bnbStage2: false,
+        optics: true,
+        opticsBackend: "closedSolid",
+        transportMaxPaths: SURFACE_TRANSPORT_LEG_MAX_PATHS,
+        condensation: surfaceCondensationKernelSpec(de),
+      },
+      packParams: (n) =>
+        de4
+          ? packSurface4GpuParams(de4, canonicalView4, {
+              itemCount: n,
+              cutoff: 0,
+            })
+          : packSurfaceGpuParams(de3!, { itemCount: n, cutoff: 0 }),
+      packMaps: () =>
+        new Float32Array(
+          de4 ? packSurfaceGpuMaps4(de4) : packSurfaceGpuMaps(de3!),
+        ),
+      fixture: {
+        estimate: (p) =>
+          SHAPE_MARCH_SAFETY *
+          (de4
+            ? condensationDistance4(de4.condensation!, p[0], p[1], p[2], 0)
+            : condensationDistance3(de3!.condensation!, p[0], p[1], p[2])),
+        stepScale: de.stepScale,
+        visibleRadius: de.visibleBoundingRadius,
+      },
+    });
+  };
+  pushClosedSolidLeg(false);
+  pushClosedSolidLeg(true);
+
   const escapeSys = systems.escape[0];
   if (escapeSys) {
     const de = escapeSys.de;
     legs.push({
       core: "escape",
       systemName: escapeSys.name,
+      backend: "estimator",
       options: {
         mode: "shade",
         core: "escape",
@@ -8473,6 +8599,7 @@ async function runSurfaceTransportAgreementLegs(
     legs.push({
       core: "bulb",
       systemName: bulbSys.name,
+      backend: "estimator",
       options: {
         mode: "shade",
         core: "bulb",
@@ -8522,6 +8649,7 @@ async function runSurfaceTransportAgreementLegs(
     legs.push({
       core: "escape4",
       systemName: escape4Sys.name,
+      backend: "estimator",
       options: {
         mode: "shade",
         core: "escape4",
@@ -8558,7 +8686,7 @@ async function runSurfaceTransportAgreementLegs(
     const { pipeline, compileMs } = await buildSurfacePipeline(
       device,
       "auto",
-      `${surfaceDeKernelWgsl(leg.options)}\n${SURFACE_TRANSPORT_CONTROL_WGSL}`,
+      `${surfaceDeKernelWgsl(leg.options)}\n${surfaceTransportControlWgsl(leg.backend === "closedSolid")}`,
       "controlTransport",
       `surface-de transport ${leg.core}`,
     );
@@ -8605,38 +8733,85 @@ async function runSurfaceTransportAgreementLegs(
       theta: number;
       anchorPresent: number;
       mode: number;
+      /** The caller-carried medium riding the query record's last slot.
+       * Read only by the closed-solid backend's query; the estimator
+       * legs pack 0 and never read it. */
+      inside: number;
     };
     const boundaryQueries: ControlQueryRec[] = [];
     const traceQueries: ControlQueryRec[] = [];
     for (const probe of probes) {
-      boundaryQueries.push({
-        origin: [
-          probe.hitPos[0] + probe.dir[0] * visR * 0.01,
-          probe.hitPos[1] + probe.dir[1] * visR * 0.01,
-          probe.hitPos[2] + probe.dir[2] * visR * 0.01,
-        ],
-        dir: [-probe.dir[0], -probe.dir[1], -probe.dir[2]],
-        anchorPoint: [0, 0, 0],
-        eps: DIELECTRIC_CROSSING_EPS_REL * visR,
-        ior: DIELECTRIC_IOR,
-        radius: visR,
-        absorb: DIELECTRIC_ABSORPTION,
-        theta: DIELECTRIC_INITIAL_BRANCH_THETA,
-        anchorPresent: 0,
-        mode: 1,
-      });
-      boundaryQueries.push({
-        origin: probe.hitPos,
-        dir: [-probe.dir[0], -probe.dir[1], -probe.dir[2]],
-        anchorPoint: probe.hitPos,
-        eps: DIELECTRIC_CROSSING_EPS_REL * visR,
-        ior: DIELECTRIC_IOR,
-        radius: visR,
-        absorb: DIELECTRIC_ABSORPTION,
-        theta: DIELECTRIC_INITIAL_BRANCH_THETA,
-        anchorPresent: 1,
-        mode: 1,
-      });
+      if (leg.backend === "closedSolid") {
+        // The closed-solid legs' arms pin the INSIDE traversal (the
+        // backend's whole point) beside the outside one: the anchored
+        // arm restarts AT the hit heading INTO the solid with the
+        // refracted child's medium — the estimator legs' anchored arm
+        // marches the REVERSE ray with no medium at all — and the
+        // unanchored arm starts just past the hit along the reverse ray
+        // with the reflected child's medium. The trace probe (below)
+        // resolves end to end under the signed query in both arms.
+        boundaryQueries.push({
+          origin: probe.hitPos,
+          dir: [probe.dir[0], probe.dir[1], probe.dir[2]],
+          anchorPoint: probe.hitPos,
+          eps: DIELECTRIC_CROSSING_EPS_REL * visR,
+          ior: DIELECTRIC_IOR,
+          radius: visR,
+          absorb: DIELECTRIC_ABSORPTION,
+          theta: DIELECTRIC_INITIAL_BRANCH_THETA,
+          anchorPresent: 1,
+          mode: 1,
+          inside: 1,
+        });
+        boundaryQueries.push({
+          origin: [
+            probe.hitPos[0] + probe.dir[0] * visR * 0.01,
+            probe.hitPos[1] + probe.dir[1] * visR * 0.01,
+            probe.hitPos[2] + probe.dir[2] * visR * 0.01,
+          ],
+          dir: [-probe.dir[0], -probe.dir[1], -probe.dir[2]],
+          anchorPoint: [0, 0, 0],
+          eps: DIELECTRIC_CROSSING_EPS_REL * visR,
+          ior: DIELECTRIC_IOR,
+          radius: visR,
+          absorb: DIELECTRIC_ABSORPTION,
+          theta: DIELECTRIC_INITIAL_BRANCH_THETA,
+          anchorPresent: 0,
+          mode: 1,
+          inside: 0,
+        });
+      } else {
+        boundaryQueries.push({
+          origin: [
+            probe.hitPos[0] + probe.dir[0] * visR * 0.01,
+            probe.hitPos[1] + probe.dir[1] * visR * 0.01,
+            probe.hitPos[2] + probe.dir[2] * visR * 0.01,
+          ],
+          dir: [-probe.dir[0], -probe.dir[1], -probe.dir[2]],
+          anchorPoint: [0, 0, 0],
+          eps: DIELECTRIC_CROSSING_EPS_REL * visR,
+          ior: DIELECTRIC_IOR,
+          radius: visR,
+          absorb: DIELECTRIC_ABSORPTION,
+          theta: DIELECTRIC_INITIAL_BRANCH_THETA,
+          anchorPresent: 0,
+          mode: 1,
+          inside: 0,
+        });
+        boundaryQueries.push({
+          origin: probe.hitPos,
+          dir: [-probe.dir[0], -probe.dir[1], -probe.dir[2]],
+          anchorPoint: probe.hitPos,
+          eps: DIELECTRIC_CROSSING_EPS_REL * visR,
+          ior: DIELECTRIC_IOR,
+          radius: visR,
+          absorb: DIELECTRIC_ABSORPTION,
+          theta: DIELECTRIC_INITIAL_BRANCH_THETA,
+          anchorPresent: 1,
+          mode: 1,
+          inside: 0,
+        });
+      }
       traceQueries.push({
         origin: probe.hitPos,
         dir: probe.dir,
@@ -8648,6 +8823,7 @@ async function runSurfaceTransportAgreementLegs(
         theta: DIELECTRIC_INITIAL_BRANCH_THETA,
         anchorPresent: 0,
         mode: 0,
+        inside: 0,
       });
     }
     const count = boundaryQueries.length + traceQueries.length;
@@ -8683,6 +8859,7 @@ async function runSurfaceTransportAgreementLegs(
         view.setFloat32(base + 76, q.theta, true);
         view.setUint32(base + 80, q.anchorPresent, true);
         view.setUint32(base + 84, q.mode, true);
+        view.setUint32(base + 88, q.inside, true);
       };
       list.forEach(write);
       for (let i = list.length; i < padded; i++) {
@@ -8698,6 +8875,7 @@ async function runSurfaceTransportAgreementLegs(
             theta: DIELECTRIC_INITIAL_BRANCH_THETA,
             anchorPresent: 0,
             mode: 1,
+            inside: 0,
           },
           i,
         );
@@ -8830,6 +9008,19 @@ async function runSurfaceTransportAgreementLegs(
     };
     probes.forEach((probe, pi) => {
       // --- the TRACE probe (mode 0): the replay trace from the hit ---
+      const solidQuery: TransportQueryFn | undefined =
+        leg.backend === "closedSolid"
+          ? (origin, dir, anchorPresent, anchorPoint, inside, eps) =>
+              transportSolidBoundaryQueryCPU(
+                leg.fixture,
+                origin,
+                dir,
+                anchorPresent,
+                anchorPoint,
+                inside,
+                eps,
+              )
+          : undefined;
       const cpuTrace = transportTraceCPU(
         leg.fixture,
         probe.hitPos,
@@ -8842,6 +9033,7 @@ async function runSurfaceTransportAgreementLegs(
         },
         SURFACE_TRANSPORT_CONTROL_BG_LINEAR,
         legCaps,
+        solidQuery,
       );
       const traceStable =
         !forward ||
@@ -8893,17 +9085,35 @@ async function runSurfaceTransportAgreementLegs(
       }
       // An unstable TRACE skips only its own comparisons: the boundary
       // probes below carry their own classifier, so they still gate.
-      // --- the BOUNDARY probes (mode 1), unanchored then anchored ---
+      // --- the BOUNDARY probes (mode 1), backend's own arms ---
+      // The closed-solid legs' arm 0 is the ANCHORED inside traversal (the
+      // refracted child); the estimator legs' arm 1 is theirs. The labels
+      // and the anchored-arm t pin follow the backend.
       for (let b = 0; b < 2; b++) {
         const query = boundaryQueries[pi * 2 + b];
-        const cpuHit = transportBoundaryQueryCPU(
-          leg.fixture,
-          query.origin,
-          query.dir,
-          query.anchorPresent === 1,
-          query.anchorPoint,
-          query.eps,
-        );
+        const anchoredArm = leg.backend === "closedSolid" ? b === 0 : b === 1;
+        const armName = anchoredArm
+          ? "boundary-anchored"
+          : "boundary-unanchored";
+        const cpuHit =
+          leg.backend === "closedSolid"
+            ? transportSolidBoundaryQueryCPU(
+                leg.fixture,
+                query.origin,
+                query.dir,
+                query.anchorPresent === 1,
+                query.anchorPoint,
+                query.inside === 1,
+                query.eps,
+              )
+            : transportBoundaryQueryCPU(
+                leg.fixture,
+                query.origin,
+                query.dir,
+                query.anchorPresent === 1,
+                query.anchorPoint,
+                query.eps,
+              );
         const boundaryStable =
           !forward ||
           surfaceTransportBoundaryProbeStable(
@@ -8934,7 +9144,7 @@ async function runSurfaceTransportAgreementLegs(
         if (gpuKind !== TRANSPORT_BOUNDARY_KIND_CODES[cpuHit.kind]) {
           fail(
             pi,
-            b === 0 ? "boundary-unanchored" : "boundary-anchored",
+            armName,
             `kind — gpu ${String(gpuKind)} vs cpu "${cpuHit.kind}"`,
           );
         }
@@ -8942,15 +9152,15 @@ async function runSurfaceTransportAgreementLegs(
         if (gpuReason !== cpuHit.reason) {
           fail(
             pi,
-            b === 0 ? "boundary-unanchored" : "boundary-anchored",
+            armName,
             `reason — gpu ${String(gpuReason)} vs cpu ${String(cpuHit.reason)}`,
           );
         }
         const gpuT = boundaryOut[base + 2];
-        if (b === 1 && !(gpuT > 0)) {
+        if (anchoredArm && !(gpuT > 0)) {
           fail(
             pi,
-            "boundary-anchored",
+            armName,
             `t ${String(gpuT)} — the anchored query must clear its own anchor`,
           );
         }
@@ -8958,7 +9168,7 @@ async function runSurfaceTransportAgreementLegs(
         if (tDelta > 1e-3 * visR) {
           fail(
             pi,
-            b === 0 ? "boundary-unanchored" : "boundary-anchored",
+            armName,
             `t — gpu ${String(gpuT)} vs cpu ${String(cpuHit.t)} ` +
               `(delta ${String(tDelta)} > ${String(1e-3 * visR)})`,
           );
@@ -8969,7 +9179,7 @@ async function runSurfaceTransportAgreementLegs(
           if (delta > 3e-2) {
             fail(
               pi,
-              b === 0 ? "boundary-unanchored" : "boundary-anchored",
+              armName,
               `normal[${String(c)}] — gpu ${String(boundaryOut[base + 4 + c])} vs cpu ${String(cpuHit.normal[c])}`,
             );
           }
@@ -8993,6 +9203,9 @@ async function runSurfaceTransportAgreementLegs(
     rows.push({
       core: leg.core,
       system: leg.systemName,
+      backend: leg.backend,
+      opticsSoundness:
+        leg.backend === "closedSolid" ? "resolving" : "vacuous-inside",
       compileMs,
       queries: count,
       boundaryAgree: true,
@@ -9063,6 +9276,11 @@ interface SurfaceTransportEnvelopeFrame {
 interface SurfaceTransportEnvelopeRow {
   core: "affine" | "affine4";
   system: string;
+  /** The boundary backend the arm drove: `"estimator"` on the IFS
+   * fixtures (the vacuous-optics rows), `"closedSolid"` on the
+   * emitter-only union fixtures — the arms whose transport samples must
+   * RESOLVE (the row-failure gate below). */
+  backend: "estimator" | "closedSolid";
   adapterLabel: string | undefined;
   preview: SurfaceTransportEnvelopeFrame;
   /** The preview rendered twice — production-realistic reuse (the app
@@ -9153,6 +9371,15 @@ function surfaceTransportEnvelopeRowFailures(
       `retained ${(row.retainedBytes / (1024 * 1024)).toFixed(1)}MiB > 128MiB line`,
     );
   }
+  if (row.backend === "closedSolid" && row.settle.transport.resolved === 0) {
+    // The closed-solid backend's whole point: its transport samples
+    // RESOLVE. A zero-resolution settle is the vacuous state the
+    // estimator arms disclose — for these arms it is a failure, not a
+    // disclosure.
+    failures.push(
+      "closed-solid settle resolved no transport sample (the inside traversal did not reach the lane)",
+    );
+  }
   return failures;
 }
 
@@ -9167,7 +9394,7 @@ function surfaceTransportEnvelopeNote(
   const vacuous =
     row.preview.transport.resolved === 0 && row.preview.counts.hit > 0;
   return (
-    `transport envelope ${row.core} × ${row.system}: ` +
+    `transport envelope ${row.core} × ${row.system} [${row.backend}]: ` +
     `preview ${row.preview.wallMs.toFixed(0)}ms (batch max ${row.preview.maxBatchMs.toFixed(1)}ms, ` +
     `passes ${String(row.preview.transport.passes)}, resolved ${String(row.preview.transport.resolved)} ` +
     `unresolved ${String(row.preview.transport.unresolved)} invalid ${String(row.preview.transport.invalid)}), ` +
@@ -9200,15 +9427,21 @@ function surfaceTransportEnvelopeNote(
  *   preview 256×144, 1 sample, the app preview's own budget
  *   settle  512×288, 4 samples (the qualified convention), unbudgeted
  *
- * against the decided envelope's lines (see the constants above). One arm
- * per admitted descent core: `affineTetra` (affine, 3D) and `aff4Tetra`
- * (affine4, 4D at its identity-rotor canonical pose) — the same fixture
- * systems the agreement legs pin, so the envelope's geometry is exactly
- * the arithmetic that was certified. The fold core's transport stays
- * refused on its own measured record (the capability matrix); the forward
- * families are unadmitted. Skipped on software adapters by the caller —
- * the lines are real-driver measurements, and SwiftShader timing certifies
- * nothing (the agreement legs already cover the kernel's reachability).
+ * against the decided envelope's lines (see the constants above). Four
+ * arms: the two estimator arms (one per admitted descent core —
+ * `affineTetra` (affine, 3D) and `aff4Tetra` (affine4, 4D at its
+ * identity-rotor canonical pose), the same fixture systems the agreement
+ * legs pin) and the two CLOSED-SOLID arms (`emitterOnlyUnion3`/`4`, the
+ * emitter-only union the closed-solid backend serves, driven with
+ * `opticsBackend: "closedSolid"`). The estimator arms stay the standing
+ * TIMING gate with their vacuous-optics disclosure; the closed-solid
+ * arms must RESOLVE — the row-failure gate reads the settle's resolved
+ * count, which is the acceptance line the boundary backend exists to
+ * meet. The fold core's transport stays refused on its own measured
+ * record (the capability matrix); the forward families are unadmitted.
+ * Skipped on software adapters by the caller — the lines are real-driver
+ * measurements, and SwiftShader timing certifies nothing (the agreement
+ * legs already cover the kernel's reachability).
  *
  * Fail closed: a missing fixture system, a null frame, a missing transport
  * tally, or any delegated-line failure surfaces in
@@ -9238,6 +9471,7 @@ async function runSurfaceTransportEnvelopeLeg(
   const rows: SurfaceTransportEnvelopeRow[] = [];
   const arms: {
     core: "affine" | "affine4";
+    backend: "estimator" | "closedSolid";
     sys: SurfaceSystemState | Surface4SystemState;
     view4: SurfaceGpu4View | null;
   }[] = [];
@@ -9246,15 +9480,118 @@ async function runSurfaceTransportEnvelopeLeg(
   if (!affine3d)
     throw new Error("transport envelope: affineTetra did not build");
   if (!aff4) throw new Error("transport envelope: aff4Tetra did not build");
-  arms.push({ core: "affine", sys: affine3d, view4: null });
-  arms.push({ core: "affine4", sys: aff4, view4: aff4.view4 });
+  arms.push({
+    core: "affine",
+    backend: "estimator",
+    sys: affine3d,
+    view4: null,
+  });
+  arms.push({
+    core: "affine4",
+    backend: "estimator",
+    sys: aff4,
+    view4: aff4.view4,
+  });
+
+  // The closed-solid arms (both dimensions): the emitter-only union the
+  // closed-solid backend serves — the same fixture recipe the agreement
+  // legs' closed-solid rows pin — at the canonical identity pose in 4D.
+  // These arms' transport samples must RESOLVE (the row-failure gate
+  // reads the settle's resolved count) and the vacuous note flips itself
+  // off when the counts go nonzero.
+  {
+    const solidTransforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.35, -0.1, 0.05],
+        rotation: [0.15, -0.2, 0.1],
+        scale: [0.35, 0.35, 0.35],
+        emitter: {
+          parts: [
+            { primitive: { kind: "sphere", radius: 1 }, combine: "union" },
+          ],
+        },
+      },
+      {
+        id: 1,
+        position: [-0.4, 0.25, -0.05],
+        rotation: [-0.1, 0.12, -0.2],
+        scale: [0.3, 0.3, 0.3],
+        emitter: {
+          parts: [
+            {
+              primitive: { kind: "box", half: [0.7, 0.5, 0.8] },
+              combine: "union",
+            },
+          ],
+        },
+      },
+    ];
+    const solid3 = buildSurfaceDE(
+      solidTransforms,
+      null,
+      { order: 1, plane: "xy" },
+      {},
+    );
+    const solid4 = buildSurfaceDE4(
+      solidTransforms,
+      null,
+      { order: 1, plane: "xy" },
+      {},
+    );
+    if (solid3.maps.length !== 0 || !solid3.condensation) {
+      throw new Error(
+        "transport envelope: the 3D closed-solid fixture did not build its emitter-only union",
+      );
+    }
+    if (solid4.maps.length !== 0 || !solid4.condensation) {
+      throw new Error(
+        "transport envelope: the 4D closed-solid fixture did not build its emitter-only union",
+      );
+    }
+    arms.push({
+      core: "affine",
+      backend: "closedSolid",
+      sys: {
+        name: "emitterOnlyUnion3",
+        core: "affine",
+        de: solid3,
+        transforms: solidTransforms,
+        queries: [],
+        cpu: [],
+      },
+      view4: null,
+    });
+    arms.push({
+      core: "affine4",
+      backend: "closedSolid",
+      sys: {
+        name: "emitterOnlyUnion4",
+        de: solid4,
+        view4: {
+          rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+          w0: 0,
+          sliceHalfW: 0,
+        },
+        transforms: solidTransforms,
+        queries: [],
+        cpu: [],
+        stable: [],
+      },
+      view4: {
+        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        w0: 0,
+        sliceHalfW: 0,
+      },
+    });
+  }
 
   const heapNow = (): number | undefined =>
     (performance as { memory?: { usedJSHeapSize?: number } }).memory
       ?.usedJSHeapSize;
 
   for (const arm of arms) {
-    const { core, sys, view4 } = arm;
+    const { core, backend, sys, view4 } = arm;
     const de = sys.de;
     // The optics-authored DOCUMENT: every slotted transform dielectric —
     // the whole solid glass, the appearance's own shape and the lane's
@@ -9292,7 +9629,10 @@ async function runSurfaceTransportEnvelopeLeg(
         : { kind: "ifs", de: de as SurfaceDE },
       colors,
       trapIndices,
-      { materials },
+      {
+        materials,
+        ...(backend === "closedSolid" ? { opticsBackend: "closedSolid" } : {}),
+      },
     );
     try {
       const specFor = (
@@ -9461,6 +9801,7 @@ async function runSurfaceTransportEnvelopeLeg(
       const row: SurfaceTransportEnvelopeRow = {
         core,
         system: sys.name,
+        backend,
         adapterLabel: renderer.adapterLabel,
         preview: toRowFrame(preview),
         previewRepeat: { wallMs: repeat.wallMs, byteIdentical },
@@ -20651,7 +20992,7 @@ async function runSurfaceDeSection(
         // runner's stdout printer predates this field, so the row also
         // lands in `notes` and the run's summary discloses it.
         results.notes.push(
-          `transport agreement ${row.core} × ${row.system}: queries=${String(row.queries)} ` +
+          `transport agreement ${row.core} × ${row.system} [${row.backend}, ${row.opticsSoundness}]: queries=${String(row.queries)} ` +
             `boundaryAgree=${String(row.boundaryAgree)} traceAgree=${String(row.traceAgree)} ` +
             `maxRadianceDelta=${row.maxRadianceDelta.toExponential(2)} ` +
             `maxResidualDelta=${row.maxResidualDelta.toExponential(2)} ` +
