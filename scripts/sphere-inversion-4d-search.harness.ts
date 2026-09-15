@@ -28,9 +28,18 @@
  *
  * Run: npx vitest run --config scripts/vitest.harness.config.ts \
  *        scripts/sphere-inversion-4d-search.harness.ts
- * Env: SI4_SIZE (panel px), SI4_SHARD / SI4_SHARDS (split one round across
- * processes), SI4_ONLY (comma-separated candidate keys).
+ * Env: SI4_ROUND (r1 | r2 | r3 | win; unset runs r1-r3), SI4_SIZE (panel
+ * px), SI4_SHARD / SI4_SHARDS (split one round across processes), SI4_ONLY
+ * (comma-separated candidate keys). The winners sheet renders at 320 px in
+ * parallel parts, then tiles them:
+ *   SI4_ROUND=win SI4_SIZE=320 SI4_WIN_PART=ref|0|1|2   (one process each)
+ *   SI4_ROUND=win SI4_SIZE=320 SI4_WIN_PART=combine
+ * Writes, under `scripts/out/`: sphere-inversion-4d-search-r{1,2,3}-s*.png
+ * and sphere-inversion-4d-winners.png.
  */
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { mulberry32 } from "../src/fractal/rng";
 import {
   PREVIEW_HIT,
@@ -752,7 +761,7 @@ function subArrangement(
   return { dim: 3, gens, seed, depth: spec.depth };
 }
 
-function measureCandidate(cand: Candidate, size: number) {
+function measureCandidate(cand: Candidate, size: number, twin = true) {
   const scene = buildInversionScene(cand.spec);
   const scratch = makeFoldScratch(scene);
   const lifts = cand.poses.map((p) => lift4(p.planes, p.w0));
@@ -870,7 +879,7 @@ function measureCandidate(cand: Candidate, size: number) {
     }
     let subDiff = NaN;
     try {
-      if (subSpec) {
+      if (subSpec && twin) {
         const s3 = buildInversionScene(subSpec);
         const sc3 = makeFoldScratch(s3);
         const twin = renderPreview(
@@ -991,9 +1000,252 @@ function runRound(round: string, candidates: Candidate[]): void {
   );
 }
 
+// ---------------------------------------------------------------- winners
+
+/** The three native 4D subjects, each as the pose/slice sequence its
+ * preset's rotor and slice sliders would reveal. Poses start at the
+ * identity, which is PASSIVE for every one of them (the 600-cell's
+ * equatorial slice is its icosidodecahedral sub-arrangement), so the first
+ * column is the 3D-reducible reference and the rest are the genuine slices. */
+const WINNERS: Candidate[] = [
+  {
+    key: "LACE600 K.995 B.20 D7",
+    spec: {
+      dim: 4,
+      gens: atKissing(cell600, 0.995),
+      seed: ballSeed(0.2, 4),
+      depth: 7,
+    },
+    poses: [
+      { name: "ID", planes: [], w0: 0 },
+      { name: "W.03", planes: [], w0: 0.03 },
+      { name: "W.06", planes: [], w0: 0.06 },
+      { name: "XW.1W.04", planes: [["xw", 0.1]], w0: 0.04 },
+    ],
+  },
+  {
+    key: "VAULT600 K.99 CUT SH.9T.04 D5",
+    spec: {
+      dim: 4,
+      gens: atKissing(cell600, 0.99),
+      seed: cutShellSeed4(0.9, 0.04, VAULT_DIR, 10.25, 10),
+      depth: 5,
+    },
+    poses: [
+      { name: "ID", planes: [], w0: 0 },
+      { name: "W.08", planes: [], w0: 0.08 },
+      { name: "WKISS", planes: [], w0: W_KISS_600 },
+      { name: "XW.3W.1", planes: [["xw", 0.3]], w0: 0.1 },
+    ],
+    view: VAULT_B,
+  },
+  {
+    key: "MEDAL600 K.99 SH1.1T.03 D5",
+    spec: {
+      dim: 4,
+      gens: atKissing(cell600, 0.99),
+      seed: shellSeed(1.1, 0.03, 4),
+      depth: 5,
+    },
+    poses: [
+      { name: "ID", planes: [], w0: 0 },
+      { name: "WKISS", planes: [], w0: W_KISS_600 },
+      {
+        name: "XW.4YW.3ZW.2",
+        planes: [
+          ["xw", 0.4],
+          ["yw", 0.3],
+          ["zw", 0.2],
+        ],
+        w0: 0,
+      },
+      { name: "XW.3W.1", planes: [["xw", 0.3]], w0: 0.1 },
+    ],
+  },
+];
+
+/** The 3D bar, rendered here at the same panel size: the gate sheet's
+ * kissing octahedral pearls (axis view), kissing cube pearls (top view),
+ * the octahedral interior vault and the icosahedral lace shell — each spec
+ * and camera exactly as `sphere-inversion.harness.ts` draws it. */
+function render3dReferences(size: number) {
+  const refs: {
+    label: string;
+    spec: InversionSceneSpec;
+    eyeOffset?: Vec3;
+    view?: InteriorView;
+  }[] = [
+    {
+      label: "3D PEARLS OCT6 KISS B.28 D10 AXIS",
+      spec: {
+        dim: 3,
+        gens: octahedral6(1, Math.SQRT1_2),
+        seed: ballSeed(0.28, 3),
+        depth: 10,
+      },
+      eyeOffset: [0.35, 0.45, 1.9],
+    },
+    {
+      label: "3D PEARLS CUBE8 KISS B.42 D12 TOP",
+      spec: {
+        dim: 3,
+        gens: cube8(1, 1 / Math.sqrt(3)),
+        seed: ballSeed(0.42, 3),
+        depth: 12,
+      },
+      eyeOffset: [0.45, 1.85, 0.6],
+    },
+    {
+      label: "3D VAULT INSIDE OCT6 R.70 D8",
+      spec: {
+        dim: 3,
+        gens: octahedral6(1, 0.7),
+        seed: [
+          ...shellSeed(1, 0.06, 3),
+          {
+            c: VAULT_DIR.map((v) => (v / Math.hypot(...VAULT_DIR)) * 10.25),
+            r: 10,
+            sign: -1,
+          },
+        ],
+        depth: 8,
+      },
+      view: VAULT_VIEW,
+    },
+    {
+      label: "3D LACE SHELL ICO12 R.52 D6",
+      spec: {
+        dim: 3,
+        gens: icosahedral12(1, 0.52),
+        seed: shellSeed(1, 0.03, 3),
+        depth: 6,
+      },
+    },
+  ];
+  return refs.map((ref) => {
+    const scene = buildInversionScene(ref.spec);
+    const scratch = makeFoldScratch(scene);
+    const R = ref.view
+      ? scene.boundRadius
+      : Math.max(
+          0.2,
+          sampleSetExtent((p) => inversionOrbitContains(scene, p, scratch), {
+            fillRadius: scene.boundRadius,
+            points: 32768,
+          }).reachAbs * 1.06,
+        );
+    const preview: PreviewScene = {
+      de: (p) => estimateInversionDistance(scene, p, scratch),
+      boundingRadius: R,
+      stepScale: 1,
+      eyeOffset: ref.eyeOffset ?? EYE_OFFSET,
+      zoom: ZOOM,
+    };
+    if (ref.view) {
+      preview.eye = ref.view.eye;
+      preview.target = ref.view.target;
+      preview.boundingCenter = [0, 0, 0];
+      preview.zoom = ref.view.zoom;
+      preview.shadow = false;
+      preview.fog = false;
+    }
+    const stats = renderPreview(preview, size);
+    const px = size * size;
+    const line =
+      `H${((100 * stats.hits) / px).toFixed(1)} ` +
+      `X${((100 * stats.exhausted) / px).toFixed(1)} ` +
+      `S${(stats.steps / px).toFixed(1)} ${(stats.ms / 1000).toFixed(1)}S`;
+    console.log(`    ${ref.label.padEnd(36)} ${line}`);
+    return { stats, lines: [ref.label, line] as [string, string] };
+  });
+}
+
+type SheetPanel = { stats: PanelStats; lines: [string, string] };
+
+const WIN_PART = process.env.SI4_WIN_PART;
+const PART_DIR = join(dirname(fileURLToPath(import.meta.url)), "out");
+const partFile = (part: string) =>
+  join(PART_DIR, `sphere-inversion-4d-winners-part-${part}.json`);
+
+/** One row of the winners sheet — the 3D references (part `ref`) or one
+ * subject (part `0`..`2`) — cached as raw panels so rows render in parallel
+ * processes and one `combine` part tiles them. */
+function renderWinnerPart(part: string): SheetPanel[] {
+  if (part === "ref") {
+    console.log(`\n  [win] 3D references (${SIZE}px)`);
+    return render3dReferences(SIZE);
+  }
+  const cand = WINNERS[Number(part)];
+  const started = Date.now();
+  const m = measureCandidate(cand, SIZE, false);
+  console.log(
+    `\n  [win] ${cand.key} — framed R ${m.R.toFixed(3)}, ` +
+      `${((Date.now() - started) / 1000).toFixed(1)}s total`,
+  );
+  const px = SIZE * SIZE;
+  return m.results.map((r) => {
+    const line =
+      `H${((100 * r.stats.hits) / px).toFixed(1)} ` +
+      `X${((100 * r.stats.exhausted) / px).toFixed(1)} ` +
+      `S${(r.stats.steps / px).toFixed(1)} ${(r.stats.ms / 1000).toFixed(1)}S ` +
+      `OFF${r.offPx.toFixed(2)} K${r.contain0.toFixed(2)}`;
+    console.log(
+      `    ${r.pose.name.padEnd(14)} ${line}  copy px ${r.copyPx.toFixed(2)} ` +
+        `cloud: copies ${r.copyShare.toFixed(2)} off ${r.off.toFixed(2)} ` +
+        `sub IoU ${r.sub.toFixed(3)} I0 ${r.iou0.toFixed(2)}`,
+    );
+    return {
+      stats: r.stats,
+      lines: [`4D ${cand.key.split(" ")[0]} ${r.pose.name}`, line] as [
+        string,
+        string,
+      ],
+    };
+  });
+}
+
 const ROUND = process.env.SI4_ROUND;
 
 describe("native 4D sphere-inversion beauty search", () => {
+  it.runIf(ROUND === "win")(
+    "winners: the native 4D subjects beside the 3D bar at equal size",
+    () => {
+      mkdirSync(PART_DIR, { recursive: true });
+      const parts = ["ref", "0", "1", "2"];
+      if (WIN_PART !== "combine") {
+        for (const part of WIN_PART ? [WIN_PART] : parts) {
+          const panels = renderWinnerPart(part);
+          writeFileSync(
+            partFile(part),
+            JSON.stringify(
+              panels.map((p) => ({
+                lines: p.lines,
+                rgb: Buffer.from(p.stats.rgb).toString("base64"),
+              })),
+            ),
+          );
+        }
+        if (WIN_PART) return;
+      }
+      const panels: SheetPanel[] = parts.flatMap((part) =>
+        (
+          JSON.parse(readFileSync(partFile(part), "utf8")) as {
+            lines: [string, string];
+            rgb: string;
+          }[]
+        ).map((p) => ({
+          lines: p.lines,
+          stats: {
+            ...blankPanel(SIZE),
+            rgb: new Uint8Array(Buffer.from(p.rgb, "base64")),
+          },
+        })),
+      );
+      console.log(
+        `  wrote ${writeLabeledContactSheet(panels, 4, "sphere-inversion-4d-winners.png")}`,
+      );
+    },
+  );
   it.runIf(!ROUND || ROUND === "r1")(
     "round 1: arrangement families under one pose sequence",
     () => {
