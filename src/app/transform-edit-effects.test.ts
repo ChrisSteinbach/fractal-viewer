@@ -816,3 +816,63 @@ describe("planTransformEdit: Surface appearance consumers", () => {
     expect(plan.preserveSurfaceView).toBe(true);
   });
 });
+
+describe("planTransformEdit: sphere-inversion subject", () => {
+  it("neither regenerates Points nor re-enters Surface for a geometry edit", () => {
+    const previous = snapshot();
+    const document = replaceTransform(previous, 0, { position: [0.4, 0, 0] });
+
+    for (const renderMode of ["points", "surface"] as const) {
+      const plan = planTransformEdit(
+        classifyTransformEdit(previous, document),
+        context({
+          document,
+          renderMode,
+          sphereInversionSubject: true,
+          surface: {
+            eligibility: { status: "eligible", kind: "sphereInversion" },
+          },
+        }),
+      );
+
+      expect(plan.points, renderMode).toBe("none");
+      expect(plan.active, renderMode).toBe("none");
+      expect(plan.refreshSurfaceEligibility, renderMode).toBe(true);
+    }
+  });
+
+  it("does not re-enter a 4D Surface session for a finish or index edit", () => {
+    const previous = snapshot();
+    const document = replaceTransform(previous, 0, {
+      colorIndex: 3,
+      finish: { specular: 0.9 },
+    });
+
+    const plan = planTransformEdit(
+      classifyTransformEdit(previous, document),
+      context({
+        document,
+        renderMode: "surface",
+        sphereInversionSubject: true,
+        surface: {
+          eligibility: { status: "degraded", kind: "sphereInversion4" },
+        },
+      }),
+    );
+
+    expect(plan.active).toBe("none");
+    expect(plan.points).toBe("none");
+  });
+
+  it("still re-enters Surface for the same edit once the block is gone", () => {
+    const previous = snapshot();
+    const document = replaceTransform(previous, 0, { position: [0.4, 0, 0] });
+
+    const plan = planTransformEdit(
+      classifyTransformEdit(previous, document),
+      context({ document, renderMode: "surface" }),
+    );
+
+    expect(plan.active).toBe("reenter-surface");
+  });
+});

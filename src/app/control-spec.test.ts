@@ -38,6 +38,8 @@ import {
 } from "./constants";
 import { pentatope } from "../fractal/presets";
 import { BUNDLED_SHAPES, BUNDLED_TRAP_SHAPES } from "./bundled-shapes";
+import { setSphereInversion } from "./state";
+import { PRESET_SPHERE_INVERSIONS } from "../fractal/presets";
 
 /** Look up a table entry by its index.html element id. */
 function specById(id: string): ScalarControlSpec {
@@ -86,6 +88,7 @@ function mockEffects(shared = false): ControlEffects {
     restartFlameTilingRender: vi.fn(),
     setSurfaceLatticeScale: vi.fn(),
     restartSurfaceRender: vi.fn(),
+    syncSphereInversion: vi.fn(),
     applyBackground: vi.fn(),
     trackAutoBackground: vi.fn(),
     cancelBalloonSweep: vi.fn(),
@@ -2308,12 +2311,20 @@ describe("commit", () => {
     expect(fx.regenerateIfAutoUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it("numPointsSlider is the only entry that declares a commit effect", () => {
+  it("numPointsSlider and the sphere-inversion sliders are the only entries that declare a commit effect", () => {
     const withCommit = SCALAR_CONTROLS.filter(
       (s) => s.kind === "range" && s.commit !== undefined,
     ).map((s) => s.id);
 
-    expect(withCommit).toEqual(["numPointsSlider"]);
+    expect(withCommit).toEqual([
+      "numPointsSlider",
+      "sphereInversionRadiusSlider",
+      "sphereInversionSizeSlider",
+      "sphereInversionThicknessSlider",
+      "sphereInversionCutRadiusSlider",
+      "sphereInversionCutOffsetSlider",
+      "sphereInversionDepthSlider",
+    ]);
   });
 });
 
@@ -2412,5 +2423,102 @@ describe("table policy", () => {
     const ids = SCALAR_CONTROLS.map((s) => s.id);
 
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe("sphere-inversion controls", () => {
+  it("adds Kissing Pearls in a flat scene and removes the block again", () => {
+    const spec = specById("sphereInversionEnabledCheckbox");
+    const initial = initialState(true);
+
+    const added = applyScalarControl(initial, spec, true);
+    const removed = applyScalarControl(added, spec, false);
+
+    expect(added.sphereInversion).toEqual(
+      PRESET_SPHERE_INVERSIONS.inversionPearls?.(),
+    );
+    expect(removed.sphereInversion).toBeUndefined();
+    expect(removed.transforms).toBe(initial.transforms);
+  });
+
+  it("keeps an existing block when the checkbox reports checked again", () => {
+    const spec = specById("sphereInversionEnabledCheckbox");
+    const state = setSphereInversion(initialState(true), {
+      arrangement: "ico12",
+      depth: 3,
+    });
+
+    expect(applyScalarControl(state, spec, true)).toBe(state);
+  });
+
+  it("writes a slider's field only when a block is present", () => {
+    const spec = specById("sphereInversionDepthSlider");
+    const bare = initialState(true);
+    const withBlock = setSphereInversion(bare, { arrangement: "oct6" });
+
+    expect(applyScalarControl(bare, spec, "5")).toBe(bare);
+    expect(applyScalarControl(withBlock, spec, "5").sphereInversion).toEqual({
+      arrangement: "oct6",
+      depth: 5,
+    });
+    expect(applyScalarControl(withBlock, spec, "8").sphereInversion).toEqual({
+      arrangement: "oct6",
+    });
+  });
+
+  it("reads an out-of-range document value without clamping it", () => {
+    const spec = specById("sphereInversionDepthSlider");
+    if (spec.kind !== "range") throw new Error("expected a range spec");
+    const state = setSphereInversion(initialState(true), {
+      arrangement: "oct6",
+      depth: 20,
+    });
+
+    expect(spec.numeric.read(state)).toBe(20);
+    expect(spec.numeric.bounds?.(state)).toEqual(
+      expect.objectContaining({ min: 0, max: 12 }),
+    );
+  });
+
+  it("follows the seed kind's size span", () => {
+    const spec = specById("sphereInversionSizeSlider");
+    if (spec.kind !== "range") throw new Error("expected a range spec");
+    const shell = setSphereInversion(initialState(true), {
+      arrangement: "oct6",
+      seed: { kind: "shell" },
+    });
+
+    expect(spec.numeric.bounds?.(shell)).toEqual(
+      expect.objectContaining({ min: 0.7, max: 1.3 }),
+    );
+    expect(spec.numeric.read(shell)).toBe(1);
+  });
+
+  it("settles discrete edits at once and slider edits on release", () => {
+    const state = setSphereInversion(
+      { ...initialState(true), renderMode: "surface" },
+      { arrangement: "oct6" },
+    );
+    for (const id of [
+      "sphereInversionEnabledCheckbox",
+      "sphereInversionArrangement",
+      "sphereInversionSeedKind",
+    ]) {
+      const fx = mockEffects();
+      specById(id).effect?.(state, fx, state);
+      expect(fx.regenerateIfAutoUpdate, id).toHaveBeenCalledTimes(1);
+      expect(fx.syncSphereInversion, id).toHaveBeenCalledTimes(1);
+      expect(fx.restartSurfaceRender, id).not.toHaveBeenCalled();
+    }
+
+    const slider = specById("sphereInversionRadiusSlider");
+    if (slider.kind !== "range") throw new Error("expected a range spec");
+    const live = mockEffects();
+    slider.effect?.(state, live, state);
+    expect(live.regenerateIfAutoUpdate).toHaveBeenCalledTimes(1);
+    expect(live.syncSphereInversion).not.toHaveBeenCalled();
+    const release = mockEffects();
+    slider.commit?.(state, release, state);
+    expect(release.syncSphereInversion).toHaveBeenCalledTimes(1);
   });
 });

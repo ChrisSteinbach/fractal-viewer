@@ -39,6 +39,18 @@ import {
   type BundledTrapKind,
 } from "./bundled-shapes";
 import { isLatticeTilingSpec, TILING_GROUPS } from "../fractal/tiling";
+import { SPHERE_INVERSION_SEED_KINDS } from "../fractal/sphere-inversion";
+import {
+  defaultSphereInversionBlock,
+  sphereInversionArrangementValue,
+  sphereInversionFieldRange,
+  sphereInversionFieldValue,
+  sphereInversionSeedKindValue,
+  withSphereInversionArrangement,
+  withSphereInversionField,
+  withSphereInversionSeedKind,
+  type SphereInversionNumericField,
+} from "./sphere-inversion-controls";
 import { clamp } from "../fractal/vec";
 import {
   DEFAULT_FLAME_PALETTE,
@@ -108,6 +120,7 @@ import {
   setSurfaceLightAzimuth,
   setSurfaceLightElevation,
   setSurfacePaletteId,
+  setSphereInversion,
   setTiling,
   SOLID_ITERATION_DETENTS,
   SURFACE_ANTIALIAS_DETENTS,
@@ -393,6 +406,14 @@ export interface ControlEffects {
    * itself.
    */
   cancelBalloonSweep(): void;
+  /**
+   * Settle a sphere-inversion block edit everywhere the block reaches
+   * outside the panel: the Flame/Solid refusal beside the mode switch, the
+   * flame-backdrop placeholder, the transform editor's dormant notes, and a
+   * live Surface session, which RESTARTS only when the block's authored
+   * JSON differs from the one it entered with.
+   */
+  syncSphereInversion(): void;
 }
 
 /**
@@ -448,6 +469,11 @@ export interface NumericControlSpec {
   /** Presentation mapping for a retained slider. Omitted means identity. */
   rangeToNumber?: (raw: number) => number;
   numberToRange?: (value: number) => number;
+  /** A state-dependent span replacing `min`/`max` in the updateLabels sync
+   * direction, which still widens it to the shown value and also moves the
+   * range element's own min/max. For controls whose public range depends on
+   * the document (a sphere-inversion seed's kind or dimension). */
+  bounds?: (state: AppState) => { min: number; max: number };
   read(state: AppState): number;
   apply(state: AppState, value: number): AppState;
 }
@@ -612,6 +638,82 @@ const tilingEffect: ControlEffect = (state, fx) => {
   if (state.renderMode === "solid") fx.applySolidTilingEdit();
   fx.trackAutoBackground();
 };
+
+/** A discrete sphere-inversion edit (the enable gesture, the arrangement,
+ * the seed kind): Points follows Auto-update, the Surface gate re-derives,
+ * and syncSphereInversion settles the rest — including the live Surface
+ * session's restart. docs/panel-ia.md's record is in
+ * sphere-inversion-controls.ts's module doc. */
+const sphereInversionEffect: ControlEffect = (_state, fx) => {
+  fx.regenerateIfAutoUpdate();
+  fx.refreshSurfaceEligibility();
+  fx.syncSphereInversion();
+};
+
+/** A sphere-inversion slider tick: Points follows Auto-update and the gate
+ * re-derives, but Surface waits for the release ({@link
+ * sphereInversionCommit}) — a session restart per tick would rebuild the
+ * construction's tables (472 KiB for the 600-cell) dozens of times a drag. */
+const sphereInversionLiveEffect: ControlEffect = (_state, fx) => {
+  fx.regenerateIfAutoUpdate();
+  fx.refreshSurfaceEligibility();
+};
+
+const sphereInversionCommit: ControlEffect = (_state, fx) => {
+  fx.syncSphereInversion();
+};
+
+/** The readout text every sphere-inversion slider shares: the number as
+ * authored to three decimals (a depth prints as the integer it is). */
+function sphereInversionReadout(value: number): string {
+  return String(Number(value.toFixed(3)));
+}
+
+/** One table-driven sphere-inversion slider. Reads the block through
+ * sphere-inversion-controls.ts (a non-number shows the default beside its
+ * refusal note) and writes through its absent-means-default rule; with no
+ * block present it reads the default and writes nothing. */
+function sphereInversionRange(
+  id: string,
+  labelId: string,
+  accessibleLabel: string,
+  field: SphereInversionNumericField,
+): RangeControlSpec {
+  const probe = { arrangement: "oct6" };
+  const range = sphereInversionFieldRange(probe, field);
+  const value = (s: AppState): number =>
+    sphereInversionFieldValue(s.sphereInversion ?? probe, field);
+  const write = (s: AppState, next: number): AppState =>
+    s.sphereInversion && Number.isFinite(next)
+      ? setSphereInversion(
+          s,
+          withSphereInversionField(s.sphereInversion, field, next),
+        )
+      : s;
+  return {
+    kind: "range",
+    id,
+    label: { id: labelId, text: (s) => sphereInversionReadout(value(s)) },
+    numeric: numericControl(
+      accessibleLabel,
+      range.min,
+      range.max,
+      range.step,
+      value,
+      write,
+      {
+        precision: range.precision,
+        ...(field === "depth" ? { enforceStep: true } : {}),
+        bounds: (s) =>
+          sphereInversionFieldRange(s.sphereInversion ?? probe, field),
+      },
+    ),
+    read: (s) => String(value(s)),
+    apply: (s, raw) => write(s, Number(raw)),
+    effect: sphereInversionLiveEffect,
+    commit: sphereInversionCommit,
+  };
+}
 
 /** The lattice scale is live inside Surface but changes which bounded raw
  * images Points and Flame contain. Points follows Auto-update, Flame restarts
@@ -931,6 +1033,7 @@ function numericControl(
     | "precision"
     | "rangeToNumber"
     | "numberToRange"
+    | "bounds"
   > = {},
 ): NumericControlSpec {
   const stepText = String(step);
@@ -948,6 +1051,7 @@ function numericControl(
     ...(options.allowedValues ? { allowedValues: options.allowedValues } : {}),
     ...(options.enforceStep ? { enforceStep: true } : {}),
     ...(options.rangeToNumber ? { rangeToNumber: options.rangeToNumber } : {}),
+    ...(options.bounds ? { bounds: options.bounds } : {}),
     ...(options.numberToRange ? { numberToRange: options.numberToRange } : {}),
   };
 }
@@ -1597,6 +1701,94 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     },
     effect: tilingScaleEffect,
   },
+  // ——— Sphere inversion: the optional authored subject that replaces the
+  // transform system (sphere-inversion-controls.ts carries the panel-IA
+  // record and the public ranges). The checkbox adds a showcase's form in
+  // the scene's current dimension and removes the block; the selects and
+  // sliders write one field each, absent-means-default. ———
+  {
+    kind: "checkbox",
+    id: "sphereInversionEnabledCheckbox",
+    read: (s) => s.sphereInversion !== undefined,
+    apply: (s, checked) =>
+      checked
+        ? s.sphereInversion
+          ? s
+          : setSphereInversion(
+              s,
+              defaultSphereInversionBlock(systemIsNonFlat(s)),
+            )
+        : s.sphereInversion
+          ? setSphereInversion(s, null)
+          : s,
+    effect: sphereInversionEffect,
+  },
+  {
+    kind: "select",
+    id: "sphereInversionArrangement",
+    read: (s) =>
+      s.sphereInversion
+        ? sphereInversionArrangementValue(s.sphereInversion)
+        : "oct6",
+    apply: (s, raw) => {
+      if (!s.sphereInversion) return s;
+      const next = withSphereInversionArrangement(s.sphereInversion, raw);
+      return next === s.sphereInversion ? s : setSphereInversion(s, next);
+    },
+    effect: sphereInversionEffect,
+  },
+  sphereInversionRange(
+    "sphereInversionRadiusSlider",
+    "sphereInversionRadiusLabel",
+    "Sphere radius",
+    "radiusFraction",
+  ),
+  {
+    kind: "select",
+    id: "sphereInversionSeedKind",
+    read: (s) =>
+      s.sphereInversion
+        ? sphereInversionSeedKindValue(s.sphereInversion)
+        : "ball",
+    apply: (s, raw) => {
+      if (!s.sphereInversion) return s;
+      const kind = SPHERE_INVERSION_SEED_KINDS.find((k) => k === raw);
+      if (!kind) return s;
+      const next = withSphereInversionSeedKind(s.sphereInversion, kind);
+      return next === s.sphereInversion ? s : setSphereInversion(s, next);
+    },
+    effect: sphereInversionEffect,
+  },
+  sphereInversionRange(
+    "sphereInversionSizeSlider",
+    "sphereInversionSizeLabel",
+    "Seed radius",
+    "size",
+  ),
+  sphereInversionRange(
+    "sphereInversionThicknessSlider",
+    "sphereInversionThicknessLabel",
+    "Shell half-thickness",
+    "thickness",
+  ),
+  sphereInversionRange(
+    "sphereInversionCutRadiusSlider",
+    "sphereInversionCutRadiusLabel",
+    "Cut radius",
+    "cutRadius",
+  ),
+  sphereInversionRange(
+    "sphereInversionCutOffsetSlider",
+    "sphereInversionCutOffsetLabel",
+    "Cut offset",
+    "cutOffset",
+  ),
+  sphereInversionRange(
+    "sphereInversionDepthSlider",
+    "sphereInversionDepthLabel",
+    "Depth",
+    "depth",
+  ),
   {
     kind: "select",
     id: "tilingClip",

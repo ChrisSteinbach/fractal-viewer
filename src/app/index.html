@@ -416,9 +416,14 @@
             >
           </label>
           <label class="checkbox-label">
-            <input type="checkbox" id="finalTransformToggle" />
+            <input
+              type="checkbox"
+              id="finalTransformToggle"
+              aria-describedby="transformTimingHint finalLensNote"
+            />
             Final-transform lens (warps the whole cloud)
           </label>
+          <p id="finalLensNote" class="flame-note hidden"></p>
           <div class="editor-group-title" id="transformListTitle">
             Select to edit
           </div>
@@ -432,6 +437,201 @@
             aria-labelledby="transformListTitle"
           ></div>
           <div id="transformEditor"></div>
+        </details>
+
+        <!-- Sphere inversion: an optional authored SUBJECT that replaces the
+             transform system (docs/panel-ia.md, Scene / Look). Points samples
+             its seed orbit and Surface traces it, in 3D and native 4D; Flame
+             and Solid refuse the family. Every row is table-driven
+             (control-spec.ts) over sphere-inversion-controls.ts's public
+             ranges; a value outside a range or refused by the resolver is
+             kept and disclosed in the note beside its row. -->
+        <details
+          class="panel-section"
+          id="sphereInversionSection"
+          name="panel-section"
+        >
+          <summary>Sphere inversion</summary>
+          <p id="sphereInversionTimingHint" class="flame-hint">
+            Construction edits regenerate Points (following Auto-update) and
+            restart Surface.
+          </p>
+          <details class="panel-explainer">
+            <summary>How sphere inversion works</summary>
+            <p>
+              A ring of mirror spheres inverts a seed shape again and again:
+              each inversion shrinks a copy into the gaps between the spheres.
+              Turned on, it replaces the transforms as the scene's subject; the
+              transforms are kept and return when it is turned off. A 3D
+              arrangement makes a 3D scene and a 4D arrangement a native 4D one.
+              Depth is how many inversions deep the copies go.
+            </p>
+          </details>
+          <label class="checkbox-label">
+            <input
+              type="checkbox"
+              id="sphereInversionEnabledCheckbox"
+              aria-describedby="sphereInversionTimingHint sphereInversionNote"
+            />
+            Sphere inversion (replaces the transforms)
+          </label>
+          <div id="sphereInversionControls" class="hidden">
+            <label class="select-label">
+              Arrangement
+              <select
+                id="sphereInversionArrangement"
+                aria-describedby="sphereInversionTimingHint sphereInversionArrangementNote"
+              >
+                <optgroup label="3D">
+                  <option value="oct6">Octahedron · 6 spheres</option>
+                  <option value="cube8">Cube · 8 spheres</option>
+                  <option value="ico12">Icosahedron · 12 spheres</option>
+                </optgroup>
+                <optgroup label="4D">
+                  <option value="cross8">16-cell · 8 hyperspheres</option>
+                  <option value="tess16">Tesseract · 16 hyperspheres</option>
+                  <option value="cell24">24-cell · 24 hyperspheres</option>
+                  <option value="cell600">600-cell · 120 hyperspheres</option>
+                </optgroup>
+                <option value="__authored" hidden>Authored arrangement</option>
+              </select>
+            </label>
+            <p
+              id="sphereInversionArrangementNote"
+              class="flame-note hidden"
+            ></p>
+            <label class="range-label">
+              Sphere radius
+              <span id="sphereInversionRadiusLabel" class="value-label"
+                >0.99</span
+              >
+              <input
+                type="range"
+                id="sphereInversionRadiusSlider"
+                min="0.6"
+                max="0.99"
+                step="0.01"
+                value="0.99"
+                aria-describedby="sphereInversionTimingHint sphereInversionRadiusNote"
+              />
+            </label>
+            <p id="sphereInversionRadiusNote" class="flame-note hidden"></p>
+            <label class="select-label">
+              Seed
+              <select
+                id="sphereInversionSeedKind"
+                aria-describedby="sphereInversionTimingHint sphereInversionKindNote"
+              >
+                <option value="ball">Ball</option>
+                <option value="shell">Shell</option>
+                <option value="cutShell">Cut shell</option>
+                <option value="__authored" hidden>Authored seed</option>
+              </select>
+            </label>
+            <p id="sphereInversionKindNote" class="flame-note hidden"></p>
+            <div id="sphereInversionSizeRow">
+              <label class="range-label">
+                <span id="sphereInversionSizeCaption">Ball radius</span>
+                <span id="sphereInversionSizeLabel" class="value-label"
+                  >0.28</span
+                >
+                <input
+                  type="range"
+                  id="sphereInversionSizeSlider"
+                  min="0.15"
+                  max="0.8"
+                  step="0.01"
+                  value="0.28"
+                  aria-describedby="sphereInversionTimingHint sphereInversionSizeNote"
+                />
+              </label>
+              <p id="sphereInversionSizeNote" class="flame-note hidden"></p>
+            </div>
+            <div id="sphereInversionThicknessRow" class="hidden">
+              <label class="range-label">
+                Shell half-thickness
+                <span id="sphereInversionThicknessLabel" class="value-label"
+                  >0.030</span
+                >
+                <input
+                  type="range"
+                  id="sphereInversionThicknessSlider"
+                  min="0.01"
+                  max="0.1"
+                  step="0.005"
+                  value="0.03"
+                  aria-describedby="sphereInversionTimingHint sphereInversionThicknessNote"
+                />
+              </label>
+              <p
+                id="sphereInversionThicknessNote"
+                class="flame-note hidden"
+              ></p>
+            </div>
+            <div id="sphereInversionCutRadiusRow" class="hidden">
+              <label class="range-label">
+                Cut radius
+                <span id="sphereInversionCutRadiusLabel" class="value-label"
+                  >10.0</span
+                >
+                <input
+                  type="range"
+                  id="sphereInversionCutRadiusSlider"
+                  min="2"
+                  max="50"
+                  step="0.5"
+                  value="10"
+                  aria-describedby="sphereInversionTimingHint sphereInversionCutRadiusNote"
+                />
+              </label>
+              <p
+                id="sphereInversionCutRadiusNote"
+                class="flame-note hidden"
+              ></p>
+            </div>
+            <div id="sphereInversionCutOffsetRow" class="hidden">
+              <label class="range-label">
+                Cut offset
+                <span id="sphereInversionCutOffsetLabel" class="value-label"
+                  >0.25</span
+                >
+                <input
+                  type="range"
+                  id="sphereInversionCutOffsetSlider"
+                  min="-0.5"
+                  max="0.8"
+                  step="0.01"
+                  value="0.25"
+                  aria-describedby="sphereInversionTimingHint sphereInversionCutOffsetNote"
+                />
+              </label>
+              <p
+                id="sphereInversionCutOffsetNote"
+                class="flame-note hidden"
+              ></p>
+            </div>
+            <p id="sphereInversionSeedNote" class="flame-note hidden"></p>
+            <label class="range-label">
+              Depth
+              <span id="sphereInversionDepthLabel" class="value-label">8</span>
+              <input
+                type="range"
+                id="sphereInversionDepthSlider"
+                min="0"
+                max="12"
+                step="1"
+                value="8"
+                aria-describedby="sphereInversionTimingHint sphereInversionDepthNote"
+              />
+            </label>
+            <p id="sphereInversionDepthNote" class="flame-note hidden"></p>
+          </div>
+          <p
+            id="sphereInversionNote"
+            class="flame-note-info"
+            role="status"
+            aria-live="polite"
+          ></p>
         </details>
 
         <!-- Xaos: edit graph-directed selection over Transform.chaos rows
@@ -856,7 +1056,7 @@
           <div id="backgroundRow">
             <label class="select-label">
               Background
-              <select id="background">
+              <select id="background" aria-describedby="backgroundNote">
                 <option value="dark">Dark</option>
                 <option value="haze">Haze</option>
                 <option value="auto">Auto</option>
@@ -864,6 +1064,7 @@
                 <option value="custom">Custom</option>
               </select>
             </label>
+            <p id="backgroundNote" class="flame-note hidden"></p>
           </div>
 
           <!-- The backdrop's gradient SHAPE: orthogonal to the gradient

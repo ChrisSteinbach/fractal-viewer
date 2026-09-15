@@ -7334,6 +7334,7 @@ async function main(): Promise<void> {
         colorSource: state.surface.colorSource,
         shapeTrapActive: state.shapeTrap !== undefined,
       },
+      sphereInversionSubject: state.sphereInversion !== undefined,
     });
   }
 
@@ -9801,6 +9802,12 @@ async function main(): Promise<void> {
         surfaceSession.enter();
       }
     },
+    // The refreshUi chokepoint owns every consequence of a block edit: the
+    // Flame/Solid refusal and flame-backdrop placeholder
+    // (syncSphereInversionModes), the Surface restart keyed on the block's
+    // authored JSON (syncSphereInversionSurfaceSession, a no-op when nothing
+    // changed), and the transform editor's dormant-material notes.
+    syncSphereInversion: () => refreshUi(),
     applyBackground: applyBackgroundNow,
     trackAutoBackground,
     cancelBalloonSweep: () => {

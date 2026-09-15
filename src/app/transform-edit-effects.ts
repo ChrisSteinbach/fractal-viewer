@@ -89,6 +89,12 @@ export interface TransformEditPlanContext {
   readonly flamePaletteId: PaletteSelection;
   readonly solidPaletteId: PaletteSelection;
   readonly surface: TransformEditSurfaceContext;
+  /** Whether a sphere-inversion block is the scene's subject. The block
+   * REPLACES the transform system in every renderer that draws it (Points'
+   * boundary sampler, Surface's sphere-inversion session) and Flame/Solid
+   * refuse the family, so no renderer reads the transforms while it is
+   * present: a transform edit authors state for when the block is removed. */
+  readonly sphereInversionSubject?: boolean;
 }
 
 /** Plain document values only: arrays and objects, with no prototypes/DOM. */
@@ -364,6 +370,20 @@ export function planTransformEdit(
     context.document.finalTransform ?? null,
     context.document.symmetry,
   );
+  if (context.sphereInversionSubject === true) {
+    // Nothing on screen reads the transforms (the context field's doc): the
+    // Points sample and the Surface session both trace the block, whose
+    // construction a transform edit cannot change, so a regenerate or a
+    // Surface re-entry would redraw the same object. Eligibility still
+    // refreshes, because its dormant-settings note names the transforms.
+    return {
+      points: "none",
+      active: "none",
+      refreshSurfaceEligibility: delta.geometry,
+      reuseActiveSeed: false,
+      preserveSurfaceView: false,
+    };
+  }
   let points: PointsTransformEditEffect = "none";
   if (delta.geometry) {
     if (context.autoUpdate) points = "regenerate";

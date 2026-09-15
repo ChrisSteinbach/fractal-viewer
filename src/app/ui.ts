@@ -142,8 +142,17 @@ import {
 } from "./control-spec";
 import type { ScalarControlSpec } from "./control-spec";
 import {
+  SPHERE_INVERSION_AUTHORED_OPTION,
+  SPHERE_INVERSION_CONTROLS_MODE_REASON,
+  sphereInversionControlNotes,
+  sphereInversionSeedKind,
+  sphereInversionVisibleRows,
+  type SphereInversionNoteRow,
+} from "./sphere-inversion-controls";
+import {
   SPHERE_INVERSION_BALLOON_SESSION_REASON,
   SPHERE_INVERSION_DORMANT_KALEIDOSCOPE,
+  SPHERE_INVERSION_DORMANT_LENS,
   SPHERE_INVERSION_SLAB_REFUSAL,
   surfaceTrapGeometryRestriction,
   type SurfaceEligibilityRecovery,
@@ -2545,6 +2554,28 @@ export class Ui {
    * Flame/Solid refusal): Points draws its boundary sample, over which the
    * Balloon echo stays dormant. */
   private sphereInversionScene = false;
+  /** Whether the DOCUMENT carries a sphere-inversion block, read straight
+   * off the state updateLabels last synced (the Flame/Solid refusal above is
+   * pushed later in refreshUi). Keys every dormant-section disclosure. */
+  private sphereInversionPresent = false;
+  // The Sphere inversion section (sphere-inversion-controls.ts's record):
+  // the row containers its seed kind shows or hides, the kind-dependent size
+  // caption, the selects' authored-value options, and one disclosure per row.
+  private readonly sphereInversionControls: HTMLElement;
+  private readonly sphereInversionTimingHint: HTMLElement;
+  private readonly sphereInversionNote: HTMLElement;
+  private readonly sphereInversionSizeRow: HTMLElement;
+  private readonly sphereInversionSizeCaption: HTMLElement;
+  private readonly sphereInversionRows: Record<
+    "thickness" | "cutRadius" | "cutOffset",
+    HTMLElement
+  >;
+  private readonly sphereInversionNotes: Record<
+    Exclude<SphereInversionNoteRow, "block">,
+    HTMLElement
+  >;
+  private readonly finalLensNote: HTMLElement;
+  private readonly backgroundNote: HTMLElement;
 
   // The surface render's mode-gated status block contains its hint and trace
   // progress (see setSurfaceProgress). The document-derived eligibility note
@@ -3246,6 +3277,29 @@ export class Ui {
     this.surfaceStatus = this.byId("surfaceStatus");
     this.surfaceNote = this.byId("surfaceNote");
     this.sphereInversionModeNote = this.byId("sphereInversionModeNote");
+    this.sphereInversionControls = this.byId("sphereInversionControls");
+    this.sphereInversionTimingHint = this.byId("sphereInversionTimingHint");
+    this.sphereInversionNote = this.byId("sphereInversionNote");
+    this.sphereInversionSizeRow = this.byId("sphereInversionSizeRow");
+    this.sphereInversionSizeCaption = this.byId("sphereInversionSizeCaption");
+    this.sphereInversionRows = {
+      thickness: this.byId("sphereInversionThicknessRow"),
+      cutRadius: this.byId("sphereInversionCutRadiusRow"),
+      cutOffset: this.byId("sphereInversionCutOffsetRow"),
+    };
+    this.sphereInversionNotes = {
+      arrangement: this.byId("sphereInversionArrangementNote"),
+      radiusFraction: this.byId("sphereInversionRadiusNote"),
+      kind: this.byId("sphereInversionKindNote"),
+      size: this.byId("sphereInversionSizeNote"),
+      thickness: this.byId("sphereInversionThicknessNote"),
+      cutRadius: this.byId("sphereInversionCutRadiusNote"),
+      cutOffset: this.byId("sphereInversionCutOffsetNote"),
+      seed: this.byId("sphereInversionSeedNote"),
+      depth: this.byId("sphereInversionDepthNote"),
+    };
+    this.finalLensNote = this.byId("finalLensNote");
+    this.backgroundNote = this.byId("backgroundNote");
     this.surfaceEligibilityRecoveryBtn = this.byId(
       "surfaceEligibilityRecoveryBtn",
     );
@@ -4662,6 +4716,80 @@ export class Ui {
   }
 
   /**
+   * Paint the Sphere inversion section from the document
+   * (sphere-inversion-controls.ts decides; this only writes the DOM). The
+   * table-driven sync has already put every value on its control; this adds
+   * which rows the seed kind reads, the selects' authored-value options, the
+   * per-row disclosures, and the Flame/Solid refusal.
+   */
+  private syncSphereInversionSection(state: AppState): void {
+    const block = state.sphereInversion;
+    const refusedMode =
+      state.renderMode === "flame" || state.renderMode === "solid";
+    for (const id of [
+      "sphereInversionEnabledCheckbox",
+      "sphereInversionArrangement",
+      "sphereInversionRadiusSlider",
+      "sphereInversionSeedKind",
+      "sphereInversionSizeSlider",
+      "sphereInversionThicknessSlider",
+      "sphereInversionCutRadiusSlider",
+      "sphereInversionCutOffsetSlider",
+      "sphereInversionDepthSlider",
+    ]) {
+      this.setScalarDisabled(id, refusedMode);
+    }
+    this.sphereInversionControls.classList.toggle("hidden", !block);
+    const notes = block ? sphereInversionControlNotes(block) : null;
+    const sectionNote = refusedMode
+      ? SPHERE_INVERSION_CONTROLS_MODE_REASON
+      : (notes?.block ?? "");
+    this.setReasonNote(this.sphereInversionNote, sectionNote);
+    if (!block || !notes) {
+      for (const note of Object.values(this.sphereInversionNotes)) {
+        this.setReasonNote(note, "");
+        note.classList.add("hidden");
+      }
+      return;
+    }
+    const visible = sphereInversionVisibleRows(block);
+    this.sphereInversionSizeRow.classList.toggle("hidden", !visible.size);
+    for (const key of ["thickness", "cutRadius", "cutOffset"] as const) {
+      this.sphereInversionRows[key].classList.toggle("hidden", !visible[key]);
+    }
+    const kind = sphereInversionSeedKind(block);
+    this.sphereInversionSizeCaption.textContent =
+      kind === "shell" || kind === "cutShell" ? "Shell radius" : "Ball radius";
+    const authored = block as Record<string, unknown>;
+    const seed = authored.seed;
+    const authoredOption = (id: string, text: string): void => {
+      const option = Array.from(this.scalarSelect(id).options).find(
+        (o) => o.value === SPHERE_INVERSION_AUTHORED_OPTION,
+      );
+      if (option) option.textContent = text;
+    };
+    authoredOption(
+      "sphereInversionArrangement",
+      `Authored: ${JSON.stringify(authored.arrangement ?? null)}`,
+    );
+    authoredOption(
+      "sphereInversionSeedKind",
+      `Authored: ${JSON.stringify(
+        typeof seed === "object" && seed !== null && !Array.isArray(seed)
+          ? ((seed as Record<string, unknown>).kind ?? null)
+          : null,
+      )}`,
+    );
+    for (const [row, note] of Object.entries(this.sphereInversionNotes) as [
+      Exclude<SphereInversionNoteRow, "block">,
+      HTMLElement,
+    ][]) {
+      this.setReasonNote(note, notes[row]);
+      note.classList.toggle("hidden", notes[row] === "");
+    }
+  }
+
+  /**
    * Keep operational copy about the renderer the user is looking at. The
    * longer cross-renderer explanation lives in optional panel disclosures;
    * controls keep describing these short, visible nodes so keyboard and
@@ -4719,6 +4847,28 @@ export class Ui {
       this.scheduleEditHint.textContent =
         "Choosing a source copies it; later source changes do not follow. Changes restart Surface when supported.";
       this.captureSizeTimingHint.textContent = "Used by the next capture.";
+    }
+
+    if (mode === "points") {
+      this.sphereInversionTimingHint.textContent =
+        "Construction edits regenerate Points (following Auto-update).";
+    } else if (mode === "surface") {
+      this.sphereInversionTimingHint.textContent =
+        "Construction edits restart Surface without resetting the view; a slider restarts it on release.";
+    } else {
+      this.sphereInversionTimingHint.textContent =
+        "Unavailable in this renderer; the note below says why.";
+    }
+    if (state.sphereInversion !== undefined) {
+      // The replaced system's editors stay usable (a transform edit authors
+      // state for when the block is removed, and costs no renderer work —
+      // transform-edit-effects.ts), so their hints carry the disclosure.
+      const kept =
+        "Kept but not drawn while Sphere inversion is the subject; edits apply once it is turned off.";
+      this.transformTimingHint.textContent = `Sphere inversion replaces the transforms in every renderer. ${kept}`;
+      this.xaosEditHint.textContent = kept;
+      this.symmetryEditHint.textContent = kept;
+      this.scheduleEditHint.textContent = `Choosing a source copies it; later source changes do not follow. ${kept}`;
     }
 
     const transformColorTiming = this.doc.getElementById(
@@ -5009,15 +5159,25 @@ export class Ui {
         // (the authored-shape editor follows the same rule). Twist is the one
         // genuinely state-dependent bound: a full turn aliases zero, making
         // order - 1 the last distinct value.
-        const dynamicMax =
+        const span = spec.numeric.bounds?.(state) ?? spec.numeric;
+        let min = Math.min(span.min, value);
+        let max =
           spec.id === "symmetryTwistSlider"
             ? Math.min(spec.numeric.max, state.symmetry.order - 1)
-            : Math.max(spec.numeric.max, value);
-        numeric?.setBounds({
-          min: Math.min(spec.numeric.min, value),
-          max: dynamicMax,
-          step: spec.numeric.step,
-        });
+            : Math.max(span.max, value);
+        if (spec.numeric.bounds && input instanceof HTMLInputElement) {
+          // A state-dependent span also moves the retained range element,
+          // BEFORE setValue maps the thumb (a browser sanitizes a range's
+          // value into its min/max). While the slider is focused — mid-drag —
+          // it only widens, so the track never rescales under the pointer.
+          if (this.doc.activeElement === input) {
+            min = Math.min(min, Number(input.min));
+            max = Math.max(max, Number(input.max));
+          }
+          input.min = String(min);
+          input.max = String(max);
+        }
+        numeric?.setBounds({ min, max, step: spec.numeric.step });
         numeric?.setAllowedValues(spec.numeric.allowedValues);
         numeric?.setValue(value);
         // setValue also maps the retained thumb. Write the spec's canonical
@@ -5049,7 +5209,7 @@ export class Ui {
     if (state.sphereInversion !== undefined && state.symmetry.order > 1) {
       // The ownership split: the block's subject replaces the transform
       // system, so its kaleidoscope is kept but not read.
-      this.symmetryNote.textContent = `Dormant in a sphere-inversion scene: ${SPHERE_INVERSION_DORMANT_KALEIDOSCOPE}. It applies again when the block is removed.`;
+      this.symmetryNote.textContent = `Dormant in a sphere-inversion scene: ${SPHERE_INVERSION_DORMANT_KALEIDOSCOPE}. It applies again once Sphere inversion is turned off.`;
       this.symmetryNote.classList.remove("hidden");
     } else if (effectiveOrder !== state.symmetry.order) {
       this.symmetryNote.textContent = `Reduced to ${effectiveOrder}-fold (from ${state.symmetry.order}-fold) to fit the ${MAX_TRANSFORMS}-transform limit.`;
@@ -5085,6 +5245,17 @@ export class Ui {
     }
 
     this.finalTransformToggle.checked = state.finalTransform !== undefined;
+    this.sphereInversionPresent = state.sphereInversion !== undefined;
+    const dormantLens =
+      state.sphereInversion !== undefined && state.finalTransform !== undefined;
+    this.setReasonNote(
+      this.finalLensNote,
+      dormantLens
+        ? `Dormant while Sphere inversion is the subject: ${SPHERE_INVERSION_DORMANT_LENS}. It applies again once Sphere inversion is turned off.`
+        : "",
+    );
+    this.finalLensNote.classList.toggle("hidden", !dormantLens);
+    this.syncSphereInversionSection(state);
 
     // The render-mode segmented control is the panel's one fixed switch
     // between the three sibling renderers; each mode's own params show
@@ -5439,6 +5610,18 @@ export class Ui {
       "hidden",
       state.background.mode !== "flame",
     );
+    // The generated backdrop runs the chaos game on the transforms, which a
+    // sphere-inversion block replaces, so main.ts rests it on the gradient
+    // placeholder; say so beside the select rather than failing silently.
+    const heldBackdrop =
+      state.background.mode === "flame" && state.sphereInversion !== undefined;
+    this.setReasonNote(
+      this.backgroundNote,
+      heldBackdrop
+        ? "Flame backdrop draws the transforms, which Sphere inversion replaces, so the plain gradient shows instead. The image returns once Sphere inversion is turned off."
+        : "",
+    );
+    this.backgroundNote.classList.toggle("hidden", !heldBackdrop);
     // The custom backdrop pickers: shown only while the Background select
     // sits on Custom (therefore hidden for Flame too); synced to the resolved
     // stops with the same only-write-on-change guard as the axis pickers above.
@@ -9560,13 +9743,14 @@ export class Ui {
     // subject: every transform's material is kept but not read (the
     // ownership split, surface-eligibility.ts).
     const dormantUnderBlock =
+      this.sphereInversionPresent ||
       eligibility.kind === "sphereInversion" ||
       eligibility.kind === "sphereInversion4";
     const refused =
       fullyIneligible || headOnly || inactiveIfs || dormantUnderBlock;
     const reason = (feature: "finish" | "pattern"): string => {
       if (dormantUnderBlock) {
-        return `A sphere-inversion scene replaces the transform system in Surface, so this ${feature} is not read there. It stays authored and applies again when the block is removed.`;
+        return `Sphere inversion replaces the transform system, so this ${feature} is not read. It stays authored and applies again once Sphere inversion is turned off.`;
       }
       if (fullyIneligible) {
         const detail = eligibility.note ?? "not marchable";

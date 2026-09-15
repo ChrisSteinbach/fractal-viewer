@@ -223,6 +223,53 @@ morphs into place instead of snapping (see **Presets** below).
   the panel names the renderer in every mode: everything still works, but
   renders run 10–50× slower, and the fix is usually a browser GPU setting
   rather than anything in the app.
+- **Sphere inversion** — an optional authored subject that REPLACES the
+  transforms: mirror spheres invert a seed shape again and again, nesting ever
+  smaller copies in the gaps between them. It sits right after **Transforms**
+  because it is the scene's subject. Points samples the result exactly, Surface
+  traces it, and Flame and Sampled Solid refuse the family. With no scene
+  present, the section's controls are disabled in Flame and Solid, with that
+  reason beside them.
+
+  - **Sphere inversion** (checkbox) adds a scene and removes it. Adding seeds a
+    shipped showcase in the scene's current dimension: Kissing Pearls in a 3D
+    scene, 600-Cell Medallions in a 4D one. Removing it restores the
+    transforms, which stay in the document throughout.
+  - **Arrangement** picks the mirror spheres, which decides the dimension. The
+    3D group holds Octahedron (6), Cube (8) and Icosahedron (12). The 4D group
+    holds 16-cell (8), Tesseract (16), 24-cell (24) and 600-cell (120). Moving
+    to 3D drops a 4D cut direction's w, which 3D cannot read.
+  - **Sphere radius** runs 0.6 to 0.99 of the kissing radius. **Depth** runs 0
+    to 12 inversions, in both dimensions.
+  - **Seed** is Ball, Shell or Cut shell, with the lengths that kind reads:
+    - **Ball radius** runs 0.15 to 0.8. **Shell radius** runs 0.7 to 1.3.
+      Switching between a ball and a shell resets this length to the new
+      kind's default.
+    - **Shell half-thickness** runs 0.01 to 0.1.
+    - **Cut radius** runs 2 to 50. **Cut offset** runs −0.5 to 0.8 in 3D and
+      −0.4 to 0.8 in 4D.
+
+  These spans are the measured public ranges; a document may carry more. A
+  field is written only once its control moves, and moving it back onto its
+  default removes it again.
+
+  An imported value outside a span stays as written: the slider widens to it
+  and says it was kept. A value the construction refuses keeps its place too,
+  with the refusal and its repair beside the row naming it. Some refusals
+  name no single row; a shell sphere through a generator centre, for one, is
+  flagged below the seed lengths.
+
+  Edits regenerate Points, following Auto-update. A live Surface restarts
+  without resetting the view: selects restart it at once, sliders on release.
+
+  While Sphere inversion is present, the replaced system's settings are kept
+  but not drawn, and each says so beside itself:
+  - **Transforms**, **Xaos**, **Symmetry** and **Hybrid schedule** stay
+    editable, and editing them costs no rendering.
+  - The final-transform lens and per-transform finishes carry their own notes.
+  - **Background → Flame backdrop** shows the plain gradient, because the
+    backdrop draws the transforms.
+
 - **Xaos** — edits the transition graph of systems already composed without
   making every map act on every object. Add a block under **Systems → Combine
   systems**, then use this shared Scene editor for its links. Each detected

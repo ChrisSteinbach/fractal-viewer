@@ -18,7 +18,8 @@
  *    the app through the states that MINT them — every visible panel section
  *    in every reachable render mode, every transform-editor group, a
  *    mandelbox plus parameterized variations for their nested rows, an emitter
- *    shape for the part editor, a xaos-carrying preset for the leak dials — and after each
+ *    shape for the part editor, a xaos-carrying preset for the leak dials, a
+ *    sphere-inversion block through each seed kind's rows — and after each
  *    one enumerates every `input[type=range]` in the document, visible or
  *    not, requiring each to sit in a `.range-number-pair` holding exactly
  *    one `.range-number-input`, and every pair to be available or
@@ -658,6 +659,79 @@ async function main() {
       document.getElementById("modePointsBtn")?.click(),
     );
     await sleep(1500);
+
+    // The sphere-inversion rows exist only under a present block, and the
+    // seed kind decides which lengths show: add the block through its own
+    // checkbox (Kissing Pearls: radius, ball size, depth), then walk the cut
+    // shell (half-thickness, cut radius, cut offset) in 3D and in a 4D
+    // arrangement (whose cut-offset span differs). Removing it again hands the
+    // rest of the gate an ordinary scene.
+    const toggledInversion = async (checked) =>
+      page.evaluate((want) => {
+        const box = document.getElementById("sphereInversionEnabledCheckbox");
+        if (!box || box.disabled) return false;
+        if (box.checked !== want) {
+          box.checked = want;
+          box.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        return true;
+      }, checked);
+    const chooseInversion = async (id, value) =>
+      page.evaluate(
+        ([selectId, choice]) => {
+          const select = document.getElementById(selectId);
+          if (!select) return false;
+          select.value = choice;
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+          return true;
+        },
+        [id, value],
+      );
+    if (!(await toggledInversion(true))) {
+      harnessFail("the Sphere inversion checkbox is missing or disabled");
+    } else {
+      await sleep(1500);
+      for (const [label, steps] of [
+        ["pearls", []],
+        ["cut shell", [["sphereInversionSeedKind", "cutShell"]]],
+        ["4D cut shell", [["sphereInversionArrangement", "tess16"]]],
+      ]) {
+        for (const [id, value] of steps) {
+          if (!(await chooseInversion(id, value))) {
+            harnessFail(`#${id} is missing`);
+          }
+          await sleep(1200);
+        }
+        if (await openSection(page, "sphereInversionSection")) {
+          audits.push(await auditState(page, `sphere inversion/${label}`));
+        }
+      }
+      const inversionRows = await page.evaluate(() =>
+        [
+          "sphereInversionRadiusSlider",
+          "sphereInversionSizeSlider",
+          "sphereInversionThicknessSlider",
+          "sphereInversionCutRadiusSlider",
+          "sphereInversionCutOffsetSlider",
+          "sphereInversionDepthSlider",
+        ].filter((id) => {
+          const range = document.getElementById(id);
+          return (
+            range
+              ?.closest(".range-number-pair")
+              ?.querySelector(".range-number-input") &&
+            range.offsetParent !== null
+          );
+        }),
+      );
+      check(
+        "completeness: every sphere-inversion slider is paired and reachable",
+        inversionRows.length === 6,
+        `${String(inversionRows.length)}/6 paired and on screen: ${inversionRows.join(", ")}`,
+      );
+      await toggledInversion(false);
+      await sleep(1500);
+    }
 
     const unpaired = audits.flatMap((a) =>
       a.unpaired.map((u) => ({ ...u, at: a.label })),
