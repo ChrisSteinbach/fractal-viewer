@@ -541,10 +541,10 @@ export function tesseract16(d: number, r: number): Generator[] {
 /** Seeds. `ball`: `B(0, ρ)`. `shell`: `ρ − τ <= |x| <= ρ + τ`. `cap`: the
  * fundamental domain capped by `B(0, ρ)` (the implicit `∩ F` does the rest). */
 export function ballSeed(rho: number, dim: Dim): GBall[] {
-  return [{ c: new Array(dim).fill(0), r: rho, sign: 1 }];
+  return [{ c: new Array<number>(dim).fill(0), r: rho, sign: 1 }];
 }
 export function shellSeed(rho: number, tau: number, dim: Dim): GBall[] {
-  const o = new Array(dim).fill(0);
+  const o = new Array<number>(dim).fill(0);
   return [
     { c: o, r: rho + tau, sign: 1 },
     { c: o, r: rho - tau, sign: -1 },
