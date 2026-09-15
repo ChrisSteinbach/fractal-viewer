@@ -520,7 +520,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     holding the centre maps to a complement).
   - `sphere-inversion.ts` — the sphere-inversion family's ONE shared
     vocabulary: an authored form (registry arrangement id, radius fraction
-    of tangency in (0, 1], ball/cap/shell/cutShell seed, depth <= 32)
+    of tangency in (0, 1], ball/shell/cutShell seed, depth <= 32)
     resolved into the explicit `{dim, generators, seed, depth}`
     construction. Out-of-domain values REFUSE with reasons, never clamp, and
     the authored block is never mutated. `analyzeSphereInversionSystem`

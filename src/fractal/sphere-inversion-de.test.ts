@@ -94,11 +94,11 @@ const ORACLE_FIXTURES: [string, SphereInversionAuthored][] = [
     { arrangement: "cube8", seed: { kind: "shell" }, depth: 2 },
   ],
   [
-    "oct6 cap 1.15, depth 2",
+    "oct6 generator-crossing ball 1.15, depth 2",
     {
       arrangement: "oct6",
       radiusFraction: 0.93,
-      seed: { kind: "cap" },
+      seed: { size: 1.15 },
       depth: 2,
     },
   ],
@@ -160,11 +160,11 @@ describe("sphereInversionContains", () => {
       },
     ],
     [
-      "oct6 cap",
+      "oct6 generator-crossing ball 1.15",
       {
         arrangement: "oct6",
         radiusFraction: 0.93,
-        seed: { kind: "cap" },
+        seed: { size: 1.15 },
         depth: 2,
       },
     ],
@@ -369,15 +369,15 @@ describe("sphereInversionHitInfo attribution", () => {
     });
   });
 
-  it("attributes a cap's fundamental-domain wall to no seed member", () => {
+  it("attributes a generator-crossing ball's fundamental-domain wall to no seed member", () => {
     const c = construction({
       arrangement: "oct6",
       radiusFraction: 0.93,
-      seed: { kind: "cap" },
+      seed: { size: 1.15 },
       depth: 2,
     });
     const de = buildSphereInversionDE(c);
-    // Just outside generator 0's sphere, on the axis, inside the cap.
+    // Just outside generator 0's sphere, on the axis, inside the crossing ball.
     const r = c.generators[0].radius;
     const hit = sphereInversionHitInfo(de, [1 - r - 1e-3, 0, 0]);
     expect(hit.d).toBeLessThanOrEqual(0);

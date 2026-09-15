@@ -575,8 +575,8 @@ Nothing is wired into Surface eligibility, persistence or a shader yet.
 | `arrangement`    | none (required)                                     | a registry id: `oct6`, `cube8`, `ico12`, `cell24`, `tess16`, `cross8`, `cell600` |
 | `radiusFraction` | 0.99                                                | `(0, 1]` of the arrangement's tangent radius; 1 is kissing (degraded)            |
 | `depth`          | 8                                                   | integer `[0, 32]` (structural cap, not a public range)                           |
-| `seed.kind`      | `ball`                                              | `ball`, `cap`, `shell`, `cutShell`                                               |
-| `seed.size`      | ball .28, cap 1.15, shells 1                        | `> 0`; a ball must not meet an open generator ball, a cap must meet one          |
+| `seed.kind`      | `ball`                                              | `ball`, `shell`, `cutShell`                                                      |
+| `seed.size`      | ball .28, shells 1                                  | `> 0`; a ball may cross the generators (its seed is `K ∩ F`)                     |
 | `seed.thickness` | shell .03, cut shell .06                            | `(0, size)`                                                                      |
 | cut fields       | direction (.35, 1, .55), w 0, offset .25, radius 10 | direction nonzero; `w` nonzero only in 4D; radius `> 0`; `                       | offset | < size + thickness` |
 
@@ -589,9 +589,7 @@ member, and a bounded member inside one closed generator ball (an empty orbit;
 sufficient, not necessary). Tangent generators are DEGRADED: still certified,
 still step scale 1, with a cusp disclosure. The two decisions to review:
 
-- **`ball` versus `cap`.** They resolve to the same single ball; the kind
-  names the subject, so a pearl seed that grows into a generator is refused
-  with a pointer to `cap` rather than silently becoming a sphairahedron.
+- **`ball` versus `cap`: MERGED** into one `ball` kind (see "One `ball` seed kind" below).
 - **Degraded means tangency.** The primary presets sit at 0.99, not 1.
 
 ### What is certified
@@ -641,7 +639,7 @@ distances against attained feasible points plus near-sphere sampling that
 never beats them.
 
 Unit tests: seven 3D fixtures (oct6 r .70 and kissing, cube8 kissing, ico12
-.99, a cube8 shell, an oct6 cap, an ico12 vault) and five 4D fixtures (tess16
+.99, a cube8 shell, an oct6 generator-crossing ball, an ico12 vault) and five 4D fixtures (tess16
 and cross8 kissing, the cell24 shell in general position and on an xw .3 /
 `w0` .15 lifted slice, a w-tilted tess16 cut shell): 0 violations. The
 increased-depth sheet: 0 violations on every row. Its figures are in
@@ -719,3 +717,22 @@ plus the covering scan (`domainSeed` carries 120 exterior members, each copy
 for the shader scoping, not a CPU core change. The 3D and cell24 rows came
 from a one-off scratch probe on the same machine and are context, not a
 reproducing harness.
+
+## One `ball` seed kind (2026-09-15)
+
+The CPU core shipped `ball` and `cap` as two seed kinds that resolved to the
+same single `B(0, size)`, with the kind naming the subject: a `ball` that met a
+generator was refused with a pointer to `cap`, and a `cap` that met none with a
+pointer to `ball`. That was two document spellings for one object, which is a
+defect in a document vocabulary: the same geometry would encode two ways, and a
+size edit across the first generator's reach would flip a valid document into a
+refusal.
+
+They are merged into ONE `ball` kind. A ball that crosses the generators is
+simply allowed, because the seed is always `K ∩ F`: inside the central void
+that is the pearls, and grown across the generators it is the sphairahedron
+the pre-gate sheets called a cap. The resolver's remaining ball refusals are
+the construction gate's (plane image, a ball inside one closed generator ball).
+`"cap"` is now an unknown kind and is refused as such, never aliased; nothing
+had been persisted, so there is no compatibility cost. The pre-gate sections
+above keep "cap" as the historical name of that subject.
