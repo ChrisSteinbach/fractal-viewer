@@ -24,7 +24,7 @@
  *     [--surface-systems=all|synthetic] [--surface-timing=0|1]
  *     [--surface-force=1] [--surface-shade-width=1,4]
  *     [--surface-aff4-sweep=1] [--surface-plane-frame=1]
- *     [--surface-canary-trip=N]
+ *     [--surface-canary-trip=N] [--surface-sphere-inversion-only=1]
  *
  * `--surface` runs the page's surface-DE kernel section AFTER the
  * flame scenarios (`?surface=1`); `--surface-only` runs it INSTEAD of them
@@ -153,6 +153,9 @@ const SURFACE_PASSTHROUGH_FLAGS = {
   // rehearsal of the "device-unreliable" verdict path; absent = the canary
   // runs for real (see createSurfaceCanary's doc in main.ts).
   "surface-canary-trip": "surfaceCanaryTrip",
+  // Run only the sphere-inversion legs (iteration and cost sweeps); the
+  // section verdict is then "fail" or "skipped", never "pass".
+  "surface-sphere-inversion-only": "surfaceSphereInversionOnly",
 };
 
 function parseArgs(argv) {
