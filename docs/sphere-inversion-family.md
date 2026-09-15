@@ -545,3 +545,129 @@ which is a production kernel question (the GLSL tracers' 24-slot per-map uniform
 - **The gate's vault camera on the 600-cell.** Head-on light washes out the
   small windows. A camera lit at grazing incidence and close to the wall is
   required.
+
+## CPU core (2026-09-15)
+
+The production CPU core that follows the gate. Modules:
+
+- `src/fractal/sphere-inversion.ts` — the shared vocabulary: authored form,
+  resolver, construction gate, covering tables, hit record, and the transport
+  and cutoff scalars.
+- `src/fractal/sphere-inversion-de.ts` and `sphere-inversion-de-4d.ts` — the
+  estimator twins; only the vector arithmetic is duplicated.
+- `src/fractal/sphere-inversion-oracle.ts` — the independent explicit-orbit
+  oracle.
+- `scripts/sphere-inversion-oracle.harness.ts` — the increased-depth
+  reference.
+
+Nothing is wired into Surface eligibility, persistence or a shader yet.
+
+### Authored form and resolver
+
+| Field            | Default                                             | Domain (outside it: REFUSED with a reason)                              |
+| ---------------- | --------------------------------------------------- | ----------------------------------------------------------------------- |
+| `arrangement`    | none (required)                                     | a registry id: `oct6`, `cube8`, `ico12`, `cell24`, `tess16`, `cross8`   |
+| `radiusFraction` | 0.99                                                | `(0, 1]` of the arrangement's tangent radius; 1 is kissing (degraded)   |
+| `depth`          | 8                                                   | integer `[0, 32]` (structural cap, not a public range)                  |
+| `seed.kind`      | `ball`                                              | `ball`, `cap`, `shell`, `cutShell`                                      |
+| `seed.size`      | ball .28, cap 1.15, shells 1                        | `> 0`; a ball must not meet an open generator ball, a cap must meet one |
+| `seed.thickness` | shell .03, cut shell .06                            | `(0, size)`                                                             |
+| cut fields       | direction (.35, 1, .55), w 0, offset .25, radius 10 | direction nonzero; `w` nonzero only in 4D; radius `> 0`; `              | offset | < size + thickness` |
+
+Every arrangement puts its centres at distance 1, so lengths are absolute. The
+registry is extensible: a new id is one entry. The resolver collects every
+reason, never clamps, and never mutates the authored block. It then runs the
+construction gate, which refuses overlapping generators, a seed sphere whose
+depth-1 image scale reaches 1e6 (a plane image), a seed with no bounded
+member, and a bounded member inside one closed generator ball (an empty orbit;
+sufficient, not necessary). Tangent generators are DEGRADED: still certified,
+still step scale 1, with a cusp disclosure. The two decisions to review:
+
+- **`ball` versus `cap`.** They resolve to the same single ball; the kind
+  names the subject, so a pearl seed that grows into a generator is refused
+  with a pointer to `cap` rather than silently becoming a sphairahedron.
+- **Degraded means tangency.** The primary presets sit at 0.99, not 1.
+
+### What is certified
+
+For generators with pairwise disjoint interiors (tangency included) and a
+seed of generalized balls with no depth-1 plane image — exactly what the gate
+admits — a positive return is a lower bound on the Euclidean distance to
+`O_D`, modulo f64, marched at step scale 1. A return `<= 0` is a MEMBER SIGNAL
+in folded coordinates, not a signed distance. No damping factor or local
+derivative appears anywhere. The f32 argument belongs to the shader mirror.
+
+The cutoff follows `surface-de.ts`'s contract. An exit is taken only after
+transporting the RUNNING minimum, which is an exact bound on the part of the
+cover already scanned, so no cutoff-shortened distance ever reaches
+`inversionDistanceLowerBound`. A folded threshold (the transport's monotone
+inverse) decides only when an exit is tried.
+
+### Attribution
+
+`sphereInversionHitInfo` / `sphereInversionHitInfo4` return, beside a `d`
+bit-identical to the plain estimate: the fold status (domain, exhausted,
+pole), the fold depth, the word length of the winning covering term (fold
+depth, +1 for a copy, +2 for a gap ball), that word's first and last
+generator, and the binding seed member (−1 for a generator wall, a gap ball or
+a pole). The cost is one member scan of the winning term. `boundingRadius`
+(origin-centred, the full 4D radius in 4D) is the march entry sphere.
+
+### Defined outcomes as implemented
+
+| Situation                    | Implemented outcome (each has its own test in 3D and 4D)                        |
+| ---------------------------- | ------------------------------------------------------------------------------- |
+| Pole                         | `d = 0`, status pole, not a member; just off the centre positive and sound      |
+| Budget spent inside a ball   | status exhausted, not a member, positive and at most the true distance          |
+| Kissing tangency point       | `d = 0` without membership, true distance positive: a stall, never an overshoot |
+| Seed sphere through a centre | refused when the DE is built (plane image)                                      |
+| Overlapping generators       | refused when the DE is built                                                    |
+| Far field                    | finite; between `                                                               | p   | − boundingRadius` and the seed term |
+
+### Oracle and verdict
+
+The oracle enumerates every reduced word as an exact intersection of
+generalized balls and finds the true distance by enumerating the critical
+points of `|p − ·|` on every member-sphere intersection of size `<= n`,
+pruned to spheres within the running best. Its own tests pin primitive images
+against raw point inversion, membership against pointwise word images, and
+distances against attained feasible points plus near-sphere sampling that
+never beats them.
+
+Unit tests: seven 3D fixtures (oct6 r .70 and kissing, cube8 kissing, ico12
+.99, a cube8 shell, an oct6 cap, an ico12 vault) and five 4D fixtures (tess16
+and cross8 kissing, the cell24 shell in general position and on an xw .3 /
+`w0` .15 lifted slice, a w-tilted tess16 cut shell): 0 violations. The
+increased-depth sheet: 0 violations on every row. Its figures are in
+`docs/harness-sheets.md`'s `sphere-inversion-oracle` entry.
+
+Tightness differs from the pre-gate table (p50 0.94–0.96 there, 0.64–0.93
+here) because this query set puts half its samples on rays toward pieces at
+down to 1e-5 of the ray, where the depth-budget and gap terms bind; it is a
+harder sample, not a looser bound.
+
+### 4D reductions
+
+- **Flat embedding.** oct6 r .70 at `w = 0` with a 4-ball seed, depth 8,
+  queried at `w = 0`: the estimate equals the 3D estimator BIT FOR BIT (6,000
+  uniform points plus a 17³ lattice through walls and centres), with identical
+  membership and attribution. Each fourth-coordinate term is appended last and
+  is an exact `+ 0`.
+- **Non-flat.** tess16 kissing at `w0` .3 holds members whose fold spent at
+  least one inversion outside the seed's own slice, though no centre lies in
+  that hyperplane, so the only 3D reduction is the bare seed slice. The cell24
+  shell's membership changes under an xw .3 rotation and differs from its
+  four-generator in-hyperplane 3D sub-arrangement; its estimate moves under a
+  `w0` offset.
+
+### Slab (`halfExtent`): refused
+
+A thick slice renders the projected shadow of `O_D ∩ {|w − w0| <= h}`. The
+trivially sound `d(p, w0) − h` is a lower bound, but its zero set is the
+`h`-thickening of the slice in every 3D direction, a different object; a test
+exhibits a point `h/2` outside the shadow that it accepts. The exact route
+would transport the segment's enclosing ball through each inversion (exact by
+`inversionBallScale`), but a ball straddling a generator sphere belongs to two
+fold branches, which needs the branch enumeration this fold does not have. The
+4D estimator therefore takes no `halfExtent`, and a host must hold the slice
+thickness at zero for this family.
