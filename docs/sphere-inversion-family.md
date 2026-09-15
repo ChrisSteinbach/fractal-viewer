@@ -904,7 +904,9 @@ their rows describe what a lift would need to make it READ.
   and warns; import never produces a block.
 - **Presets and Surprise Me** clear the block (absent means clear), because
   each names a new transform-system subject that a leftover block would
-  replace in Surface.
+  replace in Surface. The exceptions are the family's own showcases, which
+  install their block through `PRESET_SPHERE_INVERSIONS` under the same
+  absent-means-clear rule (Presets, below).
 
 ## Points, Flame and Solid (2026-09-15, delegated)
 
@@ -1219,3 +1221,123 @@ lengths move 3D cost by at most 25% and 4D cost by at most 40%. The 600-cell bal
   Refusing it would remove the family's primary native 4D subject. The
   600-cell shell (medallion) settles in 22–29 s. Every other arrangement
   and seed settles in 20 s or less.
+
+## Presets (2026-09-15, delegated)
+
+Six Surface showcases sit in their own **Sphere inversion** menu group: four
+3D, two native 4D. The group holds both dimensions, as Space tiling does, and
+marks the 4D pair with `(4D)` in the label. The family is what a reader looks
+for, so the pair is not split off into the 4D group. Every call in this
+section is DELEGATED (lead agent, owner to ratify).
+
+### Mechanism
+
+- **`PRESET_SPHERE_INVERSIONS`** (`presets.ts`) holds the block a preset IS,
+  under `PRESET_FINALS`' ABSENT-MEANS-CLEAR rule. A showcase installs its
+  block, and every other preset clears one. Entries are factories, so a
+  document never aliases the table. Each entry spells out every field its
+  seed kind reads, because the block persists verbatim.
+- **The transforms underneath are a placeholder**: the Sierpinski
+  tetrahedron. The block replaces them as the subject, but a document still
+  carries a transform system. The tetrahedron is the smallest contracting
+  system every renderer and gate admits. It is FLAT, so the block's
+  arrangement alone decides the scene's dimension (`scene-dimension.ts`).
+  When the next preset clears the block, an ordinary valid scene remains.
+- **`PRESET_RENDER_HINTS` is `surface`** for all six. In Points the 4D
+  subjects draw as a dust ball, because their windows are a slice
+  phenomenon.
+- **`PRESET_VIEWS`** is a new side table: the saved view a preset is composed
+  at. ABSENT MEANS AUTO-FIT, so every other preset keeps the arrival fit it
+  always had.
+  - It is authored as plain data in units a reader can check: eye, look-at
+    point, vertical fov, an ordered list of 4D plane rotations, and a WORLD
+    `w0`.
+  - `load-hints.ts` carries it as a fourth hint. The hint is consumed on the
+    preset's own replaced landing, in place of the fit, and the morph's
+    camera chase stands down while it waits.
+  - `preset-view.ts` converts it at that moment. When the eye is closer
+    than `MIN_RADIUS` (the interior vaults), the orbit pivot is pushed out
+    along the line of sight, so the eye and the view direction stay exact.
+  - The world `w0` is normalized against the LANDED cloud's bounds, the same
+    `wSupport` the tracer multiplies back out by, and the slice window is
+    turned on.
+- **The landed view reaches the `#v1=` hash only on the next save.** The
+  view lands after the load's debounced save, the same way every preset's
+  auto-fit always has. A copied link reads the live document, so it carries
+  the view. The gate therefore reads the landed slice off the live controls.
+- **Viewer preferences are untouched.** With Automatic motion on, the 4D
+  showcases tumble away from their authored rotor, as any saved view does.
+
+### The set
+
+Settle is wall time from the menu click to the `?surfacestate` settle latch.
+The render hint enters Surface; nothing clicks the mode button. Eight
+antialiasing passes (the app default), a 1600×900 viewport at DSF 1, the
+compute engine, and 0 exhausted rays in every settled frame. Machine: Mesa
+Intel Iris Xe (TGL GT2), WebGPU `intel gen-12lp` (software = false),
+`quiet=YES` before launch. These figures are that machine's. The build
+includes the per-generation colour-slot fix (D + 3 hues in compute).
+
+| Preset (menu label)                               | Construction                                                             | View                                                                          | Settle | Covered |
+| ------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------- | -----: | ------: |
+| `inversionPearls` (Kissing Pearls)                | oct6, rf .99, ball .28, D8                                               | eye (.26, .34, 1.42) → origin, fov 62                                         | 10.7 s |   22.0% |
+| `inversionCubePearls` (Cube Pearls)               | cube8, rf .99, ball .42, D8                                              | eye (.39, 1.6, .52) → origin, fov 62                                          | 10.1 s |   22.3% |
+| `inversionVault` (Octahedral Vault)               | oct6, rf .99, cut shell 1 ± .06 (default cut), D8                        | eye (.15, .3, .1) → (−.6, −1, .1), fov 81                                     | 21.3 s |   95.9% |
+| `inversionLace` (Icosahedral Lace)                | ico12, rf .99, shell 1 ± .03, D6                                         | eye (1.2, .87, 1.42) → origin, fov 62                                         | 12.6 s |   39.9% |
+| `inversionVault4` (600-Cell Vault (4D))           | cell600, rf .99, cut shell .9 ± .04 (default cut, `cutDirectionW` 0), D5 | eye (.35, −.05, .06) → (−.99, .15, −.18), fov 77; identity rotor, `w0` 1/(4φ) | 53.0 s |   87.4% |
+| `inversionMedallions4` (600-Cell Medallions (4D)) | cell600, rf .99, shell 1.1 ± .03, D5                                     | eye (1.32, .96, 1.56) → origin, fov 62; `xw` .3, `w0` .1                      | 23.0 s |   40.5% |
+
+Every parameter lies inside the public ranges above.
+
+**4D nudges.** Nudging the slice slider by +.06 normalized re-settles to a
+different arrangement, not a turned copy of the same one:
+
+- **Vault.** Windows change size, some empty out, and the rosettes regroup.
+  Settles in 47.9 s, with 46.8% of pixels differing.
+- **Medallions.** Medallions change their pearl counts and centre rosettes.
+  Settles in 20.5 s, with 16.1% of pixels differing.
+
+The gate is `scripts/sphere-inversion-presets.verify.mjs`. It checks:
+
+- menu entry, compute engine and the settle latch;
+- coverage of at least 5% of the pane and no exhausted ray;
+- the landed slice, and that a slice nudge changes the frame;
+- that a following ordinary preset clears the block.
+
+Its frames are `scripts/out/si-preset-<key>.png`, plus `-nudge.png` for the
+4D presets (gitignored; regenerate them).
+
+### Choices and rejected poses
+
+Poses were explored on the same machine with minted `#v1=` documents before
+being baked into the table.
+
+- **Radius fraction .99 everywhere, never 1.** At exact tangency a ray
+  reaching a cusp is estimated at distance 0 without being a member, and
+  stalls. The gate sheets' r .70 (oct6) and r .52 (ico12) are .99 of their
+  kissing radii to within .001.
+- **Cube pearls at D8, not the sheet's D12.** D10 and D8 are visually
+  identical at this pane. D8 settles in 9–10 s, and one D10 run took 34.5 s,
+  which is within this Iris's run-to-run spread for the cell but buys nothing.
+- **600-cell vault: the grazing view A, not the 4D search's view B.** B sits
+  close to the wall and reads as flat red and yellow walls with small
+  rosettes. A, from near the centre, looks along the wall away from the cut:
+  the cut rim and a horizon above, rows of pearl-window rosettes below.
+  - The kiss slice `1/(4φ)` gives larger rosettes than `w0` .08.
+  - D4 is indistinguishable from D5 but saves only 4 s. Every vault variant
+    tried (views A and A-pulled-back, D4/D5, `w0` .08/kiss) settled in
+    49–58 s.
+  - **The vault is over the ~30 s preset target on this Iris**, as the cost
+    section's 600-cell cut-shell rows predict. It stays admitted under the
+    no-automatic-give-up line, for the reasons given there.
+- **Medallions at `xw` .3, `w0` .1, not the double rotation at the kiss
+  slice.** Both are genuine slices at the same cost (21–23 s). The single
+  `xw` turn gives fuller medallions, pearl rings round a central rosette,
+  where the double rotation's medallions are sparser. The double rotation
+  stays one Shift-drag away.
+- **No palette, lighting or finish is authored.** The default "By Transform"
+  source colours by generation, and under the default light the subjects
+  read as lit geometry. `PRESET_SURFACE_PALETTES` stays trap-only.
+- **Zoom floor.** Every view keeps its closest detail well inside the
+  compute cores' f32 floor (about 10R magnification). No settled frame shows
+  thickening at its nearest pearls or window rims.
