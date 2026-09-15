@@ -1096,6 +1096,36 @@ and the native 4D half is genuine but less striking.
 Full record and the author's assessment for the owner:
 `docs/sphere-inversion-family.md`.
 
+### sphere-inversion-4d-search
+
+The native 4D beauty search the gate verdict set as a condition of preset
+authoring (`scripts/sphere-inversion-4d-search.harness.ts`, on the same
+prototype and `de-preview.ts`). Four rounds at 128 px covered twelve
+arrangement families, the 600-cell's seeds and kiss slice, near-identity lace
+poses, and lit interior vaults. A 320 px winners sheet then set three subjects
+beside the 3D bar.
+
+It adds two image-weighted genuineness columns, because lace has no volume
+for the cloud columns to measure:
+
+- the colour difference against the explicit in-plane 3D sub-arrangement
+  through the same camera (passive floor 0.2–9.6%);
+- the share of copy pixels whose fold word matches the identity pose's
+  (erosion test, calibrated at 1.00 on the flat embedding's passive offset).
+
+MEASURED VERDICT: every panel 0.0% exhausted. The 600-cell is the only family
+dense enough to survive slicing. Its cut-shell PEARL-WINDOW VAULT meets the 3D
+vault bar at genuine poses (word match 0.35–0.44, 38–44% off its 3D
+sub-arrangement). Its MEDALLION SPHERE matches the 3D lace shell (0.03–0.68,
+27–32%). Its LACE SNOWFLAKES are genuine (0.13–0.36) but read as lace stars
+and dust. That subject's striking identity cage is 3D-reducible. The failures
+are duoprisms, Hopf necklaces, random S³, both 24-cell orientations, an
+in-plane clique with off-plane cutters, and ball seeds generally (the seed's
+own slice dominates).
+
+The argument for why slices dust, exact parameters and pose sequences:
+`docs/sphere-inversion-family.md` ("Native 4D beauty search").
+
 ## The space-tiling sheet
 
 ### tiling
