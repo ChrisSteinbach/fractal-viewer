@@ -736,3 +736,40 @@ the construction gate's (plane image, a ball inside one closed generator ball).
 `"cap"` is now an unknown kind and is refused as such, never aliased; nothing
 had been persisted, so there is no compatibility cost. The pre-gate sections
 above keep "cap" as the historical name of that subject.
+
+## The cutoff contract, pinned (2026-09-15)
+
+The contract is `surface-de.ts`'s and is now pinned against the explicit orbit
+in both dimensions (cube8 shell D2 in 3D, cell24 .98 shell D2 in 4D; cutoffs
+1e-3, 1e-2, 0.05, 0.2):
+
+- **At or above the cutoff** the return is the uncut estimate bit for bit and
+  never above the oracle's true distance.
+- **Below the cutoff** the return is sub-cutoff exactly when the uncut
+  estimate is. Every query whose true distance is below the cutoff returns
+  below it; a query whose true distance is above it can still return below it
+  only where the uncut bound already under-reads (the lower bound's safe
+  direction). The cutoff never changes a decision, including with the cutoff
+  on the full estimate to the ulp.
+- **An exit value lies in `[full, cutoff)`.** It is a decision value, not a
+  distance. The estimator itself only ever transports the running minimum,
+  which is an exact bound on the part of the cover already scanned, so
+  `inversionDistanceLowerBound` never consumes a cutoff-shortened distance.
+  A caller must not transport or compose a sub-cutoff return either; a
+  Balloon- or lens-style wrapper queries with cutoff 0 or uses the decision
+  alone.
+
+**Was a fix needed? No violation was found.** The exact transport is monotone,
+but its f64 evaluation (a quotient of two rounded increasing terms) is not
+exactly monotone, so in principle an exit within a few ulps of the cutoff could
+flip the decision. A scratch search of about 580,000 positive queries (ico12
+shell D6, oct6 kissing D8, cube8 vault D7, cell24 shell D5, cutoff at the full
+value and one ulp either side) found no mismatch and no exit at all in that
+band: reaching it needs the folded threshold's own rounding to line up. The
+exit now clears `SPHERE_INVERSION_CUTOFF_EXIT_MARGIN = 2^-40` anyway. Each
+transport step's relative rounding is a few ulps and its sensitivity
+`s/(s+d)` never amplifies it, so 32 steps stay far inside `2^-40`. That makes
+the decision identity a written argument rather than a sampled one. The
+folded threshold's comment is also corrected: ignoring the `1 + 2^-20` margin
+puts it slightly below the true threshold (an exit may be tried late, never
+wrongly), not above it.
