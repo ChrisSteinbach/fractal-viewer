@@ -548,8 +548,18 @@ export interface SiEvalRow {
   maxGpuMinusCpu: number;
   /** `max(gpu − cpu64)` over CPU-positive queries (the one-sided gate). */
   maxPositiveExcess: number;
-  /** `slack − maxPositiveExcess`: what the f32 slack has left. */
+  /** `slack − maxPositiveExcess`. NOT the f32 error: the kernel returns
+   * `max(0, v − slack)`, so a query whose CPU value is below the slack reads
+   * `gpu − cpu = −cpu` and pins this near the slack. {@link maxRawExcess} is
+   * the f32 measure. */
   oneSidedMargin: number;
+  /** The PRE-SLACK f32 overshoot `max(gpu + slack − cpu64)` over queries both
+   * sides call positive (so the kernel's clamp did not engage): what the
+   * slack actually absorbs. Negative when the f32 bound never exceeded the
+   * f64 one. */
+  maxRawExcess: number;
+  /** Queries the raw excess was taken over. */
+  rawExcessQueries: number;
   oneSidedFailures: number;
   /** Queries where exactly one side returned a positive value (the member
    * signal's sign; disclosed, gated only through the clamped values). */
@@ -585,6 +595,8 @@ export function compareSphereInversionEval(
   let oneSidedFailures = 0;
   const abs: number[] = [];
   let memberSignFlips = 0;
+  let maxRawExcess = -Infinity;
+  let rawExcessQueries = 0;
   for (let i = 0; i < row.cpu.length; i++) {
     const cpuRaw = row.cpu[i];
     if (cpuRaw > 0 !== gpu[i] > 0) memberSignFlips++;
@@ -599,6 +611,13 @@ export function compareSphereInversionEval(
     if (!(err <= tol(cpu, row.R))) {
       failures++;
       if (signed > 0) failuresOver++;
+    }
+    if (cpuRaw > 0 && gpu[i] > 0) {
+      rawExcessQueries++;
+      maxRawExcess = Math.max(
+        maxRawExcess,
+        gpu[i] + SPHERE_INVERSION_GPU_SLACK - cpuRaw,
+      );
     }
     if (cpu > 0) {
       maxPositiveExcess = Math.max(maxPositiveExcess, signed);
@@ -626,6 +645,8 @@ export function compareSphereInversionEval(
     maxGpuMinusCpu: finite(maxSigned),
     maxPositiveExcess: finite(maxPositiveExcess),
     oneSidedMargin: SPHERE_INVERSION_GPU_SLACK - finite(maxPositiveExcess),
+    maxRawExcess: finite(maxRawExcess),
+    rawExcessQueries,
     oneSidedFailures,
     memberSignFlips,
     census: { ...census },

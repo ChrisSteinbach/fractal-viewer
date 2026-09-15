@@ -124,6 +124,18 @@ describe("sphere-inversion bench comparators", () => {
     expect(compareSphereInversionEval(row, under, tol).pass).toBe(true);
   });
 
+  it("reports the pre-slack f32 overshoot, not the clamp-pinned margin", () => {
+    const row = benchRows()[0];
+    // A kernel whose f32 bound ran 3e-7 over f64 before the slack.
+    const gpu = row.cpu.map((c) =>
+      Math.max(0, c + 3e-7 - SPHERE_INVERSION_GPU_SLACK),
+    );
+    const result = compareSphereInversionEval(row, gpu, tol);
+    expect(result.maxRawExcess).toBeCloseTo(3e-7, 12);
+    expect(result.rawExcessQueries).toBeGreaterThan(0);
+    expect(result.maxPositiveExcess).toBeLessThanOrEqual(0);
+  });
+
   it("names the floors a vacuous row misses", () => {
     const row = benchRows()[0];
     const result = compareSphereInversionEval(
