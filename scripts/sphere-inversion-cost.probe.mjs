@@ -58,7 +58,8 @@
  * Usage (production build served first):
  *   npm run build && npm run preview &
  *   node scripts/sphere-inversion-cost.probe.mjs [url] --display=:0
- *     [--plans=3d-depth,3d-rf,4d-depth,4d-rf,4d-pose,gl] [--viewport=1920x1080]
+ *     [--plans=3d-depth,3d-rf,4d-depth,4d-rf,4d-pose,gl,supp,supp-raster]
+ *     [--viewport=1920x1080]
  *     [--timeout-s=90] [--prune-s=60] [--out=scripts/out/sphere-inversion-cost.json]
  *     [--only=<substring of a cell key>] [--lock=/tmp/claude-1000/si-bench.lock]
  *
@@ -238,6 +239,23 @@ function plannedRows() {
       for (const a of ["oct6", "ico12"])
         for (const s of ["ball", "cutShell"])
           row(plan, "webgl", 3, a, 0.99, s, "id", [5, 8, 12]);
+    // The supplement to the first sweep: the rows its prune rule skipped
+    // (the 600-cell vault at identity), 4D depth past 12, and the 4D
+    // radius-fraction step between .8 and .99 where preview exhaustion moves.
+    if (plan === "supp") {
+      row(plan, "compute", 4, "cell600", 0.99, "cutShell", "id", [5, 8]);
+      row(plan, "compute", 4, "cell600", 0.99, "ball", "id", [8]);
+      for (const a of ["tess16", "cell600"])
+        row(plan, "compute", 4, a, 0.99, "shell", "id", [20, 32]);
+      for (const a of ARR4)
+        for (const s of Object.keys(SEEDS4))
+          row(plan, "compute", 4, a, 0.9, s, "id", [5]);
+    }
+    // Ray scaling on the costliest arrangement; run with its own --out and
+    // --viewport, since a cell key does not name the raster.
+    if (plan === "supp-raster")
+      for (const s of Object.keys(SEEDS4))
+        row(plan, "compute", 4, "cell600", 0.99, s, "id", [5]);
   }
   return rows;
 }
