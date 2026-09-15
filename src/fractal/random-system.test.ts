@@ -940,3 +940,11 @@ describe("occupiedCellCount", () => {
     expect(occupiedCellCount(positions, 8, bounds4)).toBe(8);
   });
 });
+
+describe("randomSystem and the sphere-inversion family", () => {
+  it("never rolls a sphere-inversion block", () => {
+    for (let seed = 0; seed < 40; seed++) {
+      expect("sphereInversion" in randomSystem(mulberry32(seed))).toBe(false);
+    }
+  });
+});

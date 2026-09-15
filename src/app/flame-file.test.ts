@@ -1614,3 +1614,21 @@ describe("encodeFlameFile chaos rows", () => {
     expect(rows).toEqual(["2 1 2 1", "1 1 1 1", "2 1 2 1", "1 1 1 1"]);
   });
 });
+
+describe("encodeFlameFile and the sphere-inversion block", () => {
+  it("writes the preserved transform system unchanged and warns that the block was dropped", () => {
+    const s: SceneSnapshot = toSnapshot(initialState(true));
+    const plain = encodeFlameFile(s, "scene");
+    const withBlock = encodeFlameFile(
+      { ...s, sphereInversion: { arrangement: "cell600" } },
+      "scene",
+    );
+    expect(withBlock.xml).toBe(plain.xml);
+    expect(
+      withBlock.warnings.some((w) => w.includes("sphere-inversion scene")),
+    ).toBe(true);
+    expect(plain.warnings.some((w) => w.includes("sphere-inversion"))).toBe(
+      false,
+    );
+  });
+});
