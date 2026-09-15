@@ -50,7 +50,10 @@
  * across arrangements; a uniform size change is the camera's job, not a
  * document field.
  */
-import { signedInversionBallScale } from "./inversion";
+import {
+  inversionDistanceLowerBound,
+  signedInversionBallScale,
+} from "./inversion";
 
 // ------------------------------------------------------------- constants
 
@@ -795,4 +798,128 @@ export function buildSphereInversionTables(
     boundingRadius,
     minGeneratorGap,
   };
+}
+
+// ------------------------------------------------------ estimator scaffolding
+
+/**
+ * A built estimator: the covering tables plus the fold's transport scratch.
+ * The SAME shape in both dimensions (the vectors are flat with stride
+ * `dim`); each twin builds it through {@link createSphereInversionDE} and
+ * owns only its unrolled arithmetic. The scratch makes a DE single-threaded
+ * and non-reentrant, like the other CPU estimators.
+ */
+export interface SphereInversionDE extends SphereInversionTables {
+  construction: SphereInversionConstruction;
+  /** `|x − c|` before fold inversion `i`. */
+  foldRadius: Float64Array;
+  /** `r²` of fold inversion `i`. */
+  foldRadius2: Float64Array;
+  /** The folded query. */
+  foldPoint: Float64Array;
+}
+
+/** Build the tables and scratch for a construction of dimension `dim`.
+ * Throws when the dimension disagrees or the construction is ineligible. */
+export function createSphereInversionDE(
+  construction: SphereInversionConstruction,
+  dim: 3 | 4,
+): SphereInversionDE {
+  if (construction.dim !== dim) {
+    throw new Error(
+      `sphere-inversion construction is ${construction.dim}D, estimator is ${dim}D`,
+    );
+  }
+  const tables = buildSphereInversionTables(construction);
+  return {
+    ...tables,
+    construction,
+    foldRadius: new Float64Array(construction.depth + 1),
+    foldRadius2: new Float64Array(construction.depth + 1),
+    foldPoint: new Float64Array(dim),
+  };
+}
+
+/**
+ * Attribution for a query — what a shader will need to colour and light a
+ * hit, at the cost of one extra member scan of the winning covering term.
+ */
+export interface SphereInversionHit {
+  /** The estimate, bit-identical to the plain estimator's at the same
+   * cutoff. */
+  d: number;
+  status: SphereInversionFoldStatus;
+  /** Inversions the query's fold spent. */
+  foldDepth: number;
+  /** Word length of the covering term that set `d`: the fold depth for the
+   * folded seed, +1 for a one-step copy, +2 for a depth-2 gap ball. */
+  depth: number;
+  /** Outermost letter of that word (the first generator the query's fold
+   * inverted through), −1 at depth 0. */
+  firstGenerator: number;
+  /** Innermost letter of that word, −1 at depth 0. */
+  lastGenerator: number;
+  /** Index into `construction.seed` of the binding member of the winning
+   * intersection, or −1 when it is a generator wall, a gap ball or a pole. */
+  seedMember: number;
+}
+
+export function makeSphereInversionHit(): SphereInversionHit {
+  return {
+    d: 0,
+    status: SPHERE_INVERSION_FOLD_DOMAIN,
+    foldDepth: 0,
+    depth: 0,
+    firstGenerator: -1,
+    lastGenerator: -1,
+    seedMember: -1,
+  };
+}
+
+/** Carry a folded-coordinate EXACT lower bound back through the fold's `k`
+ * inversions, innermost first, with `inversionDistanceLowerBound`. */
+export function transportSphereInversionBound(
+  foldRadius: Float64Array,
+  foldRadius2: Float64Array,
+  k: number,
+  d: number,
+): number {
+  let v = d;
+  for (let i = k - 1; i >= 0; i--) {
+    v = inversionDistanceLowerBound(foldRadius[i], foldRadius2[i], v);
+  }
+  return v;
+}
+
+/**
+ * The folded-coordinate value below which the transported result would fall
+ * below `cutoff`: the transport's monotone inverse `d = s·y/(r − y)` applied
+ * outermost first (`Infinity` once `y >= r`, where no folded value reaches
+ * the cutoff). It deliberately ignores the transport's `1 + 2^-20` margin,
+ * so it can only OVER-state the threshold; the estimators confirm every exit
+ * by transporting forward, so this decides when an exit is TRIED, never
+ * whether one is taken.
+ */
+export function sphereInversionFoldedCutoff(
+  foldRadius: Float64Array,
+  foldRadius2: Float64Array,
+  k: number,
+  cutoff: number,
+): number {
+  let c = cutoff;
+  for (let i = 0; i < k; i++) {
+    const r = foldRadius[i];
+    if (c >= r) return Infinity;
+    c = ((foldRadius2[i] / r) * c) / (r - c);
+  }
+  return c;
+}
+
+/** The generator `l` whose image `I_j(B_l)` sits at index `gapIndex` of
+ * `gaps[j]` (the list skips `l = j`). */
+export function sphereInversionGapGenerator(
+  j: number,
+  gapIndex: number,
+): number {
+  return gapIndex < j ? gapIndex : gapIndex + 1;
 }
