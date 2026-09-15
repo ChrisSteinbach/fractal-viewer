@@ -273,11 +273,12 @@ up: its trap starts at the frozen 624 and ends at 688. Both plane regions
 are zero-filled when unused; a conditional declaration would make the trap
 offset depend on the floor toggle and split one document across two wires.
 
-## Seven kernel cores
+## Nine kernel cores
 
 The lens wrapper added the second core, the escape port the third and — its
 4D cut — the fourth, the 4D fold-branch port the fifth, the Mandelbulb the
-sixth, the 4D escape chain the seventh.
+sixth, the 4D escape chain the seventh, and the sphere-inversion family the
+eighth and ninth.
 
 ### `core:"affine"`
 
@@ -640,6 +641,63 @@ two axes by name.
 
 `lens`/`balloon` throw, `groundPlane` composes, and there is no fragment
 mirror at all.
+
+### `core:"sphereInv"` / `core:"sphereInv4"` (the sphere-inversion family)
+
+These two cores carry the seed-orbit estimator of `sphere-inversion-de.ts` /
+`sphere-inversion-de-4d.ts`. `surface-sphere-inversion-gpu.ts`'s
+`sphereInversionWgslSource` emits it once for both dimensions; the 4D core sits
+behind escape4's view lift, emitted under the name `liftSphereInv4`. They are
+neither a descent nor a forward orbit:
+
+- Binding 1 is re-typed `siTable: array<vec4f>`, the deduplicated
+  generator / seed / copy / gap wire (688 B for oct6, 472,416 B for the 600-cell
+  cut shell).
+- The header (counts, radii, the unit-arrangement flag) rides the variant blocks
+  at 208 / 464, padded so the ground-plane block keeps its frozen 288 / 576.
+- The seven older cores' generated source is pinned byte for byte by
+  `surface-de-gpu-digest.test.ts`.
+
+The composition policy, the f32 argument and the hit attribution (trap =
+generation, rings = closest radial approach, sheets = seed member) are in
+`docs/sphere-inversion-gpu.md`.
+
+MEASURED by the bench legs on a certified-quiet Intel Iris Xe on 2026-09-15.
+Both cores compiled and passed every gate on their first device run:
+
+- Eleven eval rows have `fail = 0`. The GPU never read above the f64 bound on a
+  CPU-positive query.
+- The pre-slack f32 overshoot peaks at `5.35e-7` against the `1e-6` slack.
+- Hit-info attribution has zero mismatches, and the flat 4D reduction is
+  bit-equal to the 3D kernel.
+- Both 96×54 unproject marches have `fail = 0` with identical hit counts.
+- The production frames completed with no exhausted rays: 3D over the floor,
+  and 4D at two view4 poses on one renderer.
+
+On one eval harness, per query:
+
+| Subject                   | µs/query  |
+| ------------------------- | --------- |
+| 3D rows                   | 0.04–0.05 |
+| escape4                   | 0.05      |
+| 600-cell rows             | 0.20–0.32 |
+| `mandelboxKifs` fold, w12 | ~10,300   |
+
+The fold figure is on its own on-attractor-heavy mix. Rows and method are in
+`docs/gpu-bench-surface.md`.
+
+THE f32 ZOOM FLOOR. The kernel subtracts an absolute `1e-6` from every positive
+bound, so the params packers clamp the hit acceptance `hitFloorEps` to at least
+`1e-6` world units. Below it, a ray could never accept where the slack zeroes
+the bound, and it would stall. The other cores' full-tier floor is
+`R · max(1e-7, 1e-5 / magnification)` (`scene.ts`'s `surfaceFullHitFloor`),
+which follows the lens down to 100× magnification. A sphere-inversion session's
+floor stops shrinking once magnification passes `10·R`: about 13× for the
+600-cell (`R` 1.306) and 17× for the oct6 pearls (`R` 1.70). Past that, detail
+finer than about `1e-6` world units is accepted rather than resolved. The
+measured overshoot rules out shrinking the slack by more than about half
+without a per-driver argument. The slack is a wire value (`siRadii.w`), so a
+later non-unit arrangement can scale it without a layout change.
 
 ## Ground plane
 
@@ -1109,4 +1167,6 @@ The appended `gearworksCondensation` agreement row uses the same 700-query
 CPU oracle gate as the affine core, but compiles a dedicated gear-SDF pipeline;
 `marchUnprojectCondensation` then runs the bounded app-ray march against the
 CPU emulator. The established fold/lens/balloon fixtures and timing rows are
-unchanged.
+unchanged. The sphere-inversion cores are pinned by the section's
+`sphere-inversion-legs.ts` (eval, attribution, march, frames, compile matrix,
+timing); `--surface-sphere-inversion-only=1` runs those legs alone.

@@ -702,3 +702,27 @@ the real-driver agreement and timing rows remain the bench's.
 still passes (Firefox, dev server, 20/20 mode exits on the compute engine).
 It drives its own fixed fold-lens document, so the sphere-inversion session's
 teardown is covered only by sharing the same renderer lifecycle.
+
+## Bench obligations — measured (2026-09-15)
+
+The section 7 obligations now run as `bench:surface` legs
+(`src/app/gpu-bench/sphere-inversion.ts` and `sphere-inversion-legs.ts`).
+They were measured on a certified-quiet Intel Iris Xe (`--display=:0`). The
+rows are in `docs/gpu-bench-surface.md`, and the verdicts in
+`docs/surface-gpu-kernels.md`. Both kernels compiled and passed every gate on
+the first device run, with no kernel or packer change. Three things differ
+from the plan above, and all are recorded there:
+
+- The value gate compares CLAMPED values `max(v, 0)`. A return `<= 0` is the
+  folded-coordinate member signal, and its f32 size legitimately differs at
+  fold depth 6–7.
+- The real driver's f32 overshoot before the slack, `max(gpu + slack − cpu64)`
+  over queries both sides call positive, peaks at `5.35e-7` (600-cell vault,
+  rotated pose). That is above the emulation's `3.3e-7` and 1.9× under the
+  slack, so the slack stays `1e-6`.
+- The anti-vacuity floors are per row. The pearls, kissing and snowflake rows
+  measure no copy-term wins, so their copy floors are zero.
+
+The acceptance clamp costs zoom depth. Its floor binds past a magnification of
+about `10·R` (13× for the 600-cell, 17× for oct6), while the other cores' floor
+follows the lens to 100×.

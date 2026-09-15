@@ -353,6 +353,154 @@ run.
 `estimateEscapeDistance4F32`'s mutation-testing story, run before this lift
 measurement, is recorded below under "Mutation-testing the f32 twins".
 
+## The sphere-inversion rows (`core:"sphereInv"` / `"sphereInv4"`)
+
+The eighth and ninth cores are pinned by two modules. `src/app/gpu-bench/sphere-inversion.ts`
+holds the fixtures, query mixes, comparators and the f64 CPU march emulator, and is
+unit-tested without a device. `sphere-inversion-legs.ts` holds the device legs,
+called before the section verdict. `--surface-sphere-inversion-only=1` runs just
+these legs after the canary arms. Its verdict is `fail` or `skipped`, never
+`pass`, because a run that skips every other leg certifies nothing about the
+section. The plan and fixture rationale are in `docs/sphere-inversion-gpu.md`.
+
+What gates:
+
+- **Compile matrix.** Both cores in eval, the app's unproject march with
+  `statusOut`, and shade in four forms: plain, finish, ground plane + finish, and
+  lighting rig.
+- **Eval agreement**, eleven rows of 700 queries each:
+  - The query mix is 300 points uniform in the row's query-space ball, 250
+    deep-word points (a point just off a seed sphere, carried through a random
+    reduced word of length up to six) and 150 points a CPU sphere tracer
+    evaluated from the row's camera.
+  - `surfaceEvalTol` at `fail = 0` on CLAMPED values `max(v, 0)`. A return
+    `<= 0` is the CPU estimator's folded-coordinate member signal, not a
+    distance, and its size legitimately differs in f32 at fold depth 6–7. The
+    f32 twin already showed that on 8/700 cube8 shell queries before any device
+    ran. Sign disagreements are disclosed as `signFlips`.
+  - The ONE-SIDED gate `max(gpu − cpu64) <= 1e-6` over CPU-positive queries.
+  - Per-row anti-vacuity floors on fold depth `k >= 3`, copy-term wins and
+    gap-term wins, each at about half the measured census. A floor is 0 where
+    the row measures none: pearls, kissing and the snowflake have no copy wins.
+  - Hit-info attribution (generation and seed member), read through a probe
+    entry appended to the shade kernel, on queries both sides call positive and
+    agree on.
+- **Flat reduction.** `siFlat4` runs the oct6 pearls embedded at `w = 0` through
+  the 4D kernel on `siOct6Pearls3`'s queries, and must agree with the 3D kernel
+  within `1e-6`.
+- **March agreement.** A 96×54 unproject march, compared per ray against the CPU
+  emulator, for `siOct6Kiss3` (exterior orbit camera) and `si600Vault4@XW.3W.1`
+  (the 4D search sheet's interior vault camera). It needs `fail = 0`, no
+  truncation, and both hit counts strictly between zero and the ray count.
+  Exclusions (boundary flips and rounding-at-acceptance flips) are capped at 1%
+  of the rays.
+- **Production frames.** `SurfaceComputeRenderer` on `siOct6Pearls3` over the
+  ground plane, and on the 600-cell medallion at `WKISS` then `XW.4YW.3ZW.2` on
+  ONE renderer (the per-frame view4 repack). A real adapter must finish
+  untruncated with hits, misses, no exhausted or active rays, and a hit rate
+  within 0.15 of a strided CPU march.
+
+MEASURED on 2026-09-15:
+
+- Adapter: Intel Iris Xe. `glxinfo` reports Mesa Intel Iris Xe Graphics (TGL
+  GT2); WebGPU reports `intel gen-12lp`, `software=false`.
+- Quiet baseline `quiet=YES` on all four sphere-inversion-only runs.
+- The agreement, march and frame rows were identical across the four runs.
+- Every gate passed on the first device compile. No kernel or packer change was
+  needed.
+
+| Row                            | Core | maxAbs  | f32 overshoot before the slack (queries) | signFlips | k≥3 / copy / gap (floors)        | attribution mismatches |
+| ------------------------------ | ---- | ------- | ---------------------------------------- | --------: | -------------------------------- | ---------------------- |
+| `siOct6Pearls3`                | 3D   | 1.15e-6 | 9.59e-8 (558)                            |        19 | 177 / 0 / 429 (88 / 0 / 214)     | 0 of 558               |
+| `siOct6Kiss3`                  | 3D   | 1.23e-6 | 2.00e-7 (547)                            |        24 | 188 / 0 / 425 (94 / 0 / 212)     | 0 of 547               |
+| `siCube8Shell3`                | 3D   | 1.68e-6 | 1.79e-7 (611)                            |        26 | 192 / 244 / 39 (96 / 122 / 19)   | 0 of 611               |
+| `siIco12Vault3`                | 3D   | 1.38e-6 | 4.82e-7 (663)                            |         3 | 214 / 274 / 178 (107 / 137 / 89) | 0 of 663               |
+| `siFlat4`                      | 4D   | 1.15e-6 | 9.59e-8 (558)                            |        19 | 177 / 0 / 429 (88 / 0 / 214)     | 0 of 558               |
+| `siCell24Shell4` xw .3 w0 .15  | 4D   | 1.62e-6 | 1.40e-7 (677)                            |         0 | 22 / 198 / 225 (11 / 99 / 112)   | 0 of 677               |
+| `si600Vault4@W.08`             | 4D   | 1.20e-6 | 1.51e-7 (674)                            |         0 | 41 / 191 / 267 (20 / 95 / 133)   | 0 of 674               |
+| `si600Vault4@XW.3W.1`          | 4D   | 1.48e-6 | 5.35e-7 (644)                            |         0 | 28 / 196 / 275 (14 / 98 / 137)   | 0 of 644               |
+| `si600Medallion4@WKISS`        | 4D   | 1.10e-6 | 1.25e-7 (675)                            |         0 | 41 / 122 / 324 (20 / 61 / 162)   | 0 of 675               |
+| `si600Medallion4@XW.4YW.3ZW.2` | 4D   | 1.13e-6 | 2.14e-7 (681)                            |         0 | 24 / 132 / 371 (12 / 66 / 185)   | 0 of 681               |
+| `si600Snowflake4@W.06`         | 4D   | 1.09e-6 | 5.87e-8 (694)                            |         0 | 50 / 0 / 662 (25 / 0 / 331)      | 0 of 694               |
+
+All rows have `fail = 0` and no one-sided failures. On every CPU-positive query
+`gpu − cpu64 <= 0`, so the plan's stricter form of the gate holds as well as
+the gated `<= slack` form. The largest errors are the slack itself plus f32
+noise, because the kernel subtracts `1e-6` from every positive bound.
+
+READ THE OVERSHOOT COLUMN, NOT A MARGIN. The kernel returns `max(0, v − slack)`,
+so a query whose CPU value is below `1e-6` reads `gpu − cpu = −cpu`. That pins
+`slack − max(gpu − cpu64)` near the slack no matter what the f32 error is, so
+that margin says nothing. The overshoot column is `max(gpu + slack − cpu64)`
+over queries both sides call positive, which is what the slack actually absorbs.
+It peaks at `5.35e-7` on the 600-cell vault at the rotated pose, which also
+carries the f32 view lift. That is above the CPU emulation's `3.3e-7`, as the
+plan expected a real driver might be, and still 1.9× under the slack.
+
+The flat reduction agreed to `maxDelta = 0` on all 700 queries.
+
+March rows:
+
+- `siOct6Kiss3`: 189/189 GPU/CPU hits of 5,184 rays, `maxAbsT` 6.49e-3.
+- `si600Vault4@XW.3W.1`: 4,466/4,466 hits, `maxAbsT` 1.89e-3.
+- Both had zero status mismatches, zero exclusions and zero exhausted rays, and
+  both `maxAbsT` values sit inside the per-ray `t` tolerance.
+
+Production frames at 256×144, with no exhausted or active rays anywhere, 21–25
+passes and 186–280 ms of GPU time each:
+
+| Frame                       |  Hits | Misses |  Plane | Hit rate GPU / CPU |
+| --------------------------- | ----: | -----: | -----: | ------------------ |
+| Pearls over the floor       | 1,268 | 12,330 | 23,266 | 0.034 / 0.038      |
+| Medallion at `WKISS`        | 7,285 | 29,579 |      0 | 0.198 / 0.201      |
+| Medallion at `XW.4YW.3ZW.2` | 7,487 | 29,377 |      0 | 0.203 / 0.205      |
+
+Shader compiles on a cold driver cache took 874–1,609 ms for the 3D shade
+variants and 986–1,824 ms for 4D, against 51–75 ms for eval and march. With a
+warm cache they took 9–23 ms.
+
+Timing is informational and never gates. It measures µs per query over WHOLE
+TILES of each row's 700-query mix, in submissions sized from a pilot spread
+across the mix. Whole tiles matter because the mix is ordered by class, so a
+batch cut from its front measures one class. An earlier sizing read the fold
+subject at 3,022 µs on a jittered-only 256-query batch, and its fast rows were
+dominated by submission overhead. The existing cores run on the same harness
+with their own 700-query mixes. Measured in the third and fourth certified runs:
+
+| Subject                        | Core            | µs/query, run 3 / 4 | Submission |
+| ------------------------------ | --------------- | ------------------: | ---------: |
+| `siOct6Pearls3`                | `sphereInv`     |       0.042 / 0.052 |    262,144 |
+| `siOct6Kiss3`                  | `sphereInv`     |       0.046 / 0.044 |    262,144 |
+| `si600Vault4@XW.3W.1`          | `sphereInv4`    |       0.204 / 0.230 |   ≥111,360 |
+| `si600Medallion4@XW.4YW.3ZW.2` | `sphereInv4`    |       0.282 / 0.283 |    262,144 |
+| `si600Snowflake4@W.06`         | `sphereInv4`    |       0.296 / 0.317 |    262,144 |
+| `esc4ChainWRot`                | `escape4`       |       0.052 / 0.045 |    262,144 |
+| `mandelboxKifs`                | `fold` width 12 |     10,309 / 10,261 |         64 |
+
+These are throughput figures (wall time over a parallel dispatch), not the
+per-ray figures the other timing rows report, and each subject runs its own
+query mix. Readings:
+
+- The 3D family costs about what the 4D escape chain does per query.
+- The 600-cell's 120 generators cost 4–7.5× the 3D rows, the snowflake the most.
+  That is the ordering the CPU plan predicted.
+- On its own on-attractor-heavy mix, the production-width fold frontier costs
+  35,000–50,000× the 600-cell rows.
+- The 96×54 march rows spent 21–74 ms of GPU time across the four runs
+  (4.0–14.3 µs per ray, including host-loop overhead at that tiny raster), so
+  no row is near a budget.
+
+**The full section on this machine.** Two full `--display=:0` runs on the same
+certified-quiet Iris ended `device-unreliable`. Both lost the device at the
+untouched `compute frame swirl lens4SwirlPostOverFold` leg, before the
+sphere-inversion legs run. `docs/surface-slice-thickness.md` records the same
+loss for every full run on this machine, including an unmodified baseline. No
+gating row failed before the loss in either run; the only nonzero `fail=` counts
+were the non-gating w4 `info` rows. The sphere-inversion rows above therefore
+come from the sphere-inversion-only runs, which share the section's device
+acquisition and canary. A full-section `pass` with these legs is still owed, on
+a machine where that swirl leg survives.
+
 ## Mutation-testing the f32 twins
 
 A stale f32 twin does not disagree with its f64 CPU oracle — it makes the
