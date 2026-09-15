@@ -3006,17 +3006,14 @@ export const PRESET_VIEWS: Partial<Record<Preset, PresetView>> = {
     camera: { eye: [1.2, 0.87, 1.42], target: [0, 0, 0], fov: 62 },
   },
   inversionVault4: {
-    // From near the centre, grazing along the wall away from the cut: the
-    // cut rim and its horizon above, rows of pearl-window rosettes below.
-    // A double rotation off the centre slice, never the identity pose: the
+    // From outside, obliquely over the cut: the rim, the bowl's curvature
+    // and the pearl-window rosettes on the far inner wall all in one
+    // silhouette. Interior views read as a flat wall with medallions. A
+    // double rotation off the centre slice, never the identity pose: the
     // identity slice holds the most generators and is the costliest (see
     // the doc's cost section), and the xw/yw turn makes the rosettes
     // asymmetric.
-    camera: {
-      eye: [0.35, -0.05, 0.06],
-      target: [-0.99, 0.15, -0.18],
-      fov: 77,
-    },
+    camera: { eye: [1.9, 1.3, 0.2], target: [0, 0, 0], fov: 55 },
     fourD: {
       rotation: [
         ["xw", 0.3],
