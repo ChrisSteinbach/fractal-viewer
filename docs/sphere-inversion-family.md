@@ -1561,13 +1561,22 @@ What each leg established:
 - **Distinct objects.** All 15 pairs of settled frames differ; the closest
   pair (the two pearl presets) differs on 27.5% of pixels.
 - **Share links.** A 3D link reproduces the sender's frame byte for byte. A
-  4D link does not: `persist.ts` stores the rotor pair to 4 decimals
-  (vault4's `p₀` 0.9838 against the preset's 0.98383134), while the
-  authored-fov camera keeps 10. The link itself is a fixed point: the
-  reloaded session copies the same document, and a second reload is
-  byte-identical to the first. The gate discloses the 4D drift (bounded at
-  1% of pixels) rather than failing on it. Whether the rotor should keep more
-  digits is the persistence owner's call.
+  4D link does not, and the reason is not rounding: the pose and camera are
+  written unrounded, and the rotor renormalization is a fixed point.
+  `FourDPose` stores the slice NORMALIZED against the LANDED cloud's 4D
+  half-extents, and the cloud is seeded afresh per generation, so one
+  document resolves to a slightly different world `w0` on each run. The
+  evidence is three-fold: two links copied from the same session differ in no
+  field yet render differently; nudging `sliceCenter` by 1e-5 reproduces the
+  signature exactly; and the menu session's own `sliceCenter` differed run to
+  run (0.07378780 against 0.07382606). The link is still a fixed point in
+  every other respect: the reloaded session copies the same document, and a
+  second reload is byte-identical to the first. The gate discloses the 4D
+  drift (bounded at 1% of pixels) rather than failing on it. A fix is in
+  flight — an optional WORLD slice field on the pose, preferred on decode,
+  with the normalized one as the legacy fallback — after which these two
+  rows should reload byte-exactly and the disclosure becomes a pass.
+
 - **Save PNG.** Every 2× export completed and has content (1,800–6,600
   coarse colours, luma standard deviation 24–45). The Iris's own ray ceiling
   already cuts a 2× export into 2 bands. Under `?surfacemaxrays=600000` the
