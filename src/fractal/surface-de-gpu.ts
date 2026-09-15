@@ -8290,6 +8290,58 @@ ${surfacePatternShadeSourceWgsl()}`
   // dispatch picks the boundary query: the estimator march (absent's
   // meaning, text unchanged) or the closed-solid signed query.
   const solidQuery = opticsBackend === "closedSolid";
+  // The closed-solid field's emission, per dimension. In 3D it is the
+  // condensation term at the root (the signed certified bound the primary
+  // march reads). In 4D the term's hypot form is a distance to the shape
+  // flat and reads ZERO throughout its interior — no negative region for
+  // a signed traversal — so the 4D field is the max form
+  // (condensation-de.ts's condensationSignedDistance4, mirrored):
+  // sigmaMin · max(sdShape, |local w|), sign-exact, the 3D solid field
+  // exactly at the canonical pose where the slice carries the flat, and
+  // the honest empty interior where a tilted slice cuts the flat into a
+  // sheet. Graph-directed selection and hybrid schedules are refused for
+  // this backend, so the emitter loop needs neither gate.
+  const transportSolidFieldWgsl = !solidQuery
+    ? ""
+    : core4
+      ? `// The closed-solid field (opticsBackend "closedSolid"), 4D form —
+// condensation-de.ts's condensationSignedDistance4 mirrored. The hypot
+// estimator's interior reads ZERO on the shape flat (hypot(max(sd,0), w)
+// = 0 whenever sd < 0 and w = 0), so it has no negative region for a
+// signed traversal — the measured 4D envelope arm resolved nothing off
+// it, both engines crawling identically. The signed field is the
+// intrinsic solid's field plus the flat's distance as a penalty:
+// sigmaMin · sdShape + |local w|, union min. Where the displayed slice
+// carries the flat (the canonical composition: w-untouched lifts,
+// w0 = 0, a w-preserving rotor) the penalty vanishes IDENTICALLY and
+// the field is exactly the 3D solid field; off it the penalty forms a
+// lens-shaped slab around the flat whose failures are honest refusals.
+// The displayed point embeds through the live rotor/slice exactly as
+// the descent's prologue does. Graph-directed selection and hybrid
+// schedules are refused for this backend, so the emitter loop needs
+// neither gate.
+fn transportSolidField(p: vec3f) -> f32 {
+  let q = rotorInvApply4(vec4f(p, params.w0));
+  var best = 1e30;
+  for (var e = 0u; e < params.condEmitterCount; e++) {
+    let m = maps[params.mapCount + e];
+    let local = mapApply4(m, q);
+    let sd = condensationShapeSdf(u32(m.p0.z), local.xyz);
+    let d = m.p0.x * sd + abs(local.w);
+    if (d < best) {
+      best = d;
+    }
+  }
+  return best * ${wgslFloatLit(SHAPE_MARCH_SAFETY)};
+}`
+      : `// The closed-solid field (opticsBackend "closedSolid"): the session's
+// SIGNED closed-solid union — the condensation term at the root, the
+// same SAFETY-scaled certified bound the primary march reads, so the
+// query's crossing scale applies to the field the primary hit was
+// found with.
+fn transportSolidField(p: vec3f) -> f32 {
+  return condensationTerm(p, 1.0, 0u);
+}`;
   const opticsBlock = optics
     ? `
 // ---- dielectric optical transport (docs/surface-dielectric-transport.md)
@@ -8400,17 +8452,7 @@ fn transportOpticalNormal(p: vec3f, dir: vec3f, eps: f32, li: u32) -> vec3f {
 
 ${
   solidQuery
-    ? `// The closed-solid field (opticsBackend "closedSolid"): the session's
-// SIGNED closed-solid union — the condensation term at the root, the
-// same SAFETY-scaled certified bound the primary march reads, so the
-// query's crossing scale applies to the field the primary hit was
-// found with. In 4D the term embeds the displayed point through the
-// live rotor/slice exactly as the descent's prologue does.
-fn transportSolidField(p: vec3f) -> f32 {
-  return condensationTerm(${
-    core4 ? "rotorInvApply4(vec4f(p, params.w0))" : "p"
-  }, 1.0, 0u);
-}
+    ? `${transportSolidFieldWgsl}
 
 // The closed-solid normal: the SAME tetrahedron-tap discipline as the
 // estimator normal, on the signed field — a smooth closed solid has no

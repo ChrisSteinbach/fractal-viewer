@@ -162,7 +162,7 @@ import type {
 } from "../../fractal/surface-de";
 import {
   condensationDistance3,
-  condensationDistance4,
+  condensationSignedDistance4,
 } from "../../fractal/condensation-de";
 import {
   analyzeSurfaceSystem4,
@@ -8549,7 +8549,13 @@ async function runSurfaceTransportAgreementLegs(
         estimate: (p) =>
           SHAPE_MARCH_SAFETY *
           (de4
-            ? condensationDistance4(de4.condensation!, p[0], p[1], p[2], 0)
+            ? condensationSignedDistance4(
+                de4.condensation!,
+                p[0],
+                p[1],
+                p[2],
+                0,
+              )
             : condensationDistance3(de3!.condensation!, p[0], p[1], p[2])),
         stepScale: de.stepScale,
         visibleRadius: de.visibleBoundingRadius,

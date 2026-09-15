@@ -114,4 +114,29 @@ describe("condensation shape distances", () => {
     expect(condensationDistance4(de, 0, 0, 0, 0.75)).toBeCloseTo(0.75, 12);
     expect(condensationTerm4(de, 0, 2, 0, 0, 0, 0.75)).toBeCloseTo(1.35, 12);
   });
+
+  it("keeps a negative interior for the signed transport field where the hypot form reads zero", () => {
+    const de = de4();
+    // The hypot estimator is a distance to the flat: zero throughout the
+    // interior at w = 0 — no negative region for a signed traversal.
+    expect(condensationDistance4(de, 0, 0, 0, 0)).toBe(0);
+    expect(condensationDistance4(de, 0.5, 0, 0, 0)).toBe(0);
+    // The signed field is the intrinsic solid's field (the flat's
+    // distance as a penalty vanishes at w = 0): negative inside, exact
+    // magnitude.
+    expect(condensationSignedDistance4(de, 0, 0, 0, 0)).toBeCloseTo(-1, 12);
+    expect(condensationSignedDistance4(de, 0.5, 0, 0, 0)).toBeCloseTo(-0.5, 12);
+    expect(condensationSignedDistance4(de, 2, 0, 0, 0)).toBeCloseTo(1, 12);
+    // Off the flat the penalty lifts the field: the lens-slab interior
+    // around the flat narrows with |w| and the deep interior reads
+    // positive (an honest empty interior, never the bare preimage).
+    expect(condensationSignedDistance4(de, 0, 0, 0, 0.75)).toBeCloseTo(
+      0.75,
+      12,
+    );
+    expect(condensationSignedDistance4(de, 0.5, 0, 0, 0.75)).toBeCloseTo(
+      0.25,
+      12,
+    );
+  });
 });
