@@ -516,6 +516,25 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `inversionBallScale`, the Möbius factor `R²/(|c|² − r²)` that takes a
     ball to a ball exactly, returning 0 — "no information", so a caller's
     bound degrades conservatively — when the region swallows the centre.
+    `signedInversionBallScale` keeps the sign for generalized balls (a ball
+    holding the centre maps to a complement).
+  - `sphere-inversion.ts` — the sphere-inversion family's ONE shared
+    vocabulary: an authored form (registry arrangement id, radius fraction
+    of tangency in (0, 1], ball/cap/shell/cutShell seed, depth <= 32)
+    resolved into the explicit `{dim, generators, seed, depth}`
+    construction. Out-of-domain values REFUSE with reasons, never clamp, and
+    the authored block is never mutated. `analyzeSphereInversionSystem`
+    refuses overlap, depth-1 plane seed images and empty or unbounded seeds,
+    and reports tangency degraded; NOT yet wired into
+    `surface-eligibility.ts` or persistence. `sphere-inversion-de.ts` and
+    `-de-4d.ts` are the twins (only arithmetic duplicated): the TRANSPORTED
+    CERTIFIED BOUND on the depth-D SEED ORBIT (never the limit set), step
+    scale 1, `<= 0` a member signal, `surface-de.ts`'s cutoff contract (an
+    exit transports the running minimum, never a shortened distance), and
+    hit-info attribution. The 4D flat embedding equals 3D bit for bit; the
+    slab is REFUSED; f64 only. `sphere-inversion-oracle.ts` is the
+    independent explicit-orbit oracle pinning both. Record:
+    `docs/sphere-inversion-family.md`.
   - `morph.ts` — pure interpolation (`lerpSystem`): endpoint-exact at t=0/1,
     rotation lerped nearest-turn, transform-count mismatches fade surplus by
     weight, flat↔4D continuous via derived w-scale, kaleidoscope crossfade
@@ -1133,39 +1152,15 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     position that costs the least.
     Full record — the per-axis extent figures and the rotation-cost
     comparison across link positions — in `docs/escape-time-family.md`.
-  - `qjulia-de.ts` — the quaternion Julia set's CPU oracle:
-    `q <- q^2 + c` (Hart/Sandin/Kauffman 1989) in the project's own
-    vocabulary, since `q^2 + c` is conjugate by translation to `(q + c)^2`
-    — i.e. `variations.ts`'s `qsquare` with the transform's translation as
-    the Julia constant. `analyzeQJuliaSystem` gates, `buildQJuliaDE`
-    builds, `estimateQJuliaDistance` returns the Böttcher log form
-    `0.5·|y|·ln|y| / dr`. A nonidentity post is REFUSED: this orbit has no
-    post stage. The only CERTIFIED estimator in the escape-time
-    family (quaternion norm is multiplicative, so `|dq'| = 2|q|·|dq|`
-    EXACTLY, where the folds' and the bulb's are heuristics) and the
-    cheapest thing the marcher has ever run — 0.059 us/eval against the
-    shipped fold's 0.633, at step scale 1.0 with 0.00% measured overshoot.
-    NO RENDERER READS IT, deliberately: it is production-dead by the
-    verdict of `scripts/qjulia-beauty.harness.ts`, whose twenty panels
-    are all SMOOTH — shells, whorls and blobs, handsome and
-    entirely without fractal detail — and whose zoom sheet resolves
-    nothing new at three levels on four systems. Surface mode's central
-    promise is that zoom keeps resolving; for this object there is
-    nothing there to resolve, which is why its WGSL/GLSL cores and its
-    4D lift (the only cut that is NOT a solid of revolution — tested
-    among those panels, and smooth too) are CLOSED
-    won't-do along with their epic. The module stays for two reasons: it
-    is the executable record of the measurement that refused them, and
-    it is where the quaternion square's EXACT `2|q|` derivative lives —
-    which the power-link work CASHED IN: the map is now a chain LINK on
-    the escape core, needing neither its own kernel nor its own 4D lift,
-    and the `hybridChainQuaternion` preset renders it. So this module's own
-    prediction came true — the object that is dull alone earns its place
-    composed with a fold — while no renderer calls its standalone estimator.
-    The chain reads the map in `v` space with the linear-or-Böttcher form
-    `escape-de.ts` picks, not this file's `y`-space estimator. Its
-    step-scale and bailout numbers are still ITS object's, not a
-    hybrid's.
+  - `qjulia-de.ts` — the quaternion Julia set's CPU oracle, `q <- q^2 + c`
+    (`qsquare` with the translation as the constant): gate, build and the
+    Böttcher estimate; a nonidentity post is REFUSED. The escape family's
+    only CERTIFIED estimator (`|dq'| = 2|q|·|dq|` exactly). NO RENDERER READS
+    IT: `scripts/qjulia-beauty.harness.ts` found the object SMOOTH at every
+    pose and zoom, so its cores and 4D lift are CLOSED won't-do. It stays as
+    that record and as the exact derivative the escape chain's `qsquare` link
+    reuses (`hybridChainQuaternion`), read in `v` space with `escape-de.ts`'s
+    form. Cost, step-scale and overshoot figures: its module doc.
   - `bulb-de.ts` — the Mandelbulb CPU oracle: triplex power 8 in Mandelbrot
     form, `v <- V(Mv + t) + p`, with `t` the live pre-power offset. `dr`
     seeds at `sigma_max(M)` and carries that exact floor; the estimate is
@@ -1566,19 +1561,13 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     header; verified on real Chromium via
     `scripts/panel-touch-scroll.verify.mjs`. Not verified on WebKit or
     Firefox Android.
-  - `capture-cost.ts` — the arithmetic behind a capture's cost memory,
-    out of `scene.ts` so it tests without a WebGL context:
-    `solidCaptureMsPerPx` and `predictCaptureMs`. The solid Save-PNG's
-    modal is indeterminate (one synchronous raymarch reports no coverage
-    and cannot be interrupted), so the only decision left is whether it
-    skips the grace period — decided by `exportScale > 1` until this,
-    which flashed it for ~270ms over a 274ms export. `scene.ts` keeps the
-    clock and `solidCapturePxCostMs`, whose doc carries the invalidation
-    rule: the voxel grid and the solid params stale a reading, and the
-    POSE deliberately does not. The two errors are not symmetric — an
-    under-prediction still arms the 400ms grace timer, so it costs one
-    grace period, while an ABSENT reading falls back to export scale and
-    flashes every time — so the field survives everything it plausibly can.
+  - `capture-cost.ts` — a capture's cost memory out of `scene.ts`
+    (`solidCaptureMsPerPx`, `predictCaptureMs`), tested without WebGL. It
+    decides only whether the solid Save-PNG skips the modal's grace period;
+    a missing reading flashes the modal while an under-prediction costs one
+    grace period, so the reading survives everything but the voxel grid and
+    solid params (never the pose). The measured flash: its module doc; the
+    invalidation rule: `scene.ts`'s `solidCapturePxCostMs`.
   - `export-progress.ts` — the Save-PNG progress modal's DOM-free policy:
     a run earns a blocking modal only past a slow `predictedMs`
     or `EXPORT_MODAL_GRACE_MS` (never-flash, `render-tier.ts`'s
