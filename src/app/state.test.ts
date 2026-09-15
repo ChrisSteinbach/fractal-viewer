@@ -186,6 +186,9 @@ import {
   setTransforms,
   setTransformEmitter,
   systemIsNonFlat,
+  displayedIsNonFlat,
+  sceneIsNonFlat,
+  setSphereInversion,
   updateTransform,
 } from "./state";
 import { autoBackground, resolveBackground } from "./background";
@@ -1745,6 +1748,56 @@ describe("setPositionAxisColors", () => {
       y: [0, 1, 0],
       z: [0, 0.1, 1],
     });
+  });
+});
+
+describe("sceneIsNonFlat and displayedIsNonFlat (the sphere-inversion block)", () => {
+  it("lets a native 4D block make a flat transform system's scene 4D", () => {
+    const state = setSphereInversion(initialState(true), {
+      arrangement: "cell600",
+    });
+    expect(systemIsNonFlat(state)).toBe(false);
+    expect(sceneIsNonFlat(state)).toBe(true);
+  });
+
+  it("lets a 3D block make a non-flat transform system's scene 3D", () => {
+    const base = initialState(true);
+    const state = setSphereInversion(
+      {
+        ...base,
+        transforms: [
+          { ...base.transforms[0], w: { position: 0.5 } },
+          ...base.transforms.slice(1),
+        ],
+      },
+      { arrangement: "oct6" },
+    );
+    expect(systemIsNonFlat(state)).toBe(true);
+    expect(sceneIsNonFlat(state)).toBe(false);
+  });
+
+  it("keeps the transform system's dimension when the block names no known arrangement", () => {
+    const state = setSphereInversion(initialState(true), {
+      arrangement: "dodeca20",
+    });
+    expect(sceneIsNonFlat(state)).toBe(false);
+  });
+
+  it("describes the scene in Surface and the preserved transforms in the modes that still draw them", () => {
+    const state = setSphereInversion(initialState(true), {
+      arrangement: "tess16",
+    });
+    expect(displayedIsNonFlat({ ...state, renderMode: "surface" })).toBe(true);
+    for (const renderMode of ["points", "flame", "solid"] as const) {
+      expect(displayedIsNonFlat({ ...state, renderMode })).toBe(false);
+    }
+  });
+
+  it("stores the block exactly as authored and clears it to absent", () => {
+    const block = { arrangement: "nope", depth: 99, future: true };
+    const state = setSphereInversion(initialState(true), block);
+    expect(state.sphereInversion).toBe(block);
+    expect(setSphereInversion(state, null).sphereInversion).toBeUndefined();
   });
 });
 

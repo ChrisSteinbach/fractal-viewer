@@ -6,7 +6,7 @@
  * genetic blocks from the paired transforms. Nothing in this module consults
  * runtime capability, mutates an input, pins an asset, or adds a lineage node.
  */
-import { systemPartsAreNonFlat } from "../fractal/affine4";
+import { scenePartsAreNonFlat } from "../fractal/scene-dimension";
 import { mulberry32 } from "../fractal/rng";
 import {
   type HybridSchedule,
@@ -144,6 +144,9 @@ const SCENE_FIELDS = {
   condensationDepthBand: "condensationDepthBand",
   shapeTrap: "shapeTrap",
   tiling: "tiling",
+  // The sphere-inversion block is one authored subject, never mixed: it
+  // rides whole from the primary parent, like the look fields below.
+  sphereInversion: "primary",
   numPoints: "primary",
   pointSize: "primary",
   colorMode: "primary",
@@ -933,6 +936,7 @@ function buildSnapshot(
   const tilingParent = chosenParent(prepared, coordinates, "tiling").snapshot;
   copyOptionalSceneField(snapshot, tilingParent, "tiling");
 
+  copyOptionalSceneField(snapshot, primary, "sphereInversion");
   copyOptionalSceneField(snapshot, primary, "customPalette");
   copyOptionalSceneField(snapshot, primary, "positionAxisColors");
   copyOptionalSceneField(snapshot, primary, "camera");
@@ -947,7 +951,16 @@ function buildSnapshot(
   copyOptionalSceneField(snapshot, primary, "fogTintStrength");
   copyOptionalSceneField(snapshot, primary, "groundPlane");
 
-  if (systemPartsAreNonFlat(transforms, finalTransform ?? null, symmetry)) {
+  // The 4D pose is Saved-view framing for the SCENE's dimension, which a
+  // copied sphere-inversion block decides (scene-dimension.ts).
+  if (
+    scenePartsAreNonFlat(
+      transforms,
+      finalTransform ?? null,
+      symmetry,
+      snapshot.sphereInversion,
+    )
+  ) {
     if (primary.fourD !== undefined) {
       snapshot.fourD = clone(primary.fourD) as SceneSnapshot["fourD"];
     } else if (prepared.secondary.snapshot.fourD !== undefined) {

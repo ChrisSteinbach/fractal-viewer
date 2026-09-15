@@ -145,6 +145,7 @@ import {
 import { MAX_SHAPE_PARTS } from "../fractal/shapes";
 import type { ShapePart, ShapePose, ShapeSpec } from "../fractal/shapes";
 import { TILING_GROUPS, isLatticeTilingSpec } from "../fractal/tiling";
+import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
 import type { TilingGroup, TilingSpec } from "../fractal/tiling";
 import { isMeshAssetId } from "../fractal/mesh-shapes";
 import { resolveCondensationDepthBand } from "../fractal/condensation-de";
@@ -198,6 +199,16 @@ export interface SceneSnapshot {
    * through {@link decodeEmitter}'s spec codec.
    */
   tiling?: TilingSpec;
+  /**
+   * Optional sphere-inversion block (see {@link AppState.sphereInversion}).
+   * Written only when present, so a scene without one encodes
+   * byte-identically to one predating the field. Its wire is the authored
+   * JSON VERBATIM — no rounding, no normalization, unknown keys kept — and
+   * {@link decodeSphereInversion} keeps any plain JSON object as-is, so a
+   * block this version's resolver refuses survives decode → encode exactly
+   * and surfaces its refusal through the Surface gate instead of vanishing.
+   */
+  sphereInversion?: SphereInversionAuthored;
   numPoints: number;
   pointSize: number;
   colorMode: ColorMode;
@@ -461,6 +472,13 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     condensationDepthBand: state.condensationDepthBand,
     shapeTrap: state.shapeTrap,
     tiling: state.tiling,
+    // OMITTED, not undefined, while absent: evolution's content digest
+    // counts an own undefined key, and a block-less document must stay
+    // identical to every document predating the field in every identity it
+    // has, not only on the wire.
+    ...(state.sphereInversion !== undefined
+      ? { sphereInversion: state.sphereInversion }
+      : {}),
     numPoints: state.numPoints,
     pointSize: state.pointSize,
     colorMode: state.colorMode,
@@ -558,6 +576,8 @@ export function fromSnapshot(
     shapeTrap: snapshot.shapeTrap,
     // The tiling block, for the schedule's reason exactly.
     tiling: snapshot.tiling,
+    // The sphere-inversion block, for the schedule's reason exactly.
+    sphereInversion: snapshot.sphereInversion,
     balloonEcho: snapshot.balloonEcho ?? false,
     balloonRadius: snapshot.balloonRadius ?? DEFAULT_BALLOON_RADIUS,
     balloonPaletteId: snapshot.balloonPaletteId ?? DEFAULT_BALLOON_PALETTE,
@@ -1301,6 +1321,31 @@ function decodeTiling(raw: unknown): TilingSpec | undefined {
     tiling.clip = clip;
   }
   return tiling;
+}
+
+/**
+ * Decode the scene's optional sphere-inversion block (`fractal/
+ * sphere-inversion.ts`'s authored form). NOT the whole-block-or-nothing
+ * fallback the other scene blocks use, by decision: a block this version
+ * cannot render — an unknown arrangement, an out-of-domain value, a field a
+ * newer version wrote — is PRESERVED so the document stays the one its
+ * author wrote and the Surface gate can name the refusal
+ * (`resolveSphereInversion` collects the reasons). So the decoder validates
+ * only that the value can be a block at all: a plain object (not an array,
+ * not null, not a scalar), which drops to absent otherwise — a non-object
+ * names no block to preserve. The parsed JSON object is returned as-is:
+ * `JSON.parse` output holds only JSON values, key order included, so
+ * `encodeScene` re-emits it byte for byte. The resolver is written for such
+ * untrusted values (wrong types refuse, never coerce), so nothing here needs
+ * to pre-validate a field. Never throws.
+ */
+function decodeSphereInversion(
+  raw: unknown,
+): SphereInversionAuthored | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  return raw;
 }
 
 /**
@@ -3216,6 +3261,7 @@ export function encodeScene(s: SceneSnapshot): string {
           cellScale: number;
           clip?: EncodedShapeSpec;
         };
+    sphereInversion?: SphereInversionAuthored;
     numPoints: number;
     pointSize: number;
     colorMode: ColorMode;
@@ -3547,6 +3593,13 @@ export function encodeScene(s: SceneSnapshot): string {
     if (clip !== undefined) encoded.clip = clip;
     payload.tiling = encoded;
   }
+  // The sphere-inversion block, written only when present and VERBATIM:
+  // its lengths are never round4'd (a rounded radius fraction or seed size
+  // can move a document across a resolver refusal) and a refused block's
+  // unknown keys ride along untouched (decodeSphereInversion's contract).
+  if (s.sphereInversion !== undefined && s.sphereInversion !== null) {
+    payload.sphereInversion = s.sphereInversion;
+  }
   // Written only when present, like finalTransform above — never-authored
   // scenes keep their short URLs. Encoded as hex (per-stop strings for an
   // authored gradient, one concatenated ramp string for an imported one) for
@@ -3789,6 +3842,10 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     // never rejecting the scene; see decodeTiling.
     const tiling = decodeTiling(o.tiling);
 
+    // sphereInversion: optional block — any plain JSON object is kept
+    // verbatim, refused or not; see decodeSphereInversion.
+    const sphereInversion = decodeSphereInversion(o.sphereInversion);
+
     // colorMode / renderStyle: exact known-string matches only. ---------------
     const { colorMode, renderStyle } = o;
     if (typeof colorMode !== "string" || !VALID_COLOR_MODES.has(colorMode))
@@ -3999,6 +4056,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       condensationDepthBand,
       shapeTrap,
       tiling,
+      sphereInversion,
       numPoints,
       pointSize,
       colorMode: colorMode as ColorMode,
