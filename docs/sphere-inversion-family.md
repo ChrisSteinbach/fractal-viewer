@@ -852,32 +852,36 @@ expresses. Its route kinds are `"sphereInversion"` (3D) and
 
 - **Refused block:** ineligible, note `Sphere-inversion scene refused:
 <resolver reasons>`.
-- **Admissible block, no renderer:** ineligible, note `The sphere-inversion
-Surface renderer is not yet available; this 3D|native 4D construction
-resolves (…disclosures)`. `opts.sphereInversionRenderer` is absent in the
-  app; the renderer work supplies its real availability, and tests set it to
-  pin the kinds.
-- **With a renderer:** `eligible`, or `degraded` for tangency (the cusp
-  disclosure), with the kind carrying the dimension.
+- **Admissible block, no compute adapter:** ineligible, note `3D|native 4D
+sphere-inversion scenes render on WebGPU compute, which is unavailable
+here`. Neither dimension has a fragment arm yet
+  (`sphereInversionHasFragmentArm`).
+- **Admissible block with compute:** `eligible`, or `degraded` whenever the
+  note carries a disclosure (tangency cusps, dormant settings, the 4D slab
+  clamp), with the kind carrying the dimension. The WGSL route and its session
+  door are recorded in `docs/sphere-inversion-gpu.md`'s "Routing as shipped".
 
 ### Combination policy
 
 | Feature                        | Policy                   | Reason                                                                                                                                                                                                  | Lift's shape                                                                                                                                                       |
 | ------------------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Space tiling                   | REFUSED (document)       | No tiling wrapper certifies this estimator; the lattice arm's authority radius is not wired.                                                                                                            | Resolve the tiling against the DE's origin-centred `boundingRadius`; fold the query into the canonical cell before the inversion fold.                             |
-| Kaleidoscope (order > 1)       | REFUSED (document)       | The arrangement carries its own symmetry; a sector sweep over the inversion group has no certificate, and a rotation outside the arrangement's group moves generators into overlap with their images.   | Admit exactly rotations in the arrangement's symmetry group (no-ops), or fold the query into a sector with a union-of-copies argument.                             |
-| Final transform lens           | REFUSED (document)       | No lens wrapper certifies this estimator.                                                                                                                                                               | `descendLens`'s fold-final branch sweep around `estimateSphereInversionDistance` at cutoff 0 on the inner term.                                                    |
+| Kaleidoscope (order > 1)       | DORMANT, disclosed       | The arrangement carries its own symmetry; a sector sweep over the inversion group has no certificate, and a rotation outside the arrangement's group moves generators into overlap with their images.   | Admit exactly rotations in the arrangement's symmetry group (no-ops), or fold the query into a sector with a union-of-copies argument.                             |
+| Final transform lens           | DORMANT, disclosed       | No lens wrapper certifies this estimator.                                                                                                                                                               | `descendLens`'s fold-final branch sweep around `estimateSphereInversionDistance` at cutoff 0 on the inner term.                                                    |
 | Shape trap                     | REFUSED (document)       | The inversion fold has no trap accumulator.                                                                                                                                                             | Accumulate the trap SDF over the fold's `k` visited points, like the escape family's orbit runners (colour only).                                                  |
 | Balloon                        | REFUSED (session)        | The echo would invert this estimator: sub-cutoff returns are decisions, so inner queries run at cutoff 0 (a full scan at 120 generators), and a ball seed reaching the ball centre swallows the camera. | `min(DE(p), (\|p−c\|/ρ)·DE(I(p)))` with the inner term at cutoff 0 and the origin ball at `boundingRadius`; measure the doubled 600-cell cost and the camera case. |
 | 4D slice thickness             | REFUSED, clamped to zero | `d − h` is unsound for the slab's shadow (CPU core section).                                                                                                                                            | Transport the segment's enclosing ball per inversion with a two-branch enumeration where it straddles a generator sphere.                                          |
 | Ground plane                   | COMPOSES                 | The floor reads only the session ball (`boundingRadius`, the full 4D radius in 4D), and its penumbra/AO probes need only a certified lower bound.                                                       | —                                                                                                                                                                  |
-| Per-transform finishes         | NOT READ, disclosed      | Material lanes keyed on transform slots the subject does not have (its attribution is generator, word and seed member). They stay dormant on the preserved transforms instead of blocking entry.        | Map finishes onto `SphereInversionHit` attribution (the shader scoping's material question).                                                                       |
+| Per-transform finishes         | DORMANT, disclosed       | Material lanes keyed on transform slots the subject does not have (its attribution is generator, word and seed member). They stay dormant on the preserved transforms instead of blocking entry.        | Map finishes onto `SphereInversionHit` attribution (the shader scoping's material question).                                                                       |
 | Schedule, band, emitters, xaos | NOT READ                 | Structure of the replaced transform system.                                                                                                                                                             | —                                                                                                                                                                  |
 
 The session half lives in `sphereInversionSessionRefusal` (Balloon) and
 `SPHERE_INVERSION_SLAB_REFUSAL`, which the thickness row's refusal note
-(`ui.ts`, reason `"sphereInversion"`) and the gate's note share. Neither is
-wired into a session yet, because no session exists.
+(`ui.ts`, reason `"sphereInversion"`) and the gate's note share; both are
+wired into the Surface session door. The kaleidoscope and lens rows above
+were refusals until the ownership amendment (`docs/sphere-inversion-gpu.md`):
+state the block's subject replaces is kept but not read, and the reasons in
+their rows describe what a lift would need to make it READ.
 
 ### Morph, mutation, random, flame, presets
 

@@ -75,6 +75,24 @@ fold-shaped, and the fragment 4D tracer carries no forward-orbit GLSL
 either, so entry is refused without compute and a mid-session loss exits
 with the same toast one family over.
 
+SPHERE-INVERSION sessions (a document carrying the scene-level
+`sphereInversion` block, which replaces the transform system as the subject)
+route here in BOTH dimensions, on `core:"sphereInv"` (3D) and
+`core:"sphereInv4"` (native 4D, rotor/slice per frame like every 4D kind).
+They are compute-ONLY in both for now: no fragment arm exists, so the gate
+refuses entry without compute and a mid-session loss exits the mode with a
+toast instead of falling back to a WebGL tracer that would draw the transform
+system. `surface-eligibility.ts`'s `sphereInversionHasFragmentArm` is the one
+per-dimension predicate a fragment arm flips (the 3D GLSL arm is planned; 4D
+stays compute-only, since the 600-cell tables fit no uniform block). The
+session door routes on the gate's own kind rather than re-classifying,
+refuses Balloon, holds 4D slice thickness at zero, keeps the explorer's
+camera framing (the Points cloud is an exact boundary sample of the same set),
+and packs one colour slot per generation (`D + 3`) sharing one material. The
+construction is fixed at create: a block change restarts a live session, and
+`surfaceComputeForceFrameKey` takes the resolved construction as its second
+argument. Full record: `docs/sphere-inversion-gpu.md`.
+
 A TILED session (finite or mirrored-lattice) routes exactly where its
 untiled shape routes — the tiling block rides the `SurfaceComputeTarget`
 and the frame specs' params packers derive the carrier from it, so the
@@ -88,9 +106,12 @@ attractor, not the infinite mirror image).
 
 ## Targets and cores
 
-`create()` takes a `SurfaceComputeTarget` union,
-`{kind:"ifs"|"escape"|"bulb"|"escape4"|"ifs4"}`, whose `kind` picks the
-kernel core:
+`create()` takes a `SurfaceComputeAnyTarget`: the `SurfaceComputeTarget`
+union `{kind:"ifs"|"escape"|"bulb"|"escape4"|"ifs4"}` plus the two
+sphere-inversion kinds `{kind:"sphereInversion"|"sphereInversion4"}`, which
+are neither forward nor descent (`isDescentTarget` names `ifs`/`ifs4`,
+`isSphereInversionTarget` the two new kinds). The `kind` picks the kernel
+core:
 
 - `ifs4` → affine4 or fold4, off `deHasFolds4` (the 3D `deHasFolds` split
   one dimension up).

@@ -619,3 +619,86 @@ scene's own settings to render the block. Scene-level renderer composition
 applied TO the subject — space tiling, balloon, shape trap, slab thickness —
 stays REFUSED with its reason. Ground plane, lighting rigs and supersampling
 compose.
+
+## Routing as shipped (2026-09-15, delegated)
+
+The app half of the WGSL route (section 9's step 6) and the ownership
+amendment above, as implemented.
+
+**Gate** (`src/app/surface-eligibility.ts`). A present block still takes
+precedence over every transform gate. A refused block, Space tiling and a
+shape trap refuse with their reasons. The replaced system's kaleidoscope,
+final lens and per-transform finishes are DORMANT: the route stays open and
+`sphereInversionDormantDisclosures` names each one in the note. Any disclosure
+(these, tangency cusps, the 4D slab clamp) reports `degraded`, because the
+Surface gate shows a note only for a degraded or ineligible route. Without
+compute the route refuses in both dimensions, behind
+`sphereInversionHasFragmentArm(dim)`: a per-dimension table, `false` for 3D
+and 4D, which is the ONE value the 3D GLSL arm flips. A document refusal is
+named ahead of the missing adapter. The renderer-availability option the
+persistence work stubbed is gone; availability is the compute fact plus that
+table.
+
+**Session door** (`src/app/main.ts`). The routing arm reads the gate's
+`sphereInversion`/`sphereInversion4` kind instead of re-classifying. It
+refuses Balloon (`sphereInversionSessionRefusal`), resolves the construction,
+builds `buildSphereInversionDE`/`buildSphereInversionDE4`, and creates the
+compute target with the ground plane when authored. A 4D session holds slice
+thickness at zero with the `"sphereInversion"` reason on the row. On a
+mid-session device loss the re-entry is refused by the gate (no compute, no
+fragment arm) and exits with the toast. The WebGL branch is unreachable while
+the table says `false`, and throws if the table is flipped without an
+installed arm. The explorer's camera framing is KEPT: the Points cloud is an
+exact boundary sample of the same set, and fitting the enclosing ball (the
+forward families' move) opened the oct6 pearls at a quarter of the pane.
+`scene.ts`'s `enterSurfaceComputeSphereInversionSession` records the origin
+ball (the full radius in 4D), the ground-plane choice, no balloon, no trap and
+the construction depth as the preview clamp.
+
+**Slots** (`src/app/surface-slots.ts`, `sphereInversionShadeSlots`). One
+colour slot per generation, `sphereInversionGenerationSlots(D) = D + 3`,
+spread by `transformColors` exactly as the Points sample spreads them; trap
+coordinates `g / (D + 2)`. ONE material replicated into every slot. No block
+finish exists yet and per-transform finishes are dormant, so today the
+material is classic and the kernels compile without `finish`.
+
+**Restart on construction edit.** The session records the block's authored
+JSON at start. After any document change, a live Surface session whose block
+differs (added, edited, removed; by undo, timeline leg or import) restarts
+through `restartSurfaceRender`, and the door re-derives the route. Transform
+edits under a block still follow the transform-edit plan (a re-entry), which
+costs a restart but draws the same object.
+
+**Force-frame key.** Decision 8's "no change" did not survive: the key now
+takes the resolved construction as a second argument and appends a tagged,
+count-delimited `sphereInversion` block, so it changes when the block does
+even without the restart's memo clear, and an absent default keys like its
+explicit value (`surface-force-frame-key.test.ts`).
+
+**Panel.** The kaleidoscope row's note, each transform's Finish/Pattern note
+and the in-session Balloon reason (a new `"sphereInversion"` Surface session
+kind in `panel-applicability.ts`) disclose the dormant or refused state beside
+the control. The final lens has no row of its own to carry a note, so it is
+disclosed in the Surface gate's note only.
+
+**Verified in the built app** (`npm run build` + `npm run preview`, headed
+Chromium on `:0`, `glxinfo -B`: Mesa Intel Iris Xe Graphics (TGL GT2), WebGPU
+adapter "intel gen-12lp", not software). Documents minted with the app's own
+`toSnapshot`/`encodeScene`, Surface entered from the mode button, the
+`?surfacestate` latch held for 2 s:
+
+| Document                                    | Engine  | Settle | Hit coverage (1024x640) | Frame                                                                                 |
+| ------------------------------------------- | ------- | ------ | ----------------------- | ------------------------------------------------------------------------------------- |
+| oct6 pearls, ball .28, D 8 (3D)             | compute | 5.5 s  | 10.6%, 0 exhausted      | nested pearls: red seed, orange first generation, yellow and teal deeper generations  |
+| cell600 vault, cut shell .9 ± .04, D 5 (4D) | compute | 21.3 s | 34.1%, 0 exhausted      | a cut shell whose windows nest further windows, lace dust at the rim; slab note shown |
+
+Preview frames reported 31–32 exhausted rays out of ~59,000 at the coarse rung
+and none at settle. Chrome logged "DispatchWorkgroups with a workgroup count
+of 0 is unusual" once per session (a warning, not an error; not yet attributed
+to a core). These are observations for the bench record, not its gate:
+the real-driver agreement and timing rows remain the bench's.
+
+`scripts/surface-teardown.verify.mjs --lens --toggleId=__modeExit --toggles=20`
+still passes (Firefox, dev server, 20/20 mode exits on the compute engine).
+It drives its own fixed fold-lens document, so the sphere-inversion session's
+teardown is covered only by sharing the same renderer lifecycle.
