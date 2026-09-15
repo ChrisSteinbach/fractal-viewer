@@ -1358,15 +1358,11 @@ export function surfaceTransportSource(fourD: boolean): string {
   const float TRANSPORT_ANCHOR_ENVELOPE_REL = ${DIELECTRIC_ANCHOR_ENVELOPE_REL.toFixed(1)};
   const int TRANSPORT_QUERY_MAX_STEPS = ${DIELECTRIC_QUERY_MAX_STEPS};
 
-  // The frozen opticsMaps lane pair per slot
-  // (surface-material-wire.ts's surfaceMaterialOpticsLanes — ONE layout
-  // both dimensions read): lane 2j = (ior, radius, absorption.r,
-  // absorption.g), lane 2j+1 = (absorption.b, reserved, reserved,
-  // reserved). ior > 0 marks an optical slot; the trace routes per hit.
-  uniform vec4 uMapOptics[2 * MAX_MAPS];
-
   // One live path: the oracle's continuation payload, the kernel's
-  // TransportPath struct.
+  // TransportPath struct. (The uMapOptics lane pair the trace reads is
+  // declared by the SPLICING template — a default-block array in 3D, the
+  // std140 block's unconditional trailing member in 4D — because the two
+  // declarations live in different uniform blocks.)
   struct TransportPath {
     vec3 origin;
     vec3 dir;
@@ -2010,6 +2006,17 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
    * (ringsLow, ringsInvSpan, sheetsLow, sheetsInvSpan). The downstream
    * pattern-shading bead consumes it. */
   uniform vec4 uPatternCalibration;
+#if SURFACE_OPTICS
+  /** The frozen opticsMaps lane pair per slot
+   * (surface-material-wire.ts's surfaceMaterialOpticsLanes — ONE layout
+   * both dimensions read): lane 2j = (ior, radius, absorption.r,
+   * absorption.g), lane 2j+1 = (absorption.b, reserved, reserved,
+   * reserved). Declared INSIDE the arm (the SURFACE_BULB precedent), so a
+   * classic document's program pays no bytes; ior > 0 marks an optical
+   * slot and the trace routes per hit. In 4D the lanes are the std140
+   * block's unconditional trailing member instead — never declared twice. */
+  uniform vec4 uMapOptics[2 * MAX_MAPS];
+#endif
 #if SURFACE_SCHEDULE
   // The hit-info descent publishes the point after the finite B prefix;
   // pattern space begins there, while final lenses remain outside it.

@@ -6380,6 +6380,20 @@ async function main(): Promise<void> {
                 supported: SurfaceComputeRenderer.supported(),
                 block: surfaceComputeBlock,
               });
+              // The software-rasterizer optics strip — the 3D branch's note.
+              // Measured here FIRST: the 4D optics arm is the one that
+              // killed the SwiftShader renderer.
+              if (webglSoftware && sessionMaterials?.optics) {
+                sessionMaterials = gatedSlotMaterials(
+                  ifsShadeSlots(de),
+                  de.patternCalibration,
+                  de.visibleBoundingRadius,
+                  false,
+                );
+                console.info(
+                  "Surface render: optics lane disabled on the software rasterizer; rendering classic.",
+                );
+              }
               scene.setSurfaceSystem4(
                 de,
                 surfaceSlotColors(state.transforms, ifsShadeSlots(de)),
@@ -6701,6 +6715,26 @@ async function main(): Promise<void> {
               supported: SurfaceComputeRenderer.supported(),
               block: surfaceComputeBlock,
             });
+            // A SOFTWARE rasterizer cannot survive the transport program
+            // (measured on SwiftShader: the 4D optics arm compiles and then
+            // kills the renderer on the first surface frame; the 3D arm
+            // happened to survive), so a WebGL session on one re-derives its
+            // wire with the optics gate off — classic, disclosed, never a
+            // crashed page. The same session-side gate that owns the fold
+            // and forward-family disclosures owns this one; a hardware-GL
+            // fallback keeps the lane, and the compute route (which runs the
+            // lane on its own adapter) is untouched.
+            if (webglSoftware && sessionMaterials?.optics) {
+              sessionMaterials = gatedSlotMaterials(
+                ifsShadeSlots(de),
+                de.patternCalibration,
+                de.visibleBoundingRadius,
+                false,
+              );
+              console.info(
+                "Surface render: optics lane disabled on the software rasterizer; rendering classic.",
+              );
+            }
             scene.setSurfaceSystem(
               de,
               surfaceSlotColors(state.transforms, ifsShadeSlots(de)),

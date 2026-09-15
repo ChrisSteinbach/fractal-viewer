@@ -43,6 +43,10 @@ import type { ShapeSpec } from "../fractal/shapes";
 import { twentyFourCellFlake } from "../fractal/presets";
 import { createHash } from "node:crypto";
 import { PRE_PATTERN_SOURCE_HASHES } from "./surface-pattern-baseline";
+import {
+  DIELECTRIC_QUERY_MAX_STEPS,
+  dielectricOpticsSource,
+} from "../fractal/surface-dielectric";
 import { SURFACE_LENS_SWIRL } from "../fractal/swirl-lens";
 import { swirlLensShaderSource } from "../fractal/swirl-lens-shader";
 import type { Transform } from "../fractal/types";
@@ -54,8 +58,8 @@ const BALLOON_PALETTE_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "4D balloon finish0": {
-    resolved: "0769da4164ccda95",
-    emitted: "50f29771c6ddd73c",
+    resolved: "31b6bf11b2764031",
+    emitted: "e0048922718b5bcb",
   },
   "4D balloon finish1": {
     resolved: "62e202ba5c488c7c",
@@ -69,28 +73,28 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "4D base finish0": {
-    resolved: "c6897201fb0264d3" /* post-affine stage */,
-    emitted: "c6897201fb0264d3" /* post-affine stage */,
+    resolved: "dad07bdc2b02798c" /* optics lane pair appended to the block */,
+    emitted: "dad07bdc2b02798c" /* optics lane pair appended to the block */,
   },
   "4D balloon finish0": {
-    resolved: "80a0be5c012e902d",
-    emitted: "2af17599644dcb23",
+    resolved: "31b6bf11b2764031",
+    emitted: "e0048922718b5bcb",
   },
   "4D plane finish0": {
-    resolved: "7191bd55127a53a4",
-    emitted: "cfff02462664a362",
+    resolved: "8db4aafe4a033a5a",
+    emitted: "24293ccbafd8159c",
   },
   "4D base finish1": {
-    resolved: "7c43181090e3d22e",
-    emitted: "7c43181090e3d22e",
+    resolved: "f6665d1c11aec7c5",
+    emitted: "7817748ebf0c2de1",
   },
   "4D balloon finish1": {
-    resolved: "53bf23b33e8b8182",
-    emitted: "c344ed33440faa54",
+    resolved: "42240c43bffd4549",
+    emitted: "3918bd029ac43b4b",
   },
   "4D plane finish1": {
-    resolved: "94881001359cb219",
-    emitted: "538790988a3a3303",
+    resolved: "858fe22ffa50aaf7",
+    emitted: "231ab60a0e457612",
   },
 };
 
@@ -157,7 +161,7 @@ function de4(
   };
 }
 
-/** The six Float32Arrays behind the material's `SurfaceMaps4` block, in the
+/** The Float32Arrays behind the material's `SurfaceMaps4` block, in the
  * order the fragment shader declares its members — the bytes the GPU reads.
  * Reached through the uniforms group because block members deliberately do
  * NOT appear in `material.uniforms`. */
@@ -168,6 +172,7 @@ function mapBlock(material: THREE.ShaderMaterial): {
   trap: Float32Array;
   finishA: Float32Array;
   finishB: Float32Array;
+  optics: Float32Array;
 } {
   const group = material.uniformsGroups[0];
   const uniforms = group.uniforms as THREE.Uniform<Float32Array>[];
@@ -178,6 +183,7 @@ function mapBlock(material: THREE.ShaderMaterial): {
     trap: uniforms[3].value,
     finishA: uniforms[4].value,
     finishB: uniforms[5].value,
+    optics: uniforms[8].value,
   };
 }
 
@@ -490,7 +496,7 @@ describe("4D GLSL reverse-chi packing and source", () => {
     expect(material.uniforms.uCondState.value.slice(0, 2)).toEqual([2, 2]);
     expect(material.uniforms.uShadeCount.value).toBe(3);
     expect(material.uniforms.uCondCount.value).toBe(2);
-    expect(material.uniformsGroups[0].uniforms).toHaveLength(8);
+    expect(material.uniformsGroups[0].uniforms).toHaveLength(9);
   });
 
   it("keeps root/B wildcard state and filters A/refiner/condensation predecessors without symmetry-expanded state", () => {
@@ -1292,10 +1298,10 @@ describe("compile-gated finite tiling in the 4D GLSL tracer", () => {
 
   it("keeps the pre-lattice finite source bytes frozen", () => {
     expect(sha256(sourceFor(f4))).toBe(
-      "ffbfa751ca9ea940efd4d8c5ad46ca4fca8aaeacf4ea3dd193ac24a98ff4f531" /* post-affine stage */,
+      "49d89efdeab9fa2bdd9e21a819cb3934cea300d9f4f02639184a3654afb05ecf" /* optics lane pair appended to the block */,
     );
     expect(sha256(surface4FragmentFor(0, 0, 0, 0, null, 0, 0, f4))).toBe(
-      "008c4db07d3f00f80c55c127ae3b9204424b915c4904566376e6e106a7cfd757" /* post-affine stage */,
+      "6de34fb8f2fa57f34bc46f6b6e078a00f9fb5dea16e516af25653b836f6b33d9" /* optics lane pair appended to the block */,
     );
   });
 
@@ -2129,6 +2135,10 @@ describe("the 4D tracer's finish arm", () => {
         // std140 offsets never move on any toggle.
         "mat4 uInvPostM[MAX_MAPS];",
         "vec4 uInvPostT[MAX_MAPS];",
+        // The optical transport's lane pair, appended after the post pair
+        // by the same discipline — UNCONDITIONAL, read only under the
+        // optics arm.
+        "vec4 uMapOptics[2 * MAX_MAPS];",
       ]);
     }
   });
@@ -2173,14 +2183,22 @@ describe("the 4D tracer's finish arm", () => {
     expect(() => surface4FragmentFor(1, 1, 1)).toThrow(RangeError);
   });
 
-  it("keeps the plain 4D arm under the strip threshold with the finish on — this file's tightest margin", () => {
-    // Current recorded material baseline: 63878 B resolved, 1658 B under.
-    // The patterned 4D plain arm intentionally crosses and strips; this
-    // finish-only arm remains the tightest unstripped material pairing.
-    expect(surface4FragmentResolvedFor(0, 0, 1).length).toBeLessThan(
+  it("keeps the plain 4D arm's unstripped margin honest after the optics lane pair's arrival", () => {
+    // The optics lane pair's UNCONDITIONAL block member costs every 4D
+    // program ~1.9KB raw, which pushed the plain+finish arm (63878 B,
+    // once this file's tightest unstripped material pairing) over the
+    // strip threshold — it now strips, like every scene arm. The
+    // tightest UNstripped pairing is the bare off arm: 64686 B resolved,
+    // 850 B under, and the only row whose driver bytes a comment-only
+    // edit can reach.
+    expect(surface4FragmentResolvedFor(0, 0, 1).length).toBeGreaterThan(
       SURFACE_GLSL_STRIP_BYTES,
     );
-    expect(surface4FragmentFor(0, 0, 1)).toContain(
+    expect(surface4FragmentFor(0, 0, 1)).not.toContain("//");
+    expect(surface4FragmentResolvedFor(0, 0, 0).length).toBeLessThan(
+      SURFACE_GLSL_STRIP_BYTES,
+    );
+    expect(surface4FragmentFor(0, 0, 0)).toContain(
       "\n  precision highp float;",
     );
     expect(surface4FragmentResolvedFor(1, 0, 1).length).toBeGreaterThan(
@@ -2189,14 +2207,18 @@ describe("the 4D tracer's finish arm", () => {
     expect(surface4FragmentFor(1, 0, 1)).not.toContain("//");
   });
 
-  it("backs the block's two new members with classic-lane placeholders, in the group's last two slots", () => {
+  it("backs the block's new members with placeholders, in the group's last slots", () => {
     const material = createSurfaceMaterial4();
     expect(material.defines.SURFACE4_FINISH).toBe(0);
     const group = material.uniformsGroups[0];
-    expect(group.uniforms).toHaveLength(8);
+    expect(group.uniforms).toHaveLength(9);
     const maps = mapBlock(material);
     expect(maps.finishA).toHaveLength(SURFACE4_MAX_MAPS * 4);
     expect(maps.finishB).toHaveLength(SURFACE4_MAX_MAPS * 4);
+    // The optics lane pair's placeholder is all-zero (ior 0 = classic),
+    // the exact bytes setSurfaceMaterials writes for an unreached slot.
+    expect(maps.optics).toHaveLength(SURFACE4_MAX_MAPS * 8);
+    expect(maps.optics).toEqual(new Float32Array(SURFACE4_MAX_MAPS * 8));
     const classic = surfaceMaterialLanes(CLASSIC_SURFACE_MATERIAL);
     for (let j = 0; j < SURFACE4_MAX_MAPS; j++) {
       expect(maps.finishA.subarray(j * 4, j * 4 + 4)).toEqual(
@@ -2278,7 +2300,7 @@ describe("the 4D tracer's finish arm", () => {
     const material = createSurfaceMaterial4();
     const group = material.uniformsGroups[0];
     setSurface4Materials(material, patternMaterials());
-    expect(group.uniforms).toHaveLength(8);
+    expect(group.uniforms).toHaveLength(9);
     expect(material.defines.SURFACE4_FINISH).toBe(0);
     expect(material.defines.SURFACE4_PATTERN).toBe(1);
     expect(material.fragmentShader).not.toContain("finishShade");
@@ -2295,7 +2317,7 @@ describe("the 4D tracer's finish arm", () => {
 
     setSurface4Materials(material, null);
     expect("SURFACE4_PATTERN" in material.defines).toBe(false);
-    expect(group.uniforms).toHaveLength(8);
+    expect(group.uniforms).toHaveLength(9);
     expect(material.fragmentShader).toBe(surface4FragmentFor());
   });
 
@@ -2449,6 +2471,10 @@ describe("the 4D tracer's pattern arm", () => {
         // std140 offsets never move on any toggle.
         "mat4 uInvPostM[MAX_MAPS];",
         "vec4 uInvPostT[MAX_MAPS];",
+        // The optical transport's lane pair, appended after the post pair
+        // by the same discipline — UNCONDITIONAL, read only under the
+        // optics arm.
+        "vec4 uMapOptics[2 * MAX_MAPS];",
       ]);
     }
     // The plane-over-balloon refusal holds with the pattern on.
@@ -2501,7 +2527,7 @@ describe("the 4D tracer's pattern arm", () => {
     const material = createSurfaceMaterial4();
     const group = material.uniformsGroups[0];
     setSurface4Materials(material, patternMaterials());
-    expect(group.uniforms).toHaveLength(8);
+    expect(group.uniforms).toHaveLength(9);
     expect(material.defines.SURFACE4_FINISH).toBe(0);
     expect(material.defines.SURFACE4_PATTERN).toBe(1);
     expect(material.fragmentShader).toContain("vec3 patternShade(");
@@ -2729,5 +2755,106 @@ describe("qualified 4D swirl final lens fragment mirror", () => {
     setSurface4Materials(material, null);
     live();
     material.dispose();
+  });
+});
+
+describe("the 4D tracer's optics arm (the dielectric transport lane)", () => {
+  it("resolves the SAME shared transport text with the 4D domain exit — the slice ball — under the arm", () => {
+    const resolved = surface4FragmentResolvedFor(
+      0,
+      0,
+      0,
+      0,
+      null,
+      0,
+      0,
+      null,
+      0,
+      0,
+      1,
+    );
+    const emitted = surface4FragmentFor(0, 0, 0, 0, null, 0, 0, null, 0, 0, 1);
+    // One math text: the emitted optics body verbatim, the kernel's caps.
+    expect(resolved).toContain(dielectricOpticsSource("glsl"));
+    expect(resolved).toContain(
+      `const int TRANSPORT_QUERY_MAX_STEPS = ${DIELECTRIC_QUERY_MAX_STEPS};`,
+    );
+    // The 4D domain radius is the SLICE ball (the value the 4D kernel
+    // packs as its visibleRadius slot), never the full unsliced radius.
+    expect(resolved).toContain(
+      "float sliceMinW = max(abs(uW0) - uSliceHalfW, 0.0);",
+    );
+    expect(resolved).not.toContain(
+      "float radiusX = uVisibleRadius * 1.02;\n    float bq",
+    );
+    // The block's unconditional lane pair, read through the std140 arrays.
+    expect(resolved).toContain("vec4 uMapOptics[2 * MAX_MAPS];");
+    expect(emitted.length).toBeLessThan(82_200);
+  });
+
+  it("keeps optics=0 byte-identical to the pinned off arm and absent of the transport", () => {
+    const off = surface4FragmentResolvedFor(0, 0, 0, 0);
+    expect(off).not.toContain(
+      "uMapOptics".replace("uMapOptics", "transportTrace"),
+    );
+    expect(off).not.toContain("transportTrace");
+    expect(surface4FragmentFor(0, 0, 0, 0)).toBe(
+      surface4FragmentFor(0, 0, 0, 0, null, 0, 0, null, 0, 0, 0),
+    );
+  });
+
+  it("setSurface4Materials flips SURFACE4_OPTICS, writes the frozen lane pair into the block, and resets it exactly", () => {
+    const material = createSurfaceMaterial4();
+    const opticsMaterial = resolveSurfaceMaterial(
+      undefined,
+      undefined,
+      { model: "dielectric" },
+      2,
+    );
+    const wire = {
+      slots: [opticsMaterial, opticsMaterial],
+      finish: false,
+      pattern: false,
+      optics: true,
+    } as const;
+    setSurface4Materials(material, wire);
+    expect(material.defines.SURFACE4_OPTICS).toBe(1);
+    const maps = mapBlock(material);
+    expect(maps.optics.subarray(0, 4)).toEqual(
+      new Float32Array([
+        opticsMaterial.optics!.ior,
+        opticsMaterial.optics!.radius,
+        opticsMaterial.optics!.absorption[0],
+        opticsMaterial.optics!.absorption[1],
+      ]),
+    );
+    expect(maps.optics.subarray(4, 8)).toEqual(
+      new Float32Array([opticsMaterial.optics!.absorption[2], 0, 0, 0]),
+    );
+    // Unreached slots: exact classic bytes.
+    expect(maps.optics.subarray(16, 24)).toEqual(new Float32Array(8));
+    expect(material.fragmentShader).toContain("TransportTrace transportTrace(");
+    setSurface4Materials(material, null);
+    expect(material.defines.SURFACE4_OPTICS).toBeUndefined();
+    expect(maps.optics.subarray(0, 8)).toEqual(new Float32Array(8));
+    expect(material.fragmentShader).not.toContain("transportTrace");
+  });
+
+  it("refuses a mixed wire under a live optics gate", () => {
+    const material = createSurfaceMaterial4();
+    const opticsMaterial = resolveSurfaceMaterial(
+      undefined,
+      undefined,
+      { model: "dielectric" },
+      2,
+    );
+    expect(() =>
+      setSurface4Materials(material, {
+        slots: [opticsMaterial, resolveSurfaceMaterial(undefined, undefined)],
+        finish: false,
+        pattern: false,
+        optics: true,
+      }),
+    ).toThrow(/uniformly/);
   });
 });
