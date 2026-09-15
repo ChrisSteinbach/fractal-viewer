@@ -89,8 +89,8 @@ const FRAME_BUDGET_MS = 120_000;
 const FRAME_BUDGET_SW_MS = 300_000;
 const FRAME_SANITY_STRIDE = 8;
 const FRAME_SANITY_TOL = 0.15;
-/** Eval timing: rows timed, the pilot batch, the per-dispatch target a
- * real adapter's batch is sized to, and its cap. */
+/** Eval timing (see {@link timeEval}): rows timed, the spread pilot, the
+ * smallest submission, the per-submission target and its cap. */
 const TIMING_ROWS = [
   "siOct6Pearls3",
   "siOct6Kiss3",
@@ -98,9 +98,9 @@ const TIMING_ROWS = [
   "si600Medallion4@XW.4YW.3ZW.2",
   "si600Snowflake4@W.06",
 ];
-const TIMING_PILOT = 1024;
-/** The smallest timed batch a slow core may shrink to. */
-const TIMING_MIN = 256;
+const TIMING_PILOT = 64;
+/** The smallest submission a slow core may shrink to. */
+const TIMING_MIN = 64;
 const TIMING_TARGET_MS = 150;
 const TIMING_MAX = 262_144;
 const TIMING_REPS = 3;
@@ -147,7 +147,10 @@ export interface SiFrameRow {
 export interface SiTimingRow {
   name: string;
   core: string;
+  /** Queries timed per repetition (whole tiles of the mix). */
   queries: number;
+  /** Queries per submission. */
+  submission: number;
   usPerQuery: number;
 }
 
@@ -290,10 +293,11 @@ function uniform(device: GPUDevice, data: ArrayBuffer): GPUBuffer {
 function queryData(
   queries: readonly Vec3[],
   count = queries.length,
+  offset = 0,
 ): Float32Array {
   const out = new Float32Array(count * 4);
   for (let i = 0; i < count; i++) {
-    const q = queries[i % queries.length];
+    const q = queries[(offset + i) % queries.length];
     out[i * 4] = q[0];
     out[i * 4 + 1] = q[1];
     out[i * 4 + 2] = q[2];
@@ -330,11 +334,12 @@ async function runEval(
   queries: readonly Vec3[],
   count = queries.length,
   read = true,
+  offset = 0,
 ): Promise<{ values: Float32Array | null; ms: number }> {
   const buffers = [
     uniform(device, params),
     storage(device, maps),
-    storage(device, queryData(queries, count)),
+    storage(device, queryData(queries, count, offset)),
     device.createBuffer({
       size: count * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
@@ -1024,6 +1029,16 @@ async function runFrames(
   }
 }
 
+/**
+ * µs per query over WHOLE TILES of a row's query mix, so the figure is the
+ * mix's cost and never one query class's (the mix is ordered by class, and
+ * a production-width fold batch cut from its front measured ~10x a whole
+ * tile). Submissions are sized from a small pilot spread across the mix and
+ * refined on larger batches until the size settles, so a fast core's
+ * per-submission overhead is negligible and a slow core's submission stays
+ * near {@link TIMING_TARGET_MS}, far from a driver watchdog. A software
+ * adapter times one tile once.
+ */
 async function timeEval(
   ctx: SphereInversionBenchContext,
   name: string,
@@ -1039,60 +1054,57 @@ async function timeEval(
     "evalQueries",
     `si timing ${name}`,
   );
-  const pilot = await runEval(
-    ctx.device,
-    pipeline,
-    packAt(TIMING_PILOT),
-    maps,
-    queries,
-    TIMING_PILOT,
-    false,
+  const mix = queries.length;
+  const spread = Array.from(
+    { length: TIMING_PILOT },
+    (_, i) => queries[Math.floor((i * mix) / TIMING_PILOT)],
   );
-  // Size the timed batch to the per-dispatch target from the pilot: whole
-  // pilot multiples when a core is fast, DOWN to TIMING_MIN when it is slow,
-  // so one submission stays far from a driver watchdog (the production-width
-  // fold eval measured ~1.3 s for a 4096-query batch on Iris). A software
-  // adapter keeps the pilot size.
-  let count = TIMING_PILOT;
-  if (!ctx.software) {
-    const perQuery = Math.max(pilot.ms, 0.01) / TIMING_PILOT;
-    const fit = TIMING_TARGET_MS / perQuery;
-    count =
-      fit >= TIMING_PILOT
-        ? Math.min(TIMING_MAX, Math.floor(fit / TIMING_PILOT) * TIMING_PILOT)
-        : Math.max(TIMING_MIN, Math.floor(fit));
-  }
-  await runEval(
-    ctx.device,
-    pipeline,
-    packAt(count),
-    maps,
-    queries,
-    count,
-    false,
-  );
-  const samples: number[] = [];
-  for (let i = 0; i < (ctx.software ? 1 : TIMING_REPS); i++) {
-    samples.push(
-      (
-        await runEval(
-          ctx.device,
-          pipeline,
-          packAt(count),
-          maps,
-          queries,
-          count,
-          false,
-        )
-      ).ms,
+  const run = (count: number, offset: number, qs: readonly Vec3[] = queries) =>
+    runEval(
+      ctx.device,
+      pipeline,
+      packAt(count),
+      maps,
+      qs,
+      count,
+      false,
+      offset,
     );
+  const sizeFor = (perQueryMs: number): number =>
+    Math.min(
+      TIMING_MAX,
+      Math.max(
+        TIMING_MIN,
+        Math.floor(TIMING_TARGET_MS / Math.max(perQueryMs, 1e-7)),
+      ),
+    );
+  let chunk = sizeFor((await run(TIMING_PILOT, 0, spread)).ms / TIMING_PILOT);
+  if (!ctx.software) {
+    for (let refine = 0; refine < 4; refine++) {
+      const next = sizeFor((await run(chunk, 0)).ms / chunk);
+      const settled = next <= chunk * 2;
+      chunk = Math.min(next, chunk * 4);
+      if (settled) break;
+    }
+  } else {
+    chunk = Math.min(chunk, mix);
   }
-  samples.sort((a, b) => a - b);
+  const total = Math.ceil(Math.max(chunk, mix) / mix) * mix;
+  const samples: number[] = [];
+  for (let rep = 0; rep < (ctx.software ? 1 : TIMING_REPS); rep++) {
+    let ms = 0;
+    for (let offset = 0; offset < total; offset += chunk) {
+      ms += (await run(Math.min(chunk, total - offset), offset % mix)).ms;
+    }
+    samples.push(ms);
+  }
+  samples.sort((x, y) => x - y);
   return {
     name,
     core,
-    queries: count,
-    usPerQuery: (samples[samples.length >> 1] * 1000) / count,
+    queries: total,
+    submission: chunk,
+    usPerQuery: (samples[samples.length >> 1] * 1000) / total,
   };
 }
 
