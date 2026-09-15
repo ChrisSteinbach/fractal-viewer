@@ -1167,6 +1167,25 @@ without ever overshooting.
 
 Full record: `docs/sphere-inversion-family.md`'s CPU core section.
 
+### sphere-inversion-sample
+
+The Points sampler's cost (`src/fractal/sphere-inversion-sample.ts`): prepare
+time, ns per emitted point over a 200k cloud (median of three, one core),
+skipped fraction, patch count and generation histogram, beside the chaos game
+on the default preset. Set identity is the unit tests' job, not this sheet's.
+About 12 s.
+
+MEASURED VERDICT (this machine, 2026-09-15): the sampler costs 3–42x a
+chaos-game iteration (0.10 us), and no row skipped a point. oct6 pearls D8
+0.31 us (prepare 1 ms, one patch); ico12 lace shell D6 1.30 us and vault D8
+1.97 us (7 ms, 13–14 patches); cell24 shell .98 D5 1.11 us (16 ms); cell600
+vault D5 4.22 us and medallion D5 3.07 us (100 ms, 110/122 patches, 107/120
+walls); cell600 vault D10 4.32 us (141 ms) — depth barely moves the cost,
+because the walk stops early and deep generations hold under 1% of the
+samples. The policy that follows is `SPHERE_INVERSION_POINTS_MAX` = 500,000
+samples per cloud (about 2.1 s of worker time at the worst subject) and a
+cached sampler per block, so a colour or count edit skips the pilot.
+
 ## The space-tiling sheet
 
 ### tiling
