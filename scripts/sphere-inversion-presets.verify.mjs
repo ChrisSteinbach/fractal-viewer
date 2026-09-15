@@ -42,21 +42,19 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
 import {
-  launchSurfaceBrowser,
-  pollSurfaceState,
-} from "./lib/surface-browser-runner.mjs";
+  SI_PRESETS,
+  differingFraction,
+  loadPreset,
+  openApp,
+  waitDocument,
+  waitSettled,
+} from "./lib/sphere-inversion-gate.mjs";
+import { launchSurfaceBrowser } from "./lib/surface-browser-runner.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
-/** The menu group, in menu order. `dim` is the block's arrangement's. */
-const PRESETS = [
-  { key: "inversionPearls", dim: 3 },
-  { key: "inversionCubePearls", dim: 3 },
-  { key: "inversionVault", dim: 3 },
-  { key: "inversionLace", dim: 3 },
-  { key: "inversionVault4", dim: 4 },
-  { key: "inversionMedallions4", dim: 4 },
-];
+/** The menu group, in menu order (the shared gate vocabulary's table). */
+const PRESETS = SI_PRESETS;
 
 /** A settled showcase must cover at least this share of the pane. A frame
  * framed on its subject covers far more; this catches a camera pointed at
@@ -65,7 +63,6 @@ const MIN_COVERED = 0.05;
 /** Two frames count as different when this share of pixels moved by more
  * than a channel step (escape-family.verify.mjs's bar). */
 const DIFFER_FRACTION = 0.02;
-const DIFFER_DELTA = 8;
 /** The 4D nudge, in the slice slider's normalized units. */
 const SLICE_NUDGE = 0.06;
 
@@ -87,109 +84,6 @@ function parseArgs(argv) {
   return args;
 }
 
-/** The live document, out of the hash persist.ts writes. */
-const READ_DOCUMENT = () => {
-  const raw = location.hash.replace(/^#v1=/, "");
-  if (!raw) return null;
-  try {
-    return JSON.parse(atob(raw.replace(/-/g, "+").replace(/_/g, "/")));
-  } catch {
-    return null;
-  }
-};
-
-async function openApp(browser, args) {
-  const context = await browser.newContext({
-    ignoreHTTPSErrors: true,
-    viewport: { width: 1600, height: 900 },
-    deviceScaleFactor: 1,
-    reducedMotion: "reduce",
-  });
-  const page = await context.newPage();
-  const errors = [];
-  page.on("console", (m) => {
-    if (m.type() === "error" || /device lost|validation error/i.test(m.text()))
-      errors.push(m.text().slice(0, 200));
-  });
-  page.on("pageerror", (e) => errors.push(`pageerror ${String(e)}`));
-  await page.goto(`${args.url}/?surfacestate`, { waitUntil: "load" });
-  await page.waitForFunction(() => typeof window.__surfaceState === "function");
-  return { context, page, errors };
-}
-
-/** Choose a preset from the panel's menu and wait for the document to
- * change (the save is debounced; escape-family.verify.mjs's lesson). */
-async function loadPreset(page, key) {
-  await page.evaluate(() => {
-    const details = document.getElementById("presetSelect")?.closest("details");
-    if (details && !details.open) details.open = true;
-  });
-  const before = await page.evaluate(() => location.hash);
-  await page.selectOption("#presetSelect", key);
-  await page.waitForFunction((h) => location.hash !== h, before, {
-    timeout: 15_000,
-  });
-}
-
-async function waitSettled(page, timeoutMs) {
-  const t0 = Date.now();
-  let held = 0;
-  let last = null;
-  while (Date.now() - t0 < timeoutMs) {
-    last = await pollSurfaceState(page);
-    if (last.settled) {
-      held += 200;
-      if (held >= 1_000) return { ok: true, state: last.probe, t0 };
-    } else {
-      held = 0;
-    }
-    await page.waitForTimeout(200);
-  }
-  return { ok: false, state: last?.probe ?? null, t0 };
-}
-
-/** Wait until the document's debounced save has caught up with a predicate. */
-async function waitDocument(page, predicate, arg) {
-  for (let i = 0; i < 60; i++) {
-    const doc = await page.evaluate(READ_DOCUMENT);
-    if (doc && predicate(doc, arg)) return doc;
-    await page.waitForTimeout(250);
-  }
-  return page.evaluate(READ_DOCUMENT);
-}
-
-async function differingFraction(page, aPath, bPath) {
-  const a = fs.readFileSync(aPath).toString("base64");
-  const b = fs.readFileSync(bPath).toString("base64");
-  return page.evaluate(
-    async ([aB64, bB64, delta]) => {
-      const decode = async (b64) => {
-        const blob = await (await fetch(`data:image/png;base64,${b64}`)).blob();
-        const bmp = await createImageBitmap(blob);
-        const c = new OffscreenCanvas(bmp.width, bmp.height);
-        const g = c.getContext("2d");
-        g.drawImage(bmp, 0, 0);
-        return g.getImageData(0, 0, bmp.width, bmp.height);
-      };
-      const ia = await decode(aB64);
-      const ib = await decode(bB64);
-      if (ia.width !== ib.width || ia.height !== ib.height) return 1;
-      let n = 0;
-      for (let i = 0; i < ia.data.length; i += 4) {
-        if (
-          Math.abs(ia.data[i] - ib.data[i]) > delta ||
-          Math.abs(ia.data[i + 1] - ib.data[i + 1]) > delta ||
-          Math.abs(ia.data[i + 2] - ib.data[i + 2]) > delta
-        ) {
-          n++;
-        }
-      }
-      return n / (ia.width * ia.height);
-    },
-    [a, b, DIFFER_DELTA],
-  );
-}
-
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   await guardFreshDist({ url: args.url });
@@ -206,7 +100,9 @@ async function main() {
   const log = (line) => console.error(`[si-presets] ${line}`);
   try {
     for (const preset of wanted) {
-      const { context, page, errors } = await openApp(browser, args);
+      const { context, page, errors } = await openApp(browser, {
+        url: args.url,
+      });
       try {
         const t0 = Date.now();
         await loadPreset(page, preset.key);

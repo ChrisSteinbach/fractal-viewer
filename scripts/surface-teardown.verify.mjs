@@ -105,6 +105,16 @@
  *                 (only a whole-system replacement resets the 4D view), so
  *                 every re-entered session in the sweep stays cover-live.
  *                 Requires --toggles=N.
+ *   --document=<file.json>
+ *                 drive a scene document of the caller's instead of the
+ *                 built-in fixtures: the JSON a `#v1=` hash decodes to (the
+ *                 sphere-inversion family gate writes its presets' share
+ *                 documents as `scripts/out/si-qual-doc-<key>.json`). The
+ *                 document is booted verbatim, so its own camera, 4D pose
+ *                 and blocks decide the session; --lens/--plain/--cover4/
+ *                 --floor/--lighting/--tiling do not apply to it. Requires
+ *                 --toggles=N, and like --cover4 it is a qualification: the
+ *                 launch must take the compute engine on a real adapter.
  *   --floor=off / --tiling=a3 / --toggleId=... / --viewport=WxH /
  *   --toggleGapMs=N
  *
@@ -117,6 +127,7 @@
  *   node scripts/surface-teardown.verify.mjs --cover4 \
  *        --toggleId=__modeExit --toggles=20 --toggleGapMs=900
  */
+import fs from "node:fs";
 import { firefox } from "playwright-core";
 
 const args = Object.fromEntries(
@@ -142,6 +153,13 @@ const LIGHTING = Boolean(args.lighting);
  * exists mid-session, and a no-toggle run would be the exploratory arm with
  * nothing live to tear down. */
 const COVER4 = Boolean(args.cover4);
+/** `--document=<file.json>` drives the caller's scene document (see the arm's
+ * header entry). Read once, up front, so a bad path fails before a browser
+ * launches. */
+const DOCUMENT_PATH = typeof args.document === "string" ? args.document : null;
+const DOCUMENT = DOCUMENT_PATH
+  ? JSON.parse(fs.readFileSync(DOCUMENT_PATH, "utf8"))
+  : null;
 const TOGGLE_ID = args.toggleId ?? "surfaceGroundPlaneCheckbox";
 const TOGGLES = Number(args.toggles ?? 0);
 const TOGGLE_GAP_MS = Number(args.toggleGapMs ?? 1200);
@@ -154,6 +172,12 @@ if (TILING !== null && TOGGLES <= 0) {
 }
 if (COVER4 && TOGGLES <= 0) {
   throw new Error("--cover4 qualification requires --toggles=N");
+}
+if (DOCUMENT && TOGGLES <= 0) {
+  throw new Error("--document qualification requires --toggles=N");
+}
+if (DOCUMENT && COVER4) {
+  throw new Error("--document and --cover4 each name the document; pick one");
 }
 const EXPECTED_TILING = TILING === "a3" ? { group: "a3" } : null;
 const POLL_MS = 500;
@@ -313,9 +337,10 @@ function cover4Scene() {
   };
 }
 
-/** The document a run drives: the cover fixture under --cover4, the radii
- * scene otherwise. */
+/** The document a run drives: the caller's under --document, the cover
+ * fixture under --cover4, the radii scene otherwise. */
 function sceneDocument(c) {
+  if (DOCUMENT) return DOCUMENT;
   return COVER4
     ? cover4Scene()
     : sceneFor(c.radii, { lens: LENS, foldType: FOLD_TYPE });
@@ -510,7 +535,13 @@ async function runToggleArm(browser, c, toggles, gapMs) {
     // Name the trigger, not "floor" — the arm is whichever restart/exit door
     // --toggleId selected, and mislabelling every run as a Floor toggle is how
     // the original diagnosis went wrong in the first place.
-    label: `${COVER4 ? "cover4 mandelbox FINAL" : c.label} [${toggles}x ${
+    label: `${
+      DOCUMENT
+        ? `document ${DOCUMENT_PATH}`
+        : COVER4
+          ? "cover4 mandelbox FINAL"
+          : c.label
+    } [${toggles}x ${
       TOGGLE_ID === "__modeExit" ? "mode exit" : TOGGLE_ID
     } @${gapMs}ms]`,
     outcome: "ok",
@@ -705,6 +736,35 @@ async function runToggleArm(browser, c, toggles, gapMs) {
         result.detail = qualificationFailures.join("; ");
       }
     }
+    if (DOCUMENT) {
+      // A caller's document qualifies the same way the cover does: the sweep
+      // ran to completion on the compute engine of a real adapter, with no
+      // page error. A session that fell to WebGL tore nothing of compute's
+      // down.
+      const qualificationFailures = [];
+      if (result.togglesCompleted !== toggles) {
+        qualificationFailures.push(
+          `toggles=${result.togglesCompleted}/${toggles}`,
+        );
+      }
+      if (
+        result.probe?.engine !== "compute" ||
+        result.probe?.backend?.software !== false
+      ) {
+        qualificationFailures.push(
+          `backend=${JSON.stringify(result.probe?.backend)} engine=${result.probe?.engine ?? "none"}`,
+        );
+      }
+      if (result.pageErrors.length > 0) {
+        qualificationFailures.push(
+          `pageErrors=${result.pageErrors.join(" | ")}`,
+        );
+      }
+      if (qualificationFailures.length > 0) {
+        result.outcome = "QUALIFICATION FAILED";
+        result.detail = qualificationFailures.join("; ");
+      }
+    }
     if (COVER4) {
       // The cover qualification asks that the sweep really ran against live
       // cover work and that the engine stayed the compute one: a session
@@ -762,7 +822,9 @@ async function main() {
   log(
     `url=${BASE} shape=${LENS ? "fold FINAL lens" : "fold base map"} fold=${FOLD_TYPE} floor=${
       FLOOR ? "ON" : "off"
-    } tiling=${TILING ?? "off"} cover4=${COVER4 ? "on" : "off"} engine=${
+    } tiling=${TILING ?? "off"} cover4=${COVER4 ? "on" : "off"} document=${
+      DOCUMENT_PATH ?? "built-in"
+    } engine=${
       FORCE_GL ? "forced WebGL" : "default (WebGPU if available)"
     } watchMs=${WATCH_MS}`,
   );
@@ -802,7 +864,11 @@ async function main() {
       // A harness error with the browser alive is still this gate's failure
       // to report honestly, never the no-adapter case below.
       reproduced = true;
-    } else if ((TILING !== null || COVER4) && !r.computeSeen && !r.deviceLost) {
+    } else if (
+      (TILING !== null || COVER4 || DOCUMENT) &&
+      !r.computeSeen &&
+      !r.deviceLost
+    ) {
       // NO ADAPTER THIS LAUNCH is apparatus, not a reproduction: the app's
       // one-way bootstrap probe latched WebGL before Surface was even
       // asked, so the qualification failed for want of a cover to tear down.
@@ -814,7 +880,7 @@ async function main() {
       );
     } else if (
       r.outcome === "QUALIFICATION FAILED" ||
-      ((TILING !== null || COVER4) && r.outcome === "refused")
+      ((TILING !== null || COVER4 || DOCUMENT) && r.outcome === "refused")
     ) {
       reproduced = true;
     }
