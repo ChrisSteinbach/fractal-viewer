@@ -1783,12 +1783,20 @@ describe("sceneIsNonFlat and displayedIsNonFlat (the sphere-inversion block)", (
     expect(sceneIsNonFlat(state)).toBe(false);
   });
 
-  it("describes the scene in Surface and the preserved transforms in the modes that still draw them", () => {
+  it("describes the scene in Surface and Points, which draw the block's seed orbit", () => {
     const state = setSphereInversion(initialState(true), {
       arrangement: "tess16",
     });
-    expect(displayedIsNonFlat({ ...state, renderMode: "surface" })).toBe(true);
-    for (const renderMode of ["points", "flame", "solid"] as const) {
+    for (const renderMode of ["surface", "points"] as const) {
+      expect(displayedIsNonFlat({ ...state, renderMode })).toBe(true);
+    }
+  });
+
+  it("describes the preserved transforms in Flame and Solid, which refuse the block", () => {
+    const state = setSphereInversion(initialState(true), {
+      arrangement: "tess16",
+    });
+    for (const renderMode of ["flame", "solid"] as const) {
       expect(displayedIsNonFlat({ ...state, renderMode })).toBe(false);
     }
   });

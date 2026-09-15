@@ -188,6 +188,7 @@
           id="modeFlameBtn"
           type="button"
           aria-pressed="false"
+          aria-describedby="sphereInversionModeNote"
           title="Fractal-flame exposure of the current view"
         >
           ✺ Flame
@@ -197,6 +198,7 @@
           id="modeSolidBtn"
           type="button"
           aria-pressed="false"
+          aria-describedby="sphereInversionModeNote"
           title="Sampled voxel-density Solid; distinct from analytic Surface"
         >
           ◆ Sampled Solid
@@ -232,6 +234,17 @@
       >
         Turn trap geometry off
       </button>
+      <!-- Document-level refusal for the renderers a sphere-inversion scene
+           has no representation in (Flame, Sampled Solid). Beside the mode
+           switch for the same reason as surfaceNote: the disabled buttons
+           describe themselves with it, and it must stay readable from every
+           renderer. Text alone drives visibility. -->
+      <p
+        id="sphereInversionModeNote"
+        class="flame-note-info"
+        role="status"
+        aria-live="polite"
+      ></p>
       <!-- Document-level disclosures stay beside the mode switch rather than
            inside Points-only sections: every renderer is showing the same
            effective symmetry/schedule, and reduced-motion disables Drift

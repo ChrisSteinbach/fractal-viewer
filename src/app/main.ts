@@ -1,7 +1,6 @@
 import {
   isFlatTransform,
   symmetryIsNonFlat,
-  systemPartsAreNonFlat,
   toTransform4,
 } from "../fractal/affine4";
 import { scenePartsAreNonFlat } from "../fractal/scene-dimension";
@@ -99,6 +98,7 @@ import type { SurfaceNativeCalibration } from "../fractal/surface-pattern";
 import {
   deriveSurfaceDocumentEligibility,
   deriveSurfaceEligibility,
+  sphereInversionRenderModeRefusal,
   surfaceEligibilityHasRoute,
   type SurfaceEligibilityResult,
 } from "./surface-eligibility";
@@ -138,7 +138,7 @@ import type {
   SurfaceGridResult,
 } from "./surface-grid-worker-core";
 import type { CloudParams } from "./cloud-generator";
-import { generateCloud } from "./cloud-worker-core";
+import { generateCloud, sphereInversionColorSlots } from "./cloud-worker-core";
 import type {
   CloudRequest,
   CloudResult,
@@ -1401,6 +1401,10 @@ async function main(): Promise<void> {
   // construction default (dark); boot syncs it to the restored document.
   let liveBackground: BackgroundGradient = resolveBackground({ mode: "dark" });
   let liveBackgroundSource: "gradient" | "flame" = "gradient";
+  // Whether the last refresh saw a sphere-inversion block, so a block's
+  // arrival or removal re-applies a flame backdrop exactly once
+  // (syncSphereInversionModes).
+  let backdropSphereInversionPresent = false;
   // A replace-load involving the generated source holds whatever is already
   // visible until the terminal cloud lands. The decorative worker is
   // suspended for that whole interval, so morph intermediates never spend a
@@ -1422,7 +1426,7 @@ async function main(): Promise<void> {
   function applyBackgroundNow(): void {
     backgroundTween.cancel();
     backgroundMorphHeld = false;
-    if (state.background.mode === "flame") {
+    if (state.background.mode === "flame" && !state.sphereInversion) {
       flameBackdropGenerator.resume();
       // Keep a previously delivered flame image in place while its refresh is
       // off-thread. The first entry has no image, so it shows the explicit dark
@@ -2519,8 +2523,9 @@ async function main(): Promise<void> {
   // live state as usual. The 4D routing flag follows the SAMPLED system's own
   // flatness, not the document's: mid-morph a flat↔4D pair takes the 4D path
   // exactly while the interpolated maps carry live w blocks
-  // (systemPartsAreNonFlat is systemIsNonFlat's formula over bare parts, so
-  // plain requests route identically to before).
+  // (scenePartsAreNonFlat is sceneIsNonFlat's formula over bare parts: a
+  // sphere-inversion block's own dimension wins, and without one it is
+  // systemIsNonFlat's, so plain requests route identically to before).
   function cloudParams(
     replaced: boolean,
     fit: boolean,
@@ -2570,7 +2575,17 @@ async function main(): Promise<void> {
           : state.numPoints,
       seed: morph?.seed ?? rollSeed(),
       symmetry,
-      fourD: systemPartsAreNonFlat(transforms, finalTransform, symmetry),
+      // A sphere-inversion block replaces the transform system as the
+      // cloud's subject (the worker samples its seed orbit), so it reads the
+      // LIVE document like the schedule — never interpolated, the target's
+      // block pops at a replace-load's first push — and decides `fourD`.
+      sphereInversion: state.sphereInversion ?? null,
+      fourD: scenePartsAreNonFlat(
+        transforms,
+        finalTransform,
+        symmetry,
+        state.sphereInversion,
+      ),
       colorMode: state.colorMode,
       colorGamma: state.colorGamma,
       // Resolved here (not the bare selection) — the "custom" sentinel has
@@ -2748,6 +2763,8 @@ async function main(): Promise<void> {
 
     // The scene gates lattice echoes against LANDED geometry, and the upload
     // above installs the finite origin ball before making its echo visible.
+    // A sphere-inversion sample refuses the echo the same way.
+    scene.setLandedSphereInversionCloud(result.generationCount !== undefined);
     scene.setBalloonEchoEnabled(state.balloonEcho);
     if (result.pointTiling || state.tiling || pointTilingDisclosureWasStale) {
       ui.updateLabels(state);
@@ -2917,6 +2934,18 @@ async function main(): Promise<void> {
     (handle) => cancelAnimationFrame(handle),
   );
 
+  // The "By Transform" slots a landed cloud's per-point indices address: the
+  // document's transforms, or a sphere-inversion sample's generations
+  // (cloud-worker-core.ts's generationCount), so one generation wears one hue
+  // in Points as in Surface.
+  function pointColorSlots(
+    result: CloudResult,
+  ): readonly Pick<Transform, "colorIndex">[] {
+    return result.generationCount === undefined
+      ? state.transforms
+      : sphereInversionColorSlots(result.generationCount);
+  }
+
   // Rebuild only the color buffer over the cached cloud and push it to the
   // scene. Leaves positions (and thus the RNG) untouched, so switching color
   // mode recolors the same shape instantly. No-op before the first generation.
@@ -2927,7 +2956,7 @@ async function main(): Promise<void> {
     if (!lastResult) return;
     const colors = buildColors(
       lastResult,
-      state.transforms,
+      pointColorSlots(lastResult),
       // The replay showcase presents by-transform coloring without ever
       // writing the document — folded here, the one place the displayed 3D
       // mode is derived.
@@ -2958,10 +2987,10 @@ async function main(): Promise<void> {
         // those inputs ignore them.
         colors: buildColors4(
           fourDResult,
-          state.transforms.length,
+          pointColorSlots(fourDResult).length,
           mode,
           resolvePalette(state.rampPaletteId, state.customPalette),
-          state.transforms.map((t) => t.colorIndex),
+          pointColorSlots(fourDResult).map((t) => t.colorIndex),
           state.colorGamma,
           state.positionAxisColors,
           fourDResult.canonicalColorSource,
@@ -2995,10 +3024,10 @@ async function main(): Promise<void> {
         colors: dimColorsExcept(
           buildColors4(
             fourDResult,
-            state.transforms.length,
+            pointColorSlots(fourDResult).length,
             "transform",
             resolvePalette(state.rampPaletteId, state.customPalette),
-            state.transforms.map((t) => t.colorIndex),
+            pointColorSlots(fourDResult).map((t) => t.colorIndex),
             1,
             undefined,
             fourDResult.canonicalColorSource,
@@ -3015,7 +3044,7 @@ async function main(): Promise<void> {
         dimColorsExcept(
           buildColors(
             lastResult,
-            state.transforms,
+            pointColorSlots(lastResult),
             "transform",
             state.colorGamma,
             resolvePalette(state.rampPaletteId, state.customPalette),
@@ -3720,7 +3749,13 @@ async function main(): Promise<void> {
   }
 
   function applyFlameBackdropImage(image: FlameBackdropImage): void {
-    if (state.background.mode !== "flame" || backgroundMorphHeld) return;
+    if (
+      state.background.mode !== "flame" ||
+      state.sphereInversion ||
+      backgroundMorphHeld
+    ) {
+      return;
+    }
     scene.setFlameBackdropImage(image);
     liveBackgroundSource = "flame";
   }
@@ -3744,6 +3779,7 @@ async function main(): Promise<void> {
   function requestFlameBackdrop(): void {
     if (
       state.background.mode !== "flame" ||
+      state.sphereInversion ||
       backgroundMorphHeld ||
       morphTween.active
     ) {
@@ -6756,6 +6792,17 @@ async function main(): Promise<void> {
   // (clicking the lit segment must not restart a converging render).
   function switchRenderMode(target: RenderMode): void {
     if (target === state.renderMode) return;
+    // Every door into a renderer funnels through here (the mode control,
+    // load hints, shows), so the family's Flame/Solid refusal lives here
+    // once.
+    const familyRefusal = sphereInversionRenderModeRefusal(
+      state.sphereInversion,
+      target,
+    );
+    if (familyRefusal !== null) {
+      ui.flashToast(familyRefusal);
+      return;
+    }
     clearPendingTransformEdits();
     // The replay lives in the points view; leaving it mid-replay must not
     // strand a partial cloud (or the narration pill) behind the flame/solid
@@ -6848,6 +6895,9 @@ async function main(): Promise<void> {
   // numbered guide box to highlight, hit-test, or drag. Final/camera selections
   // still map to no box, as before.
   function selectedBox(): number | null {
+    // A sphere-inversion block replaces the transform system in Points, so
+    // no transform box is drawn to hit-test.
+    if (state.sphereInversion) return null;
     return canvasTransformTarget(
       state.renderMode,
       viewIs4D,
@@ -6864,7 +6914,11 @@ async function main(): Promise<void> {
   }
 
   function refreshGuides(): void {
-    const available = canvasTransformGuidesEnabled(state.renderMode, viewIs4D);
+    // The guides draw the transform system, which a sphere-inversion block
+    // replaces as the Points subject.
+    const available =
+      canvasTransformGuidesEnabled(state.renderMode, viewIs4D) &&
+      !state.sphereInversion;
     const visible = available && guidesShown();
     // An empty list removes stale box geometry outside flat Points. Selection
     // remains in AppState and the editor; only its canvas presentation rests.
@@ -6919,7 +6973,39 @@ async function main(): Promise<void> {
     // never from updateLabels() alone (see renderXaosSection's own doc).
     ui.renderXaosSection(state.transforms);
     refreshSurfaceEligibility();
+    syncSphereInversionModes();
     if (!evolutionReconciliationPaused) reconcileEvolutionDocument();
+  }
+
+  // A sphere-inversion block has no Flame or Sampled Solid representation
+  // (surface-eligibility.ts's sphereInversionRenderModeRefusal): disable both
+  // with the reason beside the switch, and when a block ARRIVES under a live
+  // Flame/Solid session (undo, a loaded link) leave for Points once this
+  // refresh returns, with the reason as a toast. The generated flame backdrop
+  // draws the preserved transforms, so it rests on its gradient placeholder
+  // while a block is present.
+  function syncSphereInversionModes(): void {
+    ui.setSphereInversionModeRefusal(
+      sphereInversionRenderModeRefusal(state.sphereInversion, "flame"),
+    );
+    const refusal = sphereInversionRenderModeRefusal(
+      state.sphereInversion,
+      state.renderMode,
+    );
+    if (refusal !== null) {
+      queueMicrotask(() => {
+        const mode = state.renderMode;
+        if (sphereInversionRenderModeRefusal(state.sphereInversion, mode)) {
+          switchRenderMode("points");
+          ui.flashToast(refusal);
+        }
+      });
+    }
+    const present = state.sphereInversion !== undefined;
+    if (present !== backdropSphereInversionPresent) {
+      backdropSphereInversionPresent = present;
+      if (state.background.mode === "flame") applyBackgroundNow();
+    }
   }
 
   /**
@@ -8286,6 +8372,14 @@ async function main(): Promise<void> {
     seed: number,
     ordinal: number | string,
   ): Uint8ClampedArray<ArrayBuffer> {
+    // A lineage node carrying a sphere-inversion block would otherwise show
+    // its preserved transforms' attractor, a different object: leave it
+    // blank instead.
+    if (snapshot.sphereInversion !== undefined) {
+      return new Uint8ClampedArray(
+        MUTATION_THUMB_SIZE * MUTATION_THUMB_SIZE * 4,
+      );
+    }
     return renderSystemThumb(
       morphFromEvolutionSnapshot(snapshot),
       MUTATION_THUMB_SIZE,
@@ -9971,6 +10065,14 @@ async function main(): Promise<void> {
     // bounded neighborhood. Exact-node navigation still funnels through the
     // normal async replace-load transaction above.
     onOpenMutations: () => {
+      // The Lab mutates the transform system, which a sphere-inversion block
+      // replaces as the subject: every cell would show the same sample.
+      if (state.sphereInversion) {
+        ui.flashToast(
+          "Evolution Lab is not available for a sphere-inversion scene: it mutates the transform system the scene replaces",
+        );
+        return;
+      }
       stopShows({ notify: true });
       // The workspace root owns one exact saved view. Land any directed view
       // glide before capturing it; merely pausing ambient orbit/tumble would
@@ -10365,6 +10467,15 @@ async function main(): Promise<void> {
     // replay lives in the points view) and closes the About dialog + panel so
     // the stage is actually watchable.
     onWatchBuild: () => {
+      // The replay reveals the chaos game's generation order. A
+      // sphere-inversion cloud is an independent boundary sample with no
+      // order to reveal, so the replay is refused rather than faked.
+      if (state.sphereInversion) {
+        ui.flashToast(
+          "Watch it build replays the chaos game; a sphere-inversion scene is sampled, not iterated",
+        );
+        return;
+      }
       switchRenderMode("points");
       // A replay and the drift show can't share the stage: a drift leg's
       // regeneration would kill the replay a few seconds in. Notify:

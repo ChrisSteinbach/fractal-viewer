@@ -503,7 +503,7 @@ export function buildColorModeLUT(
  */
 export function buildColors(
   result: ChaosGameResult,
-  transforms: Transform[],
+  transforms: readonly Pick<Transform, "colorIndex">[],
   mode: ColorMode,
   colorGamma = 1,
   rampPalette: PaletteSpec = "legacy",

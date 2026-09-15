@@ -3118,14 +3118,15 @@ export function sceneIsNonFlat(state: AppState): boolean {
 /**
  * The dimensionality of what the ACTIVE render mode draws, which the panel's
  * dimensional gating (4D view rows, 4D color, the legend, the title)
- * describes: {@link sceneIsNonFlat} in Surface, whose subject a
- * sphere-inversion block replaces, and {@link systemIsNonFlat} in Points,
- * Flame and Solid, which still draw the preserved transform system and whose
- * engines must follow its flatness (`scene-dimension.ts`'s module doc).
- * Without a block the two agree everywhere.
+ * describes: {@link sceneIsNonFlat} in Surface and Points, the two modes that
+ * draw a sphere-inversion block's seed orbit (Points through the exact
+ * boundary sampler), and {@link systemIsNonFlat} in Flame and Solid, which
+ * refuse the block and whose engines must follow the preserved transforms'
+ * flatness (`scene-dimension.ts`'s module doc). Without a block the two agree
+ * everywhere.
  */
 export function displayedIsNonFlat(state: AppState): boolean {
-  return state.renderMode === "surface"
+  return state.renderMode === "surface" || state.renderMode === "points"
     ? sceneIsNonFlat(state)
     : systemIsNonFlat(state);
 }

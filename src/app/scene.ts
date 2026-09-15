@@ -954,6 +954,11 @@ export class FractalScene {
   );
   private balloonEchoSourceSphereReady = false;
   private landedPointTilingKind: "finite" | "lattice" | undefined;
+  /** Whether the landed cloud is a sphere-inversion boundary sample. Balloon
+   * is refused for that family (`surface-eligibility.ts`'s combination
+   * policy), so the echo stays hidden over it while the authored flag keeps
+   * the user's intent. */
+  private landedSphereInversionCloud = false;
   /** Solid's own inversion ball. In 3D it matches the cloud sphere above; in
    * 4D it is deliberately origin-centred with a full, slice-independent 4D
    * radius, matching balloonBall4 rather than Points' projection-centred ball. */
@@ -3003,6 +3008,16 @@ export class FractalScene {
     this.solidCapturePxCostMs = null;
   }
 
+  /** Mark whether the landed cloud is a sphere-inversion boundary sample,
+   * over which the Points echo stays hidden (the family refuses Balloon).
+   * Keyed on LANDED geometry, like the lattice gate, so a delayed result
+   * never shows an echo of a cloud that is not on screen. */
+  setLandedSphereInversionCloud(on: boolean): void {
+    if (this.landedSphereInversionCloud === on) return;
+    this.landedSphereInversionCloud = on;
+    this.syncBalloonEchoVisibility();
+  }
+
   /**
    * Set the balloon echo's radius as a NORMALIZED multiple of the cloud's
    * own enclosing-ball radius (`rMult = 1` touches the attractor's extent —
@@ -3217,7 +3232,8 @@ export class FractalScene {
     const visible =
       this.balloonEchoEnabled &&
       this.balloonEchoSourceSphereReady &&
-      this.landedPointTilingKind !== "lattice";
+      this.landedPointTilingKind !== "lattice" &&
+      !this.landedSphereInversionCloud;
     if (this.balloonEchoPoints.visible === visible) return;
     this.balloonEchoPoints.visible = visible;
     this.renderNeeded = true;
