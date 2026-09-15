@@ -287,8 +287,9 @@ export type SphereInversionSeedKind =
 
 // ---------------------------------------------------------- authored form
 
-/** The authored seed. Fields a kind does not read are ignored, never
- * refused, so switching kinds keeps the other kinds' lengths. */
+/** The authored seed. KNOWN fields a kind does not read are ignored, never
+ * refused, so switching kinds keeps the other kinds' lengths; an UNKNOWN key
+ * is refused ({@link SPHERE_INVERSION_SEED_FIELDS}). */
 export interface SphereInversionAuthoredSeed {
   kind?: string;
   /** Ball radius, or the shell's mid radius. */
@@ -317,6 +318,45 @@ export interface SphereInversionAuthored {
   seed?: SphereInversionAuthoredSeed;
   /** Inversion budget `D`: an integer in `[0, SPHERE_INVERSION_MAX_DEPTH]`. */
   depth?: number;
+}
+
+/** Every field the authored form defines, top level and seed. Any other
+ * key is REFUSED as unknown: a document written by a newer version may name
+ * a field this version cannot read, and ignoring it would render a different
+ * object than the document names (the no-clamp rule applied to keys). */
+export const SPHERE_INVERSION_AUTHORED_FIELDS: readonly string[] =
+  Object.freeze(["arrangement", "radiusFraction", "seed", "depth"]);
+export const SPHERE_INVERSION_SEED_FIELDS: readonly string[] = Object.freeze([
+  "kind",
+  "size",
+  "thickness",
+  "cutDirection",
+  "cutDirectionW",
+  "cutOffset",
+  "cutRadius",
+]);
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/**
+ * The dimension an authored block's arrangement names — `3`, `4`, or `null`
+ * when the id is not a registry arrangement (absent, unknown, or not a
+ * string). It reads ONLY the arrangement: a block refused for any other
+ * reason (an out-of-domain depth, an unknown field) still names its
+ * dimension, so repairing that reason never flips the scene between 3D and
+ * 4D. The scene-level derivation (`scene-dimension.ts`) is its one caller.
+ */
+export function sphereInversionAuthoredDimension(
+  authored: unknown,
+): 3 | 4 | null {
+  if (!isPlainObject(authored)) return null;
+  const id = authored.arrangement;
+  return typeof id === "string" &&
+    Object.prototype.hasOwnProperty.call(SPHERE_INVERSION_ARRANGEMENTS, id)
+    ? SPHERE_INVERSION_ARRANGEMENTS[id].dim
+    : null;
 }
 
 /** Absent-field values. The seed lengths are the pre-gate sheets' panels
@@ -526,12 +566,39 @@ function isFiniteNumber(v: unknown): v is number {
  * `(0, size)`; a `ball` may cross the generators (its seed is `K ∩ F`);
  * `cutDirection` a nonzero finite
  * 3-vector, `cutDirectionW` finite and zero on a 3D arrangement,
- * `cutRadius > 0`, `|cutOffset| < size + thickness`.
+ * `cutRadius > 0`, `|cutOffset| < size + thickness`. The block and a present
+ * seed must be plain objects, and every key must be one of
+ * {@link SPHERE_INVERSION_AUTHORED_FIELDS} / {@link SPHERE_INVERSION_SEED_FIELDS}
+ * (an unknown key is refused by name). Values may be of any JSON type — an
+ * imported document is untrusted — and a wrongly typed value is refused like
+ * an out-of-domain one.
  */
 export function resolveSphereInversion(
   authored: SphereInversionAuthored,
 ): SphereInversionResolution {
   const reasons: string[] = [];
+  const block: unknown = authored;
+  if (!isPlainObject(block)) {
+    return {
+      ok: false,
+      reasons: ["the sphere-inversion block is not an object"],
+    };
+  }
+  const unknownKeys = (o: Record<string, unknown>, known: readonly string[]) =>
+    Object.keys(o).filter((key) => !known.includes(key));
+  for (const key of unknownKeys(block, SPHERE_INVERSION_AUTHORED_FIELDS)) {
+    reasons.push(`unknown field "${key}" (not readable by this version)`);
+  }
+  const rawSeed: unknown = block.seed;
+  if (rawSeed !== undefined && !isPlainObject(rawSeed)) {
+    reasons.push("seed is not an object");
+  } else if (rawSeed !== undefined) {
+    for (const key of unknownKeys(rawSeed, SPHERE_INVERSION_SEED_FIELDS)) {
+      reasons.push(
+        `unknown seed field "${key}" (not readable by this version)`,
+      );
+    }
+  }
   const D = SPHERE_INVERSION_DEFAULTS;
   const id = authored.arrangement;
   const arr =
@@ -567,7 +634,7 @@ export function resolveSphereInversion(
     );
   }
 
-  const s = authored.seed ?? {};
+  const s: SphereInversionAuthoredSeed = isPlainObject(rawSeed) ? rawSeed : {};
   const kind = s.kind ?? D.seedKind;
   const knownKind = (
     SPHERE_INVERSION_SEED_KINDS as readonly unknown[]
