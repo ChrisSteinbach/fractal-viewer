@@ -1613,4 +1613,20 @@ Frames (gitignored, regenerate): `scripts/out/si-qual-<key>.png`, `-reload.png`,
 contact sheet `scripts/out/si-qual-sheet.png`; raw figures
 `scripts/out/si-qual-results.json`.
 
-**Bench.** Pending.
+**Bench** (`4bedcff` source, `:0`, `quiet=YES` before both runs).
+
+- `npm run bench:surface -- --display=:0 --surface-sphere-inversion-only=1`:
+  every leg passed. The ten eval rows had 0 failures, 0 one-sided failures and
+  0 generation or seed mismatches. The flat-4D reduction had 0 mismatches.
+  Both march rows had 0 failures with identical GPU and CPU hit counts, and
+  the three frame rows had 0 exhausted rays. Per query the kernels cost
+  0.043–0.048 µs (3D) and 0.205–0.299 µs (600-cell). The verdict is
+  `skipped` (exit 2), which is this mode's only passing verdict.
+- `npm run bench:surface -- --display=:0` (full section):
+  `device-unreliable` (exit 2). The device was lost in the compute-frame leg
+  `lens4SwirlPostOverFold`, after its march legs passed, the failure already
+  on record for this Iris. The section's sphere-inversion legs come after that
+  leg and did not run. The nonzero `fail=` rows before it are the `info`-level
+  frontier-variant sweeps (`w4 s2=on`, `shared`), not gating rows. A full
+  green section still needs a machine that holds the device through it (the
+  AMD box), and its real-driver sphere-inversion rows stay owed.
