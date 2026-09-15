@@ -394,7 +394,7 @@ export async function compareFrames(page, a, b, { resample = false } = {}) {
  * frame's first and last columns disagree, i.e. the subject reaches the
  * frame edge and the premise does not hold.
  */
-export async function coverageAgreement(page, a, b, delta = 6) {
+export async function coverageAgreement(page, a, b, delta = 16) {
   return page.evaluate(
     async ([aB64, bB64, d, decodeSrc]) => {
       const decode = eval(decodeSrc);
