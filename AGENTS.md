@@ -55,7 +55,8 @@ the subsystem records below or its owning harness header:
   `docs/controls.md` — standing briefs.
 - `docs/panel-ia.md` — the accepted control-family, applicability and edit-
   behavior contract for placing panel controls.
-- `docs/sphere-inversion-family.md` — pre-gate sphere-inversion seed-orbit study.
+- `docs/sphere-inversion-family.md`, `docs/sphere-inversion-gpu.md` — the
+  sphere-inversion family: construction, estimator, routes, cost, presets.
 
 ## Dimensional Parity — the 4D half is not a follow-up
 
@@ -524,16 +525,21 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `{dim, generators, seed, depth}` construction. Out-of-domain values and
     unknown keys REFUSE with reasons, never clamp. The scene's optional
     `sphereInversion` block persists VERBATIM (refused blocks included),
-    REPLACES the transform system as the Surface subject, and its
-    arrangement decides the scene's dimension (`scene-dimension.ts`; IFS
-    engines keep the transforms'). `surface-eligibility.ts` routes it first,
-    as `sphereInversion(4)`, refused until a renderer ships.
+    REPLACES the transform system as the subject, and its arrangement
+    decides the scene's dimension (`scene-dimension.ts`).
     `sphere-inversion-de.ts` and `-de-4d.ts` are the twins: the TRANSPORTED
     CERTIFIED BOUND on the depth-D SEED ORBIT (never the limit set), step
-    scale 1, `<= 0` a member signal, `surface-de.ts`'s cutoff contract (a
-    sub-cutoff return is a decision, never a distance), and hit-info
-    attribution. The slab is REFUSED; f64 only. `sphere-inversion-oracle.ts`
-    pins both. Policies and record: `docs/sphere-inversion-family.md`.
+    scale 1, `<= 0` a member signal, `surface-de.ts`'s cutoff contract, and
+    hit-info attribution (By Transform = GENERATION, D+3 slots). f64 only;
+    `sphere-inversion-oracle.ts` pins both. SURFACE routes to WGSL cores
+    `sphereInv`/`sphereInv4` (bench-pinned: GPU never above the f64 bound;
+    the 1e-6 f32 slack caps zoom near 10R), `SURFACE_SPHERE_INVERSION` is
+    the 3D GLSL fallback (the WGSL body token for token), 4D COMPUTE-ONLY.
+    Kaleidoscope, lens and finishes go DORMANT and disclosed; tiling,
+    balloon, trap and slab REFUSE. POINTS draws `sphere-inversion-sample.ts`'s
+    exact boundary sample of the same set; Flame and Solid REFUSE. Cost is
+    flat in depth; nothing is refused on cost. Record:
+    `docs/sphere-inversion-family.md`, `docs/sphere-inversion-gpu.md`.
   - `morph.ts` — pure interpolation (`lerpSystem`): endpoint-exact at t=0/1,
     rotation lerped nearest-turn, transform-count mismatches fade surplus by
     weight, flat↔4D continuous via derived w-scale, kaleidoscope crossfade
