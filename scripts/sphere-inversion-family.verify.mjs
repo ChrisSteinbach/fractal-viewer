@@ -22,9 +22,10 @@
  *   6. The link Copy link builds (the button's own string, recorded by a
  *      clipboard stub so the desktop clipboard is untouched) boots a FRESH
  *      context. A 3D frame is byte-identical to the menu's. A 4D frame may
- *      drift within a bound, DISCLOSED as KNOWN: persist.ts rounds the rotor
- *      pair to 4 decimals, so a preset's irrational rotor does not survive
- *      the link exactly (the authored-fov camera keeps 10). Either way the
+ *      drift within a bound, DISCLOSED as KNOWN: `FourDPose` carries the
+ *      slice NORMALIZED against the landed cloud's 4D half-extents, and the
+ *      cloud is seeded afresh per generation, so one document resolves to a
+ *      slightly different world `w0` run to run. Either way the
  *      reloaded session's own link is the same document and boots a second
  *      context byte-identical to the first: a link is a fixed point.
  *   7. Save PNG at `--scale` completes; the image is the canvas size times
@@ -117,8 +118,10 @@ const DIFFER_FRACTION = 0.02;
  * flat or gradient-only image (a bare dark backdrop scores ~10 colours). */
 const EXPORT_MIN_COLORS = 64;
 const EXPORT_MIN_LUMA_STD = 4;
-/** A 4D share link rounds the rotor pair to 4 decimals (persist.ts), so its
- * frame may drift from the sender's by this share of pixels off by more
+/** A 4D share link carries its slice NORMALIZED against the landed cloud's
+ * 4D half-extents, which a per-generation random cloud seed moves slightly,
+ * so the same document resolves to a slightly different world `w0` per run.
+ * Its frame may drift from the sender's by this share of pixels off by more
  * than 8 before the drift fails rather than being disclosed. */
 const LINK_DRIFT_4D_OVER8_MAX = 0.01;
 /** The coverage mask's channel delta. MEASURED: the dark backdrop drifts a
@@ -582,7 +585,8 @@ async function main() {
               ) {
                 known.push(
                   `${preset.key}: the 4D share link drifts from the sender's frame (max ${cmp.maxDiff}, ` +
-                    `${(100 * cmp.over8).toFixed(3)}% of pixels off by >8): persist.ts rounds the rotor pair to 4 decimals`,
+                    `${(100 * cmp.over8).toFixed(3)}% of pixels off by >8): the slice is stored normalized ` +
+                    `against a randomly seeded cloud's 4D half-extents`,
                 );
               } else if (!exact) {
                 fail(
