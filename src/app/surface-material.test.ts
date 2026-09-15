@@ -37,6 +37,16 @@ import {
 } from "./surface-material";
 import { resolveSurfaceFinish } from "../fractal/surface-finish";
 import {
+  DIELECTRIC_ANCHOR_ENVELOPE_REL,
+  DIELECTRIC_CROSSING_EPS_REL,
+  DIELECTRIC_ERROR_BUDGET,
+  DIELECTRIC_MAX_STACK,
+  DIELECTRIC_QUERY_MAX_STEPS,
+  DIELECTRIC_REPLAY_PASSES,
+  dielectricOpticsSource,
+} from "../fractal/surface-dielectric";
+import { SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS } from "../fractal/surface-de-gpu";
+import {
   CLASSIC_SURFACE_MATERIAL,
   resolveSurfaceMaterial,
   surfaceMaterialLanes,
@@ -4865,6 +4875,265 @@ describe("SURFACE_FINISH variant", () => {
         ),
       ),
     ).not.toThrow();
+  });
+});
+
+describe("SURFACE_OPTICS variant (the dielectric transport lane)", () => {
+  /** The legal descent pairings optics composes with, as
+   * (lens, balloon, plane) tuples — the forward-orbit arms REFUSE optics
+   * (the resolver throws), so only descents sweep. */
+  const descentPairings: [string, [number, number, number]][] = [
+    ["affine", [0, 0, 0]],
+    ["fold lens", [1, 0, 0]],
+    ["balloon", [0, 1, 0]],
+    ["ground plane", [0, 0, 1]],
+    ["lens + balloon", [1, 1, 0]],
+    ["lens + plane", [1, 0, 1]],
+  ];
+
+  /** 82200: the byte size Mesa was observed to crash at (the module doc's
+   * recorded cliff), plus a hair of margin for the comparison. */
+  const MESA_CLIFF = 82_200;
+
+  /** The resolver's trailing optics argument list, positionally. */
+  const opticsOn = [
+    undefined,
+    null,
+    null,
+    false,
+    0,
+    0,
+    0,
+    null,
+    0,
+    0,
+    1,
+  ] as const;
+
+  it("strips every optics token from every descent variant while the flag is off — the byte-identity mechanism", () => {
+    for (const [name, [lens, balloon, plane]] of descentPairings) {
+      const explicit = surfaceFragmentResolvedFor(0, lens, balloon, plane);
+      expect(explicit, name).not.toContain("uMapOptics");
+      expect(explicit, name).not.toContain("transportTrace");
+      expect(explicit, name).not.toContain("SURFACE_OPTICS");
+      expect(surfaceFragmentFor(0, lens, balloon, plane), name).toBe(
+        surfaceFragmentFor(
+          0,
+          lens,
+          balloon,
+          plane,
+          0,
+          0,
+          0,
+          undefined,
+          null,
+          null,
+          false,
+          0,
+          0,
+          0,
+          null,
+          0,
+          0,
+          0,
+        ),
+      );
+    }
+  });
+
+  it("splices the ONE shared optics body verbatim and the kernel's own runtime constants", () => {
+    const src = surfaceFragmentResolvedFor(0, 0, 0, 0, 0, 0, 0, ...opticsOn);
+    // The emitted math text: no restated constants, the oracle's own body.
+    expect(src).toContain(dielectricOpticsSource("glsl"));
+    // The runtime vocabulary: the oracle's qualified constants and the
+    // kernel's own caps — never restated numbers.
+    expect(src).toContain(
+      `const int TRANSPORT_QUERY_MAX_STEPS = ${DIELECTRIC_QUERY_MAX_STEPS};`,
+    );
+    expect(src).toContain(
+      `const int TRANSPORT_REPLAY_PASSES = ${DIELECTRIC_REPLAY_PASSES};`,
+    );
+    expect(src).toContain(
+      `const int TRANSPORT_MAX_STACK = ${DIELECTRIC_MAX_STACK};`,
+    );
+    expect(src).toContain(
+      `const int TRANSPORT_MAX_PROCESSED = ${SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS};`,
+    );
+    expect(src).toContain(
+      `const float TRANSPORT_CROSSING_EPS_REL = ${DIELECTRIC_CROSSING_EPS_REL};`,
+    );
+    expect(src).toContain(
+      `const float TRANSPORT_ANCHOR_ENVELOPE_REL = ${DIELECTRIC_ANCHOR_ENVELOPE_REL.toFixed(1)};`,
+    );
+    expect(src).toContain(
+      `const float TRANSPORT_ERROR_BUDGET = ${DIELECTRIC_ERROR_BUDGET};`,
+    );
+  });
+
+  it("resolves the transport over every legal descent arm, stripped, under the emitted Mesa cliff", () => {
+    for (const [name, [lens, balloon, plane]] of descentPairings) {
+      const resolved = surfaceFragmentResolvedFor(
+        0,
+        lens,
+        balloon,
+        plane,
+        0,
+        0,
+        0,
+        ...opticsOn,
+      );
+      const emitted = surfaceFragmentFor(
+        0,
+        lens,
+        balloon,
+        plane,
+        0,
+        0,
+        0,
+        ...opticsOn,
+      );
+      // Every optics program is past the strip threshold (the base descent
+      // sources already are), so the driver walks the stripped text —
+      // measured sizes: the arm costs ~20.8KB resolved / ~12.2KB emitted.
+      expect(resolved.length, name).toBeGreaterThan(SURFACE_GLSL_STRIP_BYTES);
+      expect(emitted.length, name).not.toBe(resolved.length);
+      expect(emitted.length, name).toBeLessThan(MESA_CLIFF);
+      expect(emitted, name).toContain("TransportTrace transportTrace(");
+      expect(emitted, name).toContain("float transportDomainExit(");
+    }
+  });
+
+  it("refuses the forward-orbit arms and the cinematic lighting rig", () => {
+    expect(() =>
+      surfaceFragmentResolvedFor(1, 0, 0, 0, 0, 0, 0, ...opticsOn),
+    ).toThrow(/forward-orbit/);
+    expect(() =>
+      surfaceFragmentResolvedFor(0, 0, 0, 0, 1, 0, 0, ...opticsOn),
+    ).toThrow(/forward-orbit/);
+    expect(() =>
+      surfaceFragmentResolvedFor(
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        null,
+        false,
+        0,
+        0,
+        0,
+        null,
+        0,
+        1,
+        1,
+      ),
+    ).toThrow(/cinematic lighting/);
+  });
+
+  it("routes per hit slot in main(): optical hits trace, classic slots fall through, replay passes retrace from scratch", () => {
+    const src = surfaceFragmentResolvedFor(0, 0, 0, 0, 0, 0, 0, ...opticsOn);
+    // The lane read: the frozen lane pair per slot, ior > 0 marks optical.
+    expect(src).toContain("vec4 opticsLane0 = uMapOptics[oSlot * 2];");
+    expect(src).toContain("if (opticsLane0.x > 0.0) {");
+    // The inline replay schedule: the halved theta per pass, FROM SCRATCH.
+    expect(src).toContain(
+      "dielectricReplayTheta(float(pass), TRANSPORT_INITIAL_THETA)",
+    );
+    expect(src).toMatch(
+      /for \(int pass = 0; pass < TRANSPORT_REPLAY_PASSES; pass\+\+\)/,
+    );
+    // The three exits: invalid black (never retried), the accepted paint
+    // (2.2-encode + the hit fog), and the schedule-exhausted black.
+    expect(src).toMatch(
+      /if \(traced\.status == TRANSPORT_STATUS_INVALID\) \{[\s\S]*?outColor = vec4\(0\.0, 0\.0, 0\.0, 1\.0\);/,
+    );
+    expect(src).toContain(
+      "pow(max(traced.radiance, vec3(0.0)), vec3(1.0 / 2.2))",
+    );
+    expect(src).toMatch(
+      /Still pending[\s\S]*?outColor = vec4\(0\.0, 0\.0, 0\.0, 1\.0\);/,
+    );
+    // Alpha is the coverage flag on every transport exit: a HIT.
+    expect(src).toContain(
+      "outTraceLayer = traceLayer(1.0, 0.0, dot(pos - ro, uFocusPlane.xyz))",
+    );
+  });
+
+  it("setSurfaceMaterials flips the optics gate, writes the frozen lane pair, and resets it exactly", () => {
+    const material = createSurfaceMaterial();
+    const opticsMaterial = resolveSurfaceMaterial(
+      undefined,
+      undefined,
+      { model: "dielectric" },
+      2,
+    );
+    expect(opticsMaterial.optics).toBeDefined();
+    const wire: SurfaceMaterialSlots = {
+      slots: [opticsMaterial, opticsMaterial],
+      finish: false,
+      pattern: false,
+      optics: true,
+    };
+    setSurfaceMaterials(material, wire);
+    expect(material.defines.SURFACE_OPTICS).toBe(1);
+    const lane = material.uniforms.uMapOptics.value as unknown[];
+    expect(lane.length).toBe(2 * SURFACE_MAX_MAPS);
+    // The frozen lane layout (surfaceMaterialOpticsLanes): ior, radius,
+    // absorption.r/g; absorption.b on the second lane.
+    expect((lane[0] as { x: number }).x).toBe(opticsMaterial.optics!.ior);
+    expect((lane[0] as { y: number }).y).toBe(opticsMaterial.optics!.radius);
+    expect((lane[0] as { z: number }).z).toBe(
+      opticsMaterial.optics!.absorption[0],
+    );
+    expect((lane[0] as { w: number }).w).toBe(
+      opticsMaterial.optics!.absorption[1],
+    );
+    expect((lane[1] as { x: number }).x).toBe(
+      opticsMaterial.optics!.absorption[2],
+    );
+    // The resolved fragment carries the transport.
+    expect(material.fragmentShader).toContain("TransportTrace transportTrace(");
+    // Unreached slots stay at the exact classic bytes (ior 0).
+    expect((lane[4] as { x: number }).x).toBe(0);
+    // null resets every lane and the gate.
+    setSurfaceMaterials(material, null);
+    expect(material.defines.SURFACE_OPTICS).toBeUndefined();
+    expect((lane[0] as { x: number }).x).toBe(0);
+    expect((lane[1] as { x: number }).x).toBe(0);
+    expect(material.fragmentShader).not.toContain("transportTrace");
+  });
+
+  it("refuses a mixed wire and a fold-shaped descent loudly", () => {
+    const material = createSurfaceMaterial();
+    const opticsMaterial = resolveSurfaceMaterial(
+      undefined,
+      undefined,
+      { model: "dielectric" },
+      2,
+    );
+    const mixed: SurfaceMaterialSlots = {
+      slots: [opticsMaterial, resolveSurfaceMaterial(undefined, undefined)],
+      finish: false,
+      pattern: false,
+      optics: true,
+    };
+    expect(() => setSurfaceMaterials(material, mixed)).toThrow(/uniformly/);
+    // The fold refusal: the same measured verdict the wire's
+    // admitOptics=false records, enforced at the gate that would compile it.
+    material.defines.SURFACE_FOLDS = 1;
+    const wire: SurfaceMaterialSlots = {
+      slots: [opticsMaterial],
+      finish: false,
+      pattern: false,
+      optics: true,
+    };
+    expect(() => setSurfaceMaterials(material, wire)).toThrow(
+      /fold-shaped descent refuses the optical transport/,
+    );
   });
 });
 
