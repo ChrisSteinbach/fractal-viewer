@@ -270,6 +270,10 @@ morphs into place instead of snapping (see **Presets** below).
   - **Background → Flame backdrop** shows the plain gradient, because the
     backdrop draws the transforms.
 
+  The colour legend follows the subject too: **By Transform** keys the block's
+  generations (**seed**, **gen 1** … ), one hue per inversion depth, in both
+  Points and Surface.
+
 - **Xaos** — edits the transition graph of systems already composed without
   making every map act on every object. Add a block under **Systems → Combine
   systems**, then use this shared Scene editor for its links. Each detected

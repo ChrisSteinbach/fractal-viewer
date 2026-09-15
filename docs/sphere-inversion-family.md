@@ -1473,3 +1473,35 @@ both dimensions:
 Surface (`planTransformEdit`'s `sphereInversionSubject`, pinned in
 `transform-edit-effects.test.ts`). Nothing on screen reads the transforms.
 Eligibility still refreshes, because its note names the dormant settings.
+
+**The colour legend** keys "By Transform" by generation under a block:
+`sphereInversionGenerationSlots(D)` chips from the same unauthored
+`transformColors` spread Points and Surface use, captioned "seed", "gen 1" …
+"gen N" (`legend-spec.ts`, pinned for 3D/4D Points and Surface). It is
+hidden for a refused block, which draws nothing to key. Before this, it
+showed the placeholder transforms' count (four chips for the presets'
+Sierpinski tetrahedron).
+
+### Verification
+
+- **Numeric-control gate.** `scripts/panel-numeric-control.verify.mjs` now
+  adds a block through its checkbox and walks the pearls, cut-shell and 4D
+  cut-shell rows. A dedicated check requires all six sphere-inversion sliders
+  to be paired and on screen. Both default 393×727 and 390×844 pass every
+  verdict: 95 states, 125 distinct sliders paired, smallest companion 86×44 px,
+  no overflow, no clipped domain value.
+- **Geometry and shading move together** (real driver: Mesa Intel Iris Xe TGL
+  GT2, WebGPU `intel gen-12lp`, compute, 1400×860, 8 antialiasing passes; not
+  a cost measurement). From Kissing Pearls, each edit restarted Surface and
+  settled with 0 exhausted rays:
+  - ball radius .28 → .45 through the numeric field: larger seed balls and
+    fatter pearl chains, covered 24% → 31%;
+  - seed Ball → Shell: nested shell rosettes, 85%;
+  - depth 8 → 2 by keyboard on the range: shallow windows, hues regrouped by
+    generation.
+
+  The document then held
+  `{arrangement: "oct6", radiusFraction: 0.99, seed: {kind: "shell"}, depth: 2}`:
+  the ball size was removed by the kind switch, and the depth written.
+  Frames: `scripts/out/si-controls-{before,after-size,after-shell,after-depth2}.png`
+  (gitignored).
