@@ -469,7 +469,7 @@ function printSurfaceSummary(surfaceDe) {
       console.log(
         `    si-eval ${r.system} ${r.core}: n=${r.n} fail=${r.failures} maxAbs=${r.maxAbsErr.toExponential(2)} ` +
           `p99=${r.p99AbsErr.toExponential(2)} signed=[${r.minGpuMinusCpu.toExponential(2)}, ${r.maxGpuMinusCpu.toExponential(2)}] ` +
-          `excess+=${r.maxPositiveExcess.toExponential(2)} margin=${r.oneSidedMargin.toExponential(2)} oneSidedFail=${r.oneSidedFailures} ` +
+          `excess+=${r.maxPositiveExcess.toExponential(2)} margin=${r.oneSidedMargin.toExponential(2)} raw=${r.maxRawExcess.toExponential(2)}/${r.rawExcessQueries} oneSidedFail=${r.oneSidedFailures} ` +
           `signFlips=${r.memberSignFlips} k3=${k.foldK3}/${r.floors.foldK3} copy=${k.copyWins}/${r.floors.copyWins} ` +
           `gap=${k.gapWins}/${r.floors.gapWins} wall=${k.wallProximity} attr=${r.attributionCompared ?? "?"} ` +
           `genMis=${r.generationMismatches ?? "?"} seedMis=${r.seedMemberMismatches ?? "?"}${r.pass ? "" : " FAIL"}`,
