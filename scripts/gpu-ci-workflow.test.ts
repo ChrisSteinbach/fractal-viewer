@@ -262,9 +262,16 @@ describe("GPU workflow gates", () => {
       // independence for anything is the failure mode this gate exists
       // against, so the fallback failing here fails loudly rather than
       // quietly costing 36 shards per PR forever.
+      //
+      // ZERO DIFF, never HEAD~1..HEAD. The closure is parsed whatever the
+      // diff, so an empty range isolates exactly that. A range over HEAD's
+      // own commit also parsed whatever that commit touched: any tip editing
+      // src/app/main.ts, whose `new Worker` is a loader the walker refuses by
+      // documented fail-closed policy, made this pin fail. The pin would
+      // then have depended on the latest commit, not the checkout.
       const out = execFileSync(
         "node",
-        ["scripts/gpu-ci-plan.mjs", "--base=HEAD~1", "--head=HEAD"],
+        ["scripts/gpu-ci-plan.mjs", "--base=HEAD", "--head=HEAD"],
         { cwd: new URL("..", import.meta.url), encoding: "utf8" },
       );
       const plan = JSON.parse(out);
