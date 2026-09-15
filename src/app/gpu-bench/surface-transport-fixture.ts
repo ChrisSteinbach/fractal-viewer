@@ -168,6 +168,112 @@ export function transportBoundaryQueryCPU(
   return { kind: "refused", reason: 1, t, normal: [0, 0, 0] };
 }
 
+/**
+ * The closed-solid boundary query, f64 — the twin of the kernel's
+ * `opticsBackend: "closedSolid"` emission. Same march structure as
+ * {@link transportBoundaryQueryCPU}, over the SIGNED closed-solid field
+ * (the system's `estimate` is now the union field: negative inside the
+ * optical solid, positive outside, zero only at its surface), with three
+ * differences the sign unlocks:
+ *
+ * 1. **Inside traversal.** Outside, the field understates the distance to
+ *    the solid (the certified conservative bound) and the march steps it
+ *    forward. Inside, `|f|` is the deepest containing part's certified
+ *    depth, which bounds the distance to the union's complement — the
+ *    merged interval along the ray ends at the LAST containing part's
+ *    exit — so stepping `|f|` cannot cross the boundary without sampling
+ *    its band. The estimator march's inside crawl (unsigned `d = 0`
+ *    everywhere inside, the anchor suppression advancing `2·eps` per
+ *    step into the visit cap) has no signed analog: the first steps are
+ *    small and grow geometrically away from the entry wall.
+ * 2. **The medium cross-check.** The caller's `inside` is checked against
+ *    the field's own membership at the anchored restart: beyond the
+ *    anchor envelope (`DIELECTRIC_ANCHOR_ENVELOPE_REL·eps`, within which
+ *    the boundary's own band is consistent with either medium) a
+ *    contradiction refuses `state-mismatch` (reason 3) — the qualified
+ *    fixture's exact-occupancy discipline, made real by the signed field.
+ * 3. **The crossing band is two-sided.** `|f| < eps` crosses from either
+ *    side; the reported advance stays `max(f, 0)` (an inside crossing is
+ *    reported at the query point, an outside one at the band's edge).
+ *
+ * The anchor envelope, crossing scale, step budget, domain gate and
+ * normal taps are the SAME definitions the estimator query imports.
+ */
+export function transportSolidBoundaryQueryCPU(
+  system: TransportFixtureSystem,
+  origin: Vec3,
+  dir: Vec3,
+  anchorPresent: boolean,
+  anchorPoint: Vec3,
+  inside: boolean,
+  eps: number,
+): TransportBoundaryResult {
+  let px = origin[0];
+  let py = origin[1];
+  let pz = origin[2];
+  let t = 0;
+  if (anchorPresent) {
+    const skip = 2 * eps;
+    px += dir[0] * skip;
+    py += dir[1] * skip;
+    pz += dir[2] * skip;
+    t += skip;
+    const f0 = system.estimate([px, py, pz]);
+    if (
+      Number.isFinite(f0) &&
+      ((inside && f0 > DIELECTRIC_ANCHOR_ENVELOPE_REL * eps) ||
+        (!inside && f0 < -DIELECTRIC_ANCHOR_ENVELOPE_REL * eps))
+    ) {
+      return { kind: "refused", reason: 3, t, normal: [0, 0, 0] };
+    }
+  }
+  const tFar = domainExit(system, origin, dir);
+  for (let i = 0; i < TRANSPORT_QUERY_MAX_STEPS; i++) {
+    if (tFar < 0 || t >= tFar) {
+      return { kind: "miss", reason: 0, t, normal: [0, 0, 0] };
+    }
+    const f = system.estimate([px, py, pz]);
+    if (!Number.isFinite(f) || f <= -1e30) {
+      return { kind: "refused", reason: 2, t, normal: [0, 0, 0] };
+    }
+    if (Math.abs(f) < eps) {
+      const dd = Math.max(f, 0);
+      const hx = px + dir[0] * dd;
+      const hy = py + dir[1] * dd;
+      const hz = pz + dir[2] * dd;
+      const tc = t + dd;
+      if (
+        anchorPresent &&
+        Math.hypot(
+          hx - anchorPoint[0],
+          hy - anchorPoint[1],
+          hz - anchorPoint[2],
+        ) <=
+          DIELECTRIC_ANCHOR_ENVELOPE_REL * eps
+      ) {
+        const skip = 2 * eps;
+        px = hx + dir[0] * skip;
+        py = hy + dir[1] * skip;
+        pz = hz + dir[2] * skip;
+        t = tc + skip;
+        continue;
+      }
+      return {
+        kind: "boundary",
+        reason: 0,
+        t: tc,
+        normal: transportOpticalNormal(system, [hx, hy, hz], dir, eps),
+      };
+    }
+    const stride = Math.abs(f) * system.stepScale;
+    px += dir[0] * stride;
+    py += dir[1] * stride;
+    pz += dir[2] * stride;
+    t += stride;
+  }
+  return { kind: "refused", reason: 1, t, normal: [0, 0, 0] };
+}
+
 export type TransportTraceStatus =
   "pending" | "complete" | "residual" | "unresolved" | "invalid";
 
@@ -192,11 +298,27 @@ interface FixturePath {
   bound: number;
 }
 
+/** A backend-supplied boundary query, used by the trace in place of
+ * {@link transportBoundaryQueryCPU}. The closed-solid twin passes
+ * {@link transportSolidBoundaryQueryCPU} here — the extra `inside`
+ * argument is the medium state the estimator query is sign-agnostic
+ * about but the signed query cross-checks. */
+export type TransportQueryFn = (
+  origin: Vec3,
+  dir: Vec3,
+  anchorPresent: boolean,
+  anchorPoint: Vec3,
+  inside: boolean,
+  eps: number,
+) => TransportBoundaryResult;
+
 /** The kernel's `transportTrace`, f64: the primary split at the march's
  * own hit, then the oracle's work-list loop over the twin boundary query.
  * `caps` mirrors the kernel's `transportMaxPaths` option — both engines
  * must run the SAME budget, so the leg passes the value it compiled the
- * kernel with; omitted, the shipped runtime caps. */
+ * kernel with; omitted, the shipped runtime caps. `query` swaps the
+ * boundary backend (the closed-solid emission's twin); the loop text is
+ * otherwise the kernel's, term for term. */
 export function transportTraceCPU(
   system: TransportFixtureSystem,
   origin: Vec3,
@@ -205,6 +327,7 @@ export function transportTraceCPU(
   material: DielectricMaterial,
   bgLinear: Vec3,
   caps?: { maxProcessedPaths: number; maxInterfaces: number },
+  query?: TransportQueryFn,
 ): TransportTraceResult {
   const maxProcessed =
     caps?.maxProcessedPaths ?? SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS;
@@ -288,14 +411,23 @@ export function transportTraceCPU(
       break;
     }
     processed++;
-    const hit = transportBoundaryQueryCPU(
-      system,
-      path.origin,
-      path.dir,
-      path.anchorPresent,
-      path.anchorPoint,
-      eps,
-    );
+    const hit = query
+      ? query(
+          path.origin,
+          path.dir,
+          path.anchorPresent,
+          path.anchorPoint,
+          path.inside,
+          eps,
+        )
+      : transportBoundaryQueryCPU(
+          system,
+          path.origin,
+          path.dir,
+          path.anchorPresent,
+          path.anchorPoint,
+          eps,
+        );
     if (hit.kind === "refused") {
       residual += path.bound;
       status = "unresolved";

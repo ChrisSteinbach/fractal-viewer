@@ -1606,10 +1606,13 @@ export const SURFACE_GPU_TRANSPORT_FAILURE_TRAVERSAL = 4;
 export const SURFACE_GPU_TRANSPORT_FAILURE_INSIDE_MISS = 5;
 
 /** Boundary-query refusal reasons riding the record's third word (the
- * oracle's refusal vocabulary, enumerated). */
+ * oracle's refusal vocabulary, enumerated). STATE_MISMATCH belongs to the
+ * closed-solid backend: the signed field's membership contradicts the
+ * caller-carried medium beyond the anchor envelope. */
 export const SURFACE_GPU_TRANSPORT_REASON_NONE = 0;
 export const SURFACE_GPU_TRANSPORT_REASON_VISIT_CAP = 1;
 export const SURFACE_GPU_TRANSPORT_REASON_INVALID_INPUT = 2;
+export const SURFACE_GPU_TRANSPORT_REASON_STATE_MISMATCH = 3;
 
 /** Ray-state status codes (the `y` component of a march state vec4).
  * PLANE exists only in `groundPlane: true` kernels: a MISS
