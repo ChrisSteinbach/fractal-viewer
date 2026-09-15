@@ -1278,14 +1278,14 @@ Intel Iris Xe (TGL GT2), WebGPU `intel gen-12lp` (software = false),
 `quiet=YES` before launch. These figures are that machine's. The build
 includes the per-generation colour-slot fix (D + 3 hues in compute).
 
-| Preset (menu label)                               | Construction                                                             | View                                                                          | Settle | Covered |
-| ------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------- | -----: | ------: |
-| `inversionPearls` (Kissing Pearls)                | oct6, rf .99, ball .28, D8                                               | eye (.26, .34, 1.42) → origin, fov 62                                         | 10.7 s |   22.0% |
-| `inversionCubePearls` (Cube Pearls)               | cube8, rf .99, ball .42, D8                                              | eye (.39, 1.6, .52) → origin, fov 62                                          | 10.1 s |   22.3% |
-| `inversionVault` (Octahedral Vault)               | oct6, rf .99, cut shell 1 ± .06 (default cut), D8                        | eye (.15, .3, .1) → (−.6, −1, .1), fov 81                                     | 21.3 s |   95.9% |
-| `inversionLace` (Icosahedral Lace)                | ico12, rf .99, shell 1 ± .03, D6                                         | eye (1.2, .87, 1.42) → origin, fov 62                                         | 12.6 s |   39.9% |
-| `inversionVault4` (600-Cell Vault (4D))           | cell600, rf .99, cut shell .9 ± .04 (default cut, `cutDirectionW` 0), D5 | eye (.35, −.05, .06) → (−.99, .15, −.18), fov 77; identity rotor, `w0` 1/(4φ) | 53.0 s |   87.4% |
-| `inversionMedallions4` (600-Cell Medallions (4D)) | cell600, rf .99, shell 1.1 ± .03, D5                                     | eye (1.32, .96, 1.56) → origin, fov 62; `xw` .3, `w0` .1                      | 23.0 s |   40.5% |
+| Preset (menu label)                               | Construction                                                             | View                                                                        | Settle | Covered |
+| ------------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------- | -----: | ------: |
+| `inversionPearls` (Kissing Pearls)                | oct6, rf .99, ball .28, D8                                               | eye (.26, .34, 1.42) → origin, fov 62                                       | 10.7 s |   22.0% |
+| `inversionCubePearls` (Cube Pearls)               | cube8, rf .99, ball .42, D8                                              | eye (.39, 1.6, .52) → origin, fov 62                                        | 10.1 s |   22.3% |
+| `inversionVault` (Octahedral Vault)               | oct6, rf .99, cut shell 1 ± .06 (default cut), D8                        | eye (.15, .3, .1) → (−.6, −1, .1), fov 81                                   | 21.3 s |   95.9% |
+| `inversionLace` (Icosahedral Lace)                | ico12, rf .99, shell 1 ± .03, D6                                         | eye (1.2, .87, 1.42) → origin, fov 62                                       | 12.6 s |   39.9% |
+| `inversionVault4` (600-Cell Vault (4D))           | cell600, rf .99, cut shell .9 ± .04 (default cut, `cutDirectionW` 0), D5 | eye (.35, −.05, .06) → (−.99, .15, −.18), fov 77; `xw` .3, `yw` .2, `w0` .1 | 51.6 s |   83.7% |
+| `inversionMedallions4` (600-Cell Medallions (4D)) | cell600, rf .99, shell 1.1 ± .03, D5                                     | eye (1.32, .96, 1.56) → origin, fov 62; `xw` .3, `w0` .1                    | 23.0 s |   40.5% |
 
 Every parameter lies inside the public ranges above.
 
@@ -1293,7 +1293,7 @@ Every parameter lies inside the public ranges above.
 different arrangement, not a turned copy of the same one:
 
 - **Vault.** Windows change size, some empty out, and the rosettes regroup.
-  Settles in 47.9 s, with 46.8% of pixels differing.
+  Settles in 52.9 s, with 47.2% of pixels differing.
 - **Medallions.** Medallions change their pearl counts and centre rosettes.
   Settles in 20.5 s, with 16.1% of pixels differing.
 
@@ -1323,13 +1323,21 @@ being baked into the table.
   close to the wall and reads as flat red and yellow walls with small
   rosettes. A, from near the centre, looks along the wall away from the cut:
   the cut rim and a horizon above, rows of pearl-window rosettes below.
-  - The kiss slice `1/(4φ)` gives larger rosettes than `w0` .08.
+  - **Posed off the identity rotor.** The cost section records the identity
+    slice as the costliest (it holds the most generators). The preset takes a
+    double rotation, `xw` .3 then `yw` .2, at `w0` .1. Rotated variants from
+    view A settled in 48.9–51.2 s (`xw` .3 `w0` .1; `xw` .15 at the kiss
+    slice; `xw` .3 `yw` .2 `w0` .1). The double rotation was kept: its
+    rosettes are asymmetric, an outward window opens at left, and the cut rim
+    and horizon stay. The identity rotor at the kiss slice (53.0 s) looked
+    comparable and is rejected on the cost rule, not on looks.
   - D4 is indistinguishable from D5 but saves only 4 s. Every vault variant
-    tried (views A and A-pulled-back, D4/D5, `w0` .08/kiss) settled in
-    49–58 s.
-  - **The vault is over the ~30 s preset target on this Iris**, as the cost
-    section's 600-cell cut-shell rows predict. It stays admitted under the
-    no-automatic-give-up line, for the reasons given there.
+    tried, identity or rotated, settled in 49–58 s at this pane; the cost
+    section's 1080p rows put rotated vault poses at 57–60 s.
+  - **The vault is over the ~30 s preset target on this Iris.** It stays a
+    preset under the no-automatic-give-up line: it is the family's primary
+    native 4D subject, and its interior view is a different image from the
+    medallion sphere's exterior, which settles in about 23 s.
 - **Medallions at `xw` .3, `w0` .1, not the double rotation at the kiss
   slice.** Both are genuine slices at the same cost (21–23 s). The single
   `xw` turn gives fuller medallions, pearl rings round a central rosette,
