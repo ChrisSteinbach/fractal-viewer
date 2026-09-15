@@ -112,6 +112,18 @@ export const SPHERE_INVERSION_OVERLAP_TOLERANCE = 1e-12;
 /** Generators within `tol · (r_i + r_j)` of touching are reported tangent. */
 export const SPHERE_INVERSION_TANGENT_TOLERANCE = 1e-9;
 
+/**
+ * How many "By Transform" colour slots a depth-`D` construction has: one per
+ * GENERATION a renderer can attribute. The estimators' winning covering term
+ * has word length fold depth, +1 for a copy, +2 for a gap ball, so a Surface
+ * hit reaches `D + 2`; a Points sample reaches only `D` but reads the same
+ * slot count, so one generation wears one hue in every renderer
+ * (`color.ts`'s `transformColors` spreads hues over the count).
+ */
+export function sphereInversionGenerationSlots(depth: number): number {
+  return depth + 3;
+}
+
 // ----------------------------------------------------------- arrangements
 
 /** One named generator arrangement: centres at distance 1 in `dim`. */

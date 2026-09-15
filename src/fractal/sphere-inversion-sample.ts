@@ -84,6 +84,16 @@ export const SPHERE_INVERSION_SAMPLE_CAP_ATTEMPTS = 1024;
 /** Draws one point may spend before it is skipped. */
 export const SPHERE_INVERSION_SAMPLE_DRAWS = 8;
 
+/**
+ * The most boundary samples one Points cloud draws, whatever the document's
+ * point count asks. A sample costs 3–40x a chaos-game iteration (0.3 us for
+ * the 3D pearls, 4.2 us for the 600-cell vault at depth 5, against 0.1 us),
+ * so the cap holds the worst measured subject near two seconds of worker
+ * time per regeneration; `scripts/sphere-inversion-sample.harness.ts` is the
+ * measurement and `docs/sphere-inversion-family.md` the policy.
+ */
+export const SPHERE_INVERSION_POINTS_MAX = 500_000;
+
 const PILOT_SEED = 0x5eed1a7e;
 
 export type SphereInversionPatchKind = "seed" | "wall";

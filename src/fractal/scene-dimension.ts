@@ -16,14 +16,18 @@
  * dimension (`sphereInversionAuthoredDimension` reads only the arrangement),
  * so repairing that reason never flips the scene.
  *
- * WHAT DOES NOT ROUTE THROUGH HERE, BY DECISION: the IFS renderers' engine
- * choice (the Points chaos game, the Flame and Solid workers, their edit
- * guards). Until the family has a Points/Flame/Solid representation, those
- * modes draw the PRESERVED transforms, and their engine must follow the
- * transforms' own flatness — the 3D engine cannot run a non-flat system
+ * Points routes through here too: a present block replaces the chaos game with
+ * `sphere-inversion-sample.ts`'s exact boundary sampler, so the Points
+ * request's `fourD` is the block's dimension.
+ *
+ * WHAT DOES NOT ROUTE THROUGH HERE, BY DECISION: the Flame and Solid workers
+ * and the transform edit guards. Flame and Solid REFUSE a document carrying a
+ * block (no representation draws the same set), and the transform system the
+ * guards protect is preserved but not drawn, so their engines keep following
+ * the transforms' own flatness — the 3D engine cannot run a non-flat system
  * (`chaos-game.ts`'s `symmetryRotation` throws on a w-plane). `state.ts`'s
- * `displayedIsNonFlat` is the panel's bridge: the scene's dimension while
- * Surface shows the subject, the transforms' elsewhere.
+ * `displayedIsNonFlat` is the panel's bridge: the scene's dimension in Surface
+ * and Points, the transforms' in Flame and Solid.
  */
 import { systemPartsAreNonFlat } from "./affine4";
 import { sphereInversionAuthoredDimension } from "./sphere-inversion";

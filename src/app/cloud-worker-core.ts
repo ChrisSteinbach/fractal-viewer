@@ -51,12 +51,25 @@ import {
   type SerializedPreparedMeshAsset,
 } from "../fractal/mesh-shapes";
 import { iterationRng, mulberry32 } from "../fractal/rng";
+import {
+  resolveSphereInversion,
+  sphereInversionGenerationSlots,
+} from "../fractal/sphere-inversion";
+import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
+import {
+  prepareSphereInversionSampler,
+  sampleSphereInversionCloud,
+  SPHERE_INVERSION_POINTS_MAX,
+} from "../fractal/sphere-inversion-sample";
+import type { SphereInversionSampler } from "../fractal/sphere-inversion-sample";
 import type {
   Bounds,
+  Bounds4,
   ColorMode,
   HybridSchedule,
   SymmetryParams,
   Transform,
+  Vec4,
 } from "../fractal/types";
 import { framingBounds, framingRadius4 } from "./framing-bounds";
 import type { PointTilingOutcome } from "./point-tiling-outcome";
@@ -110,6 +123,15 @@ export interface CloudRequest {
    * with the request so a delayed result reports the policy it actually ran,
    * never whatever the live checkbox says when it arrives. */
   balloonEcho?: boolean;
+  /** The raw authored sphere-inversion block, or `null`/absent. When present
+   * it REPLACES the transform system as the cloud's subject: the worker
+   * resolves it in its own realm and draws `sphere-inversion-sample.ts`'s
+   * exact boundary sample of its seed orbit instead of running the chaos
+   * game (a refused block draws nothing), and `fourD` is the block's
+   * dimension (`scene-dimension.ts`). Read from the LIVE document even
+   * mid-morph, like `schedule`: the block never interpolates, so a
+   * replace-load's target block applies from the first intermediate. */
+  sphereInversion?: SphereInversionAuthored | null;
   /** 3D color bake inputs (`buildColors`); unused on the 4D path, where color
    * is shader-owned or rebaked main-side per mode (see main.ts's
    * `applyFourDColor`). */
@@ -164,6 +186,12 @@ export interface CloudResult3D extends ChaosGameResult {
   canonicalColorSource?: PointColorSource3D;
   /** Present only when the request authored tiling (active or refused). */
   pointTiling?: PointTilingOutcome;
+  /** Present exactly when the cloud is a sphere-inversion boundary sample:
+   * `transformIndices` then carry each point's GENERATION, and "By
+   * Transform" colours read this many generation slots
+   * (`sphereInversionGenerationSlots`) instead of the document's
+   * transforms. */
+  generationCount?: number;
   /** Certified origin ball of this landed tiled set, independent of sampling. */
   tilingOriginRadius?: number;
 }
@@ -185,6 +213,9 @@ export interface CloudResult4D extends ChaosGame4Result {
   frameRadius: number;
   canonicalColorSource?: PointColorSource4D;
   pointTiling?: PointTilingOutcome;
+  /** {@link CloudResult3D.generationCount}'s 4D twin: present exactly for a
+   * sphere-inversion boundary sample. */
+  generationCount?: number;
   tilingOriginRadius?: number;
 }
 
@@ -304,6 +335,12 @@ function installRequestMeshAssets(
  * visibly boiled.
  */
 export function generateCloud(request: CloudRequest): CloudResult {
+  // A sphere-inversion block replaces the transform system as the subject:
+  // no mesh, tiling plan or chaos-game stream is built for it.
+  if (request.sphereInversion) {
+    return generateSphereInversionCloud(request, request.sphereInversion);
+  }
+
   // Guard the raw authored wire before mesh installation, session fitting,
   // RNG construction or any output-capacity typed arrays. Main-thread state
   // already clamps authored points to 5M; this makes that memory invariant
@@ -519,6 +556,235 @@ export function generateCloud(request: CloudRequest): CloudResult {
     colors,
     frameBounds,
     ...(refusedOutcome ? { pointTiling: refusedOutcome } : {}),
+  };
+}
+
+/** The tiling refusal a sphere-inversion Points cloud discloses
+ * (`surface-eligibility.ts`'s combination policy: no tiling wrapper covers the
+ * family). The cloud is the untiled seed orbit's boundary. */
+export const SPHERE_INVERSION_POINT_TILING_NOTE =
+  "Space tiling is not available with a sphere-inversion scene; Points draws the untiled seed orbit.";
+
+/** The "By Transform" slots of a sphere-inversion sample: `count` slots with
+ * no authored colour index, so hues spread evenly over the generations the
+ * way `transformColors` spreads them over unauthored transforms. */
+export function sphereInversionColorSlots(
+  count: number,
+): Pick<Transform, "colorIndex">[] {
+  return Array.from({ length: count }, () => ({}));
+}
+
+let cachedSphereInversionSampler: {
+  key: string;
+  sampler: SphereInversionSampler | null;
+} | null = null;
+
+/** The prepared sampler for an authored block, or `null` when the resolver
+ * refuses it. Its pilot costs about 100 ms at the 600-cell, so a regeneration
+ * that did not touch the block (a colour or point-count edit, every morph
+ * intermediate) reuses the last one. The key is the verbatim JSON, which is
+ * what the document persists. */
+function sphereInversionSamplerFor(
+  authored: SphereInversionAuthored,
+): SphereInversionSampler | null {
+  const key = JSON.stringify(authored);
+  if (cachedSphereInversionSampler?.key === key) {
+    return cachedSphereInversionSampler.sampler;
+  }
+  const resolution = resolveSphereInversion(authored);
+  const sampler = resolution.ok
+    ? prepareSphereInversionSampler(resolution.construction)
+    : null;
+  cachedSphereInversionSampler = { key, sampler };
+  return sampler;
+}
+
+function sampledBounds3(positions: Float32Array, count: number): Bounds {
+  if (count === 0) {
+    return {
+      minX: 0,
+      maxX: 0,
+      minY: 0,
+      maxY: 0,
+      minZ: 0,
+      maxZ: 0,
+      minR: 0,
+      maxR: 0,
+    };
+  }
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  let minR = Infinity;
+  let maxR = -Infinity;
+  for (let i = 0; i < count; i++) {
+    const x = positions[i * 3];
+    const y = positions[i * 3 + 1];
+    const z = positions[i * 3 + 2];
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+    minZ = Math.min(minZ, z);
+    maxZ = Math.max(maxZ, z);
+    const r = Math.sqrt(x * x + y * y + z * z);
+    minR = Math.min(minR, r);
+    maxR = Math.max(maxR, r);
+  }
+  return { minX, maxX, minY, maxY, minZ, maxZ, minR, maxR };
+}
+
+/** `runChaosGame4`'s bounds, box centre, exact radius about that centre and
+ * exact origin radius, over a sampled cloud. */
+function sampledBounds4(
+  positions: Float32Array,
+  w: Float32Array,
+  count: number,
+): { bounds: Bounds4; center: Vec4; radius: number; originRadius: number } {
+  if (count === 0) {
+    return {
+      bounds: {
+        minX: 0,
+        maxX: 0,
+        minY: 0,
+        maxY: 0,
+        minZ: 0,
+        maxZ: 0,
+        minW: 0,
+        maxW: 0,
+      },
+      center: [0, 0, 0, 0],
+      radius: 0,
+      originRadius: 0,
+    };
+  }
+  const min = [Infinity, Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < count; i++) {
+    for (let a = 0; a < 4; a++) {
+      const v = a < 3 ? positions[i * 3 + a] : w[i];
+      min[a] = Math.min(min[a], v);
+      max[a] = Math.max(max[a], v);
+    }
+  }
+  const center: Vec4 = [0, 1, 2, 3].map((a) => (min[a] + max[a]) / 2) as Vec4;
+  let radiusSq = 0;
+  let originSq = 0;
+  for (let i = 0; i < count; i++) {
+    let d2 = 0;
+    let o2 = 0;
+    for (let a = 0; a < 4; a++) {
+      const v = a < 3 ? positions[i * 3 + a] : w[i];
+      d2 += (v - center[a]) ** 2;
+      o2 += v * v;
+    }
+    radiusSq = Math.max(radiusSq, d2);
+    originSq = Math.max(originSq, o2);
+  }
+  return {
+    bounds: {
+      minX: min[0],
+      maxX: max[0],
+      minY: min[1],
+      maxY: max[1],
+      minZ: min[2],
+      maxZ: max[2],
+      minW: min[3],
+      maxW: max[3],
+    },
+    center,
+    radius: Math.sqrt(radiusSq),
+    originRadius: Math.sqrt(originSq),
+  };
+}
+
+/**
+ * A sphere-inversion document's cloud: `sphere-inversion-sample.ts`'s exact
+ * boundary sample of the block's seed orbit, at most
+ * {@link SPHERE_INVERSION_POINTS_MAX} points from the request's own seed,
+ * shaped exactly like a chaos-game result so every downstream consumer
+ * (upload, framing, 4D projection) is unchanged. Each point's generation
+ * rides `transformIndices`. A refused block draws an EMPTY cloud of the
+ * request's dimension (the Surface gate's note says why), and an authored
+ * tiling block is disclosed as refused rather than silently dropped.
+ */
+function generateSphereInversionCloud(
+  request: CloudRequest,
+  authored: SphereInversionAuthored,
+): CloudResult {
+  const sampler = sphereInversionSamplerFor(authored);
+  if (sampler && (sampler.dim === 4) !== request.fourD) {
+    throw new Error(
+      "sphere-inversion cloud request's fourD disagrees with its arrangement",
+    );
+  }
+  const generationCount = sphereInversionGenerationSlots(sampler?.depth ?? 0);
+  const cloud = sampler
+    ? sampleSphereInversionCloud(
+        sampler,
+        Math.min(request.numPoints, SPHERE_INVERSION_POINTS_MAX),
+        mulberry32(request.seed),
+      )
+    : null;
+  const count = cloud?.count ?? 0;
+  const positions = cloud?.positions ?? new Float32Array(0);
+  const transformIndices = cloud?.generations ?? new Uint8Array(0);
+  const disclosure = request.tiling
+    ? {
+        pointTiling: {
+          availability: "refused",
+          note: SPHERE_INVERSION_POINT_TILING_NOTE,
+        } satisfies PointTilingOutcome,
+      }
+    : {};
+  if (request.fourD) {
+    const w = cloud?.w ?? new Float32Array(0);
+    const { bounds, center, radius, originRadius } = sampledBounds4(
+      positions,
+      w,
+      count,
+    );
+    return {
+      id: request.id,
+      fourD: true,
+      positions,
+      w,
+      transformIndices,
+      count,
+      bounds,
+      center,
+      radius,
+      originRadius,
+      frameRadius: framingRadius4(positions, w, count, center),
+      generationCount,
+      ...disclosure,
+    };
+  }
+  const result: ChaosGameResult = {
+    positions,
+    transformIndices,
+    count,
+    bounds: sampledBounds3(positions, count),
+  };
+  const colors = buildColors(
+    result,
+    sphereInversionColorSlots(generationCount),
+    request.colorMode,
+    request.colorGamma,
+    request.rampPalette,
+    request.positionAxisColors,
+  );
+  return {
+    id: request.id,
+    fourD: false,
+    ...result,
+    colors,
+    frameBounds: framingBounds(positions, count),
+    generationCount,
+    ...disclosure,
   };
 }
 

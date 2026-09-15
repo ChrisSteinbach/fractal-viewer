@@ -3,7 +3,16 @@ import {
   cloudResultTransfers,
   generateCloud,
   MAX_CANONICAL_COLOR_SOURCE_BYTES,
+  SPHERE_INVERSION_POINT_TILING_NOTE,
+  sphereInversionColorSlots,
 } from "./cloud-worker-core";
+import { resolveSphereInversion } from "../fractal/sphere-inversion";
+import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
+import {
+  prepareSphereInversionSampler,
+  sampleSphereInversionCloud,
+  SPHERE_INVERSION_POINTS_MAX,
+} from "../fractal/sphere-inversion-sample";
 import type {
   CloudRequest,
   CloudResult,
@@ -1068,4 +1077,105 @@ describe("cloudResultTransfers", () => {
       }
     },
   );
+});
+
+describe("generateCloud sphere-inversion block", () => {
+  function construction(authored: SphereInversionAuthored) {
+    const r = resolveSphereInversion(authored);
+    if (!r.ok) throw new Error(r.reasons.join("; "));
+    return r.construction;
+  }
+
+  it("draws the block's boundary sample instead of the chaos game in 3D (oracle)", () => {
+    const block: SphereInversionAuthored = { arrangement: "oct6", depth: 3 };
+    const result = as3D(
+      generateCloud(cloudRequest({ sphereInversion: block, seed: 9 })),
+    );
+    const expected = sampleSphereInversionCloud(
+      prepareSphereInversionSampler(construction(block)),
+      500,
+      mulberry32(9),
+    );
+    expect(result.count).toBe(500);
+    expect(result.positions).toEqual(expected.positions);
+    expect(result.transformIndices).toEqual(expected.generations);
+  });
+
+  it("draws the native 4D sample with its own w when the block is 4D (oracle)", () => {
+    const block: SphereInversionAuthored = {
+      arrangement: "cell24",
+      radiusFraction: 0.98,
+      seed: { kind: "shell" },
+      depth: 2,
+    };
+    const result = as4D(
+      generateCloud(
+        cloudRequest({ sphereInversion: block, fourD: true, seed: 11 }),
+      ),
+    );
+    const expected = sampleSphereInversionCloud(
+      prepareSphereInversionSampler(construction(block)),
+      500,
+      mulberry32(11),
+    );
+    expect(result.positions).toEqual(expected.positions);
+    expect(result.w).toEqual(expected.w);
+  });
+
+  it("reports the family's generation slot count, depth + 3", () => {
+    const result = generateCloud(
+      cloudRequest({ sphereInversion: { arrangement: "oct6", depth: 4 } }),
+    );
+    expect(result.generationCount).toBe(7);
+  });
+
+  it("bakes By Transform colours over the generation slots, not the transforms (oracle)", () => {
+    const result = as3D(
+      generateCloud(
+        cloudRequest({ sphereInversion: { arrangement: "oct6", depth: 3 } }),
+      ),
+    );
+    expect(result.colors).toEqual(
+      buildColors(result, sphereInversionColorSlots(6), "transform", 1),
+    );
+  });
+
+  it("carries no generation count for an ordinary chaos-game cloud", () => {
+    expect(generateCloud(cloudRequest()).generationCount).toBeUndefined();
+  });
+
+  it("draws an empty cloud of the request's dimension for a refused block", () => {
+    const result = generateCloud(
+      cloudRequest({
+        sphereInversion: { arrangement: "cell600", depth: 99 },
+        fourD: true,
+      }),
+    );
+    expect(result.fourD).toBe(true);
+    expect(result.count).toBe(0);
+  });
+
+  it("caps the sample at the family's Points maximum", () => {
+    const result = generateCloud(
+      cloudRequest({
+        sphereInversion: { arrangement: "oct6", depth: 2 },
+        numPoints: SPHERE_INVERSION_POINTS_MAX + 1000,
+      }),
+    );
+    expect(result.count).toBe(SPHERE_INVERSION_POINTS_MAX);
+  });
+
+  it("discloses an authored tiling block as refused and draws the untiled sample", () => {
+    const result = generateCloud(
+      cloudRequest({
+        sphereInversion: { arrangement: "oct6", depth: 2 },
+        tiling: { group: "a3" },
+      }),
+    );
+    expect(result.pointTiling).toEqual({
+      availability: "refused",
+      note: SPHERE_INVERSION_POINT_TILING_NOTE,
+    });
+    expect(result.count).toBe(500);
+  });
 });

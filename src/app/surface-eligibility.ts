@@ -42,6 +42,7 @@ import {
 import { shapeMeshIds, shapeSdfSource } from "../fractal/shapes";
 import { resolveSphereInversion } from "../fractal/sphere-inversion";
 import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
+import { SPHERE_INVERSION_POINTS_MAX } from "../fractal/sphere-inversion-sample";
 import type { ShapeSpec } from "../fractal/shapes";
 import { TILING_GROUP_INFO, isLatticeTilingSpec } from "../fractal/tiling";
 import type { TilingSpec } from "../fractal/tiling";
@@ -52,6 +53,7 @@ import type {
   Transform,
 } from "../fractal/types";
 import { MAX_AUTHORED_SHAPE_SOURCE_BYTES } from "./authored-shape";
+import type { RenderMode } from "./state";
 import { SURFACE_MAX_MAPS, SURFACE_MAX_RECORDS } from "./surface-material";
 import { SURFACE4_MAX_MAPS } from "./surface-material-4d";
 
@@ -232,6 +234,26 @@ export function sphereInversionSessionRefusal(session: {
   return session.balloonEcho
     ? "Balloon is not available with a sphere-inversion scene: its echo would invert this estimator, whose inner queries and far-field ball have not been measured. Turn Balloon off to enter Surface."
     : null;
+}
+
+/**
+ * The render-mode half of the family's per-mode verdict
+ * (`docs/sphere-inversion-family.md`): Flame and Sampled Solid have no
+ * representation that draws a block's seed orbit, so a document carrying a
+ * block refuses both, in 3D and 4D alike; Points draws the exact boundary
+ * sample and Surface traces the estimator. A PRESENT block refuses whether or
+ * not it resolves — a refused block is still the scene's subject, and drawing
+ * the preserved transforms instead would show a different object. Returns the
+ * reason (the note beside the mode switch and every refused door's toast), or
+ * `null` when `mode` may be entered.
+ */
+export function sphereInversionRenderModeRefusal(
+  block: SphereInversionAuthored | null | undefined,
+  mode: RenderMode,
+): string | null {
+  if (block === null || block === undefined) return null;
+  if (mode !== "flame" && mode !== "solid") return null;
+  return `Flame and Sampled Solid are unavailable for a sphere-inversion scene: neither draws its seed orbit. Points samples the orbit's boundary exactly (at most ${SPHERE_INVERSION_POINTS_MAX.toLocaleString("en-US")} points), and Surface traces it.`;
 }
 
 /** The one machine fact plus the renderer availability the document cannot

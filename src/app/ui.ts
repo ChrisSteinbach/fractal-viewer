@@ -2539,6 +2539,10 @@ export class Ui {
    * query-space echo. Session routing owns this transient result; it is not
    * authored AppState and never changes the shared Balloon editor's value. */
   private solidBalloonAvailable = true;
+  /** Whether the document carries a sphere-inversion block (set with the
+   * Flame/Solid refusal): Points draws its boundary sample, over which the
+   * Balloon echo stays dormant. */
+  private sphereInversionScene = false;
 
   // The surface render's mode-gated status block contains its hint and trace
   // progress (see setSurfaceProgress). The document-derived eligibility note
@@ -2546,6 +2550,7 @@ export class Ui {
   // The mode button carries the gate and describes itself with that note.
   private readonly surfaceStatus: HTMLElement;
   private readonly surfaceNote: HTMLElement;
+  private readonly sphereInversionModeNote: HTMLElement;
   /** Gate-level escape hatch shown only when the analyzer says disabling the
    * authored trap geometry resolves the refusal. Never part of the contextual
    * Surface inspector sections. */
@@ -3238,6 +3243,7 @@ export class Ui {
     this.solidStatus = this.byId("solidStatus");
     this.surfaceStatus = this.byId("surfaceStatus");
     this.surfaceNote = this.byId("surfaceNote");
+    this.sphereInversionModeNote = this.byId("sphereInversionModeNote");
     this.surfaceEligibilityRecoveryBtn = this.byId(
       "surfaceEligibilityRecoveryBtn",
     );
@@ -4511,16 +4517,26 @@ export class Ui {
       this.balloonEchoCheckbox.checked &&
       this.landedPointTilingOutcome?.availability === "active" &&
       this.landedPointTilingOutcome.kind === "lattice";
+    // Not disabled: Surface's session refusal asks the user to turn it off.
+    const heldSphereInversion =
+      context.renderMode === "points" &&
+      this.balloonEchoCheckbox.checked &&
+      this.sphereInversionScene;
     const pendingReason = heldLattice
       ? "Balloon stays dormant over the earlier lattice cloud until regeneration installs finite or ordinary Points. Use Regenerate if Auto-update is off."
-      : "";
+      : heldSphereInversion
+        ? "Balloon stays dormant over a sphere-inversion scene: the family has no echo. The setting is kept for other scenes."
+        : "";
 
     this.balloonEchoCheckbox.disabled = refused;
     this.balloonPaletteSelect.disabled = refused;
     this.balloonRadiusRow.classList.toggle("hidden", !showDependent);
     this.balloonTintRow.classList.toggle("hidden", !showDependent);
     this.balloonNote.textContent = reason || pendingReason;
-    this.balloonNote.classList.toggle("hidden", !refused && !heldLattice);
+    this.balloonNote.classList.toggle(
+      "hidden",
+      !refused && !heldLattice && !heldSphereInversion,
+    );
 
     const editor = this.balloonCustomPaletteEditor;
     const stopInputs = Array.from(
@@ -7450,6 +7466,26 @@ export class Ui {
         requested,
       ),
     );
+  }
+
+  /**
+   * Reflect a sphere-inversion block's Flame/Solid refusal (the family's
+   * per-mode verdict in `docs/sphere-inversion-family.md`): a non-null note
+   * disables both mode buttons and mirrors the complete reason into the
+   * persistent note beside the switch, which both buttons name with
+   * `aria-describedby`; `null` restores the default affordance and clears the
+   * text. The document keeps its render-mode-independent state either way.
+   */
+  setSphereInversionModeRefusal(note: string | null): void {
+    const { flame, solid } = this.modeButtons;
+    flame.disabled = note !== null;
+    solid.disabled = note !== null;
+    flame.title = note ?? "Fractal-flame exposure of the current view";
+    solid.title =
+      note ?? "Sampled voxel-density Solid; distinct from analytic Surface";
+    this.setReasonNote(this.sphereInversionModeNote, note ?? "");
+    this.sphereInversionScene = note !== null;
+    this.syncBalloonRows();
   }
 
   /**
