@@ -212,16 +212,22 @@ describe("resolveSphereInversion", () => {
     );
   });
 
-  it("refuses a ball seed that reaches into a generator and points at the cap kind", () => {
-    expect(refusal({ arrangement: "oct6", seed: { size: 0.5 } })).toMatch(
-      /meets a generator ball.*cap/,
-    );
+  it("admits a ball seed that crosses the generators: the seed is its intersection with the fundamental domain", () => {
+    const r = resolved({
+      arrangement: "oct6",
+      radiusFraction: 0.93,
+      seed: { size: 1.15 },
+    });
+    expect(r.construction.seed).toEqual([
+      { center: [0, 0, 0], radius: 1.15, complement: false },
+    ]);
+    expect(r.eligibility.status).toBe("eligible");
   });
 
-  it("refuses a cap that stays inside the central void and points at the ball kind", () => {
-    expect(
-      refusal({ arrangement: "oct6", seed: { kind: "cap", size: 0.2 } }),
-    ).toMatch(/meets no generator ball.*ball/);
+  it("refuses the retired cap spelling as an unknown seed kind rather than aliasing it to a ball", () => {
+    expect(refusal({ arrangement: "oct6", seed: { kind: "cap" } })).toMatch(
+      /unknown seed kind "cap" \(known: ball, shell, cutShell\)/,
+    );
   });
 
   it("refuses a shell as thick as its radius", () => {
@@ -386,7 +392,7 @@ describe("buildSphereInversionTables", () => {
   });
 
   it("encloses the generators and the bounded seed in its bounding radius", () => {
-    const r = resolved({ arrangement: "oct6", seed: { kind: "cap" } });
+    const r = resolved({ arrangement: "oct6", seed: { size: 1.15 } });
     const t = buildSphereInversionTables(r.construction);
     expect(t.boundingRadius).toBeCloseTo(
       Math.max(1.15, 1 + 0.99 * Math.SQRT1_2),
