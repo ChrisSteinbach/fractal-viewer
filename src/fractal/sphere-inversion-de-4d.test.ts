@@ -443,6 +443,79 @@ describe("the refused slab", () => {
   });
 });
 
+describe("the cutoff contract against the explicit orbit (4D)", () => {
+  const CUTOFFS = [1e-3, 1e-2, 0.05, 0.2];
+  const shellDepth2 = () =>
+    construction({
+      arrangement: "cell24",
+      radiusFraction: 0.98,
+      seed: { kind: "shell" },
+      depth: 2,
+    });
+
+  it("at or above the cutoff returns the full estimate, never above the true distance", () => {
+    const c = shellDepth2();
+    const de = buildSphereInversionDE4(c);
+    const pieces = enumerateSeedOrbit(c);
+    let checked = 0;
+    for (const p of queries4(c, 120, 0xc4a)) {
+      const truth = explicitOrbitDistance(pieces, p);
+      const full = estimateSphereInversionDistance4(de, p);
+      for (const cutoff of CUTOFFS) {
+        const cut = estimateSphereInversionDistance4(de, p, cutoff);
+        if (cut < cutoff) continue;
+        checked++;
+        expect(cut).toBe(full);
+        expect(cut).toBeLessThanOrEqual(truth * (1 + 1e-9) + 1e-12);
+      }
+    }
+    expect(checked).toBeGreaterThan(100);
+  });
+
+  it("returns below the cutoff whenever the true distance is below it", () => {
+    const c = shellDepth2();
+    const de = buildSphereInversionDE4(c);
+    const pieces = enumerateSeedOrbit(c);
+    let near = 0;
+    for (const p of queries4(c, 120, 0xc4b)) {
+      const truth = explicitOrbitDistance(pieces, p);
+      for (const cutoff of CUTOFFS) {
+        if (!(truth < cutoff)) continue;
+        near++;
+        expect(estimateSphereInversionDistance4(de, p, cutoff)).toBeLessThan(
+          cutoff,
+        );
+      }
+    }
+    expect(near).toBeGreaterThan(40);
+  });
+
+  it("takes the uncut estimator's decision even with the cutoff on the full estimate to the ulp", () => {
+    const de = buildSphereInversionDE4(
+      construction({
+        arrangement: "cell24",
+        radiusFraction: 0.98,
+        seed: { kind: "shell" },
+        depth: 5,
+      }),
+    );
+    const rng = mulberry32(0xc4c);
+    let positive = 0;
+    for (let i = 0; i < 3000; i++) {
+      const p = randomUnit4(rng).map((x) => x * 1.2 * rng()) as Vec4;
+      const full = estimateSphereInversionDistance4(de, p);
+      if (!(full > 0)) continue;
+      positive++;
+      expect(estimateSphereInversionDistance4(de, p, full)).toBe(full);
+      const above = full * (1 + Number.EPSILON);
+      expect(estimateSphereInversionDistance4(de, p, above)).toBeLessThan(
+        above,
+      );
+    }
+    expect(positive).toBeGreaterThan(1000);
+  });
+});
+
 describe("the cutoff contract and attribution (4D)", () => {
   it("returns the full value bit for bit at or above the cutoff, and a sub-cutoff value only when the full value is below it", () => {
     const de = buildSphereInversionDE4(
