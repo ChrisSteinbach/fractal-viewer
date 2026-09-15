@@ -90,6 +90,21 @@ export const SPHERE_INVERSION_MAX_DEPTH = 32;
  * of f64's sixteen digits. */
 export const SPHERE_INVERSION_PLANE_SCALE_LIMIT = 1e6;
 
+/**
+ * The relative margin a cutoff exit must clear: an exit is taken only when
+ * the transported running minimum `v` satisfies `v · (1 + margin) < cutoff`.
+ * The exact transport is monotone, so `v` is at least the full estimate; its
+ * f64 EVALUATION is not exactly monotone (a quotient of two rounded,
+ * increasing terms), so without a margin a query whose full estimate sits
+ * within a few ulps of the cutoff could exit below it while the full value
+ * does not — the decision `result < cutoff` would then differ from the
+ * uncut estimator's. Each transport step's relative rounding is a few ulps
+ * and the step's sensitivity `s / (s + d)` never amplifies it, so over the
+ * {@link SPHERE_INVERSION_MAX_DEPTH} steps the two evaluations differ by far
+ * less than `2^-40`; exits inside that band fall through to the full scan.
+ */
+export const SPHERE_INVERSION_CUTOFF_EXIT_MARGIN = 2 ** -40;
+
 /** Generators overlap when their gap falls below `−tol · (r_i + r_j)`. The
  * tolerance admits tangency computed in f64 (a fraction of exactly 1). */
 export const SPHERE_INVERSION_OVERLAP_TOLERANCE = 1e-12;
@@ -913,10 +928,12 @@ export function transportSphereInversionBound(
  * The folded-coordinate value below which the transported result would fall
  * below `cutoff`: the transport's monotone inverse `d = s·y/(r − y)` applied
  * outermost first (`Infinity` once `y >= r`, where no folded value reaches
- * the cutoff). It deliberately ignores the transport's `1 + 2^-20` margin,
- * so it can only OVER-state the threshold; the estimators confirm every exit
- * by transporting forward, so this decides when an exit is TRIED, never
- * whether one is taken.
+ * the cutoff). It ignores the transport's `1 + 2^-20` margin, which puts it
+ * slightly BELOW the true threshold (an exit may be tried late, never
+ * wrongly), and f64 rounding can move it either way; the estimators confirm
+ * every exit by transporting forward against
+ * {@link SPHERE_INVERSION_CUTOFF_EXIT_MARGIN}, so this decides when an exit
+ * is TRIED, never whether one is taken.
  */
 export function sphereInversionFoldedCutoff(
   foldRadius: Float64Array,

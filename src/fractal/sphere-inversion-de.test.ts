@@ -322,6 +322,87 @@ describe("the cutoff contract", () => {
   });
 });
 
+describe("the cutoff contract against the explicit orbit", () => {
+  const CUTOFFS = [1e-3, 1e-2, 0.05, 0.2];
+  const shellDepth2 = () =>
+    construction({ arrangement: "cube8", seed: { kind: "shell" }, depth: 2 });
+
+  it("at or above the cutoff returns the full estimate, never above the true distance", () => {
+    const c = shellDepth2();
+    const de = buildSphereInversionDE(c);
+    const pieces = enumerateSeedOrbit(c);
+    let checked = 0;
+    for (const p of queries(c, 300, 0xc0a)) {
+      const truth = explicitOrbitDistance(pieces, p);
+      const full = estimateSphereInversionDistance(de, p);
+      for (const cutoff of CUTOFFS) {
+        const cut = estimateSphereInversionDistance(de, p, cutoff);
+        if (cut < cutoff) continue;
+        checked++;
+        expect(cut).toBe(full);
+        expect(cut).toBeLessThanOrEqual(truth * (1 + 1e-9) + 1e-12);
+      }
+    }
+    expect(checked).toBeGreaterThan(300);
+  });
+
+  it("returns below the cutoff whenever the true distance is below it", () => {
+    const c = shellDepth2();
+    const de = buildSphereInversionDE(c);
+    const pieces = enumerateSeedOrbit(c);
+    let near = 0;
+    for (const p of queries(c, 300, 0xc0b)) {
+      const truth = explicitOrbitDistance(pieces, p);
+      for (const cutoff of CUTOFFS) {
+        if (!(truth < cutoff)) continue;
+        near++;
+        expect(estimateSphereInversionDistance(de, p, cutoff)).toBeLessThan(
+          cutoff,
+        );
+      }
+    }
+    expect(near).toBeGreaterThan(100);
+  });
+
+  it("takes the uncut estimator's decision even with the cutoff on the full estimate to the ulp", () => {
+    const de = buildSphereInversionDE(
+      construction({ arrangement: "ico12", seed: { kind: "shell" }, depth: 5 }),
+    );
+    const rng = mulberry32(0xc0c);
+    let positive = 0;
+    for (let i = 0; i < 4000; i++) {
+      const p = randomUnit(rng).map((x) => x * 1.2 * Math.cbrt(rng())) as Vec3;
+      const full = estimateSphereInversionDistance(de, p);
+      if (!(full > 0)) continue;
+      positive++;
+      expect(estimateSphereInversionDistance(de, p, full)).toBe(full);
+      const above = full * (1 + Number.EPSILON);
+      expect(estimateSphereInversionDistance(de, p, above)).toBeLessThan(above);
+    }
+    expect(positive).toBeGreaterThan(1000);
+  });
+
+  it("returns a sub-cutoff exit value between the full estimate and the cutoff: a decision value, not a distance to transport", () => {
+    const de = buildSphereInversionDE(
+      construction({ arrangement: "ico12", seed: { kind: "shell" }, depth: 5 }),
+    );
+    const rng = mulberry32(0xc0d);
+    let exits = 0;
+    for (let i = 0; i < 4000; i++) {
+      const p = randomUnit(rng).map((x) => x * 1.2 * Math.cbrt(rng())) as Vec3;
+      const full = estimateSphereInversionDistance(de, p);
+      for (const cutoff of [1e-2, 0.05]) {
+        const cut = estimateSphereInversionDistance(de, p, cutoff);
+        if (cut >= cutoff || cut === full) continue;
+        exits++;
+        expect(cut).toBeGreaterThan(full);
+        expect(cut).toBeLessThan(cutoff);
+      }
+    }
+    expect(exits).toBeGreaterThan(0);
+  });
+});
+
 describe("sphereInversionHitInfo attribution", () => {
   it("carries the plain estimate bit for bit", () => {
     const de = buildSphereInversionDE(

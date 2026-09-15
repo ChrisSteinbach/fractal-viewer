@@ -51,18 +51,34 @@
  *     refused when the DE is built.
  *   - Far queries: the seed term is `|p| − ρ`, finite at any f64 distance.
  *
- * THE CUTOFF CONTRACT is `surface-de.ts`'s: a returned value `>= cutoff`
- * equals the `cutoff = 0` result exactly, and a value `< cutoff` guarantees
- * the full result is `< cutoff`. An exit is taken only after transporting
- * the RUNNING minimum forward: that minimum is an exact lower bound on the
- * distance to the part of the cover already scanned — never a
- * cutoff-shortened distance — so the transport's hypothesis holds, and the
- * transported value is at least the full estimate. The folded-coordinate
- * threshold only decides when such an exit is worth trying.
+ * THE CUTOFF CONTRACT is `surface-de.ts`'s, pinned against the explicit
+ * orbit in the tests:
+ *   - a return `>= cutoff` equals the `cutoff = 0` result bit for bit, so it
+ *     is the certified lower bound (never above the true distance);
+ *   - a return `< cutoff` happens EXACTLY when the full result is `< cutoff`
+ *     — so whenever the true distance is below the cutoff, and otherwise
+ *     only where the full bound itself already under-reads, the lower
+ *     bound's own safe direction. The cutoff never changes a decision.
+ *   - a sub-cutoff exit value lies in `[full, cutoff)`: it is a DECISION
+ *     value, not a distance, and no caller may transport, damp or compose it
+ *     as one (`inversion.ts`'s `inversionDistanceLowerBound` forbids a
+ *     cutoff-shortened input; a Balloon- or lens-style wrapper must query
+ *     with cutoff 0 or honour the decision alone).
+ * An exit is taken only after transporting the RUNNING minimum forward:
+ * that minimum is an exact lower bound on the distance to the part of the
+ * cover already scanned — never a cutoff-shortened distance — so the
+ * transport's hypothesis holds, and the transported value is at least the
+ * full estimate. The exit must clear `SPHERE_INVERSION_CUTOFF_EXIT_MARGIN`
+ * so f64 rounding in the transport cannot flip the decision; no such flip
+ * was found without it (about 580,000 positive queries across four
+ * fixtures with the cutoff on the full value to the ulp), so the margin is a
+ * written-argument hardening, not a measured repair. The folded-coordinate
+ * threshold only decides when an exit is worth trying.
  *
  * NO SLAB IN EITHER DIMENSION: see `sphere-inversion-de-4d.ts`.
  */
 import {
+  SPHERE_INVERSION_CUTOFF_EXIT_MARGIN,
   SPHERE_INVERSION_FOLD_DOMAIN,
   SPHERE_INVERSION_FOLD_EXHAUSTED,
   SPHERE_INVERSION_FOLD_POLE,
@@ -250,7 +266,7 @@ function evaluate3(
       k,
       best,
     );
-    if (v < cutoff) {
+    if (v * (1 + SPHERE_INVERSION_CUTOFF_EXIT_MARGIN) < cutoff) {
       result = v;
       return true;
     }

@@ -40,6 +40,7 @@
  * f64 ONLY; the f32 argument belongs to the shader mirror.
  */
 import {
+  SPHERE_INVERSION_CUTOFF_EXIT_MARGIN,
   SPHERE_INVERSION_FOLD_DOMAIN,
   SPHERE_INVERSION_FOLD_EXHAUSTED,
   SPHERE_INVERSION_FOLD_POLE,
@@ -238,7 +239,7 @@ function evaluate4(
       k,
       best,
     );
-    if (v < cutoff) {
+    if (v * (1 + SPHERE_INVERSION_CUTOFF_EXIT_MARGIN) < cutoff) {
       result = v;
       return true;
     }
