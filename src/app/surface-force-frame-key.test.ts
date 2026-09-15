@@ -4,6 +4,11 @@ import { CLASSIC_SURFACE_FINISH } from "../fractal/surface-finish";
 import { resolveShapeTrap } from "../fractal/shape-trap";
 import { PEACE_SIGN_SHAPE } from "../fractal/shapes";
 import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
+import { resolveSphereInversion } from "../fractal/sphere-inversion";
+import type {
+  SphereInversionAuthored,
+  SphereInversionConstruction,
+} from "../fractal/sphere-inversion";
 import {
   cloneSurfaceLighting,
   DEFAULT_SURFACE_LIGHTING,
@@ -662,5 +667,71 @@ describe("the shapeTrap block", () => {
     // threshold, fade — then the key ends (no trailing blocks here).
     expect(parts.length - at).toBe(8);
     expect(parts[at + 1].includes("|")).toBe(false);
+  });
+});
+
+describe("surfaceComputeForceFrameKey's sphere-inversion construction", () => {
+  function construction(
+    block: SphereInversionAuthored,
+  ): SphereInversionConstruction {
+    const resolution = resolveSphereInversion(block);
+    if (!resolution.ok) throw new Error(resolution.reasons.join("; "));
+    return resolution.construction;
+  }
+
+  it("leaves a key without a construction byte-identical to the one-argument key", () => {
+    const spec = baseSpec();
+    expect(surfaceComputeForceFrameKey(spec, null)).toBe(
+      surfaceComputeForceFrameKey(spec),
+    );
+  });
+
+  it("changes when the block changes under a parked camera", () => {
+    const spec = baseSpec();
+    const pearls = surfaceComputeForceFrameKey(
+      spec,
+      construction({ arrangement: "oct6", seed: { size: 0.28 }, depth: 8 }),
+    );
+    for (const edited of [
+      { arrangement: "oct6", seed: { size: 0.3 }, depth: 8 },
+      { arrangement: "oct6", seed: { size: 0.28 }, depth: 7 },
+      {
+        arrangement: "oct6",
+        radiusFraction: 0.9,
+        seed: { size: 0.28 },
+        depth: 8,
+      },
+      { arrangement: "cube8", seed: { size: 0.28 }, depth: 8 },
+      { arrangement: "oct6", seed: { kind: "shell" }, depth: 8 },
+    ]) {
+      expect(
+        surfaceComputeForceFrameKey(spec, construction(edited)),
+        JSON.stringify(edited),
+      ).not.toBe(pearls);
+    }
+  });
+
+  it("keys an absent default and its explicit value identically", () => {
+    const spec = baseSpec();
+    expect(
+      surfaceComputeForceFrameKey(spec, construction({ arrangement: "oct6" })),
+    ).toBe(
+      surfaceComputeForceFrameKey(
+        spec,
+        construction({ arrangement: "oct6", depth: 8, radiusFraction: 0.99 }),
+      ),
+    );
+  });
+
+  it("tells a 3D construction from a native 4D one", () => {
+    const spec = baseSpec();
+    expect(
+      surfaceComputeForceFrameKey(spec, construction({ arrangement: "oct6" })),
+    ).not.toBe(
+      surfaceComputeForceFrameKey(
+        spec,
+        construction({ arrangement: "cross8" }),
+      ),
+    );
   });
 });

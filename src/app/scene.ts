@@ -5651,6 +5651,43 @@ export class FractalScene {
   }
 
   /**
+   * The SPHERE-INVERSION compute entry, both dimensions — a construction
+   * fixed at create, marched by `core: "sphereInv"` / `"sphereInv4"`. Shaped
+   * like the forward entries because its session facts are theirs: one
+   * origin-centred ball (`tables.boundingRadius`, the FULL 4D radius in 4D,
+   * so the floor does not slide as the slice scrubs), no balloon ever (the
+   * session door refuses it), no trap channel (the gate refuses it), and a
+   * plain governor reset. The preview depth clamp is the construction's own
+   * inversion budget `D`, which is what the kernel packs regardless of the
+   * run's depth; a 4D session's rotor/slice rides every frame spec exactly
+   * as the other 4D kinds' do.
+   */
+  enterSurfaceComputeSphereInversionSession(
+    fourD: boolean,
+    groundPlane: boolean,
+    ballRadius: number,
+    depth: number,
+  ): void {
+    this.renderNeeded = true;
+    this.surfaceComputeActive = true;
+    this.surfaceCompute4 = fourD;
+    this.surfaceComputeShapeTrap = false;
+    this.surfaceShapeTrapLive = false;
+    this.surfaceLightingBoundRadius = ballRadius;
+    this.surfaceFocusBall = { center: [0, 0, 0], radius: ballRadius };
+    this.surfaceBalloonBall = null;
+    this.surfaceComputeBalloon = false;
+    this.surfaceGroundBall = groundPlane
+      ? { center: [0, 0, 0], radius: ballRadius }
+      : null;
+    this.surfaceComputeGroundPlane = groundPlane;
+    this.installSurfaceDepth(depth, null);
+    this.surfacePreviewGovernor.reset();
+    this.surfacePreviewPxCostMs = null;
+    this.flushStripBacklog();
+  }
+
+  /**
    * Record what the session's device can allocate for ONE frame:
    * `SurfaceComputeRenderer.maxFrameRays`, set once the renderer exists —
    * the enters above all run while `create()` is still in flight. Frames

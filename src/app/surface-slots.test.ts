@@ -4,6 +4,7 @@ import type { Transform } from "../fractal/types";
 import { CLASSIC_SURFACE_FINISH } from "../fractal/surface-finish";
 import { CLASSIC_SURFACE_MATERIAL } from "../fractal/surface-material-wire";
 import {
+  sphereInversionShadeSlots,
   surfaceSlotColors,
   surfaceForwardSlot,
   surfaceSlotMaterials,
@@ -392,5 +393,28 @@ describe("surfaceSlotMaterials", () => {
     const slots: SurfaceSlot[] = [{ baseIndex: 1 }, { baseIndex: 2 }];
     const wire = surfaceSlotMaterials(transforms, slots, undefined, 2);
     expect(wire).toMatchObject({ finish: false, pattern: false, optics: true });
+  });
+});
+
+describe("sphereInversionShadeSlots", () => {
+  it("packs one slot per generation with the Points sample's hue spread", () => {
+    const slots = sphereInversionShadeSlots(11);
+    expect(slots.colors).toEqual(transformColors(11));
+    expect(slots.trapIndices).toHaveLength(11);
+    expect(slots.trapIndices[0]).toBe(0);
+    expect(slots.trapIndices[10]).toBe(1);
+  });
+
+  it("stays on the classic kernels when no finish is authored", () => {
+    expect(sphereInversionShadeSlots(11).materials).toBeNull();
+  });
+
+  it("replicates one authored finish into every generation slot", () => {
+    const slots = sphereInversionShadeSlots(5, { metalness: 1 });
+    expect(slots.materials?.finish).toBe(true);
+    expect(slots.materials?.slots).toHaveLength(5);
+    const first = slots.materials!.slots[0];
+    for (const slot of slots.materials!.slots) expect(slot).toEqual(first);
+    expect(first.finish.metalness).toBe(1);
   });
 });

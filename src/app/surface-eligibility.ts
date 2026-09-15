@@ -274,9 +274,14 @@ export function sphereInversionSessionRefusal(session: {
   balloonEcho: boolean;
 }): string | null {
   return session.balloonEcho
-    ? "Balloon is not available with a sphere-inversion scene: its echo would invert this estimator, whose inner queries and far-field ball have not been measured. Turn Balloon off to enter Surface."
+    ? `${SPHERE_INVERSION_BALLOON_SESSION_REASON} Turn Balloon off to enter Surface.`
     : null;
 }
+
+/** Why Balloon is refused in a sphere-inversion scene — the session door's
+ * toast and the in-session Balloon row's adjacent reason share it. */
+export const SPHERE_INVERSION_BALLOON_SESSION_REASON =
+  "Balloon is not available with a sphere-inversion scene: its echo would invert this estimator, whose inner queries and far-field ball have not been measured.";
 
 /**
  * The render-mode half of the family's per-mode verdict

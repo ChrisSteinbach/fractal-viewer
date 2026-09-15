@@ -115,6 +115,52 @@ export function surfaceTrapIndices(
   );
 }
 
+/** A sphere-inversion session's whole per-slot shading wire. */
+export interface SphereInversionShadeSlots {
+  colors: Vec3[];
+  trapIndices: number[];
+  materials: SurfaceMaterialSlots | null;
+}
+
+/**
+ * The sphere-inversion kernels' slot wire: one slot per GENERATION
+ * (`sphereInversionGenerationSlots(D) = D + 3`, the hit-info's
+ * `firstChoice` range 0..D+2), so "By Transform" wears one hue per word
+ * length exactly as the Points sample does — the same `transformColors`
+ * spread over the same count, with no authored `colorIndex` to honour
+ * because the block has no transforms. Each slot's trap coordinate is its
+ * generation over `D + 2`, the value the kernel's own trap reports.
+ *
+ * ONE MATERIAL, replicated into every slot: generations are attribution,
+ * not separate surfaces, so a finish never varies by word length. The
+ * block has no finish of its own yet and the transform system's
+ * per-transform finishes are dormant under it, so today's caller passes
+ * none and gets `null` — the classic kernels, byte-identical shade source.
+ */
+export function sphereInversionShadeSlots(
+  generationSlots: number,
+  finish?: Transform["finish"],
+): SphereInversionShadeSlots {
+  const colors = transformColors(generationSlots);
+  const denom = Math.max(1, generationSlots - 1);
+  const trapIndices = Array.from(
+    { length: generationSlots },
+    (_, generation) => generation / denom,
+  );
+  const material = resolveSurfaceMaterial(finish, undefined);
+  const materials: SurfaceMaterialSlots | null = surfaceMaterialUsesFinish(
+    material,
+  )
+    ? {
+        slots: Array.from({ length: generationSlots }, () => material),
+        finish: true,
+        pattern: false,
+        optics: false,
+      }
+    : null;
+  return { colors, trapIndices, materials };
+}
+
 /**
  * Resolve one material per DE slot and the three independent compile gates in
  * one pass. This is the sole transform-to-material derivation: finish,
