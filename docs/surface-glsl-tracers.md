@@ -555,6 +555,56 @@ as WebGL2 fragment shaders on headless Chromium's ANGLE (SwiftShader
 Vulkan). A compile is not a render, and no caller packs a finish yet;
 the in-app picture is the wiring slice's to verify.
 
+**`SURFACE_SPHERE_INVERSION`**: the sphere-inversion seed orbit's 3D
+FALLBACK arm (`?surfacegl`, no adapter, device loss; the WGSL `sphereInv`
+core is preferred). It replaces the descent bodies wholesale, the escape/bulb
+precedent, so `surfaceFragmentResolvedFor`'s trailing `sphereInversion` flag
+REFUSES escape, bulb, lens, balloon, pattern, shape trap, condensation,
+schedule, chaos, post and tiling; ground plane, finish and lighting compose.
+`setSphereInversionSystem` packs it; every other system setter deletes the
+define and detaches the block, and the four re-resolve setters thread the
+flag.
+
+The body is the WGSL `siEstimate`/`siGeneration`/`siSeedMember` statement for
+statement, NOT a fresh transcription of the CPU oracle. It therefore carries
+the WGSL core's four recorded departures (the unit-arrangement radial reject
+and nearest-centre search, the absolute `1e-6` slack, the `2^-20·r` pole
+floor, the ignored cutoff). A test strips both dialects to one token stream
+(declaration types, `let`/`var`/`fn`, `u` suffixes, integer casts and the
+accessor spellings removed, `select` spelled as a ternary) and requires them
+equal. A second test reads the tables back OFF the material and runs them
+through the f32 twin against the CPU oracle, so the GLSL wire is the one the
+twin and the bench already certify. Hit attribution is the WGSL hit-info's:
+`firstChoice` = generation, coloured from the block's `uSiColor[D + 3]`
+rather than `uMapColor` (35 generations at `D = 32` exceed the 24 map slots),
+trap = generation/(D + 2), rings = the fold ring, sheets = the seed member.
+`uMapCount` is 1, so the finish fetch reads the one shared material from
+slot 0.
+
+STORAGE: a std140 block `SurfaceSphereInv3` of 183 table vec4 (the 3D wire
+`(c.xyz, ±r)` at the caps `n = 12`, `s = 3`: `n + s + n(s + n − 1)`) and
+35 colour vec4, 3,488 B against WebGL2's guaranteed 16 KiB. The header rides
+three default uniforms (`uSiCounts`, `uSiRadii`, `uSiUnit`): three.js writes
+UBO numbers as floats, so the integers cannot share the block. The caps are
+the 3D registry's own maxima (`ico12`, `cutShell`), and the count is monotone
+in both, so EVERY 3D construction is admitted at every depth (a test sweeps
+all nine arrangement × seed pairs at `D = 32`); no 3D construction is
+compute-only. The 4D tables do not fit (the 600-cell cut shell is 472,416 B).
+
+HIT FLOOR: the WGSL packer clamps acceptance to `max(R·hitFloor, slack)`.
+The fragment tracer's floor is a multiple of `uBoundingRadius`, so scene.ts
+writes `sphereInversionHitFloor(floor, R) = max(floor, slack/R)` whenever the
+arm is compiled. Without it the zoom-scaled full floor (down to `1e-7`) would
+accept below the slack and stall rays.
+
+VERIFIED ON THE REAL DRIVER (Mesa Intel Iris Xe via ANGLE, headed Chromium,
+`?surfacegl`): the program links in under a second (956 ms / 936 ms,
+`KHR_parallel_shader_compile` on), and the settled frames match the compute
+engine's geometry (coverage IoU 0.9998 on oct6 pearls D 8, 1.0000 on the
+ico12 cut shell D 5, where colours also agree to 0.012/255). The table and
+the one compute-side colour clamp are in `docs/sphere-inversion-gpu.md`
+("GLSL arm as shipped").
+
 ## The Mesa link cliff and the source-size rule
 
 Turning the ground plane on would have pushed the shared fold/affine source
@@ -918,7 +968,10 @@ before and strips after; escape (7658 B of headroom left), bulb
 escape+plane and bulb+plane strip under the plane rule regardless. The 4D
 figures in this paragraph are the historical finish landing before patterned
 materials existed: the plain arm was 63464 B with 2072 B of headroom. The
-current finish-only baseline is 63878 B with 1658 raw bytes of headroom; the
+finish-only baseline RE-MEASURED at the sphere-inversion arm's landing is
+65409 B with **127 B** of headroom (4D plain alone 64296 B, 1240 B). A
+1658 B figure stood here until then; it was stale, because later shared
+growth had spent the margin without this line being re-measured. The
 pattern-on 4D plain arm crosses the strip threshold as recorded below.
 
 **(5) Nothing approaches the emitted cliff.** The largest program any
@@ -933,14 +986,38 @@ THE PAIRING TO WATCH, updated. With the arm off it is still 3D
 escape+balloon at 64681 B, 855 B under — unchanged, because the arm is
 off. With the arm on, escape+balloon has already crossed and there is
 nothing left to watch there; the current nearest unstripped margin is
-**4D plain + finish at 1658 B** (63878 B, a shipped pairing). The old 2072 B
-figure was the pre-pattern finish landing. Patterned 4D plain crosses and
+**4D plain + finish at 127 B** (65409 B, a shipped pairing; re-measured, the
+1658 B once recorded here was stale). The old 2072 B figure was the
+pre-pattern finish landing. Patterned 4D plain crosses and
 strips, as measured in the next section; this is benign and costs only source
 comments in the driver diagnostic.
 Crossing there is as benign as every other crossing in this section
 (strip, not cliff), but it is the first time a crossing would cost a
 SHIPPED 4D session its commentary, where escape+balloon's never cost a
 session anything.
+
+### The sphere-inversion arm's sizes
+
+Measured at its landing, resolved against `SURFACE_GLSL_STRIP_BYTES`
+(65536 B) and emitted against the ~80 KB cliff:
+
+| variant                     | resolved B | emitted B | stripped | headroom under the strip |
+| --------------------------- | ---------- | --------- | -------- | ------------------------ |
+| sphere inversion            | 41695      | 41695     | no       | 23841                    |
+| sphere inversion + finish   | 44094      | 44094     | no       | 21442                    |
+| sphere inversion + lighting | 47562      | 47562     | no       | 17974                    |
+| + plane                     | 49561      | 15447     | yes      | (plane rule)             |
+| + plane + finish            | 52960      | 17305     | yes      | (plane rule)             |
+| + plane + finish + lighting | 60006      | 23903     | yes      | (plane rule)             |
+
+The arm sits within 1.2 KB of the bulb arm (40520 B), as the scoping plan's
+section 6 predicted. It keeps its comments in a driver log. Every
+pre-existing 3D and 4D variant measured the same byte count before and after,
+and the source hash pins held: the arm's text lives only inside
+`#if SURFACE_SPHERE_INVERSION` / `#else` / `#endif` directive lines, which the
+JS-side resolver never emits. A test gates the property (off: no token of
+the arm in any of the twelve legacy pairings at either finish state; on:
+under the threshold unstripped, every pairing under the cliff).
 
 ### The pattern arm's sizes
 

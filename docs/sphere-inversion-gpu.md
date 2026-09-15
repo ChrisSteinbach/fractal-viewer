@@ -97,7 +97,8 @@ stage 2 off) and `surfaceFragmentFor` / `surfaceFragmentResolvedFor` /
 
 One incidental finding: the 4D finish arm sits 127 B under the 65,536 B
 `SURFACE_GLSL_STRIP_BYTES` threshold, not the 1,658 B `docs/surface-glsl-tracers.md`
-records. Benign (crossing only strips it), but that record is stale.
+recorded. Benign (crossing only strips it); that record was corrected when the
+3D GLSL arm landed (re-measured 65,409 B, 127 B).
 
 ## 1. Core identity and routing
 
@@ -726,3 +727,91 @@ from the plan above, and all are recorded there:
 The acceptance clamp costs zoom depth. Its floor binds past a magnification of
 about `10·R` (13× for the 600-cell, 17× for oct6), while the other cores' floor
 follows the lens to 100×.
+
+## GLSL arm as shipped (2026-09-15, delegated)
+
+Section 6's 3D arm and section 9's GLSL route, as implemented. The
+fragment-arm table now reads `{3: true, 4: false}`: `?surfacegl`, no adapter and
+a mid-session device loss fall back to the arm in 3D. 4D stays compute-only,
+refused and disclosed exactly as before.
+
+**What it mirrors.** The arm (`SURFACE_SPHERE_INVERSION` in
+`src/app/surface-material.ts`) is the WGSL `siEstimate`/`siGeneration`/
+`siSeedMember` statement for statement. It is not a fresh transcription of the
+CPU oracle, so its only departures from the CPU estimator are the WGSL core's
+four recorded ones (radial reject + nearest centre, the `1e-6` slack, the
+`2^-20·r` pole floor, the ignored cutoff). Two unit tests hold it there. One
+normalizes both dialects to a single token stream and requires equality. The
+other reads the tables back off the material and runs them through
+`sphereInversionF32` against the CPU oracle (one-sided on positive queries,
+identical generation and seed member, on oct6/cube8/ico12).
+
+**Admitted constructions: every 3D one.** The std140 block holds 183 table
+vec4 at the caps `n = 12`, `s = 3` — the 3D registry's largest arrangement
+(`ico12`) and seed (`cutShell`). It also holds 35 generation colours
+(`D = 32`), 3,488 B in all against WebGL2's guaranteed 16 KiB. The table
+count `n + s + n(s + n − 1)` is monotone in both, so all nine arrangement ×
+seed pairs fit at every depth. No 3D construction is compute-only, and no
+disclosure is needed. The colours ride the block because 35 generations exceed
+the 24 `uMapColor` slots.
+
+**Delegated decisions** (lead to ratify):
+
+1. The GLSL arm mirrors the WGSL kernel, not the CPU oracle directly, so both
+   engines share one set of f32 departures and one bench-certified wire.
+2. Composition in the resolver: escape, bulb, lens, balloon, pattern, shape
+   trap, condensation, schedule, chaos, post and tiling refuse. Ground plane,
+   finish and lighting compose. The setter drops a balloon define and clears
+   a pattern define rather than throwing, since neither can be this family's
+   session state.
+3. The acceptance clamp is applied in `scene.ts`'s tier write
+   (`sphereInversionHitFloor`), mirroring `packSphereInversionGpuParams`'
+   `max(R·hitFloor, slack)`.
+4. The finish reads slot 0 (`uMapCount = 1`), and the WebGL branch hands
+   `setSurfaceMaterials` one slot. The one shared material therefore never
+   meets the 24-slot material cap at depth.
+
+**Sizes** (recorded with the other arms in `docs/surface-glsl-tracers.md`):
+41,695 B resolved, unstripped, 23,841 B under the strip threshold. With
+plane + finish + lighting it is 60,006 B resolved and 23,903 B emitted.
+Every pre-existing 3D and 4D source is byte-identical.
+
+**Verified in the built app** (`npm run build` + `npm run preview`, headed
+Chromium on `:0`; `glxinfo -B`: Mesa Intel Iris Xe Graphics (TGL GT2); WebGL
+backend ANGLE on that driver, not software). Documents minted with the app's
+own `toSnapshot`/`encodeScene`, Surface entered from the mode button, the
+`?surfacestate` latch held for 2 s, 1024x640 viewport. The compute frames
+are the same documents and poses without `?surfacegl`, on the same build.
+IoU and differences are over the 724 px scene pane (the panel is identical
+UI).
+
+| Document                        | Engine  | Link (`?surfperf` compileAsync) | Settle | Covered rays / 655,360 | Coverage IoU vs compute | Mean RGB diff on covered px |
+| ------------------------------- | ------- | ------------------------------- | ------ | ---------------------- | ----------------------- | --------------------------- |
+| oct6 pearls, ball .28, D 8      | webgl   | 956 ms (KHR parallel on)        | 5.9 s  | 69,687, 0 exhausted    | 0.9998                  | 3.52/255 (see below)        |
+| oct6 pearls, ball .28, D 8      | compute | —                               | 5.4 s  | 69,658, 0 exhausted    | —                       | —                           |
+| ico12 cut shell (defaults), D 5 | webgl   | 936 ms                          | 6.6 s  | 74,917, 0 exhausted    | 1.0000                  | 0.012/255                   |
+| ico12 cut shell (defaults), D 5 | compute | —                               | 5.3 s  | 74,902, 0 exhausted    | —                       | —                           |
+
+Frames: `scripts/out/si-pearls3-glsl.png` / `si-pearls3-surface.png` and
+`si-vault3-glsl.png` / `si-vault3-surface.png` (gitignored; regenerate).
+The Mesa link succeeded first time in both sessions with no console error. The
+coverage alpha stays off the canvas: the arm writes nothing past the shared
+march/shade exits, whose alpha the present blit strips.
+
+**The pearls colour difference is a COMPUTE-side slot clamp, not the arm.**
+Geometry and shading agree (IoU 0.9998, median luminance difference 0). The
+difference is hue on the deep lace: generations 5 and up. The WGSL shade entry
+clamps `firstChoice` to `params.mapCount − 1`, and `writeSphereInversionFrozen`
+writes `generatorCount` at offset 48. With oct6's 6 generators every
+generation past 4 therefore takes slot 5's colour, although `shadeMaps` holds
+the D + 3 = 11 generation slots decision 6 calls for. The vault
+(`n = 12 >= D + 3 = 8`) never binds the clamp, and there the engines agree to
+0.012/255. The fix is in the compute packer (offset 48 =
+`sphereInversionGenerationSlots(depth)`; the `sphereInv` body reads
+`siCounts`, not `mapCount`) and belongs to the kernel owner. Until it lands,
+the WebGL arm is the one following decision 6.
+
+**Open:** the 4D data-texture lift (section 6's recorded shape) and a
+committed `scripts/sphere-inversion-surface.verify.mjs` browser gate
+(section 9 step 4). The measurements above came from throwaway scripts
+under `scripts/out/`.
