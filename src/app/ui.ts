@@ -2575,6 +2575,17 @@ export class Ui {
     HTMLElement
   >;
   private readonly finalLensNote: HTMLElement;
+  /** The replaced transform system's sections, disabled while a
+   * sphere-inversion block is the subject (docs/panel-ia.md: a dormant
+   * authored capability stays visible but disabled beside its reason). */
+  private readonly sphereInversionDormantSections: readonly {
+    section: HTMLElement;
+    note: HTMLElement;
+    noun: string;
+  }[];
+  /** Whether {@link applySphereInversionDormancy} has disabled anything the
+   * release pass must restore. */
+  private sphereInversionDormancyApplied = false;
   private readonly backgroundNote: HTMLElement;
 
   // The surface render's mode-gated status block contains its hint and trace
@@ -3299,6 +3310,16 @@ export class Ui {
       depth: this.byId("sphereInversionDepthNote"),
     };
     this.finalLensNote = this.byId("finalLensNote");
+    this.sphereInversionDormantSections = [
+      ["transformsSection", "transformsDormantNote", "the transforms are"],
+      ["xaosSection", "xaosDormantNote", "Xaos is"],
+      ["symmetrySection", "symmetryDormantNote", "the symmetry is"],
+      ["scheduleSection", "scheduleDormantNote", "the hybrid schedule is"],
+    ].map(([section, note, noun]) => ({
+      section: this.byId(section),
+      note: this.byId(note),
+      noun,
+    }));
     this.backgroundNote = this.byId("backgroundNote");
     this.surfaceEligibilityRecoveryBtn = this.byId(
       "surfaceEligibilityRecoveryBtn",
@@ -4716,6 +4737,83 @@ export class Ui {
   }
 
   /**
+   * Disable the replaced transform system's sections while a sphere-inversion
+   * block is the subject (refused blocks included): every control stays
+   * visible, is disabled, and is described by its section's reason, which
+   * names the action that re-enables it. Auto-update is exempt — it is a
+   * session preference that also governs the block's own Points regeneration.
+   * Controls this pass disabled are MARKED, so the release pass restores
+   * exactly those and never an owner's own refusal. Runs after every owner
+   * (the end of updateLabels, and after each section re-render).
+   */
+  private applySphereInversionDormancy(): void {
+    if (!this.sphereInversionPresent) return;
+    for (const { section, note, noun } of this.sphereInversionDormantSections) {
+      this.setReasonNote(
+        note,
+        `Sphere inversion replaces the transform system, so ${noun} not drawn. Turn off Sphere inversion to edit.`,
+      );
+      note.classList.remove("hidden");
+      for (const control of this.dormantSectionControls(section)) {
+        if (!control.disabled) {
+          control.disabled = true;
+          control.dataset.sphereInversionDormant = "true";
+        }
+        const ids = (control.getAttribute("aria-describedby") ?? "")
+          .split(/\s+/)
+          .filter(Boolean);
+        if (!ids.includes(note.id)) {
+          control.setAttribute("aria-describedby", [...ids, note.id].join(" "));
+        }
+      }
+    }
+    this.sphereInversionDormancyApplied = true;
+  }
+
+  /** Undo {@link applySphereInversionDormancy}: re-enable what it marked and
+   * drop its reason from every description. */
+  private releaseSphereInversionDormancy(): void {
+    if (!this.sphereInversionDormancyApplied) return;
+    for (const { section, note } of this.sphereInversionDormantSections) {
+      this.setReasonNote(note, "");
+      note.classList.add("hidden");
+      for (const control of this.dormantSectionControls(section)) {
+        if (control.dataset.sphereInversionDormant !== undefined) {
+          control.disabled = false;
+          delete control.dataset.sphereInversionDormant;
+        }
+        const ids = (control.getAttribute("aria-describedby") ?? "")
+          .split(/\s+/)
+          .filter((id) => id && id !== note.id);
+        if (ids.length > 0) {
+          control.setAttribute("aria-describedby", ids.join(" "));
+        } else {
+          control.removeAttribute("aria-describedby");
+        }
+      }
+    }
+    this.sphereInversionDormancyApplied = false;
+  }
+
+  private dormantSectionControls(
+    section: HTMLElement,
+  ): (
+    | HTMLInputElement
+    | HTMLSelectElement
+    | HTMLButtonElement
+    | HTMLTextAreaElement
+  )[] {
+    return Array.from(
+      section.querySelectorAll<
+        | HTMLInputElement
+        | HTMLSelectElement
+        | HTMLButtonElement
+        | HTMLTextAreaElement
+      >("input, select, button, textarea"),
+    ).filter((control) => control.id !== "autoUpdate");
+  }
+
+  /**
    * Paint the Sphere inversion section from the document
    * (sphere-inversion-controls.ts decides; this only writes the DOM). The
    * table-driven sync has already put every value on its control; this adds
@@ -4859,18 +4957,6 @@ export class Ui {
       this.sphereInversionTimingHint.textContent =
         "Unavailable in this renderer; the note below says why.";
     }
-    if (state.sphereInversion !== undefined) {
-      // The replaced system's editors stay usable (a transform edit authors
-      // state for when the block is removed, and costs no renderer work —
-      // transform-edit-effects.ts), so their hints carry the disclosure.
-      const kept =
-        "Kept but not drawn while Sphere inversion is the subject; edits apply once it is turned off.";
-      this.transformTimingHint.textContent = `Sphere inversion replaces the transforms in every renderer. ${kept}`;
-      this.xaosEditHint.textContent = kept;
-      this.symmetryEditHint.textContent = kept;
-      this.scheduleEditHint.textContent = `Choosing a source copies it; later source changes do not follow. ${kept}`;
-    }
-
     const transformColorTiming = this.doc.getElementById(
       "transformColorTimingHint",
     );
@@ -5138,6 +5224,10 @@ export class Ui {
 
   /** Reflect scalar state into labels, inputs, the help box, and the panel. */
   updateLabels(state: AppState): void {
+    // Release the replaced system's sections BEFORE their owners re-sync, so
+    // an owner's own disabled state (a one-transform Remove) wins afterwards.
+    this.sphereInversionPresent = state.sphereInversion !== undefined;
+    if (!this.sphereInversionPresent) this.releaseSphereInversionDormancy();
     this.transformCount.textContent = String(state.transforms.length);
     const transformLimitReached = state.transforms.length >= MAX_TRANSFORMS;
     this.addBtn.disabled = transformLimitReached;
@@ -5251,7 +5341,7 @@ export class Ui {
     this.setReasonNote(
       this.finalLensNote,
       dormantLens
-        ? `Dormant while Sphere inversion is the subject: ${SPHERE_INVERSION_DORMANT_LENS}. It applies again once Sphere inversion is turned off.`
+        ? `Dormant while Sphere inversion is the subject: ${SPHERE_INVERSION_DORMANT_LENS}. Turn off Sphere inversion to edit it.`
         : "",
     );
     this.finalLensNote.classList.toggle("hidden", !dormantLens);
@@ -5613,15 +5703,23 @@ export class Ui {
     // The generated backdrop runs the chaos game on the transforms, which a
     // sphere-inversion block replaces, so main.ts rests it on the gradient
     // placeholder; say so beside the select rather than failing silently.
-    const heldBackdrop =
-      state.background.mode === "flame" && state.sphereInversion !== undefined;
+    // Only the Flame choice is refused: every other backdrop still draws.
+    const blockPresent = state.sphereInversion !== undefined;
+    const flameOption = Array.from(
+      this.scalarSelect("background").options,
+    ).find((option) => option.value === "flame");
+    if (flameOption) flameOption.disabled = blockPresent;
     this.setReasonNote(
       this.backgroundNote,
-      heldBackdrop
-        ? "Flame backdrop draws the transforms, which Sphere inversion replaces, so the plain gradient shows instead. The image returns once Sphere inversion is turned off."
+      blockPresent
+        ? `Flame backdrop is unavailable: it draws the transforms, which Sphere inversion replaces${
+            state.background.mode === "flame"
+              ? ", so the plain gradient shows instead"
+              : ""
+          }. Turn off Sphere inversion to choose it.`
         : "",
     );
-    this.backgroundNote.classList.toggle("hidden", !heldBackdrop);
+    this.backgroundNote.classList.toggle("hidden", !blockPresent);
     // The custom backdrop pickers: shown only while the Background select
     // sits on Custom (therefore hidden for Flame too); synced to the resolved
     // stops with the same only-write-on-change guard as the axis pickers above.
@@ -5815,6 +5913,8 @@ export class Ui {
       "aria-label",
       state.panelOpen ? "Close controls" : "Open controls",
     );
+    // Last, after every owner above has synced its own availability.
+    this.applySphereInversionDormancy();
   }
 
   /**
@@ -7885,6 +7985,15 @@ export class Ui {
     selected: EditTarget,
     finalTransform: Transform | null,
   ): void {
+    this.renderTransformListRows(transforms, selected, finalTransform);
+    this.applySphereInversionDormancy();
+  }
+
+  private renderTransformListRows(
+    transforms: Transform[],
+    selected: EditTarget,
+    finalTransform: Transform | null,
+  ): void {
     this.transformList.replaceChildren();
     this.transformList.appendChild(
       this.transformButton({
@@ -7967,6 +8076,11 @@ export class Ui {
    * `change`-not-`input` choice below.
    */
   renderXaosSection(transforms: Transform[]): void {
+    this.renderXaosRows(transforms);
+    this.applySphereInversionDormancy();
+  }
+
+  private renderXaosRows(transforms: Transform[]): void {
     const blocks = detectXaosBlocks(transforms);
     const leaks = detectXaosLeaks(transforms, blocks);
     const palette = transformColors(
@@ -8233,6 +8347,15 @@ export class Ui {
    * a silently-assumed count would render a plausible but wrong slot.
    */
   renderTransformEditor(
+    transform: Transform | null,
+    target: EditTarget,
+    transformCount: number,
+  ): void {
+    this.renderTransformEditorRows(transform, target, transformCount);
+    this.applySphereInversionDormancy();
+  }
+
+  private renderTransformEditorRows(
     transform: Transform | null,
     target: EditTarget,
     transformCount: number,
@@ -9750,7 +9873,7 @@ export class Ui {
       fullyIneligible || headOnly || inactiveIfs || dormantUnderBlock;
     const reason = (feature: "finish" | "pattern"): string => {
       if (dormantUnderBlock) {
-        return `Sphere inversion replaces the transform system, so this ${feature} is not read. It stays authored and applies again once Sphere inversion is turned off.`;
+        return `Sphere inversion replaces the transform system, so this ${feature} is not read. It stays authored; turn off Sphere inversion to edit it.`;
       }
       if (fullyIneligible) {
         const detail = eligibility.note ?? "not marchable";

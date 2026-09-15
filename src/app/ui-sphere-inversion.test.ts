@@ -4,7 +4,7 @@ import { initialState, setSphereInversion } from "./state";
 import type { AppState } from "./state";
 import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
 import { PRESET_SPHERE_INVERSIONS } from "../fractal/presets";
-import { pentatope } from "../fractal/presets";
+import { fernSpongeIsolated, pentatope } from "../fractal/presets";
 import indexHtml from "./index.html?raw";
 
 const parsed = new DOMParser().parseFromString(indexHtml, "text/html");
@@ -197,37 +197,97 @@ describe("Sphere inversion section", () => {
 });
 
 describe("dormant sections under a sphere-inversion block", () => {
-  it("discloses the replaced system beside Transforms, Xaos, Symmetry and the schedule in both dimensions", () => {
-    const ui = new Ui(document);
+  const DORMANT: [string, string][] = [
+    ["transformsSection", "transformsDormantNote"],
+    ["xaosSection", "xaosDormantNote"],
+    ["symmetrySection", "symmetryDormantNote"],
+    ["scheduleSection", "scheduleDormantNote"],
+  ];
 
+  function controlsOf(sectionId: string): HTMLInputElement[] {
+    return Array.from(
+      el(sectionId).querySelectorAll<HTMLInputElement>(
+        "input, select, button, textarea",
+      ),
+    ).filter((control) => control.id !== "autoUpdate");
+  }
+
+  /** refreshUi's order: labels first, then the rebuilt sections. */
+  function refresh(ui: Ui, state: AppState): void {
+    ui.updateLabels(state);
+    ui.renderTransformList(state.transforms, 0, state.finalTransform ?? null);
+    ui.renderTransformEditor(state.transforms[0], 0, state.transforms.length);
+    ui.renderXaosSection(state.transforms);
+  }
+
+  it("disables Transforms, Xaos, Symmetry and the schedule beside their reason, in 3D and 4D", () => {
+    // One Ui per document: construction rearranges the markup it binds.
+    const ui = new Ui(document);
     for (const block of [
       PRESET_SPHERE_INVERSIONS.inversionPearls!(),
       PRESET_SPHERE_INVERSIONS.inversionMedallions4!(),
     ]) {
-      ui.updateLabels(withBlock(block, { transforms: pentatope() }));
+      refresh(ui, withBlock(block, { transforms: fernSpongeIsolated() }));
 
-      for (const id of [
-        "transformTimingHint",
-        "xaosEditHint",
-        "symmetryEditHint",
-        "scheduleEditHint",
-      ]) {
-        expect(el(id).textContent, id).toMatch(
-          /not drawn while Sphere inversion is the subject/,
+      for (const [sectionId, noteId] of DORMANT) {
+        const controls = controlsOf(sectionId);
+        expect(controls.length, sectionId).toBeGreaterThan(0);
+        expect(hidden(noteId), noteId).toBe(false);
+        expect(el(noteId).textContent).toMatch(
+          /^Sphere inversion replaces the transform system, .* not drawn\. Turn off Sphere inversion to edit\.$/,
         );
+        for (const control of controls) {
+          const name =
+            control.id || control.getAttribute("aria-label") || control.tagName;
+          expect(control.disabled, `${sectionId} ${name}`).toBe(true);
+          expect(
+            control.getAttribute("aria-describedby") ?? "",
+            `${sectionId} ${name}`,
+          ).toContain(noteId);
+        }
       }
+      expect(el<HTMLInputElement>("autoUpdate").disabled).toBe(false);
+      expect(el<HTMLInputElement>("finalTransformToggle").disabled).toBe(true);
     }
   });
 
-  it("restores the ordinary hints once the block is removed", () => {
+  it("re-enables every section when the block is removed, keeping owners' own refusals", () => {
     const ui = new Ui(document);
+    const transforms = pentatope();
+    const plain = { ...initialState(true), transforms };
 
-    ui.updateLabels(withBlock({ arrangement: "oct6" }));
-    ui.updateLabels(initialState(true));
-
-    expect(el("transformTimingHint").textContent).toBe(
-      "Geometry follows Auto-update; color changes apply immediately.",
+    refresh(ui, plain);
+    const enabledBefore = DORMANT.map(
+      ([id]) => controlsOf(id).filter((c) => !c.disabled).length,
     );
+    refresh(ui, withBlock({ arrangement: "cell24" }, { transforms }));
+    expect(el<HTMLButtonElement>("removeBtn").disabled).toBe(true);
+    refresh(ui, plain);
+
+    expect(
+      DORMANT.map(([id]) => controlsOf(id).filter((c) => !c.disabled).length),
+    ).toEqual(enabledBefore);
+    for (const [sectionId, noteId] of DORMANT) {
+      expect(hidden(noteId)).toBe(true);
+      for (const control of controlsOf(sectionId)) {
+        expect(control.getAttribute("aria-describedby") ?? "").not.toContain(
+          noteId,
+        );
+      }
+    }
+    expect(el<HTMLButtonElement>("removeBtn").disabled).toBe(false);
+
+    // A one-transform Remove stays refused by its owner after the round trip.
+    const single = {
+      ...initialState(true),
+      transforms: transforms.slice(0, 1),
+    };
+    refresh(
+      ui,
+      withBlock({ arrangement: "oct6" }, { transforms: single.transforms }),
+    );
+    refresh(ui, single);
+    expect(el<HTMLButtonElement>("removeBtn").disabled).toBe(true);
   });
 
   it("notes a dormant final lens beside its toggle only while one is authored", () => {
@@ -250,27 +310,39 @@ describe("dormant sections under a sphere-inversion block", () => {
     ).toContain("finalLensNote");
   });
 
-  it("discloses the flame backdrop's gradient fallback beside Background", () => {
+  it("refuses only Background's Flame option beside its reason", () => {
     const ui = new Ui(document);
     const flameBackdrop = {
       ...initialState(true).background,
       mode: "flame" as const,
     };
+    const flameOption = () =>
+      Array.from(el<HTMLSelectElement>("background").options).find(
+        (option) => option.value === "flame",
+      )!;
 
     ui.updateLabels({ ...initialState(true), background: flameBackdrop });
     expect(hidden("backgroundNote")).toBe(true);
+    expect(flameOption().disabled).toBe(false);
 
     for (const arrangement of ["oct6", "cell600"]) {
       ui.updateLabels(
         withBlock({ arrangement }, { background: flameBackdrop }),
       );
-      expect(hidden("backgroundNote"), arrangement).toBe(false);
+      expect(flameOption().disabled, arrangement).toBe(true);
+      expect(el<HTMLSelectElement>("background").disabled).toBe(false);
       expect(el("backgroundNote").textContent).toMatch(
-        /Sphere inversion replaces.*plain gradient/,
+        /Sphere inversion replaces, so the plain gradient shows instead\. Turn off Sphere inversion to choose it\./,
       );
     }
+    ui.updateLabels(withBlock({ arrangement: "oct6" }));
+    expect(el("backgroundNote").textContent).toBe(
+      "Flame backdrop is unavailable: it draws the transforms, which Sphere inversion replaces. Turn off Sphere inversion to choose it.",
+    );
     expect(el("background").getAttribute("aria-describedby")).toBe(
       "backgroundNote",
     );
+    ui.updateLabels(initialState(true));
+    expect(flameOption().disabled).toBe(false);
   });
 });

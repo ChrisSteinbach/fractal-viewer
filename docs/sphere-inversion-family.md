@@ -1452,27 +1452,40 @@ authored.` While a slider is focused its span only widens, so the track
 
 ### Dormant sections
 
-The replaced system's editors stay EDITABLE rather than disabled. A
-transform edit authors state for when the block is removed, and costs no
-renderer work under a block (below). Each section discloses adjacently, in
-both dimensions:
+The replaced system's sections are DISABLED while a block is present,
+refused blocks included, in both dimensions (lead review, overturning the
+first delegated call that kept them editable). `docs/panel-ia.md` keeps a
+dormant authored capability visible but disabled beside its reason, and
+editing transforms nothing draws would silently queue an edit whose result
+appears only when the block is removed.
 
-- The **Transforms, Xaos, Symmetry and Hybrid schedule** hints, which their
-  controls already reference, read "Kept but not drawn while Sphere inversion
-  is the subject; edits apply once it is turned off". The existing
-  kaleidoscope note keeps its dormant wording.
-- The **final-transform lens** gets its own note beside its toggle, shown
-  while a lens is authored.
-- **Per-transform finishes and patterns** key their dormant note on the
-  block's PRESENCE, not only on the Surface route kind. A refused block
+- **Transforms, Xaos, Symmetry and Hybrid schedule** each show a note, "Sphere
+  inversion replaces the transform system, so … not drawn. Turn off Sphere
+  inversion to edit.", and every control inside the section is disabled and
+  described by it (`aria-describedby`). That includes both halves of every
+  slider pair, the transform list and editor, the final-lens toggle and the
+  per-transform finish rows.
+- **Auto-update is exempt.** It is a session preference, and it also governs
+  whether a block edit regenerates Points.
+- **The mechanism** is one pass in `ui.ts`. It runs after every owner (the end
+  of `updateLabels`, and after each re-render of the list, the editor and
+  Xaos) and MARKS what it disabled. The release pass runs at the START of
+  `updateLabels`, before the owners re-sync, and re-enables only the marked
+  controls, so an owner's own refusal (a one-transform Remove) survives the
+  round trip.
+- **The final-transform lens** keeps its own note beside the toggle while a
+  lens is authored. **Per-transform finishes and patterns** key their note on
+  the block's PRESENCE, not only on the Surface route kind; a refused block
   previously fell through to "Surface render unavailable".
-- **Background → Flame backdrop** discloses its plain-gradient fallback beside
-  the select.
+- **Background** stays usable, but its Flame choice is disabled beside the
+  reason. A document already on the Flame backdrop is told that the plain
+  gradient shows instead.
 
-**Transform edits under a block** no longer regenerate Points or re-enter
+**Transform edits under a block** still regenerate nothing and re-enter no
 Surface (`planTransformEdit`'s `sphereInversionSubject`, pinned in
-`transform-edit-effects.test.ts`). Nothing on screen reads the transforms.
-Eligibility still refreshes, because its note names the dormant settings.
+`transform-edit-effects.test.ts`), as defence in depth: an undo, an import or
+a keyboard path could still reach the transforms. Eligibility still
+refreshes, because its note names the dormant settings.
 
 **The colour legend** keys "By Transform" by generation under a block:
 `sphereInversionGenerationSlots(D)` chips from the same unauthored
@@ -1505,3 +1518,4 @@ Sierpinski tetrahedron).
   the ball size was removed by the kind switch, and the depth written.
   Frames: `scripts/out/si-controls-{before,after-size,after-shell,after-depth2}.png`
   (gitignored).
+
