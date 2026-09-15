@@ -708,6 +708,13 @@ interface PoseResult {
   /** Percent of pixels whose colour differs (any channel > 24/255) from the
    * explicit 3D sub-arrangement rendered through the same camera. */
   subDiff: number;
+  /** Of the copy pixels, the share whose fold word at the SAME in-slice
+   * point under the candidate's first pose is identical (same length, same
+   * generators). Erosion keeps every word — a flat embedding's passive offset
+   * reads 1 — so this is the image-weighted erosion test lace needs: its
+   * cloud containment is vacuous (no volume) and a pure offset puts every
+   * centre off the slice, so the off-slice share is 1 by construction. */
+  wordMatch: number;
 }
 
 function cloud3(R: number): Float64Array {
@@ -861,6 +868,8 @@ function measureCandidate(cand: Candidate, size: number, twin = true) {
     let hitPx = 0;
     let copyPx = 0;
     let offPx = 0;
+    let sameWord = 0;
+    const scratch0 = makeFoldScratch(scene);
     for (let px = 0; px < size * size; px++) {
       if (stats.status![px] !== PREVIEW_HIT) continue;
       hitPx++;
@@ -876,6 +885,10 @@ function measureCandidate(cand: Candidate, size: number, twin = true) {
           break;
         }
       }
+      const f0 = foldQuery(scene, lifts[0](p3), scratch0);
+      let same = f0.k === f.k;
+      for (let t = 0; same && t < f.k; t++) same = f0.word[t] === f.word[t];
+      if (same) sameWord++;
     }
     let subDiff = NaN;
     try {
@@ -905,6 +918,7 @@ function measureCandidate(cand: Candidate, size: number, twin = true) {
       stats,
       copyPx: hitPx > 0 ? copyPx / hitPx : 0,
       offPx: copyPx > 0 ? offPx / copyPx : 0,
+      wordMatch: copyPx > 0 ? sameWord / copyPx : 1,
       subDiff,
       fill: (100 * members) / CLOUD_POINTS,
       copyShare: members > 0 ? copies / members : 0,
@@ -974,7 +988,7 @@ function runRound(round: string, candidates: Candidate[]): void {
           `off ${r.off.toFixed(2)} sub ${r.sub.toFixed(3)} ` +
           `I0 ${r.iou0.toFixed(2)} K0 ${r.contain0.toFixed(2)}  ` +
           `px: copies ${r.copyPx.toFixed(2)} off ${r.offPx.toFixed(2)} ` +
-          `vs3D ${r.subDiff.toFixed(1)}%`,
+          `vs3D ${r.subDiff.toFixed(1)}% word0 ${r.wordMatch.toFixed(2)}`,
       );
       panels.push({
         stats: r.stats,
@@ -1204,6 +1218,24 @@ function renderWinnerPart(part: string): SheetPanel[] {
   });
 }
 
+/** The erosion instrument's calibration: the gate sheet's deliberate FLAT
+ * embedding (oct6 r .70 at w = 0, 4-ball seed), whose offset slice is
+ * passive erosion by construction and must read word0 = 1. */
+const FLAT_CONTROL: Candidate = {
+  key: "FLATCTRL O6 R.70 B.28 D8",
+  spec: {
+    dim: 4,
+    gens: octahedral6(1, 0.7, 4),
+    seed: ballSeed(0.28, 4),
+    depth: 8,
+  },
+  poses: [
+    { name: "ID", planes: [], w0: 0 },
+    { name: "W.15", planes: [], w0: 0.15 },
+    { name: "XW.4", planes: [["xw", 0.4]], w0: 0 },
+  ],
+};
+
 const ROUND = process.env.SI4_ROUND;
 
 describe("native 4D sphere-inversion beauty search", () => {
@@ -1256,6 +1288,12 @@ describe("native 4D sphere-inversion beauty search", () => {
     "round 2: the 600-cell's seeds, kiss slices and interior vaults",
     () => {
       runRound("r2", ROUND2);
+    },
+  );
+  it.runIf(ROUND === "r4")(
+    "round 4: fold-word erosion test on the winners, calibrated on the flat embedding",
+    () => {
+      runRound("r4", [...WINNERS, FLAT_CONTROL]);
     },
   );
   it.runIf(!ROUND || ROUND === "r3")(
