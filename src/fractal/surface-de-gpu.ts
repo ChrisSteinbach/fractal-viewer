@@ -44,6 +44,12 @@ import {
 import { swirlLensShaderSource } from "./swirl-lens-shader";
 import { inversionDistanceShaderSource } from "./inversion";
 import {
+  SPHERE_INVERSION_GPU_POLE_FLOOR,
+  SPHERE_INVERSION_GPU_SLACK,
+} from "./surface-sphere-inversion-gpu";
+import type { SphereInversionGpuTables } from "./surface-sphere-inversion-gpu";
+import { SPHERE_INVERSION_STEP_SCALE } from "./sphere-inversion";
+import {
   SWIRL_BALLOON_STRIDE_TRANSITION,
   validatedSwirlLensRadius,
   validatedSwirlLensLipschitz,
@@ -1060,6 +1066,16 @@ export const SURFACE_GPU_LENS4_POST_BYTES = 80;
  * lens's 208..271 block — and sizing it identically is what keeps the
  * shared plane/balloon block at ONE offset (576) across every 4D core. */
 export const SURFACE_GPU_PARAMS4_ESCAPE_BYTES = SURFACE_GPU_PARAMS4_LENS_BYTES;
+/** The params uniform for `core: "sphereInv"` without a ground plane: the
+ * 208..271 variant block carries (siCounts, siRadii, siFlags, pad) and the
+ * 272..287 slot is the escape/bulb pad, so the shared plane block keeps its
+ * frozen 288 ({@link SURFACE_GPU_PARAMS_PLANE_BYTES} with a floor). */
+export const SURFACE_GPU_PARAMS_SPHERE_INV_BYTES = 288;
+/** The params uniform for `core: "sphereInv4"` without a ground plane: the
+ * affine4 tail, then (siCounts, siRadii, siFlags) at 464..511 inside the
+ * lens4 block's region, padded to 576 so the plane block keeps its frozen 576
+ * ({@link SURFACE_GPU_PARAMS4_PLANE_BYTES} with a floor). */
+export const SURFACE_GPU_PARAMS4_SPHERE_INV_BYTES = 576;
 /** Params size for a 4D core under `balloon: true`: the 576-byte
  * 4D block — variant members declared unconditionally, zero-filled by the
  * packer when there is no lens — plus the appended balloon block at the
@@ -3353,6 +3369,169 @@ export function packEscape4GpuMaps(de: EscapeDE4): Float32Array {
     }
   });
   return out;
+}
+
+/** The frozen 0..207 block both sphere-inversion packers share: the
+ * origin-centred bounding ball, step scale 1, no kaleidoscope, the generator
+ * count in `mapCount` and the depth in `maxDepth` (the kernel reads its depth
+ * from `siCounts.z`, so a preview tier's `run.maxDepth` cannot change the
+ * object — the construction is create-time). The hit acceptance floor is
+ * CLAMPED to at least the f32 slack (decision 4): the kernel zeroes a bound
+ * below the slack, so an acceptance below it would stall rays at deep zoom. */
+function writeSphereInversionFrozen(
+  view: DataView,
+  gpu: SphereInversionGpuTables,
+  run: SurfaceGpuRunParams,
+  visibleRadius: number,
+): void {
+  const R = gpu.boundingRadius;
+  view.setFloat32(12, R, true);
+  view.setFloat32(16, R * 2, true);
+  view.setFloat32(20, SPHERE_INVERSION_STEP_SCALE, true);
+  view.setFloat32(24, visibleRadius, true);
+  view.setFloat32(28, 1, true);
+  view.setFloat32(32, 1, true);
+  view.setUint32(40, 1, true);
+  view.setUint32(48, gpu.generatorCount, true);
+  view.setUint32(52, gpu.depth, true);
+  view.setUint32(56, run.itemCount, true);
+  view.setUint32(60, run.stepsThisPass ?? 0, true);
+  view.setFloat32(64, run.cutoff ?? 0, true);
+  view.setUint32(72, run.marchSteps ?? 0, true);
+  const pose = run.pose;
+  view.setFloat32(76, pose?.pixelEps ?? 0, true);
+  view.setFloat32(
+    80,
+    Math.max(
+      R * (run.hitFloor ?? SURFACE_GPU_HIT_FLOOR),
+      SPHERE_INVERSION_GPU_SLACK,
+    ),
+    true,
+  );
+  view.setUint32(84, pose?.rasterWidth ?? 0, true);
+  view.setUint32(88, pose?.rasterHeight ?? 0, true);
+  view.setFloat32(92, run.focusDepth ?? 0, true);
+  writeVec3(view, 96, [1, 0, 0]);
+  writeVec3(view, 112, [0, 1, 0]);
+  writeVec3(view, 128, [0, 0, 1]);
+  writeVec3(view, 144, pose?.ro ?? [0, 0, 0]);
+  view.setFloat32(156, 1, true);
+  writeVec3(view, 160, pose?.right ?? [1, 0, 0]);
+  view.setFloat32(172, pose?.tanHalf ?? 0, true);
+  writeVec3(view, 176, pose?.up ?? [0, 1, 0]);
+  view.setFloat32(188, pose?.aspect ?? 1, true);
+  writeVec3(view, 192, pose?.fwd ?? [0, 0, 1]);
+  view.setFloat32(204, run.fogDensity ?? 1, true);
+}
+
+/** The sphere-inversion header at `base`: siCounts (n, s, D, s + n − 1),
+ * siRadii (r, r², pole floor², slack) and siFlags (uniformUnit, 0, 0, 0).
+ * The pole floor is RELATIVE (the kernel compares `|x − c|² <= floor²·r²`),
+ * as the CPU's is. */
+function writeSphereInversionHeader(
+  view: DataView,
+  base: number,
+  gpu: SphereInversionGpuTables,
+): void {
+  view.setUint32(base, gpu.generatorCount, true);
+  view.setUint32(base + 4, gpu.seedCount, true);
+  view.setUint32(base + 8, gpu.depth, true);
+  view.setUint32(base + 12, gpu.termStride, true);
+  view.setFloat32(base + 16, gpu.uniformRadius, true);
+  view.setFloat32(base + 20, gpu.uniformRadius * gpu.uniformRadius, true);
+  view.setFloat32(base + 24, SPHERE_INVERSION_GPU_POLE_FLOOR ** 2, true);
+  view.setFloat32(base + 28, SPHERE_INVERSION_GPU_SLACK, true);
+  view.setUint32(base + 32, gpu.uniformUnit ? 1 : 0, true);
+}
+
+/**
+ * Pack the params uniform for `core: "sphereInv"` (docs/sphere-inversion-gpu.md
+ * section 3): the frozen block as {@link writeSphereInversionFrozen}, the
+ * header at 208, zero pad through 287, and the ground-plane block at the
+ * frozen 288 when given. The tables ride the maps binding
+ * (`packSphereInversionGpuTables`). Throws for 4D tables.
+ */
+export function packSphereInversionGpuParams(
+  gpu: SphereInversionGpuTables,
+  run: SurfaceGpuRunParams,
+  groundPlane: SurfaceGpuGroundPlane | null = null,
+): ArrayBuffer {
+  if (gpu.dim !== 3) {
+    throw new Error(
+      "surface-de-gpu: packSphereInversionGpuParams needs 3D tables",
+    );
+  }
+  const buf = new ArrayBuffer(
+    groundPlane
+      ? SURFACE_GPU_PARAMS_PLANE_BYTES
+      : SURFACE_GPU_PARAMS_SPHERE_INV_BYTES,
+  );
+  const view = new DataView(buf);
+  writeSphereInversionFrozen(view, gpu, run, gpu.boundingRadius);
+  writeSphereInversionHeader(view, 208, gpu);
+  if (groundPlane) writeGroundPlane(view, groundPlane);
+  return buf;
+}
+
+/**
+ * Pack the params uniform for `core: "sphereInv4"`: the escape4 packer's 4D
+ * tail (rotor rows live, stepBack4/final4 identity, `w0` live, the frozen
+ * `visibleRadius` slice-adjusted while `visRadius4` keeps the full radius so
+ * HEIGHT does not swim with the slice, the RADIUS band `(origin, 0, 1/R)`),
+ * the header at 464, zero pad through 575, and the ground-plane block at the
+ * frozen 576 when given. THROWS on a nonzero slab: the CPU estimator refuses
+ * `halfExtent` (sphere-inversion-de-4d.ts's NO SLAB paragraph).
+ */
+export function packSphereInversion4GpuParams(
+  gpu: SphereInversionGpuTables,
+  view4: SurfaceGpu4View,
+  run: SurfaceGpuRunParams,
+  groundPlane: SurfaceGpuGroundPlane | null = null,
+): ArrayBuffer {
+  if (gpu.dim !== 4) {
+    throw new Error(
+      "surface-de-gpu: packSphereInversion4GpuParams needs 4D tables",
+    );
+  }
+  if (view4.sliceHalfW !== 0) {
+    throw new Error(
+      "surface-de-gpu: the sphereInv4 core takes no slab — a thick slice " +
+        "has no certified sphere-inversion estimator; hold sliceHalfW at 0",
+    );
+  }
+  const buf = new ArrayBuffer(
+    groundPlane
+      ? SURFACE_GPU_PARAMS4_PLANE_BYTES
+      : SURFACE_GPU_PARAMS4_SPHERE_INV_BYTES,
+  );
+  const view = new DataView(buf);
+  const R = gpu.boundingRadius;
+  const w = Math.abs(view4.w0);
+  writeSphereInversionFrozen(
+    view,
+    gpu,
+    run,
+    Math.sqrt(Math.max(R * R - w * w, 0)),
+  );
+  const rot = view4.rotor;
+  for (let i = 0; i < 4; i++) {
+    const at = 208 + i * 16;
+    view.setFloat32(at, rot[i], true);
+    view.setFloat32(at + 4, rot[4 + i], true);
+    view.setFloat32(at + 8, rot[8 + i], true);
+    view.setFloat32(at + 12, rot[12 + i], true);
+  }
+  for (let i = 0; i < 4; i++) {
+    view.setFloat32(272 + i * 20, 1, true);
+    view.setFloat32(336 + i * 20, 1, true);
+  }
+  view.setFloat32(416, view4.w0, true);
+  view.setFloat32(424, 1, true);
+  view.setFloat32(428, R, true);
+  view.setFloat32(452, 1 / R, true);
+  writeSphereInversionHeader(view, 464, gpu);
+  if (groundPlane) writeGroundPlane4(view, groundPlane);
+  return buf;
 }
 
 /** Pack the per-map storage array (layout contract above). */
