@@ -90,7 +90,6 @@ import {
 import type {
   GBall,
   RotorPlane,
-  InversionScene,
   InversionSceneSpec,
 } from "./sphere-inversion-orbit";
 
