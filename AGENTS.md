@@ -168,9 +168,8 @@ on, not expectations about the machine at hand; a claim a gate re-measures
 here gets this machine's number beside the old one, never silently
 substituted for it.
 
-CHECK THAT LINE BEFORE BELIEVING A REAL-DRIVER ROW. A SwiftShader run that was
-meant to be a real-driver run is the failure mode this note exists to stop — one
-session shipped its whole measurement set on software before noticing.
+CHECK THAT LINE BEFORE BELIEVING A REAL-DRIVER ROW: one session shipped its
+whole measurement set on software before noticing.
 
 AND A CONTENDED MACHINE IS NOT A MEASUREMENT. "Run it on a quiet machine" was
 unverifiable, and no owner can be asked to coordinate, so it is CHECKED:
@@ -292,12 +291,9 @@ The flame Save-PNG gate (not an npm script — it asserts what a
 downloaded IMAGE contains, which no unit test reaches):
 `npm run build && npm run preview &` then
 `node scripts/flame-export.verify.mjs https://localhost:4173`. Every saved
-PNG is asked only which of two pinned references it is closer to — the
-POINTS cloud or the converged FLAME — and whether it landed only once the
-accumulation FINISHED; SOLID's phase asks the same of the TRACE, since the
-explorer re-seeds its chaos game on every mode switch. MEASURED 16/16 fixed
-vs 6 pre-fix failures. Full record — the comparison's design, solid's
-substitution and the pre-fix figures — in `docs/architecture.md`.
+PNG is asked only which pinned reference it is closer to (the POINTS cloud
+or the converged FLAME; SOLID's phase, the TRACE) and whether it landed only
+once the accumulation FINISHED. Record and figures: `docs/architecture.md`.
 
 ## Pre-commit Hooks
 
@@ -538,8 +534,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     Kaleidoscope, lens and finishes go DORMANT and disclosed; tiling,
     balloon, trap and slab REFUSE. POINTS draws `sphere-inversion-sample.ts`'s
     exact boundary sample of the same set; Flame and Solid REFUSE. Cost is
-    flat in depth; nothing is refused on cost. Record:
-    `docs/sphere-inversion-family.md`, `docs/sphere-inversion-gpu.md`.
+    flat in depth; nothing is refused on cost. CONTROLS: a Scene / Look
+    section after Transforms over the measured public ranges
+    (`sphere-inversion-controls.ts`); the replaced system's sections DISABLE
+    under a block. Record: `docs/sphere-inversion-family.md`,
+    `docs/sphere-inversion-gpu.md`.
   - `morph.ts` — pure interpolation (`lerpSystem`): endpoint-exact at t=0/1,
     rotation lerped nearest-turn, transform-count mismatches fade surplus by
     weight, flat↔4D continuous via derived w-scale, kaleidoscope crossfade
