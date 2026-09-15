@@ -342,6 +342,71 @@ primary hit — with these rules, each owned by one definition:
   scale — the same estimator tapped at the scale that defines the optical
   surface. The visible surface's display-tolerance normal is untouched.
 
+### The closed-solid boundary backend (`opticsBackend: "closedSolid"`)
+
+The estimator march's scope wall is the renderer envelope's structural
+finding: it can find a boundary only from OUTSIDE, so a refracted child —
+which is what glass IS — either misses the domain without a crossing or
+crawls its anchor suppression into the step cap. The closed-solid backend
+swaps the query BODY, not the march structure: the SAME anchored
+suppression (2·eps skip, the 4·eps envelope), the SAME crossing scale,
+step budget, domain gates and refusal vocabulary, over the session's
+SIGNED closed-solid field — the condensation union at the root, the term
+the primary march itself reads, SAFETY-scaled — whose sign is what the
+unsigned estimator never had:
+
+- **Inside traversal.** Outside, the field understates the distance to
+  the solid (the certified conservative bound) and the march steps it
+  forward. Inside, `|f|` is the deepest containing part's certified
+  depth, which bounds the distance to the union's complement — the merged
+  interval along the ray ends at the LAST containing part's exit — so a
+  step cannot cross the boundary without sampling its band, and the first
+  small steps grow geometrically away from the entry wall (no crawl).
+- **The medium cross-check.** The caller-carried medium is CHECKED at the
+  anchored restart: beyond the anchor envelope, a field whose membership
+  contradicts the caller's medium refuses `state-mismatch` (reason 3) —
+  the qualified fixture's exact-occupancy discipline, made real by the
+  sign. The estimator query cannot produce this refusal; the closed-solid
+  one is the first backend that can.
+- **The 4D field.** The 3D field is the condensation term. In 4D the
+  term's hypot form is a distance to the shape flat {sd ≤ 0, w = 0} and
+  reads ZERO throughout that interior — measured: the first 4D envelope
+  arm resolved nothing off it, both engines crawling identically (the
+  agreement vacuous). The 4D field is the intrinsic solid's field plus
+  the flat's distance as a penalty (`sigmaMin · sdShape + |local w|`,
+  `condensation-de.ts`'s `condensationSignedDistance4`, mirrored by the
+  kernel's `transportSolidField`): where the displayed slice carries the
+  flat (the canonical composition — w-untouched lifts, w0 = 0, a
+  w-preserving rotor) the penalty vanishes identically and the field is
+  exactly the 3D solid field; off it the penalty forms a lens-shaped slab
+  around the flat whose failures are honest refusals, never the invented
+  interior the bare 3D form would have traversed.
+- **Admission.** The backend is the shape/condensation vocabulary's own
+  closed-solid representation — the bead's "equivalent closed-solid
+  representation" beside the qualified finite-grid reference, whose
+  anchor/corner/roundoff conventions remain the reference the contract
+  pins against. It REFUSES (loudly, at emission): no condensation
+  emitters (the signed field IS their union), graph-directed selection,
+  hybrid schedules, the fold-final lens, tiling, balloon (the wrapped
+  displayed solid is no longer the base union the field describes — those
+  sessions keep the estimator query and its disclosed vacuous-optics
+  state), and mesh-bearing emitter shapes (the mesh lattice's interior
+  band is not a certified stepping bound; the mesh's declared-resolution
+  treatment is its own follow-up). Ground plane composes (rear-scene
+  terminal, orthogonal). The estimator body's emitted text is unchanged;
+  the absent path stays byte-identical across every mode/core/variant.
+
+Measured (quiet RX 7900 XTX / radeonsi, 2026-09-15): the agreement legs
+pin the closed-solid query and trace against the f64 twin in both
+dimensions (radiance ≤ 7.7e-5, residual ≤ 4.4e-7, normals ≤ 1.5e-5 over
+the emitter-only union fixtures); the envelope's closed-solid arms RESOLVE
+— 3D settle 630 ms with 5,769 resolved / 1,959 unresolved, 4D settle
+697 ms with 7,856 resolved / 2,703 unresolved, every delegated line met
+(preview 163/177 ms, checkpoints 12.8/14.9 ms, cancel 1.1/0.8 ms,
+retained 5.6 MiB, byte-identical repeats). The unresolved fractions are
+grazing paths riding the declared resolution — disclosed per arm, never
+absorbed.
+
 ### Rear radiance, and what this backend does not yet trace
 
 `transportRearRadiance(origin, direction)` is the rear scene's ONE seam.
@@ -429,8 +494,8 @@ emitted module directly instead of through `create()`:
   invalidated: all rays stayed ACTIVE, the budget exhausted them, the frame
   rendered its seed backdrop. The buffer now allocates the optics top.
 
-And the leg's structural finding, which qualifies every "LIVE" in the matrix
-below to "live as compiled and routed":
+And the leg's structural finding, which qualifies every "LIVE" in the
+matrix below to "live as compiled and routed":
 
 - **Every transport sample resolves UNRESOLVED on hits.** The production
   boundary query marches the COMPOSED PUBLIC estimator — an unsigned
@@ -448,36 +513,60 @@ below to "live as compiled and routed":
   pays its marches, fences and readbacks whatever the samples resolve —
   and the note marks a vacuous arm optically.
 
+RESOLVED for the closed-solid path (2026-09-15): the envelope leg now
+drives FOUR arms — the two estimator arms above, plus two CLOSED-SOLID
+arms (`emitterOnlyUnion3`/`4`, the emitter-only union the backend serves,
+driven with `opticsBackend: "closedSolid"` through the same production
+renderer). The closed-solid arms RESOLVE (3D settle: 5,769 resolved /
+1,959 unresolved; 4D settle: 7,856 / 2,703) with every delegated line met
+in both dimensions, and the row-failure gate reads their settle's
+resolved count — a zero-resolution closed-solid settle is a failure, not
+a disclosure. The estimator arms keep the vacuous note (it flips itself
+off when the resolved counts go nonzero); the agreement legs carry the
+per-row `opticsSoundness` marker (`vacuous-inside` for the estimator rows
+— all-refused agreement certifies nothing about optical soundness —
+`resolving` for the closed-solid rows), and their anchored-arm t
+tolerance carries the declared-resolution granularity of the anchored
+same-boundary suppression (2·eps quantization; f32-vs-f64 field rounding
+near the band's edge moves the band exit by one step — disclosed, not
+absorbed).
+
 ### Capability matrix, updated
 
-| Core / wrapper                                | Transport status now                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| compute `affine`, `affine4`, `fold4`          | LIVE as compiled and routed: the session-materials flow admits them — an optics-authored session compiles the transport, the lane and the buffers (agreement rows: radiance ≤ 1.1e-4, residual ≤ 3.2e-4, normals ≤ 6.6e-3 against the f64 twin). NOT yet optically resolving on IFS geometry: every transport sample is unresolved on hits (the renderer envelope's finding — the estimator-march boundary query has no inside traversal)                                                                                                                                                                 |
-| compute `fold` (3D frontier)                  | MEASURED REFUSAL on real hardware: a fold transport invocation exceeds the kernel driver's GPU-job timeout at every budget that exercises the work-list (`ring gfx_0.0.0 timeout`, GPU reset, every attempt — the width-12 frontier's dynamic indexing spills to scratch inside the transport's deep call nesting, the kernel module's own frontier-spill precedent, and the spilled per-eval cost puts any full trace past ~10 s on the RX 7900 XTX). Routing strips the gate (`admitOptics: false`) so a fold session renders classic, disclosed. Reopens on a spill fix or a per-invocation time bound |
-| compute `escape`, `bulb`, `escape4` (forward) | Kernel emitted and bench-pinned (the agreement legs); ROUTING does not admit the families — the slot resolver's `admitOptics: false` strips the gate, so an optics-authored forward session renders classic, disclosed. The estimators are heuristics, not certified lower bounds: the legs pin the kernel's arithmetic, not the material's optical soundness                                                                                                                                                                                                                                             |
-| GLSL tracers (`surface-material*.ts`)         | Dormant; the GLSL twins arrive after the compute backend (a no-compute device's fallback renders classic, disclosed)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `lens` wrapper, both dimensions               | Composes — the boundary query rides the wrapped estimator                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `balloon` (3D/4D)                             | Composes over the union estimator, disclosed envelope; the shell inherits the argmin slot's material                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `ground plane`                                | Composes — the floor is a rear-scene terminal                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| Cinematic lighting                            | EXCLUSIVE (throw)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| Surface applicability gates                   | Unchanged — authored optics adds NO new admission                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Core / wrapper                                | Transport status now                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| compute `affine`, `affine4`, `fold4`          | LIVE as compiled and routed: the session-materials flow admits them — an optics-authored session compiles the transport, the lane and the buffers (agreement rows: radiance ≤ 1.1e-4, residual ≤ 3.2e-4, normals ≤ 6.6e-3 against the f64 twin). NOT optically resolving on IFS geometry with the estimator backend: every transport sample is unresolved on hits (the renderer envelope's finding — the estimator-march boundary query has no inside traversal), marked `vacuous-inside` per row. The CLOSED-SOLID backend (`opticsBackend: "closedSolid"`) over the condensation union RESOLVES in both dimensions — the envelope's closed-solid arms meet every delegated line with real resolved counts (3D 5,769 / 4D 7,856 at the settle), and the agreement legs pin the signed query against the f64 twin (`resolving` rows) |
+| compute `fold` (3D frontier)                  | MEASURED REFUSAL on real hardware: a fold transport invocation exceeds the kernel driver's GPU-job timeout at every budget that exercises the work-list (`ring gfx_0.0.0 timeout`, GPU reset, every attempt — the width-12 frontier's dynamic indexing spills to scratch inside the transport's deep call nesting, the kernel module's own frontier-spill precedent, and the spilled per-eval cost puts any full trace past ~10 s on the RX 7900 XTX). Routing strips the gate (`admitOptics: false`) so a fold session renders classic, disclosed. Reopens on a spill fix or a per-invocation time bound                                                                                                                                                                                                                            |
+| compute `escape`, `bulb`, `escape4` (forward) | Kernel emitted and bench-pinned (the agreement legs); ROUTING does not admit the families — the slot resolver's `admitOptics: false` strips the gate, so an optics-authored forward session renders classic, disclosed. The estimators are heuristics, not certified lower bounds: the legs pin the kernel's arithmetic, not the material's optical soundness                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| GLSL tracers (`surface-material*.ts`)         | Dormant; the GLSL twins arrive after the compute backend (a no-compute device's fallback renders classic, disclosed)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `lens` wrapper, both dimensions               | Composes — the boundary query rides the wrapped estimator                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `balloon` (3D/4D)                             | Composes over the union estimator, disclosed envelope; the shell inherits the argmin slot's material                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `ground plane`                                | Composes — the floor is a rear-scene terminal                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Cinematic lighting                            | EXCLUSIVE (throw)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Surface applicability gates                   | Unchanged — authored optics adds NO new admission                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 ## What is not yet qualified
 
 The compute kernel emission and the host buffer contracts are real state;
 the capability matrix above records exactly how far each consumer has come.
-The renderer-envelope leg's structural finding is now the first blocker:
-the boundary query has no INSIDE traversal, so no production geometry
-resolves a transport sample — the closed-solid backend (the transport
-contract's own finite-grid reference, made production) is what turns the
-lane on optically; until then every optics-authored session compiles, pays
-the lane, and renders its glass slots black. Remaining work, in order —
-the closed-solid boundary backend; the fold core's transport (the measured
-timeout, three recorded paths); the GLSL twins; rear-scene radiance and
-transparent visibility; distortion and capture integration; panel material
-and starter scenes; built-app qualification. Shader changes require the
-corresponding CPU/GPU agreement gate even before production routing is
-enabled; the 22 GPU controls are the pattern. Applicability refusals
+The boundary query's INSIDE traversal has LANDED for the closed-solid
+backend — the envelope's closed-solid arms resolve in both dimensions with
+every delegated line met — so the first blocker is cleared. What remains,
+in order: the fold core's transport (the measured timeout, three recorded
+paths — the closed-solid backend is now DOUBLY motivated for the
+finite-construction path, being its own recorded scope); the GLSL twins
+(`.7`, inheriting the transport and the same disclosure); rear-scene
+radiance and transparent visibility (`.8`, gated on reflections that
+re-enter the object — the closed-solid query now provides the inside
+traversal those need); distortion and capture integration; panel material
+and starter scenes (`.10` — whose app routing must carry the closed-solid
+backend's pose admission: the 4D field is exact where the displayed slice
+carries the flat, and the wiring must pin the canonical composition or
+derive it); built-app qualification (`.11`). The estimator arms' IFS
+vacuity is disclosed, not solved — IFS geometry has no closed solid for
+the signed field to describe. Shader changes require the corresponding
+CPU/GPU agreement gate even before production routing is enabled; the 22
+GPU controls are the pattern. Applicability refusals
 (slab/forward/balloon/engine admissions) are preserved unchanged by this
 work.
 
@@ -485,6 +574,7 @@ work.
 
 ```bash
 npx vitest run src/fractal/surface-dielectric.test.ts
+npx vitest run src/app/gpu-bench/surface-transport-fixture.test.ts
 npx vitest run --config scripts/vitest.harness.config.ts \
   scripts/transmission-dielectric-solid.harness.ts \
   scripts/transmission-dielectric-tree.harness.ts
@@ -504,8 +594,11 @@ against the re-exported optics. The bench's `transportAgreement` rows are
 the compute backend's per-core record: the kernel's own
 `transportNextBoundary`/`transportTrace` against `surface-transport-fixture.ts`'s
 f64 twin, fail-closed, with the forward cores' chaos exclusions disclosed
-per row (the ULP-ensemble classifier, escape legs' treatment) and the fold
-core's measured device-loss skip recorded in the run's notes. Measured
+per row (the ULP-ensemble classifier, escape legs' treatment), the fold
+core's measured device-loss skip recorded in the run's notes, and each
+row's `backend`/`opticsSoundness` pair naming what the agreement
+certifies (the closed-solid rows pin the signed query in both
+dimensions). Measured
 2026-09-14 on the RX 7900 XTX / radeonsi: six of seven cores agree
 (radiance ≤ 1.1e-4, residual ≤ 3.2e-4, normals ≤ 6.6e-3); pristine main
 reproduces the SwiftShader device-loss at an unrelated early leg, so that

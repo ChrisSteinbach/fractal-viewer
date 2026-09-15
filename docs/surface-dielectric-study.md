@@ -371,6 +371,42 @@ and in the harness constants — the evidence does not move.
 The reuse records are `staged-reuse-256x144-{menger,hyper4}.json` and the
 sanity default `staged-256x144-menger.json` (gitignored, regenerable).
 
+## The closed-solid backend's boundary representation (delegated, 2026-09-15)
+
+The transport's boundary query needed an inside traversal — glass IS
+refraction IS an inside path, and the renderer envelope measured every
+production sample refusing on hits. The qualified object's exact DDA over
+integer menger cells was the recorded reference. Under the same delegated
+authority as the envelope lines above, the working session decided the
+production representation: **the signed field itself, not a voxelization
+of it.** The shape vocabulary's SDFs are exact and signed — the thing the
+DDA would approximate with integer cells — and voxelizing them would (a)
+shrink the declared resolution to ~64³ by the step budget's own
+arithmetic (a 1000-cell interior traversal refuses; the qualified
+menger's own cells were 0.056 world units), and (b) replace the smooth
+glass faces the appearance was selected from with a visible staircase on
+every curved shape. The signed query instead marches the condensation
+union's exact field: outside it steps the certified conservative bound
+forward; inside it steps |f| — the deepest containing part's certified
+depth, a lower bound on the distance to the union's complement — so no
+step crosses the boundary without sampling its band, and the anchor
+envelope, crossing scale, step budget and refusal vocabulary are the
+estimator query's own definitions. The qualified DDA stays the reference
+implementation; its conventions (anchor identity, declared resolution,
+refusals-are-unresolved, the exact-corner treatment where integer planes
+exist) are what the production query pins against, and a future
+construction that needs exact integer cells can replace the query body
+without touching the transport. One measured correction the decision
+absorbed: the 4D hypot estimator reads ZERO throughout the shape flat's
+interior (it is a distance TO the flat), so the 4D signed field is the
+intrinsic solid's field plus the flat's distance as a penalty — exact
+where the displayed slice carries the flat, honest refusals off it. The
+first 4D envelope arm resolved nothing off the hypot form, both engines
+crawling identically — the vacuous-agreement failure mode, caught by the
+resolution gate the leg now carries. If Chris would rather see the
+literal voxel-DDA construction, the swap is one query body and the
+qualified conventions transfer unchanged.
+
 ## Owner-selected full-size result
 
 The [1024×1024 comparison](../scripts/out/transmission-dielectric-review.html)
