@@ -16,9 +16,15 @@ import type { ShapeSpec } from "../fractal/shapes";
 import type { TilingSpec } from "../fractal/tiling";
 import type { SymmetryParams, Transform } from "../fractal/types";
 import {
+  SPHERE_INVERSION_DORMANT_FINISHES,
+  SPHERE_INVERSION_DORMANT_KALEIDOSCOPE,
+  SPHERE_INVERSION_DORMANT_LENS,
+  SPHERE_INVERSION_SLAB_REFUSAL,
   SURFACE_SHAPE_SOURCE_BUDGET_BYTES,
   deriveSurfaceDocumentEligibility,
   deriveSurfaceEligibility,
+  sphereInversionDormantDisclosures,
+  sphereInversionHasFragmentArm,
   sphereInversionRenderModeRefusal,
   sphereInversionSessionRefusal,
   surfaceEligibilityHasRoute,
@@ -1488,14 +1494,32 @@ describe("the sphere-inversion route", () => {
     depth: 5,
   };
   const pearls3 = { arrangement: "oct6", seed: { size: 0.28 }, depth: 8 };
-  const withRenderer = {
-    computeAvailable: true,
-    sphereInversionRenderer: true,
+  const withCompute = { computeAvailable: true };
+  const noCompute = { computeAvailable: false };
+  const bothDimensions = [
+    ["3D", pearls3, "sphereInversion"],
+    ["4D", vault4, "sphereInversion4"],
+  ] as const;
+  const plainFinal: Transform = {
+    id: 0,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [1, 1, 1],
+  };
+  const trap = {
+    shape: {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.3 },
+          combine: "union" as const,
+        },
+      ],
+    },
   };
 
   function route(
     block: object | null,
-    opts: { computeAvailable: boolean; sphereInversionRenderer?: boolean },
+    opts: { computeAvailable: boolean },
     overrides: Partial<SurfaceEligibilityDocument> = {},
   ) {
     const document: SurfaceEligibilityDocument = {
@@ -1516,42 +1540,135 @@ describe("the sphere-inversion route", () => {
     );
   }
 
-  it("is refused with an honest renderer-not-yet-available note while no renderer ships", () => {
-    const result = route(pearls3, { computeAvailable: true });
-    expect(result).toMatchObject({ status: "ineligible", kind: null });
-    expect(result.note).toMatch(
-      /sphere-inversion Surface renderer is not yet available; this 3D construction resolves/,
-    );
-  });
-
-  it("routes a 3D block to the 3D kind and a native 4D block to the 4D kind once a renderer exists", () => {
-    expect(route(pearls3, withRenderer)).toMatchObject({
+  it("routes a clean 3D block eligible with no note", () => {
+    expect(route(pearls3, withCompute)).toEqual({
       status: "eligible",
+      note: null,
       kind: "sphereInversion",
     });
-    expect(route(vault4, withRenderer)).toMatchObject({
+  });
+
+  it("routes a native 4D block degraded, disclosing the held slice thickness", () => {
+    const result = route(vault4, withCompute);
+    expect(result).toMatchObject({
+      status: "degraded",
       kind: "sphereInversion4",
     });
+    expect(result.note).toBe(SPHERE_INVERSION_SLAB_REFUSAL);
+  });
+
+  it("has no fragment arm in either dimension yet", () => {
+    expect(sphereInversionHasFragmentArm(3)).toBe(false);
+    expect(sphereInversionHasFragmentArm(4)).toBe(false);
+  });
+
+  for (const [label, block] of bothDimensions) {
+    it(`refuses a ${label} block without compute, naming compute as the reason`, () => {
+      const result = route(block, noCompute);
+      expect(result).toMatchObject({ status: "ineligible", kind: null });
+      expect(result.note).toMatch(
+        /sphere-inversion scenes render on WebGPU compute, which is unavailable here/,
+      );
+    });
+
+    it(`never routes a ${label} block to the transform system's renderer without compute`, () => {
+      const result = route(block, noCompute, {
+        transforms: sierpinskiTetrahedron(),
+      });
+      expect(result.kind).toBeNull();
+    });
+
+    it(`keeps a ${label} kaleidoscope dormant and disclosed instead of refusing`, () => {
+      const result = route(block, withCompute, {
+        symmetry: { order: 4, plane: "xy" },
+      });
+      expect(result.status).toBe("degraded");
+      expect(result.kind).not.toBeNull();
+      expect(result.note).toContain(SPHERE_INVERSION_DORMANT_KALEIDOSCOPE);
+    });
+
+    it(`keeps a ${label} final transform lens dormant and disclosed instead of refusing`, () => {
+      const result = route(block, withCompute, { finalTransform: plainFinal });
+      expect(result.status).toBe("degraded");
+      expect(result.kind).not.toBeNull();
+      expect(result.note).toContain(SPHERE_INVERSION_DORMANT_LENS);
+    });
+
+    it(`keeps ${label} per-transform finishes dormant and disclosed instead of refusing`, () => {
+      const transforms = sierpinskiTetrahedron().map((t) => ({
+        ...t,
+        finish: { metalness: 1 },
+      }));
+      const result = route(block, withCompute, { transforms });
+      expect(result.status).toBe("degraded");
+      expect(result.kind).not.toBeNull();
+      expect(result.note).toContain(SPHERE_INVERSION_DORMANT_FINISHES);
+    });
+
+    it(`refuses Space tiling on a ${label} block with its reason`, () => {
+      const tiling = label === "3D" ? { group: "b3" } : { group: "b4" };
+      const result = route(block, withCompute, {
+        tiling: tiling as TilingSpec,
+      });
+      expect(result).toMatchObject({ status: "ineligible", kind: null });
+      expect(result.note).toMatch(/Space tiling is not available/);
+    });
+
+    it(`refuses a shape trap on a ${label} block with its reason`, () => {
+      const result = route(block, withCompute, { shapeTrap: trap });
+      expect(result).toMatchObject({ status: "ineligible", kind: null });
+      expect(result.note).toMatch(/shape trap is not available/);
+    });
+
+    it(`names a ${label} document refusal ahead of the missing compute`, () => {
+      const result = route(block, noCompute, { shapeTrap: trap });
+      expect(result.note).toMatch(/shape trap is not available/);
+      expect(result.note).not.toMatch(/WebGPU compute/);
+    });
+  }
+
+  it("lists every dormant setting at once, in a fixed order", () => {
+    const transforms = sierpinskiTetrahedron().map((t) => ({
+      ...t,
+      finish: { specular: 0 },
+    }));
+    expect(
+      sphereInversionDormantDisclosures(transforms, plainFinal, {
+        order: 3,
+        plane: "xy",
+      }),
+    ).toEqual([
+      SPHERE_INVERSION_DORMANT_KALEIDOSCOPE,
+      SPHERE_INVERSION_DORMANT_LENS,
+      SPHERE_INVERSION_DORMANT_FINISHES,
+    ]);
+    expect(
+      sphereInversionDormantDisclosures(
+        sierpinskiTetrahedron(),
+        null,
+        NO_SYMMETRY,
+      ),
+    ).toEqual([]);
   });
 
   it("takes precedence over a transform system the IFS gate admits, and over one every gate refuses", () => {
-    expect(route(null, withRenderer).kind).toBe("ifs");
-    expect(route(pearls3, withRenderer).kind).toBe("sphereInversion");
+    expect(route(null, withCompute).kind).toBe("ifs");
+    expect(route(pearls3, withCompute).kind).toBe("sphereInversion");
     const refusedSystem: Transform[] = [
       { id: 0, position: [0, 0, 0], rotation: [0, 0, 0], scale: [2, 2, 2] },
     ];
-    expect(
-      route(null, withRenderer, { transforms: refusedSystem }).status,
-    ).toBe("ineligible");
-    expect(
-      route(vault4, withRenderer, { transforms: refusedSystem }).kind,
-    ).toBe("sphereInversion4");
+    expect(route(null, withCompute, { transforms: refusedSystem }).status).toBe(
+      "ineligible",
+    );
+    expect(route(vault4, withCompute, { transforms: refusedSystem }).kind).toBe(
+      "sphereInversion4",
+    );
   });
 
   it("carries the resolver's refusal reasons in the note for a refused block", () => {
     const result = route(
       { arrangement: "dodeca20", depth: 99, future: 1 },
-      withRenderer,
+      withCompute,
     );
     expect(result).toMatchObject({ status: "ineligible", kind: null });
     expect(result.note).toMatch(/^Sphere-inversion scene refused: /);
@@ -1563,78 +1680,22 @@ describe("the sphere-inversion route", () => {
   it("reports kissing generators as degraded with the tangency disclosure", () => {
     const result = route(
       { arrangement: "cube8", radiusFraction: 1 },
-      withRenderer,
+      withCompute,
     );
     expect(result.status).toBe("degraded");
     expect(result.note).toMatch(/tangent generator pair/);
   });
 
-  it("refuses Space tiling with its reason", () => {
-    const result = route(pearls3, withRenderer, { tiling: { group: "b3" } });
-    expect(result.status).toBe("ineligible");
-    expect(result.note).toMatch(/Space tiling is not available/);
-  });
-
-  it("refuses a kaleidoscope with its reason", () => {
-    const result = route(pearls3, withRenderer, {
-      symmetry: { order: 4, plane: "xy" },
-    });
-    expect(result.status).toBe("ineligible");
-    expect(result.note).toMatch(/kaleidoscope is not available/);
-  });
-
-  it("refuses a final transform lens with its reason", () => {
-    const result = route(pearls3, withRenderer, {
-      finalTransform: {
-        id: 0,
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-      },
-    });
-    expect(result.status).toBe("ineligible");
-    expect(result.note).toMatch(/final transform lens is not available/);
-  });
-
-  it("refuses a shape trap with its reason", () => {
-    const result = route(pearls3, withRenderer, {
-      shapeTrap: {
-        shape: {
-          parts: [
-            { primitive: { kind: "sphere", radius: 0.3 }, combine: "union" },
-          ],
-        },
-      },
-    });
-    expect(result.status).toBe("ineligible");
-    expect(result.note).toMatch(/shape trap is not available/);
-  });
-
-  it("discloses, without refusing, that per-transform finishes are not read", () => {
-    const transforms = sierpinskiTetrahedron().map((t) => ({
-      ...t,
-      finish: { metalness: 1 },
-    }));
-    const result = route(pearls3, withRenderer, { transforms });
-    expect(result.status).toBe("eligible");
-    expect(result.note).toMatch(/finishes .* are not read/);
-  });
-
-  it("discloses the refused slice thickness for a native 4D block", () => {
-    expect(route(vault4, withRenderer).note).toMatch(
-      /slice thickness is held at zero/,
-    );
-    expect(route(pearls3, withRenderer).note).toBeNull();
-  });
-
   it("routes through the document form exactly as through the positional form", () => {
-    expect(
-      deriveSurfaceDocumentEligibility({
-        transforms: sierpinskiTetrahedron(),
-        symmetry: NO_SYMMETRY,
-        sphereInversion: vault4,
-      }),
-    ).toEqual(route(vault4, { computeAvailable: true }));
+    for (const block of [pearls3, vault4]) {
+      expect(
+        deriveSurfaceDocumentEligibility({
+          transforms: sierpinskiTetrahedron(),
+          symmetry: NO_SYMMETRY,
+          sphereInversion: block,
+        }),
+      ).toEqual(route(block, withCompute));
+    }
   });
 
   it("refuses Balloon at the session and admits a session without it", () => {
