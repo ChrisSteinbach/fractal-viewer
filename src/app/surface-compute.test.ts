@@ -55,6 +55,7 @@ import {
 } from "./surface-compute";
 import type {
   SurfaceComputeFrameSpec,
+  SurfaceComputeAnyTarget,
   SurfaceComputeTarget,
 } from "./surface-compute";
 import {
@@ -95,6 +96,11 @@ import {
   starFoundry,
 } from "../fractal/presets";
 import type { Transform } from "../fractal/types";
+import { resolveSphereInversion } from "../fractal/sphere-inversion";
+import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
+import { buildSphereInversionDE } from "../fractal/sphere-inversion-de";
+import { buildSphereInversionDE4 } from "../fractal/sphere-inversion-de-4d";
+import { packSphereInversionGpuTables } from "../fractal/surface-sphere-inversion-gpu";
 import {
   cloneSurfaceLighting,
   DEFAULT_SURFACE_LIGHTING,
@@ -1643,7 +1649,7 @@ interface PaletteResourceHarness {
  * allocation/compilation outcomes are supplied by the fake. */
 async function createPaletteResourceHarness(
   balloon: boolean,
-  targetOverride?: SurfaceComputeTarget,
+  targetOverride?: SurfaceComputeAnyTarget,
   lighting = false,
   deviceFeatures: string[] = [],
 ): Promise<PaletteResourceHarness> {
@@ -1730,14 +1736,14 @@ async function createPaletteResourceHarness(
     order: 1,
     plane: "xz",
   });
-  const target: SurfaceComputeTarget = targetOverride ?? {
+  const target: SurfaceComputeAnyTarget = targetOverride ?? {
     kind: "ifs",
     de,
     balloon,
   };
   const build = Reflect.get(SurfaceComputeRenderer, "buildOnDevice") as (
     device: GPUDevice,
-    target: SurfaceComputeTarget,
+    target: SurfaceComputeAnyTarget,
     colors: [number, number, number][],
     trapIndices: number[],
     shadeDeWidth: number,
@@ -2314,6 +2320,78 @@ describe("SurfaceComputeRenderer shape-trap geometry session resources", () => {
       expect(source).toContain("return min(escapeDistance, trapDistance);");
     }
     harness.renderer.destroy();
+  });
+});
+
+describe("SurfaceComputeRenderer sphere-inversion targets", () => {
+  function construction(authored: SphereInversionAuthored) {
+    const r = resolveSphereInversion(authored);
+    if (!r.ok) throw new Error(r.reasons.join("; "));
+    return r.construction;
+  }
+
+  it("builds a 3D session on the sphereInv kernel pair with the table wire at binding 1 and a 288 B params buffer (336 B with a floor)", async () => {
+    const de = buildSphereInversionDE(
+      construction({
+        arrangement: "ico12",
+        seed: { kind: "cutShell" },
+        depth: 5,
+      }),
+    );
+    const tableBytes = packSphereInversionGpuTables(de).data.byteLength;
+    const plain = await createPaletteResourceHarness(false, {
+      kind: "sphereInversion",
+      de,
+    });
+    expect(plain.bufferDescriptors[0].size).toBe(288);
+    expect(plain.bufferDescriptors.some((d) => d.size === tableBytes)).toBe(
+      true,
+    );
+    expect(plain.shaderSources).toHaveLength(2);
+    for (const source of plain.shaderSources) {
+      expect(source).toContain("var<storage, read> siTable: array<vec4f>;");
+      expect(source).toContain("fn siEstimate(q: vec3f) -> SiResult");
+    }
+    plain.renderer.destroy();
+    const floor = await createPaletteResourceHarness(false, {
+      kind: "sphereInversion",
+      de,
+      groundPlane: true,
+    });
+    expect(floor.bufferDescriptors[0].size).toBe(336);
+    expect(floor.shaderSources.every((src) => src.includes("groundY"))).toBe(
+      true,
+    );
+    floor.renderer.destroy();
+  });
+
+  it("builds a native 4D session on the sphereInv4 pair: 576 B params (624 B with a floor), the 600-cell's 472,416 B table, one kernel pair with no slab twin", async () => {
+    const de = buildSphereInversionDE4(
+      construction({
+        arrangement: "cell600",
+        seed: { kind: "cutShell", size: 0.9, thickness: 0.04 },
+        depth: 5,
+      }),
+    );
+    const plain = await createPaletteResourceHarness(false, {
+      kind: "sphereInversion4",
+      de,
+    });
+    expect(plain.bufferDescriptors[0].size).toBe(576);
+    expect(plain.bufferDescriptors.some((d) => d.size === 472_416)).toBe(true);
+    expect(plain.shaderSources).toHaveLength(2);
+    for (const source of plain.shaderSources) {
+      expect(source).toContain("fn siEstimate(q: vec4f) -> SiResult");
+      expect(source).toContain("liftSphereInv4(");
+    }
+    plain.renderer.destroy();
+    const floor = await createPaletteResourceHarness(false, {
+      kind: "sphereInversion4",
+      de,
+      groundPlane: true,
+    });
+    expect(floor.bufferDescriptors[0].size).toBe(624);
+    floor.renderer.destroy();
   });
 });
 

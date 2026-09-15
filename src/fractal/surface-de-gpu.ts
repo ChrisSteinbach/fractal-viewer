@@ -44,6 +44,13 @@ import {
 import { swirlLensShaderSource } from "./swirl-lens-shader";
 import { inversionDistanceShaderSource } from "./inversion";
 import {
+  SPHERE_INVERSION_GPU_POLE_FLOOR,
+  SPHERE_INVERSION_GPU_SLACK,
+  sphereInversionWgslSource,
+} from "./surface-sphere-inversion-gpu";
+import type { SphereInversionGpuTables } from "./surface-sphere-inversion-gpu";
+import { SPHERE_INVERSION_STEP_SCALE } from "./sphere-inversion";
+import {
   SWIRL_BALLOON_STRIDE_TRANSITION,
   validatedSwirlLensRadius,
   validatedSwirlLensLipschitz,
@@ -1060,6 +1067,16 @@ export const SURFACE_GPU_LENS4_POST_BYTES = 80;
  * lens's 208..271 block — and sizing it identically is what keeps the
  * shared plane/balloon block at ONE offset (576) across every 4D core. */
 export const SURFACE_GPU_PARAMS4_ESCAPE_BYTES = SURFACE_GPU_PARAMS4_LENS_BYTES;
+/** The params uniform for `core: "sphereInv"` without a ground plane: the
+ * 208..271 variant block carries (siCounts, siRadii, siFlags, pad) and the
+ * 272..287 slot is the escape/bulb pad, so the shared plane block keeps its
+ * frozen 288 ({@link SURFACE_GPU_PARAMS_PLANE_BYTES} with a floor). */
+export const SURFACE_GPU_PARAMS_SPHERE_INV_BYTES = 288;
+/** The params uniform for `core: "sphereInv4"` without a ground plane: the
+ * affine4 tail, then (siCounts, siRadii, siFlags) at 464..511 inside the
+ * lens4 block's region, padded to 576 so the plane block keeps its frozen 576
+ * ({@link SURFACE_GPU_PARAMS4_PLANE_BYTES} with a floor). */
+export const SURFACE_GPU_PARAMS4_SPHERE_INV_BYTES = 576;
 /** Params size for a 4D core under `balloon: true`: the 576-byte
  * 4D block — variant members declared unconditionally, zero-filled by the
  * packer when there is no lens — plus the appended balloon block at the
@@ -1685,9 +1702,31 @@ export interface SurfaceGpuKernelOptions {
    * {@link packEscape4GpuParams} AND {@link packEscape4GpuMaps} (binding
    * 1 is `array<GpuMap4>` carrying one FORWARD 4x4 per link), same inert
    * options as "escape", `lens`/`balloon` throw, `groundPlane` composes,
-   * and a nonzero `footprint` or `sliceHalfW` throws at pack. */
+   * and a nonzero `footprint` or `sliceHalfW` throws at pack.
+   * "sphereInv" and "sphereInv4" are the SPHERE-INVERSION cores —
+   * `sphere-inversion-de.ts` / `-de-4d.ts`'s seed-orbit estimator, emitted
+   * once for both dimensions by `surface-sphere-inversion-gpu.ts`'s
+   * `sphereInversionWgslSource` (the 4D one behind escape4's view lift).
+   * Neither a descent nor a forward orbit: binding 1 is re-typed
+   * `siTable: array<vec4f>` ({@link packSphereInversionGpuTables}), the
+   * header rides the variant block ({@link packSphereInversionGpuParams} /
+   * {@link packSphereInversion4GpuParams}). `groundPlane`, `finish`,
+   * `lighting`, `statusOut`, `rays` and `evalStride` compose; `width`,
+   * `shadeDeWidth`, `sharedFrontier`, `bnbStage2`, `slabExt` and
+   * `mapsUniform` are inert; lens, balloon, tiling, shape trap (colour and
+   * geometry), condensation, schedule, xaos, pattern, optics and the slab
+   * cover THROW, each with its reason (docs/sphere-inversion-gpu.md
+   * section 3). */
   core?:
-    "fold" | "affine" | "escape" | "affine4" | "fold4" | "bulb" | "escape4";
+    | "fold"
+    | "affine"
+    | "escape"
+    | "affine4"
+    | "fold4"
+    | "bulb"
+    | "escape4"
+    | "sphereInv"
+    | "sphereInv4";
   /** Emit the FOLD FINAL-transform lens wrapper (`descendLens`, the
    * pure-fold final lens's vocabulary; the 4D arm lifts it to the 4D
    * cores as `descendLens4`): the descent body (any core but
@@ -3321,6 +3360,169 @@ export function packEscape4GpuMaps(de: EscapeDE4): Float32Array {
   return out;
 }
 
+/** The frozen 0..207 block both sphere-inversion packers share: the
+ * origin-centred bounding ball, step scale 1, no kaleidoscope, the generator
+ * count in `mapCount` and the depth in `maxDepth` (the kernel reads its depth
+ * from `siCounts.z`, so a preview tier's `run.maxDepth` cannot change the
+ * object — the construction is create-time). The hit acceptance floor is
+ * CLAMPED to at least the f32 slack (decision 4): the kernel zeroes a bound
+ * below the slack, so an acceptance below it would stall rays at deep zoom. */
+function writeSphereInversionFrozen(
+  view: DataView,
+  gpu: SphereInversionGpuTables,
+  run: SurfaceGpuRunParams,
+  visibleRadius: number,
+): void {
+  const R = gpu.boundingRadius;
+  view.setFloat32(12, R, true);
+  view.setFloat32(16, R * 2, true);
+  view.setFloat32(20, SPHERE_INVERSION_STEP_SCALE, true);
+  view.setFloat32(24, visibleRadius, true);
+  view.setFloat32(28, 1, true);
+  view.setFloat32(32, 1, true);
+  view.setUint32(40, 1, true);
+  view.setUint32(48, gpu.generatorCount, true);
+  view.setUint32(52, gpu.depth, true);
+  view.setUint32(56, run.itemCount, true);
+  view.setUint32(60, run.stepsThisPass ?? 0, true);
+  view.setFloat32(64, run.cutoff ?? 0, true);
+  view.setUint32(72, run.marchSteps ?? 0, true);
+  const pose = run.pose;
+  view.setFloat32(76, pose?.pixelEps ?? 0, true);
+  view.setFloat32(
+    80,
+    Math.max(
+      R * (run.hitFloor ?? SURFACE_GPU_HIT_FLOOR),
+      SPHERE_INVERSION_GPU_SLACK,
+    ),
+    true,
+  );
+  view.setUint32(84, pose?.rasterWidth ?? 0, true);
+  view.setUint32(88, pose?.rasterHeight ?? 0, true);
+  view.setFloat32(92, run.focusDepth ?? 0, true);
+  writeVec3(view, 96, [1, 0, 0]);
+  writeVec3(view, 112, [0, 1, 0]);
+  writeVec3(view, 128, [0, 0, 1]);
+  writeVec3(view, 144, pose?.ro ?? [0, 0, 0]);
+  view.setFloat32(156, 1, true);
+  writeVec3(view, 160, pose?.right ?? [1, 0, 0]);
+  view.setFloat32(172, pose?.tanHalf ?? 0, true);
+  writeVec3(view, 176, pose?.up ?? [0, 1, 0]);
+  view.setFloat32(188, pose?.aspect ?? 1, true);
+  writeVec3(view, 192, pose?.fwd ?? [0, 0, 1]);
+  view.setFloat32(204, run.fogDensity ?? 1, true);
+}
+
+/** The sphere-inversion header at `base`: siCounts (n, s, D, s + n − 1),
+ * siRadii (r, r², pole floor², slack) and siFlags (uniformUnit, 0, 0, 0).
+ * The pole floor is RELATIVE (the kernel compares `|x − c|² <= floor²·r²`),
+ * as the CPU's is. */
+function writeSphereInversionHeader(
+  view: DataView,
+  base: number,
+  gpu: SphereInversionGpuTables,
+): void {
+  view.setUint32(base, gpu.generatorCount, true);
+  view.setUint32(base + 4, gpu.seedCount, true);
+  view.setUint32(base + 8, gpu.depth, true);
+  view.setUint32(base + 12, gpu.termStride, true);
+  view.setFloat32(base + 16, gpu.uniformRadius, true);
+  view.setFloat32(base + 20, gpu.uniformRadius * gpu.uniformRadius, true);
+  view.setFloat32(base + 24, SPHERE_INVERSION_GPU_POLE_FLOOR ** 2, true);
+  view.setFloat32(base + 28, SPHERE_INVERSION_GPU_SLACK, true);
+  view.setUint32(base + 32, gpu.uniformUnit ? 1 : 0, true);
+}
+
+/**
+ * Pack the params uniform for `core: "sphereInv"` (docs/sphere-inversion-gpu.md
+ * section 3): the frozen block as {@link writeSphereInversionFrozen}, the
+ * header at 208, zero pad through 287, and the ground-plane block at the
+ * frozen 288 when given. The tables ride the maps binding
+ * (`packSphereInversionGpuTables`). Throws for 4D tables.
+ */
+export function packSphereInversionGpuParams(
+  gpu: SphereInversionGpuTables,
+  run: SurfaceGpuRunParams,
+  groundPlane: SurfaceGpuGroundPlane | null = null,
+): ArrayBuffer {
+  if (gpu.dim !== 3) {
+    throw new Error(
+      "surface-de-gpu: packSphereInversionGpuParams needs 3D tables",
+    );
+  }
+  const buf = new ArrayBuffer(
+    groundPlane
+      ? SURFACE_GPU_PARAMS_PLANE_BYTES
+      : SURFACE_GPU_PARAMS_SPHERE_INV_BYTES,
+  );
+  const view = new DataView(buf);
+  writeSphereInversionFrozen(view, gpu, run, gpu.boundingRadius);
+  writeSphereInversionHeader(view, 208, gpu);
+  if (groundPlane) writeGroundPlane(view, groundPlane);
+  return buf;
+}
+
+/**
+ * Pack the params uniform for `core: "sphereInv4"`: the escape4 packer's 4D
+ * tail (rotor rows live, stepBack4/final4 identity, `w0` live, the frozen
+ * `visibleRadius` slice-adjusted while `visRadius4` keeps the full radius so
+ * HEIGHT does not swim with the slice, the RADIUS band `(origin, 0, 1/R)`),
+ * the header at 464, zero pad through 575, and the ground-plane block at the
+ * frozen 576 when given. THROWS on a nonzero slab: the CPU estimator refuses
+ * `halfExtent` (sphere-inversion-de-4d.ts's NO SLAB paragraph).
+ */
+export function packSphereInversion4GpuParams(
+  gpu: SphereInversionGpuTables,
+  view4: SurfaceGpu4View,
+  run: SurfaceGpuRunParams,
+  groundPlane: SurfaceGpuGroundPlane | null = null,
+): ArrayBuffer {
+  if (gpu.dim !== 4) {
+    throw new Error(
+      "surface-de-gpu: packSphereInversion4GpuParams needs 4D tables",
+    );
+  }
+  if (view4.sliceHalfW !== 0) {
+    throw new Error(
+      "surface-de-gpu: the sphereInv4 core takes no slab — a thick slice " +
+        "has no certified sphere-inversion estimator; hold sliceHalfW at 0",
+    );
+  }
+  const buf = new ArrayBuffer(
+    groundPlane
+      ? SURFACE_GPU_PARAMS4_PLANE_BYTES
+      : SURFACE_GPU_PARAMS4_SPHERE_INV_BYTES,
+  );
+  const view = new DataView(buf);
+  const R = gpu.boundingRadius;
+  const w = Math.abs(view4.w0);
+  writeSphereInversionFrozen(
+    view,
+    gpu,
+    run,
+    Math.sqrt(Math.max(R * R - w * w, 0)),
+  );
+  const rot = view4.rotor;
+  for (let i = 0; i < 4; i++) {
+    const at = 208 + i * 16;
+    view.setFloat32(at, rot[i], true);
+    view.setFloat32(at + 4, rot[4 + i], true);
+    view.setFloat32(at + 8, rot[8 + i], true);
+    view.setFloat32(at + 12, rot[12 + i], true);
+  }
+  for (let i = 0; i < 4; i++) {
+    view.setFloat32(272 + i * 20, 1, true);
+    view.setFloat32(336 + i * 20, 1, true);
+  }
+  view.setFloat32(416, view4.w0, true);
+  view.setFloat32(424, 1, true);
+  view.setFloat32(428, R, true);
+  view.setFloat32(452, 1 / R, true);
+  writeSphereInversionHeader(view, 464, gpu);
+  if (groundPlane) writeGroundPlane4(view, groundPlane);
+  return buf;
+}
+
 /** Pack the per-map storage array (layout contract above). */
 export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
   const schedule = surfaceScheduleWireInfo(de);
@@ -4269,7 +4471,11 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // The 4D cores: one view lift, one params tail, one maps layout. The
   // shared header/entry interpolations below key on this, so an eighth
   // core cannot forget one of them.
-  const core4 = core === "affine4" || core === "fold4" || core === "escape4";
+  const core4 =
+    core === "affine4" ||
+    core === "fold4" ||
+    core === "escape4" ||
+    core === "sphereInv4";
   // The FORWARD cores (escape, bulb and escape4): a forward orbit
   // rather than a descent, so none of the
   // descent helpers and no frontier. The shared header/entry
@@ -4278,6 +4484,51 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // that is BOTH — it takes the 4D tail and the `GpuMap4` layout from the
   // descent cores and the orbit from the 3D escape one.
   const forward = core === "escape" || core === "bulb" || core === "escape4";
+  // The SPHERE-INVERSION cores: neither a descent (no inverse maps, no
+  // frontier, no descent helpers) nor a forward orbit (no `+ p`, no escape).
+  // Every predicate below that the seven shipped cores read evaluates for
+  // them exactly as before — pinned by surface-de-gpu-digest.test.ts.
+  const siCore = core === "sphereInv" || core === "sphereInv4";
+  if (siCore) {
+    const refusals: [boolean, string][] = [
+      [
+        !!opts.lens,
+        "a final-transform lens (the scene block has no final transform)",
+      ],
+      [
+        !!opts.balloon,
+        "balloon (an inversion-group orbit under a further inversion is unmeasured for the echo's clearance and far-cap rules)",
+      ],
+      [
+        (opts.tiling ?? null) !== null,
+        "space tiling (no fixture or look call exists; lattice tiling has no finite ball)",
+      ],
+      [
+        (opts.shapeTrap ?? null) !== null ||
+          opts.shapeTrapGeometry?.geometry === true,
+        "a shape trap (the escape family's forward-orbit channel)",
+      ],
+      [
+        (opts.condensation?.emitters.length ?? 0) > 0 ||
+          (opts.schedule?.scheduleMapCount ?? 0) > 0 ||
+          (opts.chaos?.activeStateCount ?? 0) > 0,
+        "condensation, a hybrid schedule or xaos (transform-system features)",
+      ],
+      [
+        !!opts.pattern || !!opts.optics,
+        "pattern or optics (not in the first cut: pattern needs a source4 convention, optics ships dormant)",
+      ],
+      [
+        !!opts.slabCover,
+        "a slab cover (the CPU estimator refuses a thick slice)",
+      ],
+    ];
+    for (const [refused, what] of refusals) {
+      if (refused) {
+        throw new Error(`surface-de-gpu: the ${core} core refuses ${what}`);
+      }
+    }
+  }
   // Tiling is a compile gate: finite roots and either arm's analytic clip
   // bake into the source, while the params tail carries the construction code
   // and lattice h. Validate resolver authority before any body text is
@@ -4915,14 +5166,15 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
   // them and the inertness is structural, not just documented. The
   // escape4 core is 4D and takes no slab at all (a forward orbit cannot
   // thread a segment), so it sits with the 3D cores here.
-  const slabExt = core4 && !forward ? (opts.slabExt ?? true) : true;
+  const slabExt = core4 && !forward && !siCore ? (opts.slabExt ?? true) : true;
   // The nonlinear slab cover (option doc). Structurally inert outside the
   // 4D descent cores, exactly like slabExt — but a 4D request must be
   // coherent: the cover IS the slab answer, so it requires slabExt on and
   // composes with the lens (the cover wraps the lens wrapper); 4D tiling
   // refuses slabs at pack, so generating the composition would emit a
   // kernel no packer can legally feed — loud beats silent.
-  const slabCover = core4 && !forward ? (opts.slabCover ?? false) : false;
+  const slabCover =
+    core4 && !forward && !siCore ? (opts.slabCover ?? false) : false;
   if (slabCover && !slabExt) {
     throw new Error(
       "surface-de-gpu: slabCover requires slabExt — the cover is the slab " +
@@ -4960,7 +5212,8 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
       (mode === "eval" && !!opts.evalStride));
   // The maps-load probe (option doc). Same structural inertness
   // as slabExt — only the 4D descent cores ever consult it.
-  const mapsUniform = core4 && !forward ? (opts.mapsUniform ?? false) : false;
+  const mapsUniform =
+    core4 && !forward && !siCore ? (opts.mapsUniform ?? false) : false;
   if (!Number.isInteger(width) || width < 1) {
     throw new Error(`surface-de-gpu: bad frontier width ${width}`);
   }
@@ -7677,8 +7930,55 @@ fn surfaceDEHitInfo(pIn: vec3f, li: u32) -> SurfaceHitInfo {
   return hi;
 }`;
 
-  const rawCoreHitInfoText =
-    core === "affine"
+  // The SPHERE-INVERSION hit-info (decision 6): one siEstimate, whose
+  // bookkeeping already names the winning term. "By Transform" colours by
+  // GENERATION — firstChoice is the word length, so a host packs one slot per
+  // generation 0..D+2 with identical finish lanes (one material) and the
+  // shared entry's slot clamp covers any shorter table; trap = generation
+  // over D + 2, rings = the fold's closest normalized radial approach,
+  // sheets = the binding seed member (0 for a wall, gap ball or pole).
+  const siHitInfoText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0);
+  let res = siEstimate(${core === "sphereInv4" ? "liftSphereInv4(p)" : "p"});
+  let generation = siGeneration(res);
+  let member = siSeedMember(res);
+  info.firstChoice = i32(generation);
+  info.trap = clamp(f32(generation) / f32(params.siCounts.z + 2u), 0.0, 1.0);
+  info.rings = clamp(res.ring, 0.0, 1.0);
+  info.sheets = select(
+    f32(member + 1) / f32(params.siCounts.y + 1u),
+    0.0,
+    member < 0,
+  );
+  return info;
+}`;
+  const siDescentText = siCore
+    ? /* wgsl */ `${sphereInversionWgslSource(core4 ? 4 : 3)}
+${
+  core === "sphereInv4"
+    ? `
+// The view lift, escape4's liftEscape4 under this core's name (that helper is
+// emitted inside the escape4 body only). A slice's distance is at least the
+// 4D distance, so the certified 4D bound is a certified in-slice bound.
+fn liftSphereInv4(pIn: vec3f) -> vec4f {
+  let pv = vec4f(pIn, params.w0);
+  return vec4f(
+    dot(params.rotorInvR0, pv),
+    dot(params.rotorInvR1, pv),
+    dot(params.rotorInvR2, pv),
+    dot(params.rotorInvR3, pv),
+  );
+}
+`
+    : ""
+}
+fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+  return siEstimate(${core === "sphereInv4" ? "liftSphereInv4(pIn)" : "pIn"}).d;
+}`
+    : "";
+  const rawCoreHitInfoText = siCore
+    ? siHitInfoText
+    : core === "affine"
       ? affineHitInfoText
       : core === "escape"
         ? escapeHitInfoText
@@ -7883,7 +8183,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
         ? `u = clamp(hi.colorPos.y / visR * 0.5 + 0.5, 0.0, 1.0);`
         : `u = clamp(pos.y / visR * 0.5 + 0.5, 0.0, 1.0);`;
   const shadeRadiusU =
-    core === "escape4"
+    core === "escape4" || core === "sphereInv4"
       ? // The same attractor-frame radius ramp, through this
         // core's own lift (it emits none of the descents' 4D helpers, and
         // its slab is pinned to 0 so there is no sStar term to add). The
@@ -7896,7 +8196,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
         (length(q4c - params.radiusCenter4) - params.radiusMinD) *
           params.radiusInvRange,
         0.0, 1.0);`
-        : `let q4c = liftEscape4(pos);
+        : `let q4c = ${core === "sphereInv4" ? "liftSphereInv4" : "liftEscape4"}(pos);
       u = clamp(
         (length(q4c - params.radiusCenter4) - params.radiusMinD) *
           params.radiusInvRange,
@@ -9571,6 +9871,15 @@ ${
   chaosMask3: vec4u,
   chaosMask4: vec4u,
   chaosMask5: vec4u,`;
+  // The sphere-inversion header — the SAME three members at 208 (3D) and 464
+  // (4D); packSphereInversionGpuParams / packSphereInversion4GpuParams.
+  const siStructFields = /* wgsl */ `
+  // (generatorCount n, seedCount s, depth D, termStride s + n - 1)
+  siCounts: vec4u,
+  // (r, r^2, relative pole floor^2, absolute f32 slack)
+  siRadii: vec4f,
+  // (uniformUnit, 0, 0, 0) — the radial-reject / nearest-centre search
+  siFlags: vec4u,`;
   const headerText = /* wgsl */ `
 struct Params {
   boundCenter: vec3f,
@@ -9655,8 +9964,17 @@ struct Params {
     // block. One live word — the chain's estimate form — and then the
     // pad that keeps the shared plane block at 576 for every 4D core,
     // which is the 3D cores' `padF` argument one dimension up.
-    core === "escape4"
-      ? /* wgsl */ `
+    core === "sphereInv4"
+      ? `${siStructFields}${
+          tail4Block
+            ? /* wgsl */ `
+  // 512..575, PAD — the lens4 block's remaining region, so the shared
+  // plane block lands at 576 for every 4D core.
+  siPad4: array<vec4f, 4>,`
+            : ""
+        }`
+      : core === "escape4"
+        ? /* wgsl */ `
   // (logEstimate, 0, 0, 0) — the chain-level estimate form, 0
   // linear and 1 Bottcher. One number per CHAIN, read once after the
   // orbit, which is why it rides here and not the maps binding. Nothing
@@ -9672,15 +9990,15 @@ struct Params {
   padE4: array<vec4f, 6>,`
       : ""
   }`
-      : // The lens4 block, APPENDED past the 4D tail
-        // (464..575). Declared under the lens, and under anything
-        // appended past it, so the shared
-        // block keeps one offset. A smaller struct reading a larger
-        // buffer is valid WebGPU, so keeping it struct-conditional
-        // otherwise is what keeps every plain 4D kernel's text
-        // byte-identical.
-        lens || tail4Block
-        ? /* wgsl */ `
+        : // The lens4 block, APPENDED past the 4D tail
+          // (464..575). Declared under the lens, and under anything
+          // appended past it, so the shared
+          // block keeps one offset. A smaller struct reading a larger
+          // buffer is valid WebGPU, so keeping it struct-conditional
+          // otherwise is what keeps every plain 4D kernel's text
+          // byte-identical.
+          lens || tail4Block
+          ? /* wgsl */ `
   lens4MR0: vec4f,
   lens4MR1: vec4f,
   lens4MR2: vec4f,
@@ -9691,14 +10009,20 @@ struct Params {
   // radii are dimension-free (SurfaceFoldRadii is SHARED by the two
   // oracles), so this is the same quartet at the 4D block's own offset.
   lens4Fold: vec4f,`
-        : ""
+          : ""
   }${balloon ? balloonStructFields : ""}${
     groundPlane || shapeTrap ? planeStructFields : ""
   }${shapeTrap ? trapStructFields : ""}${
     condensationShapes ? condensationStructFields : ""
   }${schedule ? scheduleStructFields : ""}${chaos ? chaosStructFields : ""}`
-      : core === "escape"
-        ? /* wgsl */ `
+      : core === "sphereInv"
+        ? /* wgsl */ `${siStructFields}
+  // 256..271 pad, then the escape/bulb cores' 272..287 pad, so the shared
+  // plane block lands at ONE offset (288) across every 3D core.
+  siPad: vec4f,
+  padF: vec4f,${groundPlane ? planeStructFields : ""}`
+        : core === "escape"
+          ? /* wgsl */ `
   escM0: vec3f,
   escT0: f32,
   escM1: vec3f,
@@ -9718,8 +10042,8 @@ struct Params {
   padF: vec4f,${groundPlane || shapeTrap ? planeStructFields : ""}${
     shapeTrap ? trapStructFields : ""
   }`
-        : core === "bulb"
-          ? /* wgsl */ `
+          : core === "bulb"
+            ? /* wgsl */ `
   bulbM0: vec3f,
   bulbT0: f32,
   bulbM1: vec3f,
@@ -9731,14 +10055,14 @@ struct Params {
   padF: vec4f,${groundPlane || shapeTrap ? planeStructFields : ""}${
     shapeTrap ? trapStructFields : ""
   }`
-          : lens ||
-              balloon ||
-              groundPlane ||
-              condensationShapes ||
-              schedule ||
-              chaos ||
-              tiling
-            ? /* wgsl */ `
+            : lens ||
+                balloon ||
+                groundPlane ||
+                condensationShapes ||
+                schedule ||
+                chaos ||
+                tiling
+              ? /* wgsl */ `
   lensM0: vec3f,
   lensT0: f32,
   lensM1: vec3f,
@@ -9756,7 +10080,7 @@ struct Params {
   }${condensationShapes ? condensationStructFields : ""}${
     schedule ? scheduleStructFields : ""
   }${chaos ? chaosStructFields : ""}`
-            : ""
+              : ""
   }
 ${
   tiling
@@ -9789,7 +10113,7 @@ ${
     : ""
 }
 }${
-    !mapsBinding
+    !mapsBinding || siCore
       ? ""
       : core4
         ? /* wgsl */ `
@@ -9843,18 +10167,21 @@ struct GpuMap {
     // identically either way, so the variant is exactly this one line.
     !mapsBinding
       ? ""
-      : core4
-        ? mapsUniform
-          ? `
+      : siCore
+        ? `
+@group(0) @binding(1) var<storage, read> siTable: array<vec4f>;`
+        : core4
+          ? mapsUniform
+            ? `
 @group(0) @binding(1) var<uniform> maps: array<GpuMap4, ${SURFACE_GPU_UNIFORM_MAP_SLOTS}>;`
-          : `
+            : `
 @group(0) @binding(1) var<storage, read> maps: array<GpuMap4>;`
-        : `
+          : `
 @group(0) @binding(1) var<storage, read> maps: array<GpuMap>;`
   }
 ${io}
 ${frontierBlock}${
-    forward
+    forward || siCore
       ? ""
       : core4
         ? /* wgsl */ `
@@ -12783,8 +13110,11 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   return 0.5 * r * log(r) / dr;
 }`;
 
-  const rawDescentBlock =
-    core === "affine"
+  const rawDescentBlock = siCore
+    ? `// The sphere-inversion seed-orbit estimator (surface-sphere-inversion-gpu.ts),
+// ${core === "sphereInv4" ? "native 4D behind the view lift" : "3D"}.
+${siDescentText}`
+    : core === "affine"
       ? `// descend's refine=true path (surface-de.ts) — the estimator the
 // AFFINE GLSL marches, in that mirror's f32 formulation. Fixed width 4.
 ${affineDescentText}`

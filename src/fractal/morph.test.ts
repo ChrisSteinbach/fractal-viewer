@@ -1785,3 +1785,20 @@ describe("lerpTiling (the tiling block's morph rule)", () => {
     ).toBeUndefined();
   });
 });
+
+describe("lerpSystem and the sphere-inversion block", () => {
+  it("never carries a sphere-inversion block into an intermediate: the document's block applies from the first push", () => {
+    const a = {
+      ...system(),
+      sphereInversion: { arrangement: "oct6" },
+    } as MorphSystem;
+    const b = {
+      ...system({ transforms: [transform({ position: [1, 0, 0] })] }),
+      sphereInversion: { arrangement: "oct6", radiusFraction: 0.9 },
+    } as MorphSystem;
+    const mid = lerpSystem(a, b, 0.5);
+    expect(mid).not.toBe(a);
+    expect(mid).not.toBe(b);
+    expect("sphereInversion" in mid).toBe(false);
+  });
+});

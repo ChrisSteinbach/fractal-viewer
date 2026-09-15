@@ -4,6 +4,7 @@ import {
   systemPartsAreNonFlat,
   toTransform4,
 } from "../fractal/affine4";
+import { scenePartsAreNonFlat } from "../fractal/scene-dimension";
 import { wSupport } from "./rotor4";
 import { FourDTween, FourDView, viewTransition } from "./four-d-view";
 import type { FourDPose } from "./four-d-view";
@@ -361,6 +362,7 @@ import {
   setSymmetryPlane,
   setSymmetryOrder,
   setSymmetryTwist,
+  setSphereInversion,
   setTiling,
   setTransforms,
   setTransformEmitter,
@@ -5728,6 +5730,7 @@ async function main(): Promise<void> {
         state.shapeTrap ?? null,
         state.tiling ?? null,
         state.condensationDepthBand,
+        state.sphereInversion ?? null,
       );
       if (sessionEligibility.status === "ineligible") {
         ui.flashToast(
@@ -5854,10 +5857,16 @@ async function main(): Promise<void> {
       pendingSurfaceGrid = null;
       try {
         if (
-          systemPartsAreNonFlat(
+          // The SCENE's dimension (scene-dimension.ts), which a
+          // sphere-inversion block decides. The door above refuses every
+          // such block today (no renderer), so this reads the transforms'
+          // flatness in practice; routing it here keeps the gate and the
+          // door on one derivation for the renderer work.
+          scenePartsAreNonFlat(
             state.transforms,
             state.finalTransform ?? null,
             state.symmetry,
+            state.sphereInversion,
           )
         ) {
           // A 4D system: the w = sliceCenter cross-section (or slab) of the
@@ -6939,6 +6948,7 @@ async function main(): Promise<void> {
       state.shapeTrap ?? null,
       state.tiling ?? null,
       state.condensationDepthBand,
+      state.sphereInversion ?? null,
     );
   }
 
@@ -8188,6 +8198,9 @@ async function main(): Promise<void> {
         // (the eligibility refusal). random-system never ROLLS one — tiling
         // is authored composition, not surprise material.
         state = setTiling(state, null);
+        // A rolled system is the new subject; a leftover sphere-inversion
+        // block would replace it in Surface. random-system never rolls one.
+        state = setSphereInversion(state, null);
       },
       "always",
       morphMs,
@@ -9833,6 +9846,11 @@ async function main(): Promise<void> {
         // would route the arriving system through a group it was never
         // composed with).
         state = setTiling(state, PRESET_TILINGS[preset] ?? null);
+        // A preset names a transform-system subject, and a sphere-inversion
+        // block would replace it in Surface: every preset load CLEARS the
+        // block (the tiling table's absent-means-clear rule; no preset
+        // carries one yet).
+        state = setSphereInversion(state, null);
         // The flame palette a preset was composed against
         // (PRESET_PALETTES) — set, never cleared: absent means "the user's
         // palette is fine", which is every preset that predates the table.

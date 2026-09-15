@@ -19,6 +19,7 @@ import {
   SURFACE_SHAPE_SOURCE_BUDGET_BYTES,
   deriveSurfaceDocumentEligibility,
   deriveSurfaceEligibility,
+  sphereInversionSessionRefusal,
   surfaceEligibilityHasRoute,
 } from "./surface-eligibility";
 import type { SurfaceEligibilityDocument } from "./surface-eligibility";
@@ -1476,5 +1477,169 @@ describe("deriveSurfaceEligibility and the tiling block", () => {
     const result = deriveSurfaceDocumentEligibility(tiled);
     expect(result.status).not.toBe("ineligible");
     expect(result.kind).not.toBeNull();
+  });
+});
+
+describe("the sphere-inversion route", () => {
+  const vault4 = {
+    arrangement: "cell600",
+    seed: { kind: "cutShell", size: 0.9, thickness: 0.04 },
+    depth: 5,
+  };
+  const pearls3 = { arrangement: "oct6", seed: { size: 0.28 }, depth: 8 };
+  const withRenderer = {
+    computeAvailable: true,
+    sphereInversionRenderer: true,
+  };
+
+  function route(
+    block: object | null,
+    opts: { computeAvailable: boolean; sphereInversionRenderer?: boolean },
+    overrides: Partial<SurfaceEligibilityDocument> = {},
+  ) {
+    const document: SurfaceEligibilityDocument = {
+      transforms: sierpinskiTetrahedron(),
+      symmetry: NO_SYMMETRY,
+      ...overrides,
+    };
+    return deriveSurfaceEligibility(
+      document.transforms,
+      document.finalTransform ?? null,
+      document.symmetry,
+      opts,
+      document.schedule ?? null,
+      document.shapeTrap ?? null,
+      document.tiling ?? null,
+      document.condensationDepthBand,
+      block,
+    );
+  }
+
+  it("is refused with an honest renderer-not-yet-available note while no renderer ships", () => {
+    const result = route(pearls3, { computeAvailable: true });
+    expect(result).toMatchObject({ status: "ineligible", kind: null });
+    expect(result.note).toMatch(
+      /sphere-inversion Surface renderer is not yet available; this 3D construction resolves/,
+    );
+  });
+
+  it("routes a 3D block to the 3D kind and a native 4D block to the 4D kind once a renderer exists", () => {
+    expect(route(pearls3, withRenderer)).toMatchObject({
+      status: "eligible",
+      kind: "sphereInversion",
+    });
+    expect(route(vault4, withRenderer)).toMatchObject({
+      kind: "sphereInversion4",
+    });
+  });
+
+  it("takes precedence over a transform system the IFS gate admits, and over one every gate refuses", () => {
+    expect(route(null, withRenderer).kind).toBe("ifs");
+    expect(route(pearls3, withRenderer).kind).toBe("sphereInversion");
+    const refusedSystem: Transform[] = [
+      { id: 0, position: [0, 0, 0], rotation: [0, 0, 0], scale: [2, 2, 2] },
+    ];
+    expect(
+      route(null, withRenderer, { transforms: refusedSystem }).status,
+    ).toBe("ineligible");
+    expect(
+      route(vault4, withRenderer, { transforms: refusedSystem }).kind,
+    ).toBe("sphereInversion4");
+  });
+
+  it("carries the resolver's refusal reasons in the note for a refused block", () => {
+    const result = route(
+      { arrangement: "dodeca20", depth: 99, future: 1 },
+      withRenderer,
+    );
+    expect(result).toMatchObject({ status: "ineligible", kind: null });
+    expect(result.note).toMatch(/^Sphere-inversion scene refused: /);
+    expect(result.note).toMatch(/unknown arrangement "dodeca20"/);
+    expect(result.note).toMatch(/depth 99/);
+    expect(result.note).toMatch(/unknown field "future"/);
+  });
+
+  it("reports kissing generators as degraded with the tangency disclosure", () => {
+    const result = route(
+      { arrangement: "cube8", radiusFraction: 1 },
+      withRenderer,
+    );
+    expect(result.status).toBe("degraded");
+    expect(result.note).toMatch(/tangent generator pair/);
+  });
+
+  it("refuses Space tiling with its reason", () => {
+    const result = route(pearls3, withRenderer, { tiling: { group: "b3" } });
+    expect(result.status).toBe("ineligible");
+    expect(result.note).toMatch(/Space tiling is not available/);
+  });
+
+  it("refuses a kaleidoscope with its reason", () => {
+    const result = route(pearls3, withRenderer, {
+      symmetry: { order: 4, plane: "xy" },
+    });
+    expect(result.status).toBe("ineligible");
+    expect(result.note).toMatch(/kaleidoscope is not available/);
+  });
+
+  it("refuses a final transform lens with its reason", () => {
+    const result = route(pearls3, withRenderer, {
+      finalTransform: {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+      },
+    });
+    expect(result.status).toBe("ineligible");
+    expect(result.note).toMatch(/final transform lens is not available/);
+  });
+
+  it("refuses a shape trap with its reason", () => {
+    const result = route(pearls3, withRenderer, {
+      shapeTrap: {
+        shape: {
+          parts: [
+            { primitive: { kind: "sphere", radius: 0.3 }, combine: "union" },
+          ],
+        },
+      },
+    });
+    expect(result.status).toBe("ineligible");
+    expect(result.note).toMatch(/shape trap is not available/);
+  });
+
+  it("discloses, without refusing, that per-transform finishes are not read", () => {
+    const transforms = sierpinskiTetrahedron().map((t) => ({
+      ...t,
+      finish: { metalness: 1 },
+    }));
+    const result = route(pearls3, withRenderer, { transforms });
+    expect(result.status).toBe("eligible");
+    expect(result.note).toMatch(/finishes .* are not read/);
+  });
+
+  it("discloses the refused slice thickness for a native 4D block", () => {
+    expect(route(vault4, withRenderer).note).toMatch(
+      /slice thickness is held at zero/,
+    );
+    expect(route(pearls3, withRenderer).note).toBeNull();
+  });
+
+  it("routes through the document form exactly as through the positional form", () => {
+    expect(
+      deriveSurfaceDocumentEligibility({
+        transforms: sierpinskiTetrahedron(),
+        symmetry: NO_SYMMETRY,
+        sphereInversion: vault4,
+      }),
+    ).toEqual(route(vault4, { computeAvailable: true }));
+  });
+
+  it("refuses Balloon at the session and admits a session without it", () => {
+    expect(sphereInversionSessionRefusal({ balloonEcho: true })).toMatch(
+      /Balloon is not available/,
+    );
+    expect(sphereInversionSessionRefusal({ balloonEcho: false })).toBeNull();
   });
 });

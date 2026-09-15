@@ -1058,6 +1058,115 @@ descriptive timing; its recorded 192³ SwiftShader run changed four channels by
 one byte and measured 137.20 ms accelerated versus 326.22 ms fallback median
 capture latency.
 
+## The sphere-inversion family's sheet
+
+### sphere-inversion
+
+The pre-gate evidence for a Surface family built from iterated sphere
+inversions, with its prototype math in `scripts/sphere-inversion-orbit.ts`. It
+renders the DEPTH-D SEED ORBIT `O_D` (never the limit set) through
+`de-preview.ts` in 3D and native 4D, with Mandelbox cube, B3 tiling and Balloon
+comparison panels. The distance is a transported empty-ball bound, marched at
+step scale 1.0.
+
+MEASURED VERDICT: a dedicated estimator is required, the 3D half is striking,
+and the native 4D half is genuine but less striking.
+
+- **Estimator.** Against the exact explicit orbit (937–3,201 copies, about
+  6,000 off-set queries per arrangement, kissing included), the transported
+  bound had 0 violations, with p05/p50 of 0.37–0.48 / 0.94–0.96 of the true
+  distance. The Bridges 2016 form overshoots on 82–87% of queries by up to
+  2.9x at factor 1. At factor 0.08 it costs 33.7 against 13.2 steps/ray and
+  fattens every pearl.
+- **Exhaustion.** 0.0% of rays on every panel of every sheet.
+- **Existing vocabulary.** A spherefold conjugated by its affine and post is
+  exactly one fold step. The contractive IFS gate refuses it with or without a
+  seed emitter, and the escape chain admits it but draws a tripod spike (reach
+  0.029).
+- **Exact 4D reductions.**
+  - The flat 4D embedding reproduces the 3D object bit for bit (75,937
+    queries, byte-identical panel).
+  - An identity slice is exactly its in-plane sub-arrangement's 3D orbit (IoU
+    1.000).
+- **Genuine and passive 4D fixtures**, separated by copy containment, not
+  IoU. Genuinely new arrangement comes from the cell24 perforated shell (0.51,
+  0.24, 0.00) and tangent tess16 (0.47–0.81). The eight-hypersphere cross8
+  mostly erodes its octahedral lace (0.84–1.00).
+
+Full record and the author's assessment for the owner:
+`docs/sphere-inversion-family.md`.
+
+### sphere-inversion-4d-search
+
+The native 4D beauty search the gate verdict set as a condition of preset
+authoring (`scripts/sphere-inversion-4d-search.harness.ts`, on the same
+prototype and `de-preview.ts`). Four rounds at 128 px covered twelve
+arrangement families, the 600-cell's seeds and kiss slice, near-identity lace
+poses, and lit interior vaults. A 320 px winners sheet then set three subjects
+beside the 3D bar.
+
+It adds two image-weighted genuineness columns, because lace has no volume
+for the cloud columns to measure:
+
+- the colour difference against the explicit in-plane 3D sub-arrangement
+  through the same camera (passive floor 0.2–9.6%);
+- the share of copy pixels whose fold word matches the identity pose's
+  (erosion test, calibrated at 1.00 on the flat embedding's passive offset).
+
+MEASURED VERDICT: every panel 0.0% exhausted. The 600-cell is the only family
+dense enough to survive slicing. Its cut-shell PEARL-WINDOW VAULT meets the 3D
+vault bar at genuine poses (word match 0.35–0.44, 38–44% off its 3D
+sub-arrangement). Its MEDALLION SPHERE matches the 3D lace shell (0.03–0.68,
+27–32%). Its LACE SNOWFLAKES are genuine (0.13–0.36) but read as lace stars
+and dust. That subject's striking identity cage is 3D-reducible. The failures
+are duoprisms, Hopf necklaces, random S³, both 24-cell orientations, an
+in-plane clique with off-plane cutters, and ball seeds generally (the seed's
+own slice dominates).
+
+The argument for why slices dust, exact parameters and pose sequences:
+`docs/sphere-inversion-family.md` ("Native 4D beauty search").
+
+### sphere-inversion-oracle
+
+The production sphere-inversion estimators
+(`src/fractal/sphere-inversion-de.ts` and its 4D twin) against the independent
+explicit-orbit oracle (`src/fractal/sphere-inversion-oracle.ts`) at every depth
+the oracle affords, plus the stress fixtures where a conservative step is most
+likely to fail. About 30 s on one core. Violations are reported per fixture and
+per depth, and any one fails the sheet.
+
+MEASURED VERDICT: 0 violations on every row, 3D and 4D; the true distance
+converges geometrically with depth; the stride COLLAPSES at kissing cusps
+without ever overshooting.
+
+- **Depth sweep** (about 400 off-set queries per row, half uniform and half on
+  rays toward pieces at 1e-5..1 of the ray). oct6 r .70 and kissing to D5
+  (4,687 pieces), cube8 kissing to D4 (3,201), ico12 .99 to D3 (1,597), the
+  cube8 shell to D3, the oct6 vault to D4, tess16 kissing to D3 (3,857),
+  cross8 kissing to D4 and the cell24 shell to D2: 0 violations. Estimate/true
+  p05 0.26–0.45 and p50 0.64–0.93 at depth >= 2 (1.000 at depth 0 for ball
+  seeds, where the bound is the exact seed SDF).
+- **Convergence.** The largest drop of the true distance at 120 uniform
+  queries when depth D is added falls about 2x per level: oct6 kissing
+  0.33/0.14/0.067/0.033/0.018 for D = 1..5, cube8 kissing
+  0.35/0.12/0.057/0.029, tess16 0.31/0.099/0.034, cross8
+  0.33/0.14/0.061/0.028.
+- **Cusps** (rays onto kissing tangency points, 1e-1..1e-7 away; oct6, cube8,
+  cross8 at D4, tess16 at D3): 0/300 violations each, ratio p50
+  1.8e-4..3.2e-4 and min 4e-9..1.6e-7. Sound, and the reason a ray aimed at a
+  cusp creeps.
+- **600-cell subjects** (section (c): the pearl-window vault and medallion
+  sphere to D2, 14,401 pieces, 60 queries at D2): 0 violations, D2 p05
+  0.39–0.40, p50 0.70–0.85. CPU cost at D5: 3.5 / 2.4 us/eval uniform and
+  2.7 / 1.5 us/eval near the surface (vault / medallion).
+- **Near-tangent generators** (oct6 .999 and .9999, cube8 .9999 at D4, tess16
+  .999 at D3): 0 violations, p05 0.26–0.42, p50 0.65–0.80.
+- **Narrow openings** (shells crossing .995-kissing generators, queried
+  across the openings; oct6 D4, cube8 D3, tess16 D2): 0 violations, p05
+  0.69–0.79.
+
+Full record: `docs/sphere-inversion-family.md`'s CPU core section.
+
 ## The space-tiling sheet
 
 ### tiling

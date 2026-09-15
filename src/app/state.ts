@@ -26,6 +26,8 @@ import type {
 import type { Rng } from "../fractal/rng";
 import { mulberry32 } from "../fractal/rng";
 import type { TilingSpec } from "../fractal/tiling";
+import { scenePartsAreNonFlat } from "../fractal/scene-dimension";
+import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
 import {
   SHAPE_TRAP_GEOMETRY_LEVEL_MAX,
   resolveShapeTrap,
@@ -512,6 +514,21 @@ export interface AppState {
    * same clip interpolate cellScale (`morph.ts`'s `lerpTiling`).
    */
   tiling?: TilingSpec;
+  /**
+   * Optional sphere-inversion block (`fractal/sphere-inversion.ts`'s
+   * authored form). When present it REPLACES the transform system as the
+   * scene's Surface subject, and its arrangement's dimension decides the
+   * scene's dimensionality (`fractal/scene-dimension.ts`). The transforms
+   * stay untouched, so clearing the block restores the IFS scene. Stored
+   * EXACTLY as authored or decoded — a block the resolver refuses (an
+   * unknown arrangement, an out-of-domain value, a field from a newer
+   * version) is kept verbatim and surfaces its refusal through the Surface
+   * gate, never clamped or dropped. Omitted ⇒ byte-identical to every
+   * document predating the field. Scene content: persists and rides shared
+   * links; morphs never interpolate it (the target's block applies from a
+   * replace-load's first push, the schedule's placement).
+   */
+  sphereInversion?: SphereInversionAuthored;
   numPoints: number;
   /** Multiplier on each render style's base point size; 1 = as authored. */
   pointSize: number;
@@ -2236,6 +2253,20 @@ export function setTiling(
   return { ...state, tiling };
 }
 
+/**
+ * Install/replace the sphere-inversion block, or clear it with `null` —
+ * {@link setTiling}'s shape. The block is stored AS AUTHORED, with no
+ * normalization: the resolver refuses rather than clamps, so a stored block
+ * must stay the exact document the refusal note describes.
+ */
+export function setSphereInversion(
+  state: AppState,
+  sphereInversion: SphereInversionAuthored | null,
+): AppState {
+  if (!sphereInversion) return { ...state, sphereInversion: undefined };
+  return { ...state, sphereInversion };
+}
+
 export function setNumPoints(state: AppState, numPoints: number): AppState {
   return { ...state, numPoints: clampToSpec(PARAM.numPoints, numPoints) };
 }
@@ -3067,6 +3098,36 @@ export function systemIsNonFlat(state: AppState): boolean {
     state.finalTransform ?? null,
     state.symmetry,
   );
+}
+
+/**
+ * Whether the SCENE's Surface subject is native 4D — `scene-dimension.ts`'s
+ * {@link scenePartsAreNonFlat} over this state: a present sphere-inversion
+ * block's arrangement decides, otherwise {@link systemIsNonFlat}. The Surface
+ * gate and the Surface session door read the parts form directly.
+ */
+export function sceneIsNonFlat(state: AppState): boolean {
+  return scenePartsAreNonFlat(
+    state.transforms,
+    state.finalTransform ?? null,
+    state.symmetry,
+    state.sphereInversion,
+  );
+}
+
+/**
+ * The dimensionality of what the ACTIVE render mode draws, which the panel's
+ * dimensional gating (4D view rows, 4D color, the legend, the title)
+ * describes: {@link sceneIsNonFlat} in Surface, whose subject a
+ * sphere-inversion block replaces, and {@link systemIsNonFlat} in Points,
+ * Flame and Solid, which still draw the preserved transform system and whose
+ * engines must follow its flatness (`scene-dimension.ts`'s module doc).
+ * Without a block the two agree everywhere.
+ */
+export function displayedIsNonFlat(state: AppState): boolean {
+  return state.renderMode === "surface"
+    ? sceneIsNonFlat(state)
+    : systemIsNonFlat(state);
 }
 
 /**
