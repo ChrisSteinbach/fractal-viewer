@@ -353,6 +353,12 @@ stands until the owner ratifies or overturns it.
   find at least one striking native 4D subject before presets are authored.
   It does not block the CPU core, the persistence or the shaders. If it fails,
   the family stays unfinished; it does not ship 3D-first.
+- **4D condition MET (2026-09-15, delegated).** The 600-cell interior vault
+  and medallion sphere (next section) hold the 3D vault's and lace shell's
+  strength under w offset and rotor on the 320 px winners sheet; the lace
+  snowflakes are genuine but dusty off identity and are not a primary 4D
+  subject. The 600-cell's 120 generators are now a scoping input for the
+  shader routes, not an afterthought.
 - **Candidate domains** are the table above, subject to the verified-hardware
   cost measurement. Known weaknesses the controls must address: the central
   seed dominating (seed size), and lace dissolving into sub-pixel dust
