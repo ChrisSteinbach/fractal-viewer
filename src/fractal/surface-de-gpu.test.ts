@@ -58,6 +58,7 @@ import {
   SURFACE_GPU_SHADE_OPTICS_BYTES,
   SURFACE_GPU_SHADE_PATTERN_BYTES,
   SURFACE_GPU_TILING_BYTES,
+  SURFACE_GPU_TRANSPORT_REASON_STATE_MISMATCH,
   SURFACE_GPU_UNIFORM_MAP_SLOTS,
   SURFACE_GPU_SEED_PARAMS_BYTES,
   SURFACE_GPU_SEED_WORKGROUP_SIZE,
@@ -10215,5 +10216,110 @@ describe("qualified swirl final lens GPU wire and mirrors", () => {
       );
       expect(source).not.toContain("lensEpsScale");
     }
+  });
+});
+
+describe("the closed-solid transport backend (opticsBackend)", () => {
+  const solidOpts = (
+    overrides: Partial<SurfaceGpuKernelOptions> = {},
+  ): SurfaceGpuKernelOptions =>
+    kernelOpts({
+      mode: "shade",
+      core: "affine",
+      width: 4,
+      optics: true,
+      opticsBackend: "closedSolid",
+      condensation: {
+        mapCount: 0,
+        emitters: [{ shape: CONDENSATION_SPHERE, shadeIndex: 0 }],
+      },
+      ...overrides,
+    });
+
+  it("emits the signed query over the condensation union, with the caller-carried medium crossing the query's signature", () => {
+    const shade = surfaceDeKernelWgsl(solidOpts());
+    expect(shade).toContain("fn transportSolidField(p: vec3f) -> f32 {");
+    expect(shade).toContain("return condensationTerm(p, 1.0, 0u);");
+    expect(shade).toContain(
+      "fn transportSolidNormal(p: vec3f, dir: vec3f, eps: f32) -> vec3f {",
+    );
+    expect(shade).toContain("  inside: u32,");
+    expect(shade).toContain("path.anchorPoint, path.inside, eps, li);");
+    expect(shade).toContain(
+      `const TRANSPORT_REASON_STATE_MISMATCH = ${SURFACE_GPU_TRANSPORT_REASON_STATE_MISMATCH}u;`,
+    );
+    // The medium cross-check rides the anchor envelope constant, not a
+    // restated tolerance.
+    expect(shade).toContain(
+      "(inside == 1u && f0 > TRANSPORT_ANCHOR_ENVELOPE_REL * eps) ||",
+    );
+  });
+
+  it("embeds the displayed point through the live rotor/slice on the 4D core, exactly as the descent's prologue does", () => {
+    const shade = surfaceDeKernelWgsl(solidOpts({ core: "affine4" }));
+    expect(shade).toContain(
+      "return condensationTerm(rotorInvApply4(vec4f(p, params.w0)), 1.0, 0u);",
+    );
+  });
+
+  it("keeps the estimator query's emitted text unchanged when the backend is absent or explicit", () => {
+    const omitted = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "affine", width: 4, optics: true }),
+    );
+    const explicit = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "affine",
+        width: 4,
+        optics: true,
+        opticsBackend: "estimator",
+      }),
+    );
+    expect(explicit).toBe(omitted);
+    expect(omitted).not.toContain("transportSolidField");
+    expect(omitted).not.toContain("TRANSPORT_REASON_STATE_MISMATCH");
+    // The estimator query's signature and call site stay sign-agnostic.
+    expect(omitted).toContain("  anchorPoint: vec3f,\n  eps: f32,");
+    expect(omitted).toContain("path.anchorPoint, eps, li);");
+  });
+
+  it("is inert outside shade mode even with the backend requested — the optics gate's own rule", () => {
+    for (const mode of ["eval", "march"] as const) {
+      const on = surfaceDeKernelWgsl(solidOpts({ mode }));
+      const off = surfaceDeKernelWgsl(solidOpts({ mode, optics: false }));
+      expect(on).toBe(off);
+    }
+  });
+
+  it("refuses every session the signed field cannot follow", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(solidOpts({ condensation: null })),
+    ).toThrow(/needs condensation emitters/);
+    expect(() =>
+      surfaceDeKernelWgsl(
+        solidOpts({ chaos: { activeStateCount: 1, predecessorMasks: [1] } }),
+      ),
+    ).toThrow(/cannot follow graph-directed selection/);
+    expect(() =>
+      surfaceDeKernelWgsl(
+        solidOpts({ schedule: { mapCount: 0, scheduleMapCount: 1 } }),
+      ),
+    ).toThrow(/cannot follow a hybrid schedule/);
+    expect(() => surfaceDeKernelWgsl(solidOpts({ lens: true }))).toThrow(
+      /cannot follow the fold-final lens/,
+    );
+    expect(() => surfaceDeKernelWgsl(solidOpts({ balloon: true }))).toThrow(
+      /cannot follow the balloon echo/,
+    );
+    expect(() =>
+      surfaceDeKernelWgsl(
+        solidOpts({
+          condensation: {
+            mapCount: 0,
+            emitters: [{ shape: MESH_SHAPE, shadeIndex: 0 }],
+          },
+        }),
+      ),
+    ).toThrow(/refuses mesh-bearing emitter shapes/);
   });
 });

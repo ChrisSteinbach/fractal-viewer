@@ -1865,6 +1865,37 @@ export interface SurfaceGpuKernelOptions {
    * interfaces — the oracle couples them) emit from this one number.
    * Absent emits the shipped cap byte-identically. */
   transportMaxPaths?: number;
+  /** The optical transport's boundary backend. `"estimator"` — absent's
+   * meaning, byte-identical — marches the composed PUBLIC estimator: the
+   * query the renderer-envelope leg measured, sound from OUTSIDE only
+   * (the envelope's structural finding: an inside path either misses the
+   * domain or crawls its anchor suppression into the step cap).
+   * `"closedSolid"` swaps the query body for the closed-solid backend:
+   * the SAME march structure over the session's SIGNED closed-solid
+   * field — the condensation union at the root, the term the primary
+   * march itself uses — whose sign unlocks the inside traversal a
+   * refracted child needs (glass IS refraction IS an inside path).
+   * Outside, the field understates the distance and the march steps it
+   * forward; inside, |f| is the deepest containing part's certified
+   * depth, which bounds the distance to the union's complement (the
+   * merged interval along the ray ends at the LAST containing part's
+   * exit), so a step cannot cross the boundary without sampling its
+   * band. The caller-carried medium is CROSS-CHECKED at the anchored
+   * restart — beyond the anchor envelope a contradiction refuses
+   * state-mismatch, the qualified fixture's exact-occupancy discipline
+   * made real by the sign — and the crossing band is two-sided
+   * (|f| < eps). The anchor envelope, crossing scale, step budget,
+   * domain gate and normal taps stay the estimator query's own
+   * definitions; the estimator body's emitted text is unchanged. Shade
+   * mode only (it rides the optics gate). REFUSES: no condensation
+   * emitters (the signed field IS their union), graph-directed
+   * selection, hybrid schedules, the fold-final lens, tiling and balloon
+   * (the wrapped displayed solid is no longer the base union the field
+   * describes — those sessions keep the estimator query and its
+   * disclosed vacuous-optics state), and mesh-bearing emitter shapes
+   * (the mesh lattice's interior band is not a certified stepping bound;
+   * the mesh's declared-resolution treatment is its own follow-up). */
+  opticsBackend?: "estimator" | "closedSolid";
   /** The escape family's SHAPE-TRAP color channel (`types.ts`'s ShapeTrap;
    * the formula is `escape-de.ts`'s, defined once): bake this spec's SDF
    * into the kernel (`shapeSdfSource`, the create-time-geometry decision —
@@ -4588,6 +4619,52 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
     throw new Error(
       "surface-de-gpu: the optical transport replaces the hit path and cannot compose with the cinematic lighting entry",
     );
+  }
+  // The closed-solid backend gate (option doc): the signed query over the
+  // condensation union, with every composition the base field cannot
+  // follow refused loudly — those sessions keep the estimator query and
+  // its disclosed vacuous-optics state rather than traversing a solid the
+  // displayed object no longer is.
+  const opticsBackend =
+    optics && opts.opticsBackend === "closedSolid"
+      ? "closedSolid"
+      : "estimator";
+  if (opticsBackend === "closedSolid") {
+    if (!condensationShapes) {
+      throw new Error(
+        "surface-de-gpu: the closed-solid transport backend needs condensation emitters — the signed field IS their union",
+      );
+    }
+    if (chaos) {
+      throw new Error(
+        "surface-de-gpu: the closed-solid transport backend cannot follow graph-directed selection",
+      );
+    }
+    if (schedule) {
+      throw new Error(
+        "surface-de-gpu: the closed-solid transport backend cannot follow a hybrid schedule — the B prefix moves the union the field describes",
+      );
+    }
+    if (lens) {
+      throw new Error(
+        "surface-de-gpu: the closed-solid transport backend cannot follow the fold-final lens",
+      );
+    }
+    if (tiling) {
+      throw new Error(
+        "surface-de-gpu: the closed-solid transport backend cannot follow tiling",
+      );
+    }
+    if (balloon) {
+      throw new Error(
+        "surface-de-gpu: the closed-solid transport backend cannot follow the balloon echo",
+      );
+    }
+    if (condensationShapes.some((shape) => shapeMeshIds(shape).length > 0)) {
+      throw new Error(
+        "surface-de-gpu: the closed-solid transport backend refuses mesh-bearing emitter shapes — the mesh lattice's interior band is not a certified stepping bound",
+      );
+    }
   }
   const transportMaxPaths =
     opts.transportMaxPaths ?? SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS;
@@ -8209,7 +8286,10 @@ ${surfacePatternShadeSourceWgsl()}`
   // the production boundary query, the replay-pass trace and the
   // transportRays entry — emitted after the classic entries so it can
   // reuse packSurfaceLayer/surfaceCoc/shadeGroundPlane, and only under
-  // the optics gate (every other kernel byte-identical).
+  // the optics gate (every other kernel byte-identical). The backend
+  // dispatch picks the boundary query: the estimator march (absent's
+  // meaning, text unchanged) or the closed-solid signed query.
+  const solidQuery = opticsBackend === "closedSolid";
   const opticsBlock = optics
     ? `
 // ---- dielectric optical transport (docs/surface-dielectric-transport.md)
@@ -8266,7 +8346,12 @@ const TRANSPORT_MAX_PROCESSED = ${transportMaxPaths}u;
 const TRANSPORT_MAX_INTERFACES = ${transportMaxPaths}u;
 const TRANSPORT_CROSSING_EPS_REL = ${DIELECTRIC_CROSSING_EPS_REL};
 const TRANSPORT_ANCHOR_ENVELOPE_REL = ${DIELECTRIC_ANCHOR_ENVELOPE_REL}.0;
-const TRANSPORT_QUERY_MAX_STEPS = ${DIELECTRIC_QUERY_MAX_STEPS}u;
+const TRANSPORT_QUERY_MAX_STEPS = ${DIELECTRIC_QUERY_MAX_STEPS}u;${
+        solidQuery
+          ? `
+const TRANSPORT_REASON_STATE_MISMATCH = ${SURFACE_GPU_TRANSPORT_REASON_STATE_MISMATCH}u;`
+          : ""
+      }
 
 // The query's declared domain: exactly the primary march's own gates,
 // evaluated from the query's own origin/direction. -1.0 means "no
@@ -8313,7 +8398,121 @@ fn transportOpticalNormal(p: vec3f, dir: vec3f, eps: f32, li: u32) -> vec3f {
   return select(-dir, normalize(grad), dot(grad, grad) > 1.0e-12);
 }
 
-// The production boundary query (module doc): a bounded march of the
+${
+  solidQuery
+    ? `// The closed-solid field (opticsBackend "closedSolid"): the session's
+// SIGNED closed-solid union — the condensation term at the root, the
+// same SAFETY-scaled certified bound the primary march reads, so the
+// query's crossing scale applies to the field the primary hit was
+// found with. In 4D the term embeds the displayed point through the
+// live rotor/slice exactly as the descent's prologue does.
+fn transportSolidField(p: vec3f) -> f32 {
+  return condensationTerm(${
+    core4 ? "rotorInvApply4(vec4f(p, params.w0))" : "p"
+  }, 1.0, 0u);
+}
+
+// The closed-solid normal: the SAME tetrahedron-tap discipline as the
+// estimator normal, on the signed field — a smooth closed solid has no
+// tied-plane corners to resolve, and a vanishing gradient still faces
+// the incident ray.
+fn transportSolidNormal(p: vec3f, dir: vec3f, eps: f32) -> vec3f {
+  let e = vec2f(1.0, -1.0) * 0.5773;
+  let grad = e.xyy * transportSolidField(p + e.xyy * eps) +
+    e.yyx * transportSolidField(p + e.yyx * eps) +
+    e.yxy * transportSolidField(p + e.yxy * eps) +
+    e.xxx * transportSolidField(p + e.xxx * eps);
+  return select(-dir, normalize(grad), dot(grad, grad) > 1.0e-12);
+}
+
+// The closed-solid boundary query (option doc): the estimator query's
+// march structure over the SIGNED union field. The sign unlocks the
+// inside traversal a refracted child needs: outside, the field
+// understates the distance and the march steps it forward; inside, |f|
+// is the deepest containing part's certified depth — a lower bound on
+// the distance to the union's complement, because the merged interval
+// along the ray ends at the LAST containing part's exit — so a step
+// cannot cross the boundary without sampling its band. The medium
+// state is the caller's and is now CHECKED: at the anchored restart,
+// beyond the anchor envelope, a field whose membership contradicts the
+// caller's medium refuses state-mismatch (the qualified fixture's
+// exact-occupancy discipline, made real by the sign). The crossing
+// band is two-sided (|f| < eps); an inside crossing is reported at the
+// query point, an outside one advanced to the band's edge. The anchor
+// envelope, crossing scale, step budget and domain gate are the
+// estimator query's own definitions.
+fn transportNextBoundary(
+  origin: vec3f,
+  dir: vec3f,
+  anchorPresent: u32,
+  anchorPoint: vec3f,
+  inside: u32,
+  eps: f32,
+  li: u32,
+) -> TransportBoundary {
+  var result: TransportBoundary;
+  result.kind = 3u;
+  result.reason = TRANSPORT_REASON_VISIT_CAP;
+  result.t = 0.0;
+  result.normal = vec3f(0.0);
+  var p = origin;
+  var t = 0.0;
+  if (anchorPresent == 1u) {
+    // Same-boundary suppression, part 1 (the estimator query's rule).
+    let skip = 2.0 * eps;
+    p = p + dir * skip;
+    t = t + skip;
+    // The medium cross-check: just past the anchored boundary the
+    // field's membership must agree with the caller's medium beyond
+    // the anchor envelope — within it, the boundary's own band is
+    // consistent with either medium (a grazing child rides it).
+    let f0 = transportSolidField(p);
+    if (f0 > -1.0e30 &&
+        ((inside == 1u && f0 > TRANSPORT_ANCHOR_ENVELOPE_REL * eps) ||
+         (inside == 0u && f0 < -TRANSPORT_ANCHOR_ENVELOPE_REL * eps))) {
+      result.reason = TRANSPORT_REASON_STATE_MISMATCH;
+      return result;
+    }
+  }
+  let tFar = transportDomainExit(origin, dir);
+  for (var i = 0u; i < TRANSPORT_QUERY_MAX_STEPS; i++) {
+    if (tFar < 0.0 || t >= tFar) {
+      result.kind = 2u;
+      result.reason = 0u;
+      result.t = t;
+      return result;
+    }
+    let f = transportSolidField(p);
+    if (!(f > -1.0e30)) {
+      result.kind = 3u;
+      result.reason = TRANSPORT_REASON_INVALID_INPUT;
+      return result;
+    }
+    if (abs(f) < eps) {
+      let dd = max(f, 0.0);
+      let hitP = p + dir * dd;
+      let tc = t + dd;
+      if (anchorPresent == 1u &&
+          distance(hitP, anchorPoint) <= TRANSPORT_ANCHOR_ENVELOPE_REL * eps) {
+        // Same-boundary suppression, part 2 (the estimator query's rule).
+        let skip = 2.0 * eps;
+        p = hitP + dir * skip;
+        t = tc + skip;
+        continue;
+      }
+      result.kind = 1u;
+      result.reason = 0u;
+      result.t = tc;
+      result.normal = transportSolidNormal(hitP, dir, eps);
+      return result;
+    }
+    let stride = abs(f) * params.stepScale;
+    p = p + dir * stride;
+    t = t + stride;
+  }
+  return result;
+}`
+    : `// The production boundary query (module doc): a bounded march of the
 // composed PUBLIC estimator from the query origin, crossing at the
 // optical scale, with the anchored same-boundary suppression. The medium
 // state is the caller's and stays the caller's — the query never infers
@@ -8383,7 +8582,9 @@ fn transportNextBoundary(
     t = t + stride;
   }
   return result;
+}`
 }
+
 
 // The rear scene's radiance behind an escaped ray, in LINEAR light —
 // the environment only in this emission: the pixel's backdrop, plus the
@@ -8522,7 +8723,9 @@ fn transportTrace(
       break;
     }
     processed = processed + 1u;
-    let hit = transportNextBoundary(path.origin, path.dir, path.anchorPresent, path.anchorPoint, eps, li);
+    let hit = transportNextBoundary(path.origin, path.dir, path.anchorPresent, path.anchorPoint, ${
+      solidQuery ? "path.inside, " : ""
+    }eps, li);
     if (hit.kind == 3u) {
       residual = residual + path.bound;
       out.status = TRANSPORT_STATUS_UNRESOLVED;
