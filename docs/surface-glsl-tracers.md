@@ -1123,6 +1123,37 @@ plus the compute-only escape4 Mandelbox Brick at 5.13%, strength-0
 WGSL-side wiring is documented in `surface-gpu-kernels.md`'s pattern
 lanes section.
 
+### The optics arm's sizes
+
+The dielectric transport lane (`SURFACE_OPTICS`,
+`docs/surface-dielectric-transport.md`'s GLSL-twins section) is the third
+additively-independent arm. The shared `surfaceTransportSource` text —
+emitted optics body, both boundary backends, the work-list trace — plus
+the shade-site branch and the lane pair cost, measured resolved/driver
+bytes against the pre-optics tree:
+
+| variant    | off resolved | off emitted | on resolved | on emitted | Δ emitted |
+| ---------- | -----------: | ----------: | ----------: | ---------: | --------: |
+| 3D affine  |        84185 |       29971 |      104959 |      42185 |    +12214 |
+| 3D lens    |        90088 |       31957 |      110862 |      44171 |    +12214 |
+| 3D balloon |        93618 |       31919 |      114392 |      44133 |    +12214 |
+| 3D plane   |        92051 |       33444 |      113229 |      45924 |    +12480 |
+| 3D finish  |        86584 |       31080 |      107358 |      43294 |    +12214 |
+
+Every 3D optics program strips (the base sources already sit past the
+64KB threshold), and the emitted figures sit far under the 82.2KB Mesa
+cliff — 45.9KB is the worst measured pairing. Refused pairings: the two
+forward arms and the cinematic rig (resolver throws); the fold frontier
+(the material gate). The 4D twin's optics lane rides the std140 block's
+unconditional trailing member instead of a default-block array — its
+~1.9KB raw cost lands in EVERY 4D program and pushed the plain+finish
+arm over the strip threshold (the off arm, 64686 B, is now that file's
+tightest unstripped margin; the re-recorded hashes and the margin note
+live in `surface-material-4d.test.ts`). The closed-solid backend adds no
+resolved bytes at absent (it is a resolved arm of the spliced text) and
+is compile-verified in both dimensions on the real driver through a
+temporary backend force.
+
 ## The probe-width verdict
 
 The three shading taps (normal/shadow/AO) ride the value form, which fold
