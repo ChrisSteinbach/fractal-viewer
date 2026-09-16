@@ -2246,10 +2246,22 @@ async function main(): Promise<void> {
   // slice field and then re-uploads the trio. The fourth, slab thickness
   // deliberately does not come here: it is surface-tracer-only, and the
   // cloud's slice has a fixed Gaussian width of its own.
+  /**
+   * The normalized slice centre every renderer actually draws at: the WORLD
+   * hyperplane the view carries, read against THIS session's cloud, or the
+   * stored normalized value when the view names no plane (see
+   * `FourDPose.sliceW`). The document keeps the sender's own fraction
+   * untouched — rewriting it would make a reloaded link copy a different
+   * document — so the plane lives here, on the display side of the line.
+   */
+  function liveSliceCenter(): number {
+    return fourDView.effectiveSliceCenter(scene.fourDWSupport());
+  }
+
   function pushFourDSlice(): void {
     scene.setFourDSlice(
       fourDView.sliceOn,
-      fourDView.sliceCenter,
+      liveSliceCenter(),
       fourDView.sliceRelColor,
     );
   }
@@ -2288,14 +2300,6 @@ async function main(): Promise<void> {
   function applyFourDPose(pose: FourDPose): void {
     fourDTween.cancel();
     fourDView.applyPose(pose);
-    // A pose that names a WORLD hyperplane is re-resolved against THIS
-    // session's cloud: its normalized centre was a fraction of the sender's
-    // cloud, and ours is a differently-seeded sample. Before any cloud has
-    // landed the support is 0 and the normalized value stands; the arrival
-    // path applies the pose again once the cloud is there.
-    if (pose.sliceW !== undefined) {
-      fourDView.resolveSliceWorld(pose.sliceW, scene.fourDWSupport());
-    }
     pushFourDSlice();
     scene.setRot4(fourDView.matrix());
     syncFourDSliceUi();
@@ -2307,7 +2311,8 @@ async function main(): Promise<void> {
   function syncFourDSliceUi(): void {
     ui.setFourDSlice(
       fourDView.sliceOn,
-      fourDView.sliceCenter,
+      // The panel shows the plane being DRAWN, not the sender's fraction.
+      liveSliceCenter(),
       fourDView.sliceRelColor,
       fourDView.sliceThickness,
     );
@@ -3639,7 +3644,7 @@ async function main(): Promise<void> {
       colorHalfExtents,
       invWAmp,
       sliceOn: fourDView.sliceOn,
-      sliceCenter: fourDView.sliceCenter,
+      sliceCenter: liveSliceCenter(),
       sliceWidth: FOUR_D_SLICE_WIDTH,
       sliceRelativeColor: fourDView.sliceRelColor,
       colorMode: state.fourDColor,
@@ -3664,7 +3669,7 @@ async function main(): Promise<void> {
     return {
       rotor: fourDView.matrix(),
       sliceOn: fourDView.sliceOn,
-      sliceCenter: fourDView.sliceCenter,
+      sliceCenter: liveSliceCenter(),
       sliceWidth: FOUR_D_SLICE_WIDTH,
       sliceRelativeColor: fourDView.sliceRelColor,
     };
@@ -6037,11 +6042,7 @@ async function main(): Promise<void> {
               de.depth,
             );
             if (fourD) {
-              scene.setSurface4View(
-                fourDView.matrix(),
-                fourDView.sliceCenter,
-                0,
-              );
+              scene.setSurface4View(fourDView.matrix(), liveSliceCenter(), 0);
             }
           } else if (!sphereInversionHasFragmentArm(construction.dim)) {
             // Reachable only through mid-session compute loss: the gate
@@ -6193,11 +6194,7 @@ async function main(): Promise<void> {
                 de.boundingRadius,
                 state.shapeTrap ?? null,
               );
-              scene.setSurface4View(
-                fourDView.matrix(),
-                fourDView.sliceCenter,
-                0,
-              );
+              scene.setSurface4View(fourDView.matrix(), liveSliceCenter(), 0);
               surfaceGrid.cancel();
               // The explorer cloud of a non-contracting 4D system is the
               // same escape-reset debris the 3D branch frames away from,
@@ -6392,7 +6389,7 @@ async function main(): Promise<void> {
             }
             scene.setSurface4View(
               fourDView.matrix(),
-              fourDView.sliceCenter,
+              liveSliceCenter(),
               surface4SlabAvailable ? fourDView.sliceThickness : 0,
             );
             // No grid for the 4D surface (the live rotor/slice would
@@ -12235,7 +12232,7 @@ async function main(): Promise<void> {
         if (!surfaceCaptureFlight) {
           scene.setSurface4View(
             fourDView.matrix(),
-            fourDView.sliceCenter,
+            liveSliceCenter(),
             // Sessions whose fold set breaks segment exactness clamp
             // the slab thickness to 0 (the row is hidden too).
             surface4SlabAvailable ? fourDView.sliceThickness : 0,
