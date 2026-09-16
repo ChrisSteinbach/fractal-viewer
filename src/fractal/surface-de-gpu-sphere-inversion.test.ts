@@ -83,7 +83,7 @@ describe("packSphereInversionGpuParams (3D, core sphereInv)", () => {
     for (let o = 244; o < 288; o += 4) expect(v.getUint32(o, true)).toBe(0);
   });
 
-  it("fills the frozen block: origin ball of the tables' radius, step 1, order 1, n and D, identity final", () => {
+  it("fills the frozen block: origin ball of the tables' radius, step 1, order 1, D + 3 slots and D, identity final", () => {
     const v = new DataView(packSphereInversionGpuParams(gpu, { itemCount: 7 }));
     const R = Math.fround(gpu.boundingRadius);
     expect([0, 4, 8].map((o) => v.getFloat32(o, true))).toEqual([0, 0, 0]);
@@ -91,7 +91,7 @@ describe("packSphereInversionGpuParams (3D, core sphereInv)", () => {
     expect(v.getFloat32(20, true)).toBe(1);
     expect(v.getFloat32(24, true)).toBe(R);
     expect(v.getUint32(40, true)).toBe(1);
-    expect(v.getUint32(48, true)).toBe(12);
+    expect(v.getUint32(48, true)).toBe(8);
     expect(v.getUint32(52, true)).toBe(5);
     expect(v.getUint32(56, true)).toBe(7);
     expect(v.getFloat32(96, true)).toBe(1);
@@ -104,6 +104,21 @@ describe("packSphereInversionGpuParams (3D, core sphereInv)", () => {
     );
     expect(v.getUint32(52, true)).toBe(5);
     expect(v.getUint32(216, true)).toBe(5);
+  });
+
+  it("packs the generation slot count, not the generator count, where the shade entry clamps firstChoice", () => {
+    // oct6 at depth 8: 6 generators but D + 3 = 11 generation colours. The
+    // generator count at 48 clamped every generation past 4 to slot 5's hue.
+    const oct6 = tables3({
+      arrangement: "oct6",
+      seed: { kind: "ball", size: 0.28 },
+      depth: 8,
+    });
+    const v = new DataView(
+      packSphereInversionGpuParams(oct6, { itemCount: 1 }),
+    );
+    expect(v.getUint32(48, true)).toBe(11);
+    expect(v.getUint32(208, true)).toBe(6);
   });
 
   it("clamps the hit acceptance floor to at least the f32 slack", () => {
@@ -172,6 +187,21 @@ describe("packSphereInversion4GpuParams (4D, core sphereInv4)", () => {
     // stepBack4 and final4 pack identity.
     expect(v.getFloat32(272, true)).toBe(1);
     expect(v.getFloat32(336 + 60, true)).toBe(1);
+  });
+
+  it("packs the generation slot count, not the generator count, where the shade entry clamps firstChoice", () => {
+    // cross8 at depth 8 (oct6 has no 4D form): 8 generators but D + 3 = 11
+    // generation colours.
+    const cross8 = tables4({
+      arrangement: "cross8",
+      seed: { kind: "ball", size: 0.28 },
+      depth: 8,
+    });
+    const v = new DataView(
+      packSphereInversion4GpuParams(cross8, view4, { itemCount: 1 }),
+    );
+    expect(v.getUint32(48, true)).toBe(11);
+    expect(v.getUint32(464, true)).toBe(8);
   });
 
   it("refuses a slab", () => {

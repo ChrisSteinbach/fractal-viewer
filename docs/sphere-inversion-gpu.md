@@ -254,9 +254,12 @@ per dimension.** Mutual exclusion with lens/escape/bulb is by core, as theirs is
 
 Frozen-block usage: `boundCenter` 0 = origin; `boundingRadius` 12 and
 `visibleRadius` 24 = `tables.boundingRadius`; `stepScale` 20 = 1
-(`SPHERE_INVERSION_STEP_SCALE`); `symOrder` 40 = 1; `mapCount` 48 = n (so host
-code that reads it sees the generator count); `maxDepth` 52 = D; `finalM`
-identity; `finalSigmaMin` 1.
+(`SPHERE_INVERSION_STEP_SCALE`); `symOrder` 40 = 1; `mapCount` 48 = D + 3,
+the generation slot count (`sphereInversionGenerationSlots(D)`), because its
+one reader here is the shared shade entry's `firstChoice` slot clamp and
+decision 6 makes `firstChoice` the generation (the estimator reads
+`siCounts`, never `mapCount`); `maxDepth` 52 = D; `finalM` identity;
+`finalSigmaMin` 1.
 
 4D, `core: "sphereInv4"` (struct 576 B plain, 624 B with the ground plane):
 
@@ -798,18 +801,19 @@ The Mesa link succeeded first time in both sessions with no console error. The
 coverage alpha stays off the canvas: the arm writes nothing past the shared
 march/shade exits, whose alpha the present blit strips.
 
-**The pearls colour difference is a COMPUTE-side slot clamp, not the arm.**
+**The pearls colour difference was a COMPUTE-side slot clamp, not the arm.**
 Geometry and shading agree (IoU 0.9998, median luminance difference 0). The
 difference is hue on the deep lace: generations 5 and up. The WGSL shade entry
 clamps `firstChoice` to `params.mapCount − 1`, and `writeSphereInversionFrozen`
-writes `generatorCount` at offset 48. With oct6's 6 generators every
-generation past 4 therefore takes slot 5's colour, although `shadeMaps` holds
+then wrote `generatorCount` at offset 48. With oct6's 6 generators every
+generation past 4 therefore took slot 5's colour, although `shadeMaps` holds
 the D + 3 = 11 generation slots decision 6 calls for. The vault
 (`n = 12 >= D + 3 = 8`) never binds the clamp, and there the engines agree to
-0.012/255. The fix is in the compute packer (offset 48 =
-`sphereInversionGenerationSlots(depth)`; the `sphereInv` body reads
-`siCounts`, not `mapCount`) and belongs to the kernel owner. Until it lands,
-the WebGL arm is the one following decision 6.
+0.012/255. FIXED in the compute packer, both dimensions: offset 48 is now
+`sphereInversionGenerationSlots(depth)`. The emitted sphereInv/sphereInv4
+sources read `mapCount` only in that clamp (the estimator reads `siCounts`), so
+the kernel text is unchanged. The 3.52/255 row above predates the fix and was
+not re-measured.
 
 **Open:** the 4D data-texture lift (section 6's recorded shape) and a
 committed `scripts/sphere-inversion-surface.verify.mjs` browser gate
