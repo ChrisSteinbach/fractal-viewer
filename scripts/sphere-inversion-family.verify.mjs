@@ -21,13 +21,13 @@
  *      equal field for field to `presets.ts`'s table.
  *   6. The link Copy link builds (the button's own string, recorded by a
  *      clipboard stub so the desktop clipboard is untouched) boots a FRESH
- *      context. A 3D frame is byte-identical to the menu's. A 4D frame may
- *      drift within a bound, DISCLOSED as KNOWN: `FourDPose` carries the
- *      slice NORMALIZED against the landed cloud's 4D half-extents, and the
- *      cloud is seeded afresh per generation, so one document resolves to a
- *      slightly different world `w0` run to run. Either way the
- *      reloaded session's own link is the same document and boots a second
- *      context byte-identical to the first: a link is a fixed point.
+ *      context whose settled frame is byte-identical to the menu's, in both
+ *      dimensions. The reloaded session's own link is the same document and
+ *      boots a second context byte-identical to the first: a link is a fixed
+ *      point. (4D links drifted until the pose carried a WORLD slice
+ *      hyperplane: a slice normalized against the landed cloud resolved
+ *      differently per run, because the cloud is seeded afresh. There is no
+ *      tolerance here now — a drift fails.)
  *   7. Save PNG at `--scale` completes; the image is the canvas size times
  *      the scale and has content. It is not compared with the pane: a
  *      capture zeroes the panel's right inset (scene.ts), so the export is
@@ -118,12 +118,6 @@ const DIFFER_FRACTION = 0.02;
  * flat or gradient-only image (a bare dark backdrop scores ~10 colours). */
 const EXPORT_MIN_COLORS = 64;
 const EXPORT_MIN_LUMA_STD = 4;
-/** A 4D share link carries its slice NORMALIZED against the landed cloud's
- * 4D half-extents, which a per-generation random cloud seed moves slightly,
- * so the same document resolves to a slightly different world `w0` per run.
- * Its frame may drift from the sender's by this share of pixels off by more
- * than 8 before the drift fails rather than being disclosed. */
-const LINK_DRIFT_4D_OVER8_MAX = 0.01;
 /** The coverage mask's channel delta. MEASURED: the dark backdrop drifts a
  * few levels along a row, so delta 6 counted 45.8% of the pearls pane
  * covered against a census of 22.0%; delta 16 counts 22.3%. */
@@ -329,8 +323,6 @@ async function main() {
     log(`FAIL ${line}`);
   };
   failHook = fail;
-  /** Disclosed, bounded findings that do not fail the gate. */
-  const known = [];
   const results = {
     startedAt: new Date().toISOString(),
     mode: args.mode,
@@ -577,22 +569,10 @@ async function main() {
                 `${preset.key}: link reload settled ${secs(hop1.ms)}, vs menu frame` +
                   ` mean ${cmp.meanDiff?.toFixed(4)}/255 max ${cmp.maxDiff} over8 ${((cmp.over8 ?? 0) * 100).toFixed(3)}%`,
               );
-              const exact = !cmp.sizeMismatch && cmp.maxDiff === 0;
-              if (
-                !exact &&
-                preset.dim === 4 &&
-                cmp.over8 <= LINK_DRIFT_4D_OVER8_MAX
-              ) {
-                known.push(
-                  `${preset.key}: the 4D share link drifts from the sender's frame (max ${cmp.maxDiff}, ` +
-                    `${(100 * cmp.over8).toFixed(3)}% of pixels off by >8): the slice is stored normalized ` +
-                    `against a randomly seeded cloud's 4D half-extents`,
-                );
-              } else if (!exact) {
+              if (cmp.sizeMismatch || cmp.maxDiff !== 0)
                 fail(
                   `${preset.key}: the share link does not reproduce the frame byte for byte`,
                 );
-              }
             }
             if (hop1?.frameFile && hop2?.frameFile) {
               const cmp2 = await compareFrames(
@@ -1064,14 +1044,12 @@ async function main() {
     await diffContext.close().catch(() => {});
     await browser.close();
     results.failures = failures;
-    results.known = known;
     results.finishedAt = new Date().toISOString();
     fs.writeFileSync(
       out("si-qual-results.json"),
       JSON.stringify(results, null, 1),
     );
   }
-  for (const k of known) log(`KNOWN ${k}`);
   if (failures.length > 0) {
     log(`${failures.length} failure(s):`);
     for (const f of failures) log(`  - ${f}`);
