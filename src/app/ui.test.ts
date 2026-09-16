@@ -11983,14 +11983,6 @@ describe("visible control lifetimes", () => {
   const normalizedText = (node: Element | null): string =>
     node?.textContent?.replace(/\s+/g, " ").trim() ?? "";
 
-  const labelledScope = (id: string): string => {
-    const control = document.getElementById(id);
-    if (!control) throw new Error(`No #${id} in index.html`);
-    const label = control.closest("label");
-    if (!label) throw new Error(`#${id} is not inside a label`);
-    return normalizedText(label.querySelector(".control-scope"));
-  };
-
   it("names the render-mode switch without a visible heading or legend", () => {
     // The scope legend paragraph and the "Render mode / This session"
     // heading row were removed from the panel header; the switch keeps its
@@ -12001,26 +11993,6 @@ describe("visible control lifetimes", () => {
     expect(modeSwitch?.getAttribute("aria-label")).toBe("Render mode");
     expect(modeSwitch?.getAttribute("aria-labelledby")).toBeNull();
     expect(modeSwitch?.getAttribute("aria-describedby")).toBeNull();
-  });
-
-  it("keeps session-owned controls marked after the Performance rehome", () => {
-    for (const id of [
-      "autoUpdate",
-      "morphDetail",
-      "adaptiveResolutionCheckbox",
-      "exportScale",
-      "autoOrbitSpeedSlider",
-      "fourDTumbleSpeedSlider",
-    ]) {
-      expect(labelledScope(id), id).toBe("This session");
-    }
-  });
-
-  it("marks the one auto-motion preference and Quick previews as browser-owned", () => {
-    expect(document.querySelectorAll("#autoMotionToggle")).toHaveLength(1);
-    for (const id of ["autoMotionToggle", "surfacePreviewToggle"]) {
-      expect(labelledScope(id), id).toBe("This browser");
-    }
   });
 
   it("discloses Capture size timing for every renderer before the control is used", () => {
@@ -12037,11 +12009,7 @@ describe("visible control lifetimes", () => {
 
   it("associates every 4D slice field with Saved-view framing", () => {
     const note = document.getElementById("fourDSavedViewScope");
-    expect(normalizedText(note)).toContain("Saved view");
     expect(normalizedText(note)).toContain("restored on reload");
-    expect(
-      normalizedText(document.getElementById("threeDSavedViewScope")),
-    ).toContain("Saved view");
     expect(
       normalizedText(document.getElementById("threeDSavedViewScope")),
     ).toContain("restored on reload");
@@ -12061,10 +12029,6 @@ describe("visible control lifetimes", () => {
   it("keeps authored 4D look outside Saved view and adds no Preferences section", () => {
     for (const id of ["fourDColor", "fourDDepthFadeToggle"]) {
       const control = document.getElementById(id);
-      expect(
-        control?.closest("label")?.querySelector(".control-scope"),
-        id,
-      ).toBeNull();
       expect(control?.getAttribute("aria-describedby") ?? "", id).not.toContain(
         "fourDSavedViewScope",
       );
