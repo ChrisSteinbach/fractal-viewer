@@ -412,9 +412,6 @@
           <label class="checkbox-label">
             <input type="checkbox" id="autoUpdate" checked />
             Auto-update on change
-            <span class="control-scope" aria-label="Scope: This session"
-              >This session</span
-            >
           </label>
           <label class="checkbox-label">
             <input
@@ -2538,9 +2535,6 @@
             >
               <input type="checkbox" id="surfacePreviewToggle" checked />
               Quick previews
-              <span class="control-scope" aria-label="Scope: This browser"
-                >This browser</span
-              >
             </label>
             <label class="select-label">
               Antialiasing:
@@ -2576,9 +2570,6 @@
           <label class="select-label">
             <span class="control-label-line">
               <span>Morph Detail</span>
-              <span class="control-scope" aria-label="Scope: This session"
-                >This session</span
-              >
             </span>
             <select
               id="morphDetail"
@@ -2596,9 +2587,6 @@
           >
             <input type="checkbox" id="adaptiveResolutionCheckbox" checked />
             Adaptive resolution
-            <span class="control-scope" aria-label="Scope: This session"
-              >This session</span
-            >
           </label>
         </details>
 
@@ -2608,17 +2596,11 @@
           name="panel-section"
         >
           <summary>View</summary>
-          <p class="flame-hint view-scope-note" id="threeDSavedViewScope">
-            <span class="control-scope" aria-label="Scope: Saved view"
-              >Saved view</span
-            >
+          <p class="flame-hint" id="threeDSavedViewScope">
             Camera framing is saved with links, scene files, Collection entries,
             and Timeline keyframes, and restored on reload.
           </p>
-          <p class="flame-hint view-scope-note hidden" id="fourDSavedViewScope">
-            <span class="control-scope" aria-label="Scope: Saved view"
-              >Saved view</span
-            >
+          <p class="flame-hint hidden" id="fourDSavedViewScope">
             Shift-drag rotates XW/YW; Shift-scroll rotates ZW. Rotation and
             slice framing are saved with links, files, Collection entries,
             Timeline keyframes, and restored on reload.
@@ -2626,9 +2608,6 @@
           <div id="pointsLayoutRow">
             <span class="control-label-line">
               <span>Points layout</span>
-              <span class="control-scope" aria-label="Scope: This session"
-                >This session</span
-              >
             </span>
             <div
               id="pointsLayoutSwitch"
@@ -2662,9 +2641,6 @@
                   aria-describedby="pointsParallelViewsNote"
                 />
                 Parallel fixed views
-                <span class="control-scope" aria-label="Scope: This session"
-                  >This session</span
-                >
               </label>
               <p class="flame-hint" id="pointsParallelViewsNote">
                 X, Y, and Z keep the same size at every depth. Current stays
@@ -2684,9 +2660,6 @@
               aria-describedby="continuousZoomNote continuousZoomUnavailableNote"
             />
             Continuous zoom
-            <span class="control-scope" aria-label="Scope: Saved view"
-              >Saved view</span
-            >
           </label>
           <p class="flame-hint" id="continuousZoomNote">
             Zoom keeps a safe distance from the orbit target, then narrows the
@@ -2724,9 +2697,6 @@
               checked
             />
             Automatic motion
-            <span class="control-scope" aria-label="Scope: This browser"
-              >This browser</span
-            >
           </label>
           <p class="flame-hint" id="autoMotionMechanismNote">
             In 4D, tumble replaces automatic camera orbit to reveal hidden axes;
@@ -2737,9 +2707,6 @@
               <span class="control-label-line">
                 <span
                   >Orbit speed: <span id="autoOrbitSpeedLabel">1.0×</span></span
-                >
-                <span class="control-scope" aria-label="Scope: This session"
-                  >This session</span
                 >
               </span>
               <input
@@ -2758,9 +2725,6 @@
                 <span
                   >Tumble speed:
                   <span id="fourDTumbleSpeedLabel">1.0×</span></span
-                >
-                <span class="control-scope" aria-label="Scope: This session"
-                  >This session</span
                 >
               </span>
               <input
@@ -3127,9 +3091,6 @@
           <label class="select-label">
             <span class="control-label-line">
               <span>Capture size</span>
-              <span class="control-scope" aria-label="Scope: This session"
-                >This session</span
-              >
             </span>
             <select
               id="exportScale"

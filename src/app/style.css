@@ -1007,27 +1007,6 @@ input[type="range"] {
   gap: 8px;
 }
 
-.control-scope {
-  flex: none;
-  padding: 1px 6px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--text-faint);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.4;
-  letter-spacing: 0.03em;
-  white-space: nowrap;
-}
-
-.checkbox-label > .control-scope {
-  margin-left: auto;
-}
-
-.view-scope-note .control-scope {
-  margin-right: 5px;
-}
-
 .continuous-zoom-controls {
   margin-bottom: 12px;
 }

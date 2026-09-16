@@ -69,9 +69,10 @@ Preferences section:
 - **This browser** is a local viewer preference that survives future sessions
   in this browser profile but never rides in the scene document.
 
-Use those exact three labels. Placement and edit cost remain independent of
-the label: for example, session-only Capture size stays under Workflow, and a
-browser-owned motion switch still acts live.
+This taxonomy is an internal classification only; it is never rendered as a
+visible label in the panel UI. Placement and edit cost remain independent of
+the lifetime: for example, session-only Capture size stays under Workflow,
+and a browser-owned motion switch still acts live.
 
 ## Placement procedure
 
