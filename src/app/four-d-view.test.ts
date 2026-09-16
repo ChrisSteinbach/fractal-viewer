@@ -644,41 +644,42 @@ describe("FourDView world slice plane", () => {
     expect(view.pose().sliceW).toBeUndefined();
   });
 
-  it("parks on a world plane by converting it through the cloud's support", () => {
-    const view = new FourDView();
-
-    view.resolveSliceWorld(0.1, 2);
-
-    expect(view.sliceCenter).toBe(0.05);
-    expect(view.sliceW).toBe(0.1);
-  });
-
-  it("re-emits the restored world plane verbatim, not reconstructed from the normalized centre", () => {
-    const view = new FourDView();
-
-    view.resolveSliceWorld(0.1, 3);
-
-    // The document must round-trip byte for byte; world / support * support
-    // is not required to be world.
-    expect(view.pose().sliceW).toBe(0.1);
-  });
-
-  it("keeps the normalized reading when no cloud has landed to convert against", () => {
+  it("draws the world plane read against this session's cloud, not the sender's fraction", () => {
     const view = new FourDView();
     view.applyPose(posed({ sliceCenter: 0.25, sliceW: 0.1 }));
 
-    view.resolveSliceWorld(0.1, 0);
+    expect(view.effectiveSliceCenter(2)).toBe(0.05);
+  });
 
-    expect(view.sliceCenter).toBe(0.25);
+  it("leaves the restored pose untouched, so the document it copies back is the one it was sent", () => {
+    const view = new FourDView();
+    view.applyPose(posed({ sliceCenter: 0.25, sliceW: 0.1 }));
+
+    view.effectiveSliceCenter(2);
+
+    expect(view.pose().sliceCenter).toBe(0.25);
+    expect(view.pose().sliceW).toBe(0.1);
+  });
+
+  it("falls back to the stored fraction for a pose that names no plane", () => {
+    const view = new FourDView();
+    view.applyPose(posed({ sliceCenter: 0.25 }));
+
+    expect(view.effectiveSliceCenter(2)).toBe(0.25);
+  });
+
+  it("falls back to the stored fraction before any cloud has landed to convert against", () => {
+    const view = new FourDView();
+    view.applyPose(posed({ sliceCenter: 0.25, sliceW: 0.1 }));
+
+    expect(view.effectiveSliceCenter(0)).toBe(0.25);
   });
 
   it("clamps a world plane beyond the cloud to the slider's own domain", () => {
     const view = new FourDView();
+    view.applyPose(posed({ sliceW: 5 }));
 
-    view.resolveSliceWorld(5, 2);
-
-    expect(view.sliceCenter).toBe(1);
-    expect(view.sliceW).toBe(5);
+    expect(view.effectiveSliceCenter(2)).toBe(1);
   });
 
   it("forgets the world plane on a fresh-visit reset", () => {

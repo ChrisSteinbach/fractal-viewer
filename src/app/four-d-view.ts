@@ -188,16 +188,20 @@ export class FourDView {
     return this.sliceWValue;
   }
 
-  /** Park on a WORLD hyperplane: set the normalized centre this cloud's
-   * `support` puts that plane at, and RETAIN the world value verbatim so a
-   * re-encode reproduces the document it came from rather than
-   * `world / support * support`, which need not be `world`. A support of 0
-   * (no cloud landed yet) is refused — there is no conversion to make — and
-   * the caller keeps the normalized fallback. */
-  resolveSliceWorld(world: number, support: number): void {
-    if (!(support > 0) || !Number.isFinite(world)) return;
-    this.sliceCenter = normalizedSliceCenter(world, support);
-    this.sliceWValue = world;
+  /** The normalized centre every renderer should actually slice at for a
+   * cloud with this `support`: the WORLD plane's reading on THIS cloud when
+   * the view names one, and the stored normalized value otherwise.
+   *
+   * Deliberately a DERIVATION rather than a write back into
+   * {@link sliceCenter}: the stored value is what the document carries, and a
+   * receiving session that rewrote it would copy back a DIFFERENT document
+   * than it was sent — a share link must be a fixed point (the family gate
+   * checks exactly that). So the document keeps the sender's fraction, and
+   * only what is drawn follows the plane. */
+  effectiveSliceCenter(support: number): number {
+    return this.sliceWValue !== undefined && support > 0
+      ? normalizedSliceCenter(this.sliceWValue, support)
+      : this.sliceCenter;
   }
 
   /** Record the world plane the CURRENT normalized centre sits on, for a
