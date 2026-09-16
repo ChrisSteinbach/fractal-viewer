@@ -55,8 +55,7 @@ the subsystem records below or its owning harness header:
   `docs/controls.md` — standing briefs.
 - `docs/panel-ia.md` — the accepted control-family, applicability and edit-
   behavior contract for placing panel controls.
-- `docs/sphere-inversion-family.md`, `docs/sphere-inversion-gpu.md` — the
-  sphere-inversion family: construction, estimator, routes, cost, presets.
+- `docs/sphere-inversion-family.md`, `-gpu.md` — the sphere-inversion family.
 
 ## Dimensional Parity — the 4D half is not a follow-up
 
@@ -171,9 +170,9 @@ substituted for it.
 CHECK THAT LINE BEFORE BELIEVING A REAL-DRIVER ROW: one session shipped its
 whole measurement set on software before noticing.
 
-AND A CONTENDED MACHINE IS NOT A MEASUREMENT. "Run it on a quiet machine" was
-unverifiable, and no owner can be asked to coordinate, so it is CHECKED:
-`scripts/lib/machine-quiet.mjs` attributes GPU busy time PER PROCESS off DRM
+AND A CONTENDED MACHINE IS NOT A MEASUREMENT, so quiet is CHECKED rather than
+asked for: `scripts/lib/machine-quiet.mjs` attributes GPU busy time PER
+PROCESS off DRM
 fdinfo (a global percentage cannot tell whose work it is), and EVERY gate
 that measures a real driver — the bench, the shared browser launcher, the
 direct-launching gates and probes, the browser harness sheet — takes the
@@ -217,11 +216,16 @@ then compares real SwiftShader canvas frames with the restored echo on/off.
 That one path gates the non-flat controls, boot-time ball-uniform sync and the
 project-then-invert shader compile/render together. IT COMPARES THE SCENE
 REGION, NOT THE FRAME, at a radius the DOCUMENT carries and where the echo is
-on screen. The radius is driven BEFORE the share link is copied because
-`setBalloonEchoRadius` syncs the uniforms; a post-reload drive would repair the
-desync under test. It still does NOT separate project-then-invert from
+on screen. It still does NOT separate project-then-invert from
 invert-then-project; that needs a rotor pose where they visibly disagree. The
 wrong-radius correction and measured record live in the script header.
+
+The sphere-inversion family gate: `npm run build && npm run preview &` then
+`node scripts/sphere-inversion-family.verify.mjs --mode=x11::0` (`--mode=sw`
+is the subset). Every Sphere inversion preset FROM THE MENU: compute settle,
+distinct objects, the `#v1=` block against `presets.ts`, byte-exact
+share-link reload, tiled 2x export, `?surfacegl` IoU, the Flame/Solid and 4D
+refusals. Record: `docs/sphere-inversion-family.md`.
 
 The panel's exact-numeric-companion gate (not an npm script — it needs
 layout and TRUSTED touch, neither of which jsdom has):
@@ -535,9 +539,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     balloon, trap and slab REFUSE. POINTS draws `sphere-inversion-sample.ts`'s
     exact boundary sample of the same set; Flame and Solid REFUSE. Cost is
     flat in depth; nothing is refused on cost. CONTROLS: a Scene / Look
-    section after Transforms over the measured public ranges
-    (`sphere-inversion-controls.ts`); the replaced system's sections DISABLE
-    under a block. Record: `docs/sphere-inversion-family.md`,
+    section after Transforms over the measured ranges
+    (`sphere-inversion-controls.ts`); the replaced sections DISABLE under a
+    block. Record: `docs/sphere-inversion-family.md`,
     `docs/sphere-inversion-gpu.md`.
   - `morph.ts` — pure interpolation (`lerpSystem`): endpoint-exact at t=0/1,
     rotation lerped nearest-turn, transform-count mismatches fade surplus by
@@ -1433,8 +1437,14 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
   - `persist.ts` — encode/decode scene to `#v1=<base64url>` hash + localStorage.
     Strict never-throwing decoder. Document carries optional `CameraPose` and
     optional `FourDPose` (rotor pair + w-slice; malformed quietly drops to
-    `undefined`). Undo snapshots stay camera/pose-less (history.ts dedupes by
-    string equality). Optional fold, julian/curl, bipolar and PDJ params encode
+    `undefined`). THE POSE NAMES THE HYPERPLANE: `sliceW` is the WORLD
+    rotated-w plane, PREFERRED on decode over the normalized centre, which is
+    a fraction of a cloud whose seed is random per generation. RESTORE MUST
+    NOT REWRITE that centre: the document keeps the sender's fraction and
+    only RENDERING derives the effective one, or a reload copies a DIFFERENT
+    document and the link stops being a fixed point. Undo snapshots stay
+    camera/pose-less. Optional fold,
+    julian/curl, bipolar and PDJ params encode
     only when present/finite and decode without coercion; family resolvers own
     defaults/domain. A post encodes only when present and non-identity as the
     strict 12-number `[m0..m8,tx,ty,tz]` wire. Absence stays byte-identical.
