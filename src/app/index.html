@@ -1227,7 +1227,7 @@
           id="surfaceAuthoredLightingSection"
           name="panel-section"
         >
-          <summary>Surface lighting</summary>
+          <summary>Lighting</summary>
           <p id="surfaceAuthoredLightingNote" class="flame-hint" role="status">
             Place lights in Points with visible disk and direction guides. Edits
             are saved for the next Surface render.
@@ -1248,6 +1248,56 @@
             </p>
           </details>
           <div id="surfaceAuthoredLightingControls"></div>
+          <div id="surfaceRendererLightingGroup" class="hidden">
+            <p id="surfaceLightingDisclosure" class="flame-hint">
+              Changes affect only Surface and apply immediately. Environment is
+              Surface-only.
+            </p>
+            <label class="select-label">
+              Light Angle: <span id="surfaceLightAzimuthLabel">135°</span>
+              <input
+                type="range"
+                id="surfaceLightAzimuthSlider"
+                min="-180"
+                max="180"
+                step="5"
+                value="135"
+              />
+            </label>
+            <label class="select-label">
+              Light Height: <span id="surfaceLightElevationLabel">50°</span>
+              <input
+                type="range"
+                id="surfaceLightElevationSlider"
+                min="5"
+                max="85"
+                step="5"
+                value="50"
+              />
+            </label>
+            <label class="select-label">
+              Ambient: <span id="surfaceAmbientLabel">25%</span>
+              <input
+                type="range"
+                id="surfaceAmbientSlider"
+                min="0"
+                max="0.8"
+                step="0.05"
+                value="0.25"
+              />
+            </label>
+            <label class="select-label">
+              Environment: <span id="surfaceEnvLightLabel">35%</span>
+              <input
+                type="range"
+                id="surfaceEnvLightSlider"
+                min="0"
+                max="1"
+                step="0.05"
+                value="0.35"
+              />
+            </label>
+          </div>
         </details>
 
         <!-- Authored Scene / Look state consumed by every renderer. Keep this
@@ -2305,62 +2355,6 @@
 
         <details
           class="panel-section hidden"
-          id="surfaceLightingSection"
-          name="panel-section"
-        >
-          <summary>Lighting</summary>
-          <p id="surfaceLightingDisclosure" class="flame-hint">
-            Changes affect only Surface and apply immediately. Environment is
-            Surface-only.
-          </p>
-          <label class="select-label">
-            Light Angle: <span id="surfaceLightAzimuthLabel">135°</span>
-            <input
-              type="range"
-              id="surfaceLightAzimuthSlider"
-              min="-180"
-              max="180"
-              step="5"
-              value="135"
-            />
-          </label>
-          <label class="select-label">
-            Light Height: <span id="surfaceLightElevationLabel">50°</span>
-            <input
-              type="range"
-              id="surfaceLightElevationSlider"
-              min="5"
-              max="85"
-              step="5"
-              value="50"
-            />
-          </label>
-          <label class="select-label">
-            Ambient: <span id="surfaceAmbientLabel">25%</span>
-            <input
-              type="range"
-              id="surfaceAmbientSlider"
-              min="0"
-              max="0.8"
-              step="0.05"
-              value="0.25"
-            />
-          </label>
-          <label class="select-label">
-            Environment: <span id="surfaceEnvLightLabel">35%</span>
-            <input
-              type="range"
-              id="surfaceEnvLightSlider"
-              min="0"
-              max="1"
-              step="0.05"
-              value="0.35"
-            />
-          </label>
-        </details>
-
-        <details
-          class="panel-section hidden"
           id="surfaceDepthSection"
           name="panel-section"
         >
@@ -2806,8 +2800,8 @@
             Presets morph in Points, then open their saved renderer. Lit
             interiors do not morph: they replace the scene, camera and look
             outright and open Surface, where their lights and mist stay editable
-            under Surface lighting. Random Drift stays in Points; Collection
-            Drift follows each saved scene.
+            under Lighting. Random Drift stays in Points; Collection Drift
+            follows each saved scene.
           </p>
           <label class="select-label">
             Replace with preset

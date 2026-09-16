@@ -232,7 +232,7 @@ export class SurfaceLightingControls {
         ? "Lights update live and restart Surface convergence. Switch to Points to see placement guides."
         : state.renderMode === "points"
           ? "Place lights with the controls below. Disks show their size and arrows show their aim. Edits are saved for the next Surface render; Points stays unlit."
-          : "Surface lighting is retained in this render mode. Switch to Points to place lights or Surface to edit the lighting live.";
+          : "Lighting is retained in this render mode. Switch to Points to place lights or Surface to edit the lighting live.";
     this.refresh();
   }
 
