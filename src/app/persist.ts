@@ -2558,10 +2558,19 @@ function decodeFourDPose(raw: unknown): FourDPose | undefined {
     ? clamp(rawThickness, 0, 0.5)
     : 0;
 
+  // The optional WORLD hyperplane. Its own all-or-nothing rule is narrower
+  // than sliceCenter's: a malformed value drops only THIS field, leaving the
+  // normalized fallback to frame the scene, because a document predating the
+  // field looks exactly like one whose value failed to validate and both must
+  // land on the normalized reading. No coercion, matching sliceCenter.
+  const { sliceW } = f;
   return {
     pair,
     sliceOn: Boolean(f.sliceOn),
     sliceCenter: clamp(sliceCenter, -1, 1),
+    ...(typeof sliceW === "number" && Number.isFinite(sliceW)
+      ? { sliceW }
+      : {}),
     sliceThickness,
     sliceRelColor: Boolean(f.sliceRelColor),
   };
@@ -3671,6 +3680,14 @@ export function encodeScene(s: SceneSnapshot): string {
       q: [...s.fourD.pair.q],
       sliceOn: s.fourD.sliceOn,
       sliceCenter: s.fourD.sliceCenter,
+      // The WORLD hyperplane, written only when the pose names one, beside
+      // the normalized value rather than instead of it: a document that
+      // predates the field keeps decoding, and one that carries it resolves
+      // to the same plane whatever cloud the receiver samples. See
+      // FourDPose.sliceW.
+      ...(s.fourD.sliceW !== undefined && Number.isFinite(s.fourD.sliceW)
+        ? { sliceW: s.fourD.sliceW }
+        : {}),
       sliceThickness: s.fourD.sliceThickness,
       sliceRelColor: s.fourD.sliceRelColor,
     };

@@ -97,12 +97,43 @@ export interface FourDPose {
   pair: RotorPair;
   sliceOn: boolean;
   sliceCenter: number;
+  /**
+   * The WORLD rotated-w hyperplane this pose names, when it knows it —
+   * `sliceCenter` multiplied by the landed cloud's own w-support at the
+   * moment the pose was captured (`scene.ts`'s `setSurface4View` does that
+   * multiplication every frame).
+   *
+   * `sliceCenter` alone cannot reproduce a framing: it is a FRACTION of the
+   * landed cloud's 4D half-extents, and the cloud is a seeded sample whose
+   * seed is rolled per generation (main.ts's `rollSeed`), so the same
+   * document resolves to a different world w0 in every session — measured as
+   * a 4D share link that reloaded close to, but never exactly, the sender's
+   * frame. A pose must name the hyperplane, not a fraction of a random
+   * cloud. AGENTS.md already intends one slider position to be one
+   * hyperplane across every mode; this is that intent made reproducible.
+   *
+   * Optional, and ABSENT MEANS TODAY: a document written before this field
+   * (or one whose pose was captured before any cloud landed) carries only
+   * `sliceCenter` and is restored from it exactly as it always was. The
+   * normalized value is still written beside this one, so a reader that
+   * knows nothing of this field loses nothing.
+   */
+  sliceW?: number;
   /** Slab half-thickness in the same normalized rotated-w units as
    * {@link FourDView.sliceThickness}; 0 for every pose saved
    * before the control existed, which is exactly the cross-section those
    * documents were framed with. */
   sliceThickness: number;
   sliceRelColor: boolean;
+}
+
+/** The normalized slice centre a WORLD rotated-w plane sits at for a cloud
+ * with this w-support, clamped to the slider's own [-1, 1] domain. The ONE
+ * definition of that conversion, shared by the live view, the presets' landed
+ * view (`preset-view.ts`) and their tests — `scene.ts`'s `setSurface4View`
+ * performs the inverse, and the two must not drift. */
+export function normalizedSliceCenter(world: number, support: number): number {
+  return Math.max(-1, Math.min(1, world / support));
 }
 
 /**
@@ -126,14 +157,55 @@ export class FourDView {
   tumbleSpeed: number = 1;
   /** Soft w-slice enabled? */
   sliceOn: boolean = false;
-  /** Slice window center in w. */
-  sliceCenter: number = 0;
+  private sliceCenterValue: number = 0;
+  private sliceWValue: number | undefined = undefined;
   /** Slab half-thickness in the same normalized rotated-w units as
    * {@link sliceCenter}; 0 is the zero-thickness cross-section every 4D
    * surface render was before the thickness control. */
   sliceThickness: number = 0;
   /** Recolor the w-ramp modes relative to the slice window? */
   sliceRelColor: boolean = false;
+
+  /** Slice window center in w, NORMALIZED to the landed cloud's w-support —
+   * the units the slider spans and every consumer reads. Assigning it is
+   * what a user edit does, so the assignment DROPS the retained world
+   * hyperplane ({@link sliceW}): the document may no longer claim a plane
+   * the slider has since moved off. */
+  get sliceCenter(): number {
+    return this.sliceCenterValue;
+  }
+
+  set sliceCenter(value: number) {
+    this.sliceCenterValue = value;
+    this.sliceWValue = undefined;
+  }
+
+  /** The WORLD rotated-w plane this view is parked on, when it is known —
+   * see {@link FourDPose.sliceW}. `undefined` whenever the slider has moved
+   * since the last time a world value was established, which is exactly when
+   * the normalized value is the only truth the view has. */
+  get sliceW(): number | undefined {
+    return this.sliceWValue;
+  }
+
+  /** Park on a WORLD hyperplane: set the normalized centre this cloud's
+   * `support` puts that plane at, and RETAIN the world value verbatim so a
+   * re-encode reproduces the document it came from rather than
+   * `world / support * support`, which need not be `world`. A support of 0
+   * (no cloud landed yet) is refused — there is no conversion to make — and
+   * the caller keeps the normalized fallback. */
+  resolveSliceWorld(world: number, support: number): void {
+    if (!(support > 0) || !Number.isFinite(world)) return;
+    this.sliceCenter = normalizedSliceCenter(world, support);
+    this.sliceWValue = world;
+  }
+
+  /** Record the world plane the CURRENT normalized centre sits on, for a
+   * pose about to be captured into a document. Only ever called with the
+   * value derived from the live cloud's support. */
+  retainSliceWorld(world: number): void {
+    if (Number.isFinite(world)) this.sliceWValue = world;
+  }
 
   /** Reset to the "fresh visit" baseline: rotor to identity, tumble running
    * according to the browser choice already resolved by main, speed at
@@ -201,6 +273,7 @@ export class FourDView {
       },
       sliceOn: this.sliceOn,
       sliceCenter: this.sliceCenter,
+      ...(this.sliceWValue !== undefined ? { sliceW: this.sliceWValue } : {}),
       sliceThickness: this.sliceThickness,
       sliceRelColor: this.sliceRelColor,
     };
@@ -223,7 +296,11 @@ export class FourDView {
     const normalized = normalizeRotorPair(pose.pair.p, pose.pair.q);
     if (normalized) this.pair = normalized;
     this.sliceOn = pose.sliceOn;
+    // The normalized value first (its setter drops any retained plane), then
+    // the pose's own world plane if it names one: main.ts re-resolves it
+    // against the landed cloud's support, which this class cannot see.
     this.sliceCenter = pose.sliceCenter;
+    if (pose.sliceW !== undefined) this.retainSliceWorld(pose.sliceW);
     this.sliceThickness = pose.sliceThickness;
     this.sliceRelColor = pose.sliceRelColor;
   }
@@ -321,6 +398,15 @@ export class FourDTween {
     const { startMs, durationMs, fromPair, fromCenter, fromThickness, to } =
       this.glide;
     const t = smoothstep((this.now() - startMs) / durationMs);
+    // The landing frame applies the TARGET itself rather than its own t=1
+    // interpolation: the two agree on every number, but only the target
+    // carries the world hyperplane the keyframe named, and an interpolated
+    // slice centre is deliberately plane-less while it is still moving.
+    if (t >= 1) {
+      this.view.applyPose(to);
+      this.glide = null;
+      return;
+    }
     this.view.applyPose({
       pair: slerpRotorPair(fromPair, to.pair, t),
       sliceOn: to.sliceOn,
@@ -328,7 +414,6 @@ export class FourDTween {
       sliceCenter: fromCenter + (to.sliceCenter - fromCenter) * t,
       sliceThickness: fromThickness + (to.sliceThickness - fromThickness) * t,
     });
-    if (t >= 1) this.glide = null;
   }
 
   /** Cancel any in-flight glide outright, without moving the view — a user

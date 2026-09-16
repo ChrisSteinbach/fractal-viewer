@@ -597,3 +597,96 @@ describe("viewTransition", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// The WORLD slice plane (FourDPose.sliceW). The normalized centre is a
+// fraction of the landed cloud's w-support, and the cloud is a per-generation
+// seeded sample, so the normalized value alone cannot name a hyperplane
+// across sessions. The view carries the world value beside it and drops it
+// the moment the slider moves.
+// ---------------------------------------------------------------------------
+
+describe("FourDView world slice plane", () => {
+  const posed = (over: Partial<FourDPose> = {}): FourDPose => ({
+    pair: identityRotorPair(),
+    sliceOn: true,
+    sliceCenter: 0.25,
+    sliceThickness: 0,
+    sliceRelColor: false,
+    ...over,
+  });
+
+  it("carries a restored pose's world plane into the pose it captures", () => {
+    const view = new FourDView();
+
+    view.applyPose(posed({ sliceW: 0.1 }));
+
+    expect(view.sliceW).toBe(0.1);
+    expect(view.pose().sliceW).toBe(0.1);
+  });
+
+  it("captures no world plane for a pose that names none", () => {
+    const view = new FourDView();
+
+    view.applyPose(posed());
+
+    expect(view.sliceW).toBeUndefined();
+    expect("sliceW" in view.pose()).toBe(false);
+  });
+
+  it("drops the world plane when the slice slider moves", () => {
+    const view = new FourDView();
+    view.applyPose(posed({ sliceW: 0.1 }));
+
+    view.sliceCenter = 0.4;
+
+    expect(view.sliceW).toBeUndefined();
+    expect(view.pose().sliceW).toBeUndefined();
+  });
+
+  it("parks on a world plane by converting it through the cloud's support", () => {
+    const view = new FourDView();
+
+    view.resolveSliceWorld(0.1, 2);
+
+    expect(view.sliceCenter).toBe(0.05);
+    expect(view.sliceW).toBe(0.1);
+  });
+
+  it("re-emits the restored world plane verbatim, not reconstructed from the normalized centre", () => {
+    const view = new FourDView();
+
+    view.resolveSliceWorld(0.1, 3);
+
+    // The document must round-trip byte for byte; world / support * support
+    // is not required to be world.
+    expect(view.pose().sliceW).toBe(0.1);
+  });
+
+  it("keeps the normalized reading when no cloud has landed to convert against", () => {
+    const view = new FourDView();
+    view.applyPose(posed({ sliceCenter: 0.25, sliceW: 0.1 }));
+
+    view.resolveSliceWorld(0.1, 0);
+
+    expect(view.sliceCenter).toBe(0.25);
+  });
+
+  it("clamps a world plane beyond the cloud to the slider's own domain", () => {
+    const view = new FourDView();
+
+    view.resolveSliceWorld(5, 2);
+
+    expect(view.sliceCenter).toBe(1);
+    expect(view.sliceW).toBe(5);
+  });
+
+  it("forgets the world plane on a fresh-visit reset", () => {
+    const view = new FourDView();
+    view.applyPose(posed({ sliceW: 0.1 }));
+
+    view.reset(false);
+
+    expect(view.sliceW).toBeUndefined();
+  });
+});
