@@ -303,6 +303,7 @@
 {"id":"int-550c332c68aab1ac54fefff5c5504481","kind":"field_change","created_at":"2026-09-14T17:02:36.116655757Z","actor":"Chris Steinbach","issue_id":"fr-42qx","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-ac0b2613a745d6677c8b73e4040b50fd","kind":"field_change","created_at":"2026-09-15T08:29:18.946182081Z","actor":"Chris Steinbach","issue_id":"fr-f96g","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-8cd95c38b751b50e533cf328f96f7edc","kind":"field_change","created_at":"2026-09-15T12:53:49.876212773Z","actor":"Chris Steinbach","issue_id":"fr-jd5c.6","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+<<<<<<< HEAD
 {"id":"int-319b5ff717050046e42263a5129a6a11","kind":"field_change","created_at":"2026-09-16T20:14:59.993854707Z","actor":"Chris Steinbach","issue_id":"fr-djhx.1","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-8e4726fe1947d280c7db521838af5db0","kind":"field_change","created_at":"2026-09-16T20:30:38.600761234Z","actor":"Chris Steinbach","issue_id":"fr-djhx.2","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-58fb26f03b5eb1e3aca48e48a943b2cc","kind":"field_change","created_at":"2026-09-17T04:10:07.596772461Z","actor":"Chris Steinbach","issue_id":"fr-djhx.3","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
@@ -313,3 +314,6 @@
 {"id":"int-ee574d341884d0eea5a0157df43f27d9","kind":"field_change","created_at":"2026-09-17T04:58:59.694763262Z","actor":"Chris Steinbach","issue_id":"fr-djhx.8","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-36b9594e83629f348c721f404e86ef84","kind":"field_change","created_at":"2026-09-17T07:19:12.821519319Z","actor":"Chris Steinbach","issue_id":"fr-djhx.9","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Copy budget test + contrast gate landed; both green (npm test, 181-state dual-engine contrast run)"}}
 {"id":"int-93d336d31e7b5a3b6cbddb024645c387","kind":"field_change","created_at":"2026-09-17T07:19:15.667656221Z","actor":"Chris Steinbach","issue_id":"fr-djhx","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"All nine children closed: reported items fixed, prose swept, copy-budget and dual-engine contrast gates green"}}
+=======
+{"id":"int-9a4f77bf806ef7bfc586725695547fd2","kind":"field_change","created_at":"2026-09-16T05:15:27.458254552Z","actor":"Chris Steinbach","issue_id":"fr-jd5c.7","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+>>>>>>> b560eeb (Sync tracker state for the GLSL twins' in-progress record)
