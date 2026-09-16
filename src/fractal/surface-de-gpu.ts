@@ -49,7 +49,10 @@ import {
   sphereInversionWgslSource,
 } from "./surface-sphere-inversion-gpu";
 import type { SphereInversionGpuTables } from "./surface-sphere-inversion-gpu";
-import { SPHERE_INVERSION_STEP_SCALE } from "./sphere-inversion";
+import {
+  SPHERE_INVERSION_STEP_SCALE,
+  sphereInversionGenerationSlots,
+} from "./sphere-inversion";
 import {
   SWIRL_BALLOON_STRIDE_TRANSITION,
   validatedSwirlLensRadius,
@@ -3395,10 +3398,16 @@ export function packEscape4GpuMaps(de: EscapeDE4): Float32Array {
 }
 
 /** The frozen 0..207 block both sphere-inversion packers share: the
- * origin-centred bounding ball, step scale 1, no kaleidoscope, the generator
- * count in `mapCount` and the depth in `maxDepth` (the kernel reads its depth
- * from `siCounts.z`, so a preview tier's `run.maxDepth` cannot change the
- * object — the construction is create-time). The hit acceptance floor is
+ * origin-centred bounding ball, step scale 1, no kaleidoscope, the GENERATION
+ * SLOT count (`sphereInversionGenerationSlots(D)` = D + 3) in `mapCount` and
+ * the depth in `maxDepth` (the kernel reads its depth from `siCounts.z`, so a
+ * preview tier's `run.maxDepth` cannot change the object — the construction is
+ * create-time). `mapCount`'s ONE reader in these cores is the shared shade
+ * entry's `firstChoice` slot clamp — the estimator reads `siCounts` — and the
+ * hit-info's `firstChoice` is the word length, so the clamp must cover every
+ * generation slot the host packs; the generator count would clamp oct6 at
+ * depth 8 to six hues where Points and the GLSL arm show eleven. The hit
+ * acceptance floor is
  * CLAMPED to at least the f32 slack (decision 4): the kernel zeroes a bound
  * below the slack, so an acceptance below it would stall rays at deep zoom. */
 function writeSphereInversionFrozen(
@@ -3415,7 +3424,7 @@ function writeSphereInversionFrozen(
   view.setFloat32(28, 1, true);
   view.setFloat32(32, 1, true);
   view.setUint32(40, 1, true);
-  view.setUint32(48, gpu.generatorCount, true);
+  view.setUint32(48, sphereInversionGenerationSlots(gpu.depth), true);
   view.setUint32(52, gpu.depth, true);
   view.setUint32(56, run.itemCount, true);
   view.setUint32(60, run.stepsThisPass ?? 0, true);
