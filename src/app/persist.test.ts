@@ -8131,3 +8131,62 @@ describe("sphere-inversion codec (the scene's sphere-inversion block)", () => {
     expect(cleared.sphereInversion).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// The 4D pose's optional WORLD hyperplane (FourDPose.sliceW). Written beside
+// the normalized sliceCenter, never instead of it: a reader that predates the
+// field loses nothing, and a reader that has it resolves the same plane
+// whatever cloud it samples.
+// ---------------------------------------------------------------------------
+
+describe("decodeScene fourD world slice", () => {
+  const posed = (sliceW?: number): SceneSnapshot => ({
+    ...baseSnapshot(),
+    fourD: {
+      pair: { p: [1, 0, 0, 0], q: [1, 0, 0, 0] },
+      sliceOn: true,
+      sliceCenter: 0.07378780497850285,
+      ...(sliceW === undefined ? {} : { sliceW }),
+      sliceThickness: 0,
+      sliceRelColor: false,
+    },
+  });
+
+  it("round-trips the world plane exactly and stays a fixed point", () => {
+    const encoded = encodeScene(posed(0.1));
+
+    const decoded = decodeScene(encoded)!;
+
+    expect(decoded.fourD!.sliceW).toBe(0.1);
+    expect(decoded.fourD!.sliceCenter).toBe(0.07378780497850285);
+    expect(encodeScene(decoded)).toBe(encoded);
+  });
+
+  it("keeps a pose that names no plane byte-identical to one predating the field", () => {
+    const encoded = encodeScene(posed());
+
+    const wire = decodePayload(encoded).fourD as Record<string, unknown>;
+    expect("sliceW" in wire).toBe(false);
+    expect(decodeScene(encoded)!.fourD!.sliceW).toBeUndefined();
+  });
+
+  it("drops only the plane when it is malformed, keeping the normalized framing", () => {
+    const raw = {
+      ...baseSnapshot(),
+      fourD: {
+        p: [1, 0, 0, 0],
+        q: [1, 0, 0, 0],
+        sliceOn: true,
+        sliceCenter: 0.25,
+        sliceW: "0.1",
+        sliceThickness: 0,
+        sliceRelColor: false,
+      },
+    };
+
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+
+    expect(result!.fourD!.sliceW).toBeUndefined();
+    expect(result!.fourD!.sliceCenter).toBe(0.25);
+  });
+});

@@ -1,3 +1,4 @@
+import type { PresetFourDView } from "../fractal/presets";
 import type { Bounds4 } from "../fractal/types";
 import { MIN_RADIUS, sphericalToCartesian } from "./orbit";
 import {
@@ -96,5 +97,49 @@ describe("presetFourDPose", () => {
   it("clamps a slice past the cloud's support to the slider's domain", () => {
     const pose = presetFourDPose({ rotation: [], w0: -2 }, bounds);
     expect(pose.sliceCenter).toBe(-1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The preset's authored `w0` is a WORLD hyperplane, and presetFourDPose now
+// carries it through as FourDPose.sliceW beside this cloud's normalized
+// reading of it. Two sessions sample differently-seeded clouds, so the
+// normalized readings differ while the plane must not.
+// ---------------------------------------------------------------------------
+
+describe("presetFourDPose world slice", () => {
+  const fourD: PresetFourDView = { rotation: [["xw", 0.3]], w0: 0.1 };
+  const bounds = (h: [number, number, number, number]): Bounds4 => ({
+    minX: -h[0],
+    maxX: h[0],
+    minY: -h[1],
+    maxY: h[1],
+    minZ: -h[2],
+    maxZ: h[2],
+    minW: -h[3],
+    maxW: h[3],
+  });
+
+  it("carries the authored world w0 through untouched", () => {
+    const pose = presetFourDPose(fourD, bounds([1.2, 1.1, 1, 0.9]));
+
+    expect(pose.sliceW).toBe(0.1);
+  });
+
+  it("names one hyperplane across two differently sampled clouds", () => {
+    const halfA: [number, number, number, number] = [1.2, 1.1, 1, 0.9];
+    const halfB: [number, number, number, number] = [1.27, 1.04, 0.93, 0.97];
+
+    const a = presetFourDPose(fourD, bounds(halfA));
+    const b = presetFourDPose(fourD, bounds(halfB));
+
+    // Different clouds, so the sliders sit at different normalized centres...
+    expect(a.sliceCenter).not.toBe(b.sliceCenter);
+    // ...on the same world plane, which is what the document carries.
+    expect(a.sliceW).toBe(b.sliceW);
+    const supportA = wSupport(rotorMatrix(a.pair), halfA);
+    const supportB = wSupport(rotorMatrix(b.pair), halfB);
+    expect(a.sliceCenter * supportA).toBeCloseTo(0.1, 12);
+    expect(b.sliceCenter * supportB).toBeCloseTo(0.1, 12);
   });
 });

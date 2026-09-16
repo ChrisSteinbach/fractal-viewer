@@ -3363,6 +3363,17 @@ export class FractalScene {
       1 / Math.max(wSupport(this.fourDRot, this.fourDHalfExtents), 1e-6);
   }
 
+  /** The landed cloud's support in the rotated-w direction at the current
+   * rotor — the factor {@link setSurface4View} multiplies a normalized slice
+   * centre by to reach the tracer's world `uW0`. Exposed so main.ts can
+   * convert a document's WORLD hyperplane (`FourDPose.sliceW`) into this
+   * cloud's normalized reading and back, through the one definition both
+   * directions share. 0 before any 4D cloud has landed, which the caller
+   * reads as "no conversion available yet". */
+  fourDWSupport(): number {
+    return wSupport(this.fourDRot, this.fourDHalfExtents);
+  }
+
   /**
    * Configure the soft w-slice: a Gaussian opacity window around
    * `center` in SIGNED normalized rotated-w units (the [-1, 1] range the

@@ -22,7 +22,7 @@
  */
 import type { PresetFourDView, PresetView } from "../fractal/presets";
 import type { Bounds4, Vec3, Vec4 } from "../fractal/types";
-import type { FourDPose } from "./four-d-view";
+import { normalizedSliceCenter, type FourDPose } from "./four-d-view";
 import { MIN_RADIUS, sphericalFromCartesian, type CameraPose } from "./orbit";
 import {
   identityRotorPair,
@@ -94,7 +94,12 @@ export function presetFourDPose(
   return {
     pair,
     sliceOn: true,
-    sliceCenter: Math.max(-1, Math.min(1, fourD.w0 / support)),
+    sliceCenter: normalizedSliceCenter(fourD.w0, support),
+    // The authored `w0` IS the world hyperplane, so the preset carries it
+    // through untouched rather than being re-derived from anything: a preset
+    // lands on the same plane in every session, however its cloud fell. The
+    // normalized value beside it is this cloud's reading of that same plane.
+    sliceW: fourD.w0,
     sliceThickness: 0,
     sliceRelColor: false,
   };

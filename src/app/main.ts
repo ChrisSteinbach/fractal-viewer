@@ -2288,6 +2288,14 @@ async function main(): Promise<void> {
   function applyFourDPose(pose: FourDPose): void {
     fourDTween.cancel();
     fourDView.applyPose(pose);
+    // A pose that names a WORLD hyperplane is re-resolved against THIS
+    // session's cloud: its normalized centre was a fraction of the sender's
+    // cloud, and ours is a differently-seeded sample. Before any cloud has
+    // landed the support is 0 and the normalized value stands; the arrival
+    // path applies the pose again once the cloud is there.
+    if (pose.sliceW !== undefined) {
+      fourDView.resolveSliceWorld(pose.sliceW, scene.fourDWSupport());
+    }
     pushFourDSlice();
     scene.setRot4(fourDView.matrix());
     syncFourDSliceUi();
@@ -7761,8 +7769,26 @@ async function main(): Promise<void> {
   function viewPose(): ViewPose {
     return {
       camera: cameraPose(),
-      fourD: viewIs4D ? fourDView.pose() : undefined,
+      fourD: viewIs4D ? fourDPoseForDocument() : undefined,
     };
+  }
+
+  /**
+   * The live 4D pose, with the WORLD hyperplane it sits on filled in from
+   * the landed cloud's support when the view does not already carry one (a
+   * slider edit drops it, since the document may not claim a plane the user
+   * has moved off). Recording it does not move the slice — it names the
+   * plane the current normalized centre already resolves to — and a view
+   * whose plane is still known re-emits it VERBATIM, so a document survives
+   * a decode/encode round trip byte for byte rather than through
+   * `world / support * support`.
+   */
+  function fourDPoseForDocument(): FourDPose {
+    const support = scene.fourDWSupport();
+    if (fourDView.sliceW === undefined && support > 0) {
+      fourDView.retainSliceWorld(fourDView.sliceCenter * support);
+    }
+    return fourDView.pose();
   }
 
   /**

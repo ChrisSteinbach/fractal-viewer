@@ -269,6 +269,7 @@ const FOUR_D_FIELDS = {
   pair: true,
   sliceOn: true,
   sliceCenter: true,
+  sliceW: true,
   sliceThickness: true,
   sliceRelColor: true,
 } satisfies Fields<FourDPose>;
@@ -1294,6 +1295,10 @@ function fourD(value: unknown, path: string): void {
   );
   if (center < -1 || center > 1)
     throw new RangeError(`${path}.sliceCenter is outside its authored domain`);
+  // The world hyperplane is optional (absent means the normalized reading is
+  // all the pose has) and carries no authored domain of its own: it is a
+  // world coordinate, bounded by whatever cloud resolves it.
+  if (entry.sliceW !== undefined) finite(entry.sliceW, `${path}.sliceW`);
   const thickness = finite(
     required(entry, "sliceThickness", path),
     `${path}.sliceThickness`,
