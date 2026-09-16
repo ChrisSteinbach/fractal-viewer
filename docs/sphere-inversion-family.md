@@ -1519,3 +1519,98 @@ Sierpinski tetrahedron).
   Frames: `scripts/out/si-controls-{before,after-size,after-shell,after-depth2}.png`
   (gitignored).
 
+## Qualification (2026-09-16, delegated)
+
+The family's built-app gate is `scripts/sphere-inversion-family.verify.mjs`.
+It shares its browser helpers with the presets gate
+(`scripts/lib/sphere-inversion-gate.mjs`) and reads the preset table from
+`presets.ts` itself (esbuild), so neither gate carries a copy of the
+constructions. Every call in this section is DELEGATED (lead agent, owner to
+ratify).
+
+**Run.** `npm run build && npm run preview &`, then
+`node scripts/sphere-inversion-family.verify.mjs --mode=x11::0`.
+`--mode=sw` is the SwiftShader subset: menu entry, engine and document per
+preset, plus the Flame/Solid and 4D refusal legs; no settle, frames or
+exports. `--phases=presets,tiled,gl,toast,refusal` picks legs.
+
+**Measured on** build `4bedcff` (the vault4 exterior re-pose and the panel
+controls included), Mesa Intel Iris Xe (TGL GT2) on `:0`, WebGPU
+`intel gen-12lp` (software = false), Playwright Chromium headed, 1600×900 at
+DSF 1, 8 antialiasing passes, reduced motion. The machine-quiet baseline read
+`quiet=YES` for the GPU; CPU load1 was 7.1, so the settle seconds are this
+run's and not a cost record (the cost section's are). Verdict: pass, with two
+disclosed KNOWN findings.
+
+| Preset                 | Settle | Covered | Exhausted | Export 3200×1800 (bands) | Link reload vs menu frame    | Second hop |
+| ---------------------- | -----: | ------: | --------: | ------------------------ | ---------------------------- | ---------- |
+| `inversionPearls`      | 13.5 s |   22.0% |         0 | 41.8 s (2)               | byte-exact                   | byte-exact |
+| `inversionCubePearls`  | 12.3 s |   22.3% |         0 | 37.8 s (2)               | byte-exact                   | byte-exact |
+| `inversionVault`       | 21.8 s |   95.9% |         0 | 74.3 s (2)               | byte-exact                   | byte-exact |
+| `inversionLace`        | 12.6 s |   39.9% |         0 | 40.8 s (2)               | byte-exact                   | byte-exact |
+| `inversionVault4`      | 39.5 s |   29.0% |         0 | 139.0 s (2)              | max 90, 0.640% of px off > 8 | byte-exact |
+| `inversionMedallions4` | 22.8 s |   40.5% |         0 | 78.5 s (2)               | max 88, 0.053% of px off > 8 | byte-exact |
+
+What each leg established:
+
+- **Menu, engine, census, document.** The live menu's Sphere inversion group
+  is exactly the table. Every preset entered Surface from the menu on the
+  compute engine and held the settle latch with no exhausted ray and no
+  blank-frame toast. The `#v1=` document's block equals the table's, and so
+  does the copied link's.
+- **Distinct objects.** All 15 pairs of settled frames differ; the closest
+  pair (the two pearl presets) differs on 27.5% of pixels.
+- **Share links.** A 3D link reproduces the sender's frame byte for byte. A
+  4D link does not: `persist.ts` stores the rotor pair to 4 decimals
+  (vault4's `p₀` 0.9838 against the preset's 0.98383134), while the
+  authored-fov camera keeps 10. The link itself is a fixed point: the
+  reloaded session copies the same document, and a second reload is
+  byte-identical to the first. The gate discloses the 4D drift (bounded at
+  1% of pixels) rather than failing on it. Whether the rotor should keep more
+  digits is the persistence owner's call.
+- **Save PNG.** Every 2× export completed and has content (1,800–6,600
+  coarse colours, luma standard deviation 24–45). The Iris's own ray ceiling
+  already cuts a 2× export into 2 bands. Under `?surfacemaxrays=600000` the
+  pearls (3D) and medallions (4D) exports traced in 10 bands, byte-identical
+  to their 2-band exports. An export is centred where the pane is not (a
+  capture zeroes the panel's right inset), so it is not compared with the
+  pane.
+- **WebGL arm (3D).** `?surfacegl` on the pearls and cube pearls: coverage IoU
+  1.0000 against compute, mean colour difference 0.015 and 0.009/255 on
+  jointly covered pixels. The WebGL and compute censuses agree (21.99% and
+  22.27% covered). The mask is a per-row backdrop test at channel delta 16,
+  which must agree with each engine's census before its IoU counts; delta 6
+  read the backdrop's small along-row drift as 45.8% coverage. The WebGL
+  arm's PREVIEW exhaustion is unreadable: `scene.ts` decodes a census from
+  the settle target only. The GPU doc's 3.52/255 pearls row predates the
+  colour-slot fix and used a minted document at 1024×640; these rows are the
+  same construction at the preset's pose after the fix, not a rerun of it.
+- **Flame/Solid refusal.** Two doors reach a block with Flame or Solid
+  selected. Through the isolation handoff (a reload restoring the render
+  mode onto a block document) the app stays in Points, shows the refusal
+  toast and disables the button. Through undo the app is in Points with the
+  button disabled and NO toast: `applyDecodedSnapshot` leaves for Points
+  before the restored document refreshes the panel, so there is no session
+  left to refuse. The same holds for redo, gallery loads and timeline legs.
+  The gate's toast recorder is checked against Copy link's own toast, so a
+  missing refusal toast is a real absence.
+- **4D compute-only refusal.** Under `?surfacegl` both 4D presets stay in
+  Points with the Surface button disabled and the note "native 4D
+  sphere-inversion scenes render on WebGPU compute, which is unavailable
+  here".
+- **Teardown.** `scripts/surface-teardown.verify.mjs` gained
+  `--document=<file.json>`. On the gate's share documents for
+  `inversionVault` and `inversionVault4`, `--toggleId=__modeExit --toggles=20
+--toggleGapMs=900` completed 20/20 mode exits in Firefox on the compute
+  engine (dev server, same build), with no crash or page error.
+
+**SwiftShader subset** (`--mode=sw`, same build): menu group, compute entry
+and block match for all six presets, both Flame/Solid doors and both 4D
+refusals pass.
+
+Frames (gitignored, regenerate): `scripts/out/si-qual-<key>.png`, `-reload.png`,
+`-reload2.png`, `-export.png`, `-export-tiled.png`, `-glsl.png`; the
+contact sheet `scripts/out/si-qual-sheet.png`; raw figures
+`scripts/out/si-qual-results.json`.
+
+**Bench.** Pending.
