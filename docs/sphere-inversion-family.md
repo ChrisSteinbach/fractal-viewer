@@ -1534,22 +1534,21 @@ ratify).
 preset, plus the Flame/Solid and 4D refusal legs; no settle, frames or
 exports. `--phases=presets,tiled,gl,toast,refusal` picks legs.
 
-**Measured on** build `4bedcff` (the vault4 exterior re-pose and the panel
-controls included), Mesa Intel Iris Xe (TGL GT2) on `:0`, WebGPU
+**Measured on** build `91cdc35` (the vault4 exterior re-pose, the panel
+controls and the world-slice fix included), Mesa Intel Iris Xe (TGL GT2) on `:0`, WebGPU
 `intel gen-12lp` (software = false), Playwright Chromium headed, 1600×900 at
 DSF 1, 8 antialiasing passes, reduced motion. The machine-quiet baseline read
-`quiet=YES` for the GPU; CPU load1 was 7.1, so the settle seconds are this
-run's and not a cost record (the cost section's are). Verdict: pass, with two
-disclosed KNOWN findings.
+`quiet=YES` for the GPU at load1 1.1, so the settle seconds are this run's
+and not a cost record (the cost section's are). Verdict: pass.
 
-| Preset                 | Settle | Covered | Exhausted | Export 3200×1800 (bands) | Link reload vs menu frame    | Second hop |
-| ---------------------- | -----: | ------: | --------: | ------------------------ | ---------------------------- | ---------- |
-| `inversionPearls`      | 13.5 s |   22.0% |         0 | 41.8 s (2)               | byte-exact                   | byte-exact |
-| `inversionCubePearls`  | 12.3 s |   22.3% |         0 | 37.8 s (2)               | byte-exact                   | byte-exact |
-| `inversionVault`       | 21.8 s |   95.9% |         0 | 74.3 s (2)               | byte-exact                   | byte-exact |
-| `inversionLace`        | 12.6 s |   39.9% |         0 | 40.8 s (2)               | byte-exact                   | byte-exact |
-| `inversionVault4`      | 39.5 s |   29.0% |         0 | 139.0 s (2)              | max 90, 0.640% of px off > 8 | byte-exact |
-| `inversionMedallions4` | 22.8 s |   40.5% |         0 | 78.5 s (2)               | max 88, 0.053% of px off > 8 | byte-exact |
+| Preset                 | Settle | Covered | Exhausted | Export 3200×1800 (bands) | Link reload | Second hop |
+| ---------------------- | -----: | ------: | --------: | ------------------------ | ----------- | ---------- |
+| `inversionPearls`      | 10.7 s |   22.0% |         0 | 34.8 s (2)               | byte-exact  | byte-exact |
+| `inversionCubePearls`  | 11.1 s |   22.3% |         0 | 32.1 s (2)               | byte-exact  | byte-exact |
+| `inversionVault`       | 20.9 s |   95.9% |         0 | 73.1 s (2)               | byte-exact  | byte-exact |
+| `inversionLace`        | 12.8 s |   39.9% |         0 | 40.9 s (2)               | byte-exact  | byte-exact |
+| `inversionVault4`      | 39.6 s |   29.0% |         0 | 133.1 s (2)              | byte-exact  | byte-exact |
+| `inversionMedallions4` | 22.8 s |   40.5% |         0 | 79.8 s (2)               | byte-exact  | byte-exact |
 
 What each leg established:
 
@@ -1560,22 +1559,18 @@ What each leg established:
   does the copied link's.
 - **Distinct objects.** All 15 pairs of settled frames differ; the closest
   pair (the two pearl presets) differs on 27.5% of pixels.
-- **Share links.** A 3D link reproduces the sender's frame byte for byte. A
-  4D link does not, and the reason is not rounding: the pose and camera are
-  written unrounded, and the rotor renormalization is a fixed point.
-  `FourDPose` stores the slice NORMALIZED against the LANDED cloud's 4D
-  half-extents, and the cloud is seeded afresh per generation, so one
-  document resolves to a slightly different world `w0` on each run. The
-  evidence is three-fold: two links copied from the same session differ in no
-  field yet render differently; nudging `sliceCenter` by 1e-5 reproduces the
-  signature exactly; and the menu session's own `sliceCenter` differed run to
-  run (0.07378780 against 0.07382606). The link is still a fixed point in
-  every other respect: the reloaded session copies the same document, and a
-  second reload is byte-identical to the first. The gate discloses the 4D
-  drift (bounded at 1% of pixels) rather than failing on it. A fix is in
-  flight — an optional WORLD slice field on the pose, preferred on decode,
-  with the normalized one as the legacy fallback — after which these two
-  rows should reload byte-exactly and the disclosure becomes a pass.
+- **Share links.** Every link reproduces the sender's frame byte for byte, in
+  both dimensions, and the link is a fixed point: the reloaded session copies
+  the same document and a second reload is byte-identical to the first. The
+  gate tolerates no drift here. It did until this build: a 4D frame differed
+  from its sender's (the vault on 0.64% of pixels, the medallions on 0.05%)
+  because `FourDPose` stored the slice NORMALIZED against the landed cloud's
+  4D half-extents while the cloud is seeded afresh per generation, so one
+  document resolved to a slightly different world `w0` per run — two links
+  differing in no field still rendered differently, and a session's own
+  `sliceCenter` moved between runs (0.07378780 against 0.07382606). The pose
+  now carries the slice as a WORLD hyperplane, preferred on decode, with the
+  normalized value as the legacy fallback and the document left unrewritten.
 
 - **Save PNG.** Every 2× export completed and has content (1,800–6,600
   coarse colours, luma standard deviation 24–45). The Iris's own ray ceiling
@@ -1622,20 +1617,22 @@ Frames (gitignored, regenerate): `scripts/out/si-qual-<key>.png`, `-reload.png`,
 contact sheet `scripts/out/si-qual-sheet.png`; raw figures
 `scripts/out/si-qual-results.json`.
 
-**Bench** (`4bedcff` source, `:0`, `quiet=YES` before both runs).
+**Bench** (`:0`, `quiet=YES` before each run).
 
-- `npm run bench:surface -- --display=:0 --surface-sphere-inversion-only=1`:
-  every leg passed. The ten eval rows had 0 failures, 0 one-sided failures and
-  0 generation or seed mismatches. The flat-4D reduction had 0 mismatches.
-  Both march rows had 0 failures with identical GPU and CPU hit counts, and
-  the three frame rows had 0 exhausted rays. Per query the kernels cost
-  0.043–0.048 µs (3D) and 0.205–0.299 µs (600-cell). The verdict is
-  `skipped` (exit 2), which is this mode's only passing verdict.
-- `npm run bench:surface -- --display=:0` (full section):
-  `device-unreliable` (exit 2). The device was lost in the compute-frame leg
-  `lens4SwirlPostOverFold`, after its march legs passed, the failure already
-  on record for this Iris. The section's sphere-inversion legs come after that
-  leg and did not run. The nonzero `fail=` rows before it are the `info`-level
-  frontier-variant sweeps (`w4 s2=on`, `shared`), not gating rows. A full
-  green section still needs a machine that holds the device through it (the
-  AMD box), and its real-driver sphere-inversion rows stay owed.
+- `npm run bench:surface -- --display=:0 --surface-sphere-inversion-only=1`,
+  rerun at `91cdc35`: every leg passed — eleven eval rows with 0 failures, 0
+  one-sided failures and 0 generation or seed mismatches, the flat-4D
+  reduction with 0 mismatches, both march rows with identical GPU and CPU hit
+  counts, and the frame rows with 0 exhausted rays. Per query the kernels cost
+  0.043–0.048 µs (3D) and 0.205–0.299 µs (600-cell) when measured at
+  `4bedcff`. The verdict is `skipped` (exit 2), this mode's only passing
+  verdict.
+- `npm run bench:surface -- --display=:0` (full section), measured at
+  `4bedcff` and not rerun since: `device-unreliable` (exit 2). The device was
+  lost in the compute-frame leg `lens4SwirlPostOverFold`, after its march legs
+  passed, the failure already on record for this Iris. The section's
+  sphere-inversion legs come after that leg and did not run. The nonzero
+  `fail=` rows before it are the `info`-level frontier-variant sweeps
+  (`w4 s2=on`, `shared`), not gating rows. A full green section still needs a
+  machine that holds the device through it (the AMD box), and its real-driver
+  sphere-inversion rows stay owed.
