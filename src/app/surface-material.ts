@@ -2145,6 +2145,17 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
     }
   }
 #endif
+#if SURFACE_OPTICS
+  /** The frozen opticsMaps lane pair per slot
+   * (surface-material-wire.ts's surfaceMaterialOpticsLanes — ONE layout
+   * both dimensions read): lane 2j = (ior, radius, absorption.r,
+   * absorption.g), lane 2j+1 = (absorption.b, reserved, reserved,
+   * reserved). Declared INSIDE the arm (the SURFACE_BULB precedent), so a
+   * classic document's program pays no bytes; ior > 0 marks an optical
+   * slot and the trace routes per hit. In 4D the lanes are the std140
+   * block's unconditional trailing member instead — never declared twice. */
+  uniform vec4 uMapOptics[2 * MAX_MAPS];
+#endif
 #if SURFACE_FINISH || SURFACE_PATTERN
   /** Per-map surface material, in surface-material-wire.ts's two wire
    * lanes (the ONE lane definition the WGSL shade stride shares): A =
@@ -2163,17 +2174,6 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
    * (ringsLow, ringsInvSpan, sheetsLow, sheetsInvSpan). The downstream
    * pattern-shading bead consumes it. */
   uniform vec4 uPatternCalibration;
-#if SURFACE_OPTICS
-  /** The frozen opticsMaps lane pair per slot
-   * (surface-material-wire.ts's surfaceMaterialOpticsLanes — ONE layout
-   * both dimensions read): lane 2j = (ior, radius, absorption.r,
-   * absorption.g), lane 2j+1 = (absorption.b, reserved, reserved,
-   * reserved). Declared INSIDE the arm (the SURFACE_BULB precedent), so a
-   * classic document's program pays no bytes; ior > 0 marks an optical
-   * slot and the trace routes per hit. In 4D the lanes are the std140
-   * block's unconditional trailing member instead — never declared twice. */
-  uniform vec4 uMapOptics[2 * MAX_MAPS];
-#endif
 #if SURFACE_SCHEDULE
   // The hit-info descent publishes the point after the finite B prefix;
   // pattern space begins there, while final lenses remain outside it.
