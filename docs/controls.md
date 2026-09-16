@@ -394,7 +394,7 @@ morphs into place instead of snapping (see **Presets** below).
     light toward the backdrop along the shading normal; zero retains the
     original neutral-light image exactly. This is Solid's independently persisted voxel-
     material look: these controls redraw only Solid,
-    live, without changing the separate Surface lighting state or
+    live, without changing Surface's Lighting state or
     re-accumulating the grid.
   - **Floor** — adds a neutral-gray world-space floor below the sampled
     volume, with **Solid** or **Checkerboard** pattern, **Tile size**
@@ -731,7 +731,7 @@ morphs into place instead of snapping (see **Presets** below).
   included — see **Scene color**) that appears for the orbit-trap,
   rings, sheets, and Shape trap sources, plus a **Color speed** slider — orbit-trap
   source only, fading how quickly deeper descent levels blend into the trap
-  color. The shared **Surface lighting** section lets you enable **Authored
+  color. The shared **Lighting** section lets you enable **Authored
   lights** and place the Key and Rim lights in **Points**. While that section
   is open, labeled disks show each light's position and radius, and arrows
   show its emitting direction. Adjust the position and aim controls while

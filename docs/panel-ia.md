@@ -7,12 +7,12 @@ before its DOM location or mode gate is chosen.
 
 ## Four control families
 
-| Family            | The question it answers                                                 | Typical controls                                                                                                         |
-| ----------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| **Scene / Look**  | What is the authored object, composition or appearance?                 | Transforms, Xaos, Hybrid schedule, Symmetry, Balloon, backdrop, fog, per-transform Finish and Pattern                    |
-| **Renderer**      | How does the selected renderer produce this view of the scene?          | Points sampling, Flame tone/density/blur, Solid density/material/lighting/quality, Surface lighting/depth/traps/sampling |
-| **View / Device** | How is this user inspecting the scene, and what can this device afford? | Camera and 3D/4D framing, W slice, orbit/tumble and motion, adaptive-resolution and other browser/session preferences    |
-| **Workflow**      | How does work enter, leave, get stored or get sequenced?                | Presets and composition entry points, Collection, Timeline, Capture and Share                                            |
+| Family            | The question it answers                                                 | Typical controls                                                                                                      |
+| ----------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| **Scene / Look**  | What is the authored object, composition or appearance?                 | Transforms, Xaos, Hybrid schedule, Symmetry, Balloon, backdrop, fog, per-transform Finish and Pattern                 |
+| **Renderer**      | How does the selected renderer produce this view of the scene?          | Points sampling, Flame tone/density/blur, Solid density/material/lighting/quality, Surface color/lighting/depth/traps |
+| **View / Device** | How is this user inspecting the scene, and what can this device afford? | Camera and 3D/4D framing, W slice, orbit/tumble and motion, adaptive-resolution and other browser/session preferences |
+| **Workflow**      | How does work enter, leave, get stored or get sequenced?                | Presets and composition entry points, Collection, Timeline, Capture and Share                                         |
 
 The conceptual question chooses the family. Persistence does not. A persisted
 Surface-only floor is still a Renderer control; a session-only capture size is

@@ -2128,6 +2128,7 @@ export class Ui {
   private readonly surfaceLightingStarterGroup: HTMLOptGroupElement;
   private readonly surfaceLightingControls: SurfaceLightingControls;
   private readonly surfaceLightingDisclosure: HTMLElement;
+  private readonly surfaceRendererLightingGroup: HTMLElement;
   private readonly surpriseBtn: HTMLButtonElement;
   private readonly driftBtn: HTMLButtonElement;
   private readonly driftTitle: string;
@@ -3267,11 +3268,13 @@ export class Ui {
     );
     this.surfaceTrapSection =
       this.byId<HTMLDetailsElement>("surfaceTrapSection");
+    this.surfaceRendererLightingGroup = this.byId(
+      "surfaceRendererLightingGroup",
+    );
     this.surfaceSections = [
       this.byId<HTMLDetailsElement>("surfaceColorSection"),
       this.surfaceCondensationSection,
       this.surfaceTrapSection,
-      this.byId<HTMLDetailsElement>("surfaceLightingSection"),
       this.byId<HTMLDetailsElement>("surfaceDepthSection"),
       this.byId<HTMLDetailsElement>("surfaceFloorSection"),
     ];
@@ -5439,6 +5442,14 @@ export class Ui {
         surfaceInspectorApplicability.kind !== "enabled",
       );
     }
+    this.surfaceRendererLightingGroup.classList.toggle(
+      "hidden",
+      surfaceInspectorApplicability.kind !== "enabled",
+    );
+    this.surfaceRendererLightingGroup.classList.toggle(
+      "hidden",
+      surfaceInspectorApplicability.kind !== "enabled",
+    );
     // The surface palette select means anything for "palette", "rings",
     // "sheets" and "shapeTrap" — all four sample the user-selected palette
     // — like glowBrightnessRow, hidden whenever none of those is active.

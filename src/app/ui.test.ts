@@ -7050,13 +7050,11 @@ describe("Ui render mode switch", () => {
     "surfaceColorSection",
     "surfaceCondensationSection",
     "surfaceTrapSection",
-    "surfaceLightingSection",
     "surfaceDepthSection",
     "surfaceFloorSection",
   ] as const;
   const SURFACE_ALWAYS_SECTION_IDS = [
     "surfaceColorSection",
-    "surfaceLightingSection",
     "surfaceDepthSection",
     "surfaceFloorSection",
   ] as const;
@@ -8694,12 +8692,6 @@ describe("Ui independent renderer lighting", () => {
       "solidLightingDisclosure",
       ["only Solid", "apply immediately"],
     ],
-    [
-      "surface",
-      "surfaceLightingSection",
-      "surfaceLightingDisclosure",
-      ["only Surface", "apply immediately", "Environment is Surface-only"],
-    ],
   ] as const)(
     "puts the %s disclosure first in its contextual Lighting section",
     (renderMode, sectionId, disclosureId, phrases) => {
@@ -8719,6 +8711,22 @@ describe("Ui independent renderer lighting", () => {
       }
     },
   );
+
+  it("shows the Surface renderer lighting group inside the merged Lighting section", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), renderMode: "surface" });
+    const group = document.getElementById(
+      "surfaceRendererLightingGroup",
+    ) as HTMLElement;
+    const disclosure = document.getElementById(
+      "surfaceLightingDisclosure",
+    ) as HTMLElement;
+    expect(group.classList.contains("hidden")).toBe(false);
+    expect(group.contains(disclosure)).toBe(true);
+    const disclosureText = disclosure.textContent?.replace(/\s+/g, " ");
+    expect(disclosureText).toContain("only Surface");
+    expect(disclosureText).toContain("apply immediately");
+  });
 
   it("restores divergent Solid and Surface lighting across mode switches", () => {
     const ui = new Ui(document);
@@ -8747,7 +8755,7 @@ describe("Ui independent renderer lighting", () => {
     expect(value("solidAmbientSlider")).toBe("0.2");
     expect(
       document
-        .getElementById("surfaceLightingSection")
+        .getElementById("surfaceRendererLightingGroup")
         ?.classList.contains("hidden"),
     ).toBe(true);
 
@@ -12076,7 +12084,6 @@ describe("panel accordion sections", () => {
       "surfaceColorSection",
       "surfaceCondensationSection",
       "surfaceTrapSection",
-      "surfaceLightingSection",
       "surfaceDepthSection",
       "surfaceFloorSection",
     ];
@@ -12149,8 +12156,8 @@ describe("panel accordion sections", () => {
     expect(duplicates).toEqual([
       "Scene color",
       "Scene color",
-      "Scene color",
       "Lighting",
+      "Scene color",
       "Depth",
       "Floor",
     ]);
@@ -12158,7 +12165,7 @@ describe("panel accordion sections", () => {
       (section) => section.id === "solidLightingSection",
     );
     const surfaceLighting = sections().find(
-      (section) => section.id === "surfaceLightingSection",
+      (section) => section.id === "surfaceAuthoredLightingSection",
     );
     expect(solidLighting?.querySelector("summary")?.textContent).toBe(
       "Lighting",
