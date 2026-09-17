@@ -289,7 +289,7 @@ export const SPHERE_INVERSION_BALLOON_SESSION_REASON =
 
 /**
  * The render-mode half of the family's per-mode verdict
- * (`docs/sphere-inversion-family.md`): Flame and Sampled Solid have no
+ * (`docs/sphere-inversion-family.md`): Flame and Solid have no
  * representation that draws a block's seed orbit, so a document carrying a
  * block refuses both, in 3D and 4D alike; Points draws the exact boundary
  * sample and Surface traces the estimator. A PRESENT block refuses whether or
@@ -304,7 +304,7 @@ export function sphereInversionRenderModeRefusal(
 ): string | null {
   if (block === null || block === undefined) return null;
   if (mode !== "flame" && mode !== "solid") return null;
-  return `Flame and Sampled Solid are unavailable for a sphere-inversion scene: neither draws its seed orbit. Points samples the orbit's boundary exactly (at most ${SPHERE_INVERSION_POINTS_MAX.toLocaleString("en-US")} points), and Surface traces it.`;
+  return `Flame and Solid are unavailable for a sphere-inversion scene: neither draws its seed orbit. Points samples the orbit's boundary exactly (at most ${SPHERE_INVERSION_POINTS_MAX.toLocaleString("en-US")} points), and Surface traces it.`;
 }
 
 /** The one machine fact the document cannot answer (module doc and

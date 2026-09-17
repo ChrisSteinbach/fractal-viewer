@@ -8228,7 +8228,7 @@ describe("Ui solid render controls", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), renderMode: "solid" });
     expect(document.getElementById("helpTitle")?.textContent).toBe(
-      "Sampled Solid Render",
+      "Solid Render",
     );
   });
 
@@ -10599,7 +10599,7 @@ describe("Ui.setSolidProgress", () => {
     const progress = document.getElementById("solidProgress");
     const fallback = document.getElementById("solidResolutionNote");
     expect(progress?.textContent).toContain(
-      "Sampled Solid · 128³ voxels (requested 192³) · converging 50%",
+      "Solid · 128³ voxels (requested 192³) · converging 50%",
     );
     expect(fallback?.textContent).toBe(
       "Memory fallback active: requested 192³, rendering 128³ voxels.",
@@ -10608,9 +10608,7 @@ describe("Ui.setSolidProgress", () => {
     expect(fallback?.getAttribute("aria-live")).toBe("polite");
 
     ui.setSampledSolidStatus(sampled(10, 10));
-    expect(progress?.textContent).toContain(
-      "Sampled Solid · 192³ voxels · converged",
-    );
+    expect(progress?.textContent).toContain("Solid · 192³ voxels · converged");
     expect(fallback?.textContent).toBe("");
   });
 
@@ -10629,7 +10627,7 @@ describe("Ui.setSolidProgress", () => {
     const ui = new Ui(document);
     ui.setSolidProgress(12_345_000, 20_000_000);
     expect(document.getElementById("solidProgress")?.textContent).toBe(
-      "Sampled Solid · requested 192³ voxels · effective resolution pending · converging 61% · 12.3M / 20.0M iterations",
+      "Solid · requested 192³ voxels · effective resolution pending · converging 61% · 12.3M / 20.0M iterations",
     );
   });
 
@@ -12741,7 +12739,7 @@ describe("Ui collection gallery", () => {
     ]);
     expect(
       document.querySelector("#galleryGrid .gallery-card-caption")?.textContent,
-    ).toContain("Sampled Solid · 128³ voxels (requested 192³) · converged");
+    ).toContain("Solid · 128³ voxels (requested 192³) · converged");
     expect(
       document
         .querySelector("#galleryGrid .gallery-card-caption")
@@ -12751,7 +12749,7 @@ describe("Ui collection gallery", () => {
       document
         .querySelector("#galleryGrid .gallery-card-load")
         ?.getAttribute("aria-label"),
-    ).toContain("Sampled Solid · 128³ voxels (requested 192³) · converged");
+    ).toContain("Solid · 128³ voxels (requested 192³) · converged");
   });
 
   it("fires onLoadFromCollection with the scene id when a card is clicked", () => {
@@ -13011,7 +13009,7 @@ describe("Ui timeline section", () => {
       "✺",
     );
     expect(rows()[1].querySelector(".timeline-step-mode")?.textContent).toBe(
-      "◆ Sampled Solid · resolution and convergence unavailable",
+      "◆ Solid · resolution and convergence unavailable",
     );
   });
 
@@ -13029,10 +13027,10 @@ describe("Ui timeline section", () => {
     const mode = rows()[0].querySelector(".timeline-step-mode");
     expect(mode?.classList.contains("sampled-solid")).toBe(true);
     expect(mode?.textContent).toContain(
-      "Sampled Solid · 160³ voxels · incomplete at 60%",
+      "Solid · 160³ voxels · incomplete at 60%",
     );
     expect(mode?.getAttribute("aria-label")).toContain(
-      "Sampled Solid · 160³ voxels · incomplete at 60%",
+      "Solid · 160³ voxels · incomplete at 60%",
     );
   });
 
@@ -15978,13 +15976,13 @@ describe("Ui render-progress announcer", () => {
     ui.setSolidProgress(24_000_000, 100_000_000);
     expect(announcer()?.textContent).toBe("");
     ui.setSolidProgress(25_000_000, 100_000_000);
-    expect(announcer()?.textContent).toBe("Sampled Solid render, 25 percent");
+    expect(announcer()?.textContent).toBe("Solid render, 25 percent");
     ui.setSolidProgress(75_000_000, 100_000_000); // skips 50: only the highest crossed
-    expect(announcer()?.textContent).toBe("Sampled Solid render, 75 percent");
+    expect(announcer()?.textContent).toBe("Solid render, 75 percent");
     ui.setSolidProgress(0, 100_000_000); // restart re-arms, like flame's
     expect(announcer()?.textContent).toBe("");
     ui.setSolidProgress(50_000_000, 100_000_000);
-    expect(announcer()?.textContent).toBe("Sampled Solid render, 50 percent");
+    expect(announcer()?.textContent).toBe("Solid render, 50 percent");
   });
 
   it("Surface announces at the same coarse boundaries, with its own wording", () => {

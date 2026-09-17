@@ -1731,17 +1731,17 @@ describe("the sphere-inversion route", () => {
     expect(sphereInversionSessionRefusal({ balloonEcho: false })).toBeNull();
   });
 
-  it("refuses Flame and Sampled Solid for a document carrying a block, in 3D and 4D", () => {
+  it("refuses Flame and Solid for a document carrying a block, in 3D and 4D", () => {
     for (const arrangement of ["oct6", "cell600"]) {
       for (const mode of ["flame", "solid"] as const) {
         expect(sphereInversionRenderModeRefusal({ arrangement }, mode)).toMatch(
-          /Flame and Sampled Solid are unavailable/,
+          /Flame and Solid are unavailable/,
         );
       }
     }
   });
 
-  it("refuses Flame and Sampled Solid even when the block itself is refused", () => {
+  it("refuses Flame and Solid even when the block itself is refused", () => {
     expect(
       sphereInversionRenderModeRefusal(
         { arrangement: "nope", depth: 99 },

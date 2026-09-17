@@ -1,14 +1,14 @@
 /**
- * One honest description of a sampled Solid render session.
+ * One honest description of a Solid render session.
  *
  * Solid is a progressively accumulated voxel-density render.  It is distinct
  * from the analytic Surface route, so every user-facing rendering of this
- * model deliberately says "Sampled Solid" and includes both the effective
- * voxel resolution and convergence state.  The same snapshot is suitable for
- * the live row, capture names, collection cards, timeline rows, and exports.
+ * model says "Solid" and includes both the effective voxel resolution and
+ * convergence state.  The same snapshot is suitable for the live row, capture
+ * names, collection cards, timeline rows, and exports.
  */
 
-export const SAMPLED_SOLID_IDENTITY = "Sampled Solid";
+export const SAMPLED_SOLID_IDENTITY = "Solid";
 
 export type SampledSolidPhase = "active" | "complete" | "cancelled" | "failed";
 

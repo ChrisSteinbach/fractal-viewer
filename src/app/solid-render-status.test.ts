@@ -19,10 +19,10 @@ describe("sampled Solid render-session status", () => {
       20_000_000,
     );
     expect(sampledSolidStatusText(status)).toBe(
-      "Sampled Solid · requested 192³ voxels · effective resolution pending · converging 61%",
+      "Solid · requested 192³ voxels · effective resolution pending · converging 61%",
     );
     expect(sampledSolidSnapshotText(status)).toBe(
-      "Sampled Solid · requested 192³ voxels · effective resolution pending · incomplete at 61%",
+      "Solid · requested 192³ voxels · effective resolution pending · incomplete at 61%",
     );
   });
 
@@ -45,7 +45,7 @@ describe("sampled Solid render-session status", () => {
     );
     expect(status.phase).toBe("complete");
     expect(sampledSolidStatusText(status)).toBe(
-      "Sampled Solid · 192³ voxels · converged",
+      "Solid · 192³ voxels · converged",
     );
     expect(sampledSolidFileTag(status)).toBe(
       "sampled-solid-192cubed-converged",

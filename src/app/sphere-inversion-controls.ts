@@ -63,11 +63,11 @@ export interface SphereInversionFieldRange {
  * does not offer (an unknown arrangement id or seed kind). */
 export const SPHERE_INVERSION_AUTHORED_OPTION = "__authored";
 
-/** Why the section is unavailable in Flame and Sampled Solid while no block
+/** Why the section is unavailable in Flame and Solid while no block
  * is present (with one present, those modes are already refused beside the
  * mode switch and the app leaves them). */
 export const SPHERE_INVERSION_CONTROLS_MODE_REASON =
-  "Flame and Sampled Solid cannot draw a sphere-inversion scene. Switch to Points or Surface to add or edit one.";
+  "Flame and Solid cannot draw a sphere-inversion scene. Switch to Points or Surface to add or edit one.";
 
 const SEED_FIELDS: readonly SphereInversionNumericField[] = [
   "size",
