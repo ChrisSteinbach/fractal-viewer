@@ -111,14 +111,15 @@ in `docs/4d-exploration.md`; the rules are below.
 ## Panel information architecture — classify before placing
 
 **Every panel control has one conceptual home — Scene / Look, Renderer,
-View / Device, or Workflow — chosen independently of its consumers, lifetime
-and edit behavior.** Keep the native exclusive-open top-level accordion;
-sections own applicability, shared open sections survive renderer changes,
-dependent details hide, dormant authored capabilities disable with an adjacent
-reason, document status never lives only under a mode gate, and every visible
-edit discloses whether it is live, restarts, applies on next entry, or is
-refused. Active editing precedes output/library controls. The placement record,
-ordering and examples are in `docs/panel-ia.md`.
+View / Device, or Workflow — independent of consumers, lifetime, edit
+behavior.** Keep the native exclusive-open accordion; sections own
+applicability, shared sections survive renderer changes, dependent details
+hide, dormant capabilities disable beside a reason, document status stays
+outside mode gates, and visible edits disclose
+live/restart/next-entry/refused timing. Active editing precedes output/library
+controls; the record is in `docs/panel-ia.md`. Visible copy is gated (`npm
+test`): hints ≤ 16 words, notes ≤ 24, disclosures ≤ 60, WCAG AA contrast in
+Chromium+Firefox (`scripts/panel-contrast.verify.mjs`).
 
 ## Commands
 
