@@ -7642,6 +7642,7 @@ export function setSurfaceSystem(
       tiling,
       wantPost,
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
+      0, // sphereInversion — handed back above in this rebuild path
       optics,
     );
     material.needsUpdate = true;
@@ -9312,7 +9313,8 @@ export function setEscapeSystem(
       tiling,
       wantPost,
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
-      0,
+      0, // sphereInversion — handed back above (forward arms refuse it)
+      0, // optics — the forward arms refuse the transport
     );
     material.needsUpdate = true;
   }
@@ -9455,7 +9457,8 @@ export function setBulbSystem(
       tiling,
       0,
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
-      0,
+      0, // sphereInversion — handed back above (forward arms refuse it)
+      0, // optics — the forward arms refuse the transport
     );
     material.needsUpdate = true;
   }
@@ -9630,7 +9633,8 @@ export function setSphereInversionSystem(
       null,
       0,
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
-      1,
+      1, // sphereInversion — this install's own arm
+      material.defines.SURFACE_OPTICS === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }

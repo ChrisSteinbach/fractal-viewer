@@ -3271,6 +3271,7 @@ export function surface4FragmentFor(
     tiling,
     0,
     lighting,
+    0, // sphereInversion — 4D sessions are compute-only there
     optics,
     opticsBackend,
   );
@@ -3318,6 +3319,7 @@ export function surface4FragmentResolvedFor(
     tiling,
     0,
     lighting,
+    0, // sphereInversion — 4D sessions are compute-only there
     optics,
     opticsBackend,
   );
