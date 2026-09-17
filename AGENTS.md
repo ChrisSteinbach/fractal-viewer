@@ -971,30 +971,32 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     (the fixed formula's values; shininess floor 0.01), the compile
     predicate, ONE both-dialect shader body; classic bytes pinned.
     Finish persists/morphs/mutates like fold lengths; random-system
-    never rolls it. TRANSMISSION: finite-solid 3D/4D glass SELECTED;
-    envelope DECIDED. `surface-dielectric.ts` is the ONE dimension-free
-    transport oracle; contract:
+    never rolls it. TRANSMISSION: finite-solid 3D/4D glass; envelope
+    DECIDED. `surface-dielectric.ts` is the ONE transport oracle;
+    contract:
     `docs/surface-dielectric-transport.md`. Optics
     (`surface-optics.ts`: per-slot `Transform.optics`) is LIVE on
-    compute affine/affine4/fold4 (fold REFUSED on its
-    measured GPU-job timeout; forward unadmitted). The closed-solid
+    compute affine/affine4/fold4 (fold REFUSED on its measured timeout;
+    forward unadmitted). The closed-solid
     backend (the SIGNED condensation-union query — the sign IS the
-    inside traversal) RESOLVES in BOTH dimensions; estimator arms are
-    vacuous on IFS hits,
-    disclosed. REAR SCENE DELIVERED: physical ray order at the seam —
-    later fractal hits ARE the transport's boundary events (both
-    backends' misses CERTIFY the interval; no rear march), then the
-    plane, then the background; exhaustion never relabelled — the
-    closed-solid floor corridor's shadow attenuates STRAIGHT through the
-    solid (Fresnel×Beer per channel, TIR dark, AO geometric, slot-0
-    material, shadow work apart; the rear-image contract is the
-    distortion task's; routing the starter-scene task's).
-    Pattern-albedo REFUSED
+    inside traversal) RESOLVES in both dimensions; estimator arms
+    vacuous on IFS hits (disclosed).
+    REAR SCENE DELIVERED in physical ray order — later
+    fractal hits ARE its boundary events (misses CERTIFY
+    the interval; no rear march), then plane, then background;
+    exhaustion never relabelled; the floor corridor's
+    shadow attenuates STRAIGHT through the solid (per-channel
+    Fresnel×Beer, TIR dark). DISTORTION DELIVERED: the
+    accepted virtual-slab offset (`dielectricSlabDisplacement`,
+    the bend study's re-export) displaces exit terminals'
+    rear ORIGIN only — background unbent, front Fresnel untouched; one
+    authored word, 0 = straight byte-identically; tile leg rides .10's
+    routing. Pattern-albedo REFUSED
     (`scripts/finish-pattern.harness.ts`).
     Cinematic rigs (`surface-lighting.ts`): ONE both-dialect emitter,
-    both engines, absent legacy, unresolved rays dark, HDR pre-clip,
-    points guides transient; NO PARTICIPATING MEDIUM (measured cost; a
-    look call). Record: `docs/cinematic-surface-lighting.md`.
+    unresolved rays dark;
+    NO PARTICIPATING MEDIUM (measured cost; a look call). Record:
+    `docs/cinematic-surface-lighting.md`.
   - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its
     hybrids, for exactly the systems the IFS gate refuses (one or more

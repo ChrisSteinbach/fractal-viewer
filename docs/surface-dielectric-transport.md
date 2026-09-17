@@ -223,13 +223,14 @@ same `baseIndex` slot list. The rules, each owned by one definition:
   `ResolvedSurfaceOptics` alias), so a backend hands it to the transport
   with no adapter.
 - **Not authored.** IOR and the per-channel absorption ride the qualified
-  constants as defaults; the restrained optical distortion is NOT in the
-  vocabulary yet — its model is unqualified until the distortion task owns
-  it ("do not promote the prototype's IOR/thickness constants to product
-  defaults without review"), and the transport lane below leaves a reserved
-  word so that decision appends rather than relayouts. Work and chunk
-  budgets (processed paths, interfaces, stack) stay OUT of material
-  identity: they are the runtime's, not the document's.
+  constants as defaults; the restrained optical distortion IS authored —
+  `optics.distortion`, ONE dimensionless word (the virtual slab's thickness
+  as a multiplier of the resolved optical radius), absent ⇒ 0 = straight
+  transmission byte-identically, resolver-clamped into
+  `[0, SURFACE_OPTICS_DISTORTION_CEILING]` (0.25) — and it rides the lane
+  pair's first reserved word (see below). Work and chunk budgets (processed
+  paths, interfaces, stack) stay OUT of material identity: they are the
+  runtime's, not the document's.
 - **Persistence** (`persist.ts`) mirrors the finish codec: fidelity only —
   finite values survive the wire untouched (round4 on `scale`), no clamp;
   an unknown model id drops the WHOLE block (the scale alone has no meaning
@@ -254,11 +255,11 @@ same `baseIndex` slot list. The rules, each owned by one definition:
   packs classic A/B values. The optical data rides a DEDICATED append-only
   storage buffer (`opticsMaps`): ONE vec4 pair per slot, laid out by
   `surfaceMaterialOpticsLanes` — lane 0 `(ior, radius, absorption.r,
-absorption.g)`, lane 1 `(absorption.b, reserved, reserved, reserved)` —
-  zero-stride padded when no slot resolves optics, and thrown on a list
-  that resolves optics non-uniformly. `surface-de-gpu.ts`'s
-  `packSurfaceGpuOpticsMaps` pins the layout; the three reserved words
-  belong to the distortion task (one authored word) and future approved
+absorption.g)`, lane 1 `(absorption.b, distortion, reserved,
+reserved)` — zero-stride padded when no slot resolves optics, and thrown
+  on a list that resolves optics non-uniformly. The distortion word is
+  the restrained virtual slab's thickness multiplier (zero = the straight
+  state); the two remaining reserved words belong to future approved
   fields — appends inside the frozen stride, never a relayout. The
   dimension-free layout is THE 4D half: one buffer, one lane order, both
   cores' backends.
@@ -503,6 +504,72 @@ carried by the path tree's THROUGHPUT, while every terminal composites
 terminal rear radiance only, and the front split survives it untouched.
 The per-sample environment bound stays the qualified 4
 (`DIELECTRIC_ENVIRONMENT_BOUND`), which bounds this rear scene with margin.
+
+### The restrained rear-image distortion (shipped)
+
+The accepted bounded distortion model is the bend study's WORLD-SPACE
+DISPLACEMENT CONTRACT (`docs/surface-transmission-revision.md`), now owned
+by the oracle: `dielectricSlabDisplacement` — the virtual parallel slab's
+lateral offset `thickness·(eta/ct − 1/c)·v` in the smoothed interface's
+tangent plane, smoothly saturated (`maxOffset·tanh(raw/maxOffset)`, the
+tanh argument clamped at 40 so all three dialects agree), with the bound
+TIED to the thickness so the lateral offset never exceeds the authored
+slab. The bend study's own helper is a re-export of the oracle's (the
+optics re-export proof discipline), so the study's panels and the
+production transport run the same f64 arithmetic. IOR 1, zero thickness, a
+zero normal, and a degenerate tangent (normal incidence) produce no
+displacement — the deterministic fallback, never a NaN.
+
+**Where it applies — the terminal seam only.** A path carries `exited`
+(the kernel's `exitPresent`): true ONLY on the transmitted child of an
+exit crossing, reset on every other child, so a mirror view at a later
+entry never displaces. At a miss-while-outside terminal of an `exited`
+path, the transport displaces the REAR QUERY's ORIGIN by the slab offset
+computed at that exit point (the path's origin there IS the exit point —
+the ray origin moves only at events) and evaluates `rearRadiance` from
+the displaced origin, direction unchanged. The origin-only form is the
+parallel slab's exact ray-space reading: a parallel slab translates the
+emergent ray without bending it, so the direction-only background terminal
+is shift-invariant (exactly unbent) and the structured plane terminal
+carries the bend. The front Fresnel split rides the throughput and is
+never touched; the geometry queries never saw the displacement; unresolved
+tails stay dark. The smoothed normal is the displayed field's gradient by
+the SAME tetrahedron-tap discipline as the crossing normals, at
+`DIELECTRIC_DISTORTION_NORMAL_REL` (0.04) of the material's radius — the
+study's coherence lesson, ~20× the declared crossing scale — read over the
+SAME field the boundary query marches; a vanishing gradient or a
+non-finite tap is the deterministic straight terminal.
+
+**Capture bands stay independent BY CONSTRUCTION**: the displacement is a
+pure function of per-path state, the per-slot material and the scene
+field — no screen-space state exists to wrap, clamp or read. The app-level
+tile-gate leg (distorted rays crossing every band edge in the built app)
+is DEFERRED to the starter-scene task's routing, which is what first makes
+distorted production rays exist (the app does not yet select the
+closed-solid backend); the renderer-level evidence below stands in until
+then.
+
+**The zero byte-identity.** Distortion zero (the absent field's resolved
+value) never executes the displacement: the branch is on the lane word,
+dynamically uniform, and the straight terminal's arithmetic is unchanged —
+pinned by unit tests (oracle radiance `toEqual`) and by the digest's
+untouched non-optics keys.
+
+Measured (quiet RX 7900 XTX / radeonsi, 2026-09-17): the agreement legs'
+mode-3 terminal-displacement probes pin the kernel's smoothed normal and
+slab offset against the oracle's helpers over the closed-solid fixtures —
+`maxDisplacementDelta` 4.3e-7 (3D) / 8.2e-7 (4D) against the 3e-3 pin —
+and the distortion-carrying trace probes keep the status/residual
+agreement intact with the branch live. The envelope's closed-solid arms
+now author the qualified working value (0.08) and resolve unchanged
+(3D settle 710 ms, 5,769 resolved / 4D 759 ms, 7,856, byte-identical
+repeats) — the distortion's per-exit cost (four field taps + scalar math)
+prices below the frame's noise. The one-time kernel compile grew with the
+transport text (closed-solid legs ~59→591 ms / 43→665 ms create-time;
+never per-frame). The GLSL resolved sizes: the optics-on arms grow ~4.8 KB
+(4D optics-est 92,485 B, optics-solid 104,901 B — already stripped; the
+emitted form stays ~1/3 of that, far under the Mesa cliff); the OFF arms
+are byte-unchanged (4D off exactly 64,679 B as recorded).
 
 ### Resumption, scheduling and truthfulness
 
@@ -768,15 +835,16 @@ The compute kernel emission and the host buffer contracts are real state;
 the capability matrix above records exactly how far each consumer has come.
 The boundary query's INSIDE traversal has LANDED for the closed-solid
 backend — the envelope's closed-solid arms resolve in both dimensions with
-every delegated line met — so the first blocker is cleared. What remains,
-in order: the fold core's transport (the measured timeout, three recorded
-paths — the closed-solid backend is now DOUBLY motivated for the
-finite-construction path, being its own recorded scope); the rear-scene
-contract and the corridor's straight shadow visibility have LANDED (the
-section above — the agreement legs' mode-2 shadow probes pin the corridor
-against the f64 twin, and the through-lobe probe's expected value is the
-analytic `(1 − F0)²·Beer(chord)` control); distortion and capture
-integration; panel material
+every delegated line met — so the first blocker is cleared. The rear-scene
+contract, the corridor's straight shadow visibility and the restrained
+rear-image distortion have LANDED (the sections above — the agreement
+legs' mode-2 shadow probes pin the corridor against the f64 twin, and the
+mode-3 displacement probes pin the accepted slab model). What remains:
+the fold core's transport (the measured timeout, three recorded paths —
+the closed-solid backend is now DOUBLY motivated for the finite-construction
+path, being its own recorded scope); capture integration's app-level tile
+leg (distorted rays crossing band edges — deferred with the routing, the
+section above); panel material
 and starter scenes (.10 — whose app routing must carry the closed-solid
 backend's pose admission: the 4D field is exact where the displayed slice
 carries the flat, and the wiring must pin the canonical composition or
@@ -831,8 +899,10 @@ row's `backend`/`opticsSoundness` pair naming what the agreement
 certifies (the closed-solid rows pin the signed query in both
 dimensions, and now carry `maxShadowDelta` — the mode-2 shadow probes'
 straight-visibility agreement, with the through-lobe probe's analytic
-`(1 − F0)²·Beer(0.7)` control and the two gate exits' exact-1 pin; the
-corridor's shadow work is bounded by its own runtime budget and is
+`(1 − F0)²·Beer(0.7)` control and the two gate exits' exact-1 pin; and
+`maxDisplacementDelta` — the mode-3 terminal-displacement probes' pin of
+the accepted slab model against the oracle's own helpers; the corridor's
+shadow work is bounded by its own runtime budget and is
 counted apart from the primary rays the way the lane's tallies always
 were). Measured
 2026-09-14 on the RX 7900 XTX / radeonsi: six of seven cores agree
