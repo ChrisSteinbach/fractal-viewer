@@ -1505,8 +1505,7 @@
             />
           </label>
           <p id="scheduleEditHint" class="flame-note-info">
-            Choosing a source copies it; later source changes do not follow.
-            Changes update Points immediately.
+            Choosing a source copies it. Changes update Points immediately.
           </p>
           <details class="panel-explainer">
             <summary>How the schedule works</summary>
@@ -2795,20 +2794,9 @@
         >
           <summary>Systems</summary>
           <div class="editor-group-title">Replace or explore</div>
-          <p id="presetTimingHint" class="flame-note-info">
-            Presets morph in Points, then open their saved renderer. Lit
-            interiors do not morph: they replace the scene, camera and look
-            outright and open Surface, where their lights and mist stay editable
-            under Lighting. Random Drift stays in Points; Collection Drift
-            follows each saved scene.
-          </p>
           <label class="select-label">
             Replace with preset
-            <select
-              id="presetSelect"
-              aria-label="Replace system with preset"
-              aria-describedby="presetTimingHint"
-            >
+            <select id="presetSelect" aria-label="Replace system with preset">
               <option value="" selected>Load a preset…</option>
               <option value="default">Twisted Tetrahedron</option>
               <option value="sierpinski">Sierpinski Tetrahedron</option>
@@ -2901,19 +2889,13 @@
               ></optgroup>
             </select>
           </label>
-          <button
-            class="btn btn-blue"
-            id="surpriseBtn"
-            type="button"
-            aria-describedby="presetTimingHint"
-          >
+          <button class="btn btn-blue" id="surpriseBtn" type="button">
             Surprise Me
           </button>
           <button
             class="btn btn-ghost"
             id="mutateBtn"
             type="button"
-            aria-describedby="presetTimingHint"
             title="Open the session-local Evolution Lab"
           >
             🧬 Evolve
@@ -2923,7 +2905,7 @@
             id="driftBtn"
             type="button"
             aria-pressed="false"
-            aria-describedby="presetTimingHint driftNote"
+            aria-describedby="driftNote"
             title="Ambient show: keep morphing into fresh random systems until you edit or toggle it off"
           >
             ▶ Drift
@@ -2937,8 +2919,7 @@
           </label>
           <div id="combineSystemsGroup" class="hidden">
             <p id="xaosAddHint" class="flame-note-info">
-              Adds a separate copy of the chosen system; later source changes do
-              not carry over. Edit its links in Xaos.
+              Adds a separate copy of the chosen system. Edit its links in Xaos.
             </p>
             <label class="select-label">
               System to add

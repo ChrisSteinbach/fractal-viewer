@@ -4918,7 +4918,7 @@ export class Ui {
       this.symmetryEditHint.textContent =
         "Changes update Points; switching between 3D and 4D regenerates them.";
       this.scheduleEditHint.textContent =
-        "Choosing a source copies it; later source changes do not follow. Changes update Points immediately.";
+        "Choosing a source copies it. Changes update Points immediately.";
       this.captureSizeTimingHint.textContent = "Used by the next capture.";
     } else if (mode === "flame" || mode === "solid") {
       const label = mode === "flame" ? "Flame" : "Solid";
@@ -4933,11 +4933,11 @@ export class Ui {
           ? "Changes apply immediately in Solid."
           : "Changes restart Flame.";
       this.symmetryEditHint.textContent = `Changes restart ${label} within the same dimension; 3D/4D changes return to Points.`;
-      this.scheduleEditHint.textContent =
-        `Choosing a source copies it; later source changes do not follow. ` +
-        (deferredGeometry
+      this.scheduleEditHint.textContent = `Choosing a source copies it. ${
+        deferredGeometry
           ? `Changes apply next time you enter ${label}.`
-          : `Changes restart ${label} after editing stops.`);
+          : `Changes restart ${label} after editing stops.`
+      }`;
       this.captureSizeTimingHint.textContent =
         mode === "flame"
           ? "Changing size restarts Flame at the new dimensions."
@@ -4952,7 +4952,7 @@ export class Ui {
       this.symmetryEditHint.textContent =
         "Changes apply next time you enter Surface; eligibility updates immediately.";
       this.scheduleEditHint.textContent =
-        "Choosing a source copies it; later source changes do not follow. Changes restart Surface when supported.";
+        "Choosing a source copies it. Changes restart Surface when supported.";
       this.captureSizeTimingHint.textContent = "Used by the next capture.";
     }
 
