@@ -1044,6 +1044,15 @@ input[type="range"] {
   cursor: pointer;
 }
 
+/* Firefox paints a disabled option with the UA's GrayText — measured 4.01:1
+   against the panel, below AA — while Chromium reports option colours
+   transparent and inherits the themed colour. Theme the disabled row
+   explicitly so both engines dim it to the same readable faint token
+   (`scripts/panel-contrast.verify.mjs` measures both). */
+#panel select option:disabled {
+  color: var(--text-faint);
+}
+
 .transform-list {
   display: flex;
   flex-direction: column;
@@ -1440,7 +1449,8 @@ summary.editor-group-title {
    Color group's scope note): 12px of margin there would push the two rows
    away from the title they belong to. Kept immediately after the base rule
    — stylelint's no-descending-specificity wants the plainer selector
-   first. */
+   first. The informational-note twin below covers the Finish/Pattern
+   applicability refusals, which are notes rather than hints. */
 .editor-group .flame-hint {
   margin: 0 0 4px;
 }
@@ -1514,6 +1524,13 @@ summary.editor-group-title {
   color: var(--text-dim);
   font-size: 12px;
   line-height: 1.4;
+}
+
+/* The note twin of `.editor-group .flame-hint` above: the Finish/Pattern
+   applicability refusals live inside an editor group, where the -6/10px
+   margins would detach the reason from the rows it describes. */
+.editor-group .flame-note-info {
+  margin: 0 0 4px;
 }
 
 /* The five status-note live regions stay RENDERED at all times — a live
