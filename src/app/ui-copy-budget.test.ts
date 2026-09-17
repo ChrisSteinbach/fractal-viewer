@@ -24,9 +24,10 @@ import { deriveSurfaceEligibility } from "./surface-eligibility";
 import indexHtml from "./index.html?raw";
 
 /**
- * The panel copy budget (docs/panel-ia.md's Contract section): visible
- * operational copy is one short sentence, and a help disclosure's whole body
- * stays under its own cap. The sweep measures LENGTH, not vocabulary — the
+ * The panel copy budget (docs/panel-ia.md's Copy budget and contrast
+ * section): visible operational copy is one short sentence, and a help
+ * disclosure's whole body stays under its own cap. The sweep measures
+ * LENGTH, not vocabulary — the
  * owner's complaint is prose filling the control space, and a banned-words
  * list would punish the wrong edits.
  *
