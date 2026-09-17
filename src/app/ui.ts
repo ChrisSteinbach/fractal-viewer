@@ -2433,6 +2433,8 @@ export class Ui {
    * `xaosLeakRows`/`xaosMatrixContainer` are rebuilt wholesale by
    * {@link renderXaosSection} rather than diffed — the document (chi rows)
    * drives them, like the transform list. */
+  private readonly combineSystemsCheckbox: HTMLInputElement;
+  private readonly combineSystemsGroup: HTMLElement;
   private readonly xaosAddSource: HTMLSelectElement;
   private readonly xaosAddSourceSaved: HTMLOptGroupElement;
   private readonly xaosBalanceWeights: HTMLInputElement;
@@ -3213,6 +3215,8 @@ export class Ui {
     const schedulePresetsGroup = this.byId<HTMLOptGroupElement>(
       "scheduleSourcePresets",
     );
+    this.combineSystemsCheckbox = this.byId("combineSystemsCheckbox");
+    this.combineSystemsGroup = this.byId("combineSystemsGroup");
     this.xaosAddSource = this.byId("xaosAddSource");
     this.xaosAddSourceSaved = this.byId("xaosAddSourceSaved");
     this.xaosBalanceWeights = this.byId("xaosBalanceWeights");
@@ -3909,10 +3913,12 @@ export class Ui {
         "commit",
       );
     });
-    // The Xaos "Add as block" button reads the picker + checkbox directly
-    // (no change listener on the select itself — unlike the schedule
-    // picker, a Xaos source choice is not applied until this click, so the
-    // gesture reads as "pick, then confirm" rather than "pick = apply").
+    this.combineSystemsCheckbox.addEventListener("change", () => {
+      this.combineSystemsGroup.classList.toggle(
+        "hidden",
+        !this.combineSystemsCheckbox.checked,
+      );
+    });
     this.xaosAddBtn.addEventListener("click", () => {
       handlers.onXaosAddBlock(
         this.xaosAddSource.value,

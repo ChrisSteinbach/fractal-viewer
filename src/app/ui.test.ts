@@ -1219,7 +1219,7 @@ describe("Ui Xaos add-as-block gesture", () => {
       Array.from(systems?.querySelectorAll(".editor-group-title") ?? []).map(
         (heading) => heading.textContent,
       ),
-    ).toEqual(["Replace or explore", "Combine systems"]);
+    ).toEqual(["Replace or explore"]);
     expect(
       document.getElementById("xaosAddHint")?.textContent?.replace(/\s+/g, " "),
     ).toMatch(
@@ -1229,7 +1229,24 @@ describe("Ui Xaos add-as-block gesture", () => {
       document
         .querySelector("#xaosSection .panel-explainer")
         ?.textContent?.replace(/\s+/g, " "),
-    ).toContain("Add an isolated block under Systems");
+    ).toContain("Enable Combine systems under Systems");
+  });
+
+  it("hides the combine-systems group behind an enabling checkbox", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const group = document.getElementById("combineSystemsGroup")!;
+    const checkbox = document.getElementById(
+      "combineSystemsCheckbox",
+    ) as HTMLInputElement;
+    expect(group.classList.contains("hidden")).toBe(true);
+    expect(checkbox.checked).toBe(false);
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(group.classList.contains("hidden")).toBe(false);
+    checkbox.checked = false;
+    checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(group.classList.contains("hidden")).toBe(true);
   });
 
   it("clones the preset menu's options with a preset: prefix, exactly like the schedule picker", () => {
