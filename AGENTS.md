@@ -968,43 +968,33 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `scripts/flame-tiling-4d.harness.ts`. Full contract and proof:
     `docs/tiling-contract.md`.
   - `surface-finish.ts` owns the finish domain, absent-means-classic
-    (0.4/32/0/0/0; shininess floors 0.01), the compile predicate and ONE
-    both-dialect shader body. Both engines share lane order; classic bytes
-    pinned. Finish
-    persists/morphs/mutates like fold lengths; random-system never rolls
-    it (optics likewise). TRANSMISSION: owner selected finite-solid 3D/4D
-    glass; envelope DECIDED. `surface-dielectric.ts` is the ONE
-    dimension-free transport/event oracle; contract:
-    `docs/surface-dielectric-transport.md`. The optical vocabulary
-    (`surface-optics.ts`: `Transform.optics` selector + scale, per-slot,
-    scene-derived radius) is LIVE on compute for affine/affine4/fold4 (WGSL
-    gate + replay lane; fold REFUSED on its measured GPU-job timeout; forward
-    unadmitted). The closed-solid backend
-    (`opticsBackend: closedSolid`: the SIGNED
-    condensation-union query — the sign IS the inside traversal; hypot's flat
-    4D interior is the penalty `sigmaMin·sd+|w|`)
-    RESOLVES: the envelope's closed-solid arms meet each line in
-    BOTH dimensions; estimator arms stay vacuous on IFS hits,
-    disclosed. REAR SCENE DELIVERED: the rear-radiance seam resolves in
-    physical ray order — later fractal hits are the transport's own
-    boundary events (both backends' misses CERTIFY the interval, so no
-    rear march is emitted), then the plane terminal, then the
-    background; four outcomes distinct, exhaustion never relabelled —
-    and the floor corridor's shadow attenuates STRAIGHT through the
-    optical solid under the closed-solid backend (the falsely-solid
-    defect's fix: per-channel Fresnel×Beer, TIR dark, band-crossed,
-    AO stays geometric, slot-0 material, shadow work counted apart from
-    primary rays; the rear-image contract and its first-local separation
-    are the distortion task's).
-    App routing: the starter-scene task.
-    Pattern-albedo REFUSED (`scripts/finish-pattern.harness.ts`).
-    Authored rigs (`surface-lighting.ts`): ONE shader emitter, both
-    dimensions/engines; absent legacy, visibility the displayed DE,
-    unresolved rays dark, HDR averages pre-clip. NO PARTICIPATING
-    MEDIUM (measured cost; its return is a look call).
-    Points authors the rig in both dimensions (transient disk/aim
-    guides; never in PNGs/thumbnails).
-    Record: `docs/cinematic-surface-lighting.md`.
+    (the fixed formula's values; shininess floor 0.01), the compile
+    predicate, ONE both-dialect shader body; classic bytes pinned.
+    Finish persists/morphs/mutates like fold lengths; random-system
+    never rolls it. TRANSMISSION: finite-solid 3D/4D glass SELECTED;
+    envelope DECIDED. `surface-dielectric.ts` is the ONE dimension-free
+    transport oracle; contract:
+    `docs/surface-dielectric-transport.md`. Optics
+    (`surface-optics.ts`: per-slot `Transform.optics`) is LIVE on
+    compute affine/affine4/fold4 (fold REFUSED on its
+    measured GPU-job timeout; forward unadmitted). The closed-solid
+    backend (the SIGNED condensation-union query — the sign IS the
+    inside traversal) RESOLVES in BOTH dimensions; estimator arms are
+    vacuous on IFS hits,
+    disclosed. REAR SCENE DELIVERED: physical ray order at the seam —
+    later fractal hits ARE the transport's boundary events (both
+    backends' misses CERTIFY the interval; no rear march), then the
+    plane, then the background; exhaustion never relabelled — the
+    closed-solid floor corridor's shadow attenuates STRAIGHT through the
+    solid (Fresnel×Beer per channel, TIR dark, AO geometric, slot-0
+    material, shadow work apart; the rear-image contract is the
+    distortion task's; routing the starter-scene task's).
+    Pattern-albedo REFUSED
+    (`scripts/finish-pattern.harness.ts`).
+    Cinematic rigs (`surface-lighting.ts`): ONE both-dialect emitter,
+    both engines, absent legacy, unresolved rays dark, HDR pre-clip,
+    points guides transient; NO PARTICIPATING MEDIUM (measured cost; a
+    look call). Record: `docs/cinematic-surface-lighting.md`.
   - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its
     hybrids, for exactly the systems the IFS gate refuses (one or more
