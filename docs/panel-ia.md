@@ -165,11 +165,14 @@ are exact:
 
 Contrast is WCAG AA for every visible panel text node against its effective
 background, in Chromium and Firefox:
-`node scripts/panel-contrast.verify.mjs` against a production build (both
-engines; `--mode=sw` for a displayless subset). It also asserts that selects
-resolve `color-scheme: dark` — the native dropdown popups cannot be
-screenshotted headless — and that option/optgroup carry a readable colour
-pair. CI runs it in the `panel-contrast` job.
+`node scripts/panel-contrast.verify.mjs` against a production build (181
+states per engine; `--engine=chromium|firefox` runs one). It also asserts
+that selects resolve `color-scheme: dark` — the native dropdown popups cannot
+be screenshotted headless — and that option/optgroup carry a readable colour
+pair. CI runs the Chromium leg in its `panel-contrast` job; the Firefox leg
+is hand-run beside the other panel gates, because the ubuntu runner ships
+xvfb but no Mesa GL driver, leaving Firefox there without the WebGL the app
+requires to boot.
 
 ## Stable order
 

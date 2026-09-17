@@ -176,7 +176,17 @@ jobs:
 
       - run: npm run build
 
-      - name: Panel contrast gate (Chromium + Firefox)
+      # CHROMIUM LEG ONLY, measured rather than preferred. Firefox on this
+      # runner has no WebGL: the image ships xvfb but NOT Mesa's GL drivers
+      # (its apt package list carries no libgl1-mesa-dri), so even a headed
+      # `xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1` run leaves the app's own
+      # `webglAvailable()` false and main.ts never boots the panel — the
+      # first cut of this job timed out in boot() with the app console
+      # saying \"WebGL is not supported\". Chromium needs none of that: it
+      # bundles SwiftShader, which is the whole reason the smoke job can run
+      # display-less. The Firefox leg stays a hand-run gate beside the other
+      # panel gates (AGENTS.md) until the runner image grows a GL driver.
+      - name: Panel contrast gate (Chromium)
         run: |
           # The preview's output is redirected so the backgrounded server
           # cannot hold the step's stdout open after the gate exits; the
@@ -188,12 +198,4 @@ jobs:
             if curl -sk -o /dev/null https://localhost:4173/; then break; fi
             sleep 1
           done
-          # Chromium is headless on its bundled SwiftShader.
           node scripts/panel-contrast.verify.mjs --engine=chromium
-          # Firefox has no bundled GL on Linux, so a display-less GPU-less
-          # runner leaves it without WebGL and the app refuses to boot
-          # (measured: the first cut of this job timed out in boot() with
-          # "WebGL is not supported"). Xvfb + llvmpipe is the standard
-          # software route; `--headed` makes the gate use that display.
-          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 \
-            node scripts/panel-contrast.verify.mjs --engine=firefox --headed

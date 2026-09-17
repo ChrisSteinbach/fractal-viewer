@@ -49,6 +49,13 @@
  * or boot failure on one engine is a CHECKING-side failure (exit 2) for
  * the whole run, never a verdict about the app.
  *
+ * CI RUNS THE CHROMIUM LEG ONLY, measured rather than preferred: the
+ * ubuntu runner ships xvfb but no Mesa GL driver, so Firefox there has no
+ * WebGL and the app refuses to boot (main.ts's `webglAvailable()` gate) —
+ * Chromium needs none of that because it bundles SwiftShader. The Firefox
+ * leg is a hand-run gate locally, beside the other panel gate, until the
+ * runner image grows a GL driver.
+ *
  * Usage (build + `npm run preview` first — this measures a real build):
  *   npm run build && npm run preview &
  *   node scripts/panel-contrast.verify.mjs
@@ -57,11 +64,12 @@
  *   --viewport WxH (default 393x727, the phone width the panel is
  *              designed against)
  *   --engine   both (default) | chromium | firefox
- *   --headed   run Firefox on the ambient display instead of headless.
- *              Chromium ignores it (always headless, SwiftShader). CI uses
- *              `xvfb-run -a` + LIBGL_ALWAYS_SOFTWARE=1, because a
- *              display-less GPU-less host leaves Firefox without WebGL and
- *              the app refuses to boot.
+ *   --headed   run Firefox on the ambient display instead of headless
+ *              (e.g. `xvfb-run -a` on a host whose Firefox needs the
+ *              display for software GL). Chromium ignores it — always
+ *              headless on its bundled SwiftShader. CI does not use it:
+ *              the runner has no GL driver at all, so headed changes
+ *              nothing there.
  *   --outdir   where PNGs land (default .playwright-mcp/, gitignored)
  *
  * Exit codes: 0 every verdict passed; 1 a verdict failed (real contrast
