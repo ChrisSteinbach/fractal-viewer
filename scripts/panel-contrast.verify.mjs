@@ -57,6 +57,11 @@
  *   --viewport WxH (default 393x727, the phone width the panel is
  *              designed against)
  *   --engine   both (default) | chromium | firefox
+ *   --headed   run Firefox on the ambient display instead of headless.
+ *              Chromium ignores it (always headless, SwiftShader). CI uses
+ *              `xvfb-run -a` + LIBGL_ALWAYS_SOFTWARE=1, because a
+ *              display-less GPU-less host leaves Firefox without WebGL and
+ *              the app refuses to boot.
  *   --outdir   where PNGs land (default .playwright-mcp/, gitignored)
  *
  * Exit codes: 0 every verdict passed; 1 a verdict failed (real contrast
@@ -92,6 +97,10 @@ if (!["both", "chromium", "firefox"].includes(ENGINE)) {
   console.error(`[panel-contrast] unknown --engine=${ENGINE}`);
   process.exit(2);
 }
+/** Run Firefox HEADED on the ambient display (CI: Xvfb + llvmpipe). See
+ * `launchEngine` for why a display-less GPU-less host cannot run the
+ * Firefox leg. Chromium ignores this flag — it is always headless. */
+const HEADED = flag("headed", "false") === "true";
 
 const MODES = [
   ["modePointsBtn", "points"],
@@ -544,9 +553,15 @@ async function loadPreset(page, value) {
 }
 
 async function launchEngine(name) {
+  // Chromium always runs headless: its bundled SwiftShader supplies WebGL
+  // with no display. Firefox has no such bundle on Linux, so a display-less
+  // runner without a GPU fails `webglAvailable()` and the app refuses to
+  // boot — which is why CI runs Firefox --headed under Xvfb with
+  // LIBGL_ALWAYS_SOFTWARE=1 (llvmpipe). That path is opt-in through
+  // `--headed`; the default keeps every launch display-less.
   const env = { ...process.env };
-  delete env.DISPLAY; // offscreen, no X needed (see webgl-smoke.mjs).
   if (name === "chromium") {
+    delete env.DISPLAY;
     return chromium.launch({
       executablePath: chromium.executablePath(),
       headless: true,
@@ -554,11 +569,18 @@ async function launchEngine(name) {
       args: ["--no-sandbox", "--enable-unsafe-swiftshader"],
     });
   }
+  if (!HEADED) delete env.DISPLAY;
   return firefox.launch({
     executablePath: firefox.executablePath(),
-    headless: true,
+    headless: !HEADED,
     env,
-    firefoxUserPrefs: { "gfx.webrender.software": true },
+    firefoxUserPrefs: {
+      "gfx.webrender.software": true,
+      // A software-GL host still has to be ALLOWED to run WebGL: without
+      // this, Firefox's blocklist can leave `--headed` Xvfb runs without a
+      // context exactly like the headless case.
+      "webgl.force-enabled": true,
+    },
   });
 }
 

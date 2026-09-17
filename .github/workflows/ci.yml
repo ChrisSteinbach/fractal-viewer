@@ -179,10 +179,21 @@ jobs:
       - name: Panel contrast gate (Chromium + Firefox)
         run: |
           # The preview's output is redirected so the backgrounded server
-          # cannot hold the step's stdout open after the gate exits.
+          # cannot hold the step's stdout open after the gate exits; the
+          # trap reaps it either way.
           npm run preview >/tmp/panel-preview.log 2>&1 &
+          PREVIEW_PID=$!
+          trap 'kill "$PREVIEW_PID" 2>/dev/null || true' EXIT
           for _ in $(seq 1 60); do
             if curl -sk -o /dev/null https://localhost:4173/; then break; fi
             sleep 1
           done
-          node scripts/panel-contrast.verify.mjs
+          # Chromium is headless on its bundled SwiftShader.
+          node scripts/panel-contrast.verify.mjs --engine=chromium
+          # Firefox has no bundled GL on Linux, so a display-less GPU-less
+          # runner leaves it without WebGL and the app refuses to boot
+          # (measured: the first cut of this job timed out in boot() with
+          # "WebGL is not supported"). Xvfb + llvmpipe is the standard
+          # software route; `--headed` makes the gate use that display.
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 \
+            node scripts/panel-contrast.verify.mjs --engine=firefox --headed
