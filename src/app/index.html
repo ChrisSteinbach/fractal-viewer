@@ -646,9 +646,9 @@
           <details class="panel-explainer">
             <summary>How Xaos works</summary>
             <p>
-              Add an isolated block under Systems, then tune the links between
-              its transforms here. Leak controls make broad changes; the matrix
-              provides precise control.
+              Enable Combine systems under Systems to add an isolated block,
+              then tune the links between its transforms here. Leak controls
+              make broad changes; the matrix provides precise control.
             </p>
           </details>
           <div id="xaosLeakRows" class="hidden"></div>
@@ -2931,42 +2931,50 @@
           <!-- #driftNote lives in the document-status area above the
                accordion so reduced-motion remains disclosed in every mode;
                aria-describedby preserves the explicit control association. -->
-          <div class="editor-group-title">Combine systems</div>
-          <p id="xaosAddHint" class="flame-note-info">
-            Adds a separate copy of the chosen system; later source changes do
-            not carry over. Edit its links in Xaos.
-          </p>
-          <label class="select-label">
-            System to add
-            <select
-              id="xaosAddSource"
-              aria-label="Choose a system to add as an isolated block"
-              aria-describedby="xaosAddHint"
-            >
-              <option value="" selected>Choose a system…</option>
-              <option value="__duplicate">Duplicate current system</option>
-              <optgroup label="Presets" id="xaosAddSourcePresets"></optgroup>
-              <optgroup label="Saved scenes" id="xaosAddSourceSaved"></optgroup>
-            </select>
-          </label>
           <label class="checkbox-label">
-            <input
-              type="checkbox"
-              id="xaosBalanceWeights"
-              aria-describedby="xaosAddHint"
-              checked
-            />
-            Balance weights so blocks render equally dense
+            <input type="checkbox" id="combineSystemsCheckbox" />
+            Combine systems
           </label>
-          <button
-            class="btn btn-blue"
-            id="xaosAddBtn"
-            type="button"
-            aria-describedby="xaosAddHint"
-            title="Append the chosen system's maps, seated apart and isolated by chaos rows"
-          >
-            + Add isolated block
-          </button>
+          <div id="combineSystemsGroup" class="hidden">
+            <p id="xaosAddHint" class="flame-note-info">
+              Adds a separate copy of the chosen system; later source changes do
+              not carry over. Edit its links in Xaos.
+            </p>
+            <label class="select-label">
+              System to add
+              <select
+                id="xaosAddSource"
+                aria-label="Choose a system to add as an isolated block"
+                aria-describedby="xaosAddHint"
+              >
+                <option value="" selected>Choose a system…</option>
+                <option value="__duplicate">Duplicate current system</option>
+                <optgroup label="Presets" id="xaosAddSourcePresets"></optgroup>
+                <optgroup
+                  label="Saved scenes"
+                  id="xaosAddSourceSaved"
+                ></optgroup>
+              </select>
+            </label>
+            <label class="checkbox-label">
+              <input
+                type="checkbox"
+                id="xaosBalanceWeights"
+                aria-describedby="xaosAddHint"
+                checked
+              />
+              Balance weights so blocks render equally dense
+            </label>
+            <button
+              class="btn btn-blue"
+              id="xaosAddBtn"
+              type="button"
+              aria-describedby="xaosAddHint"
+              title="Append the chosen system's maps, seated apart and isolated by chaos rows"
+            >
+              + Add isolated block
+            </button>
+          </div>
         </details>
 
         <!-- Always applicable, like Capture: saving a keeper / opening the
