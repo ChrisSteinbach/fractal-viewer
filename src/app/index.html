@@ -1228,8 +1228,7 @@
         >
           <summary>Lighting</summary>
           <p id="surfaceAuthoredLightingNote" class="flame-hint" role="status">
-            Place lights in Points with visible disk and direction guides. Edits
-            are saved for the next Surface render.
+            Place lights in Points; edits apply on the next Surface render.
           </p>
           <details class="panel-explainer">
             <summary>Using light guides</summary>
@@ -1991,8 +1990,7 @@
         >
           <summary>Floor</summary>
           <p class="flame-hint">
-            A world-space floor under Solid. Balloon temporarily hides it
-            without clearing these settings.
+            Balloon temporarily hides the floor without clearing settings.
           </p>
           <label
             class="checkbox-label"
@@ -2589,13 +2587,11 @@
         >
           <summary>View</summary>
           <p class="flame-hint" id="threeDSavedViewScope">
-            Camera framing is saved with links, scene files, Collection entries,
-            and Timeline keyframes, and restored on reload.
+            Camera framing is saved with links and restored on reload.
           </p>
           <p class="flame-hint hidden" id="fourDSavedViewScope">
-            Shift-drag rotates XW/YW; Shift-scroll rotates ZW. Rotation and
-            slice framing are saved with links, files, Collection entries,
-            Timeline keyframes, and restored on reload.
+            Shift-drag rotates XW/YW; Shift-scroll rotates ZW. Framing is saved
+            with links and restored on reload.
           </p>
           <div id="pointsLayoutRow">
             <span class="control-label-line">
@@ -2641,8 +2637,7 @@
             </div>
             <p class="flame-hint" id="pointsLayoutNote">
               X, Y, and Z stay axis-locked. Move a selected transform in any
-              pane; camera controls stay in Current. Bloom and EDL are shown in
-              Current-only Single view. Saved images capture Current.
+              pane; camera controls stay in Current.
             </p>
           </div>
           <label class="checkbox-label" id="continuousZoomRow">
@@ -2654,14 +2649,11 @@
             Continuous zoom
           </label>
           <p class="flame-hint" id="continuousZoomNote">
-            Zoom keeps a safe distance from the orbit target, then narrows the
-            lens instead of crossing it. Right-drag or two-finger drag places
-            that target. Surface re-traces smaller detail and increases its
-            depth; Points and Solid magnify their existing sampled data.
+            Zoom narrows the lens past a safe distance; right-drag or two-finger
+            drag places the orbit target.
           </p>
           <p class="flame-hint hidden" id="continuousZoomUnavailableNote">
-            The camera is frozen during Flame accumulation. An active mode can
-            still be reset or exited; return to another renderer to start one.
+            The camera is frozen during Flame accumulation.
           </p>
           <div
             class="continuous-zoom-controls hidden"
@@ -2677,9 +2669,7 @@
             </button>
           </div>
           <p class="flame-hint hidden" id="automaticMotionParkedHint">
-            Surface parks automatic motion so the render can settle. Manual
-            camera turns and, in 4D, rotor and slice controls stay live; your
-            setting takes effect again in Points or Solid.
+            Surface parks automatic motion so the render can settle.
           </p>
           <label class="checkbox-label" id="autoMotionToggleRow">
             <input
@@ -2691,8 +2681,7 @@
             Automatic motion
           </label>
           <p class="flame-hint" id="autoMotionMechanismNote">
-            In 4D, tumble replaces automatic camera orbit to reveal hidden axes;
-            manual camera orbit remains available.
+            In 4D, tumble replaces camera orbit to reveal hidden axes.
           </p>
           <div id="autoOrbitRow">
             <label class="select-label">

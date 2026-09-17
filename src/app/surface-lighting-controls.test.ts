@@ -69,7 +69,6 @@ describe("Surface lighting authoring controls", () => {
       expect(input("surfaceRigEnabled").disabled).toBe(false);
       expect(input("surfaceRigKeyPositionXNumber").disabled).toBe(false);
       expect(note.textContent).toContain("next Surface render");
-      expect(note.textContent).toContain("Points stays unlit");
       const before = structuredClone(state.surface.lighting);
       input("surfaceRigKeyPositionXNumber").value = "1.23456789";
       input("surfaceRigKeyPositionXNumber").dispatchEvent(

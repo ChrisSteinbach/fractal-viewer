@@ -4944,13 +4944,12 @@ export class Ui {
           : "Used by the next capture.";
     } else {
       this.transformTimingHint.textContent =
-        "Geometry changes restart Surface without resetting the view. Unsupported changes return to Points.";
-      this.xaosEditHint.textContent =
-        "Changes restart Surface when supported; otherwise the Surface button explains why.";
+        "Geometry changes restart Surface; unsupported changes return to Points.";
+      this.xaosEditHint.textContent = "Changes restart Surface when supported.";
       this.balloonTimingHint.textContent =
         "On/off and palette changes restart Surface; size and tint stay live.";
       this.symmetryEditHint.textContent =
-        "Changes apply next time you enter Surface; eligibility updates immediately.";
+        "Changes apply next time you enter Surface.";
       this.scheduleEditHint.textContent =
         "Choosing a source copies it. Changes restart Surface when supported.";
       this.captureSizeTimingHint.textContent = "Used by the next capture.";
@@ -4961,7 +4960,7 @@ export class Ui {
         "Construction edits regenerate Points (following Auto-update).";
     } else if (mode === "surface") {
       this.sphereInversionTimingHint.textContent =
-        "Construction edits restart Surface without resetting the view; a slider restarts it on release.";
+        "Construction edits restart Surface.";
     } else {
       this.sphereInversionTimingHint.textContent =
         "Unavailable in this renderer; the note below says why.";
@@ -5293,8 +5292,8 @@ export class Ui {
     this.surfaceLightingControls.sync(state);
     const authoredLighting = state.surface.lighting !== undefined;
     this.surfaceLightingDisclosure.textContent = authoredLighting
-      ? "Authored lights set direct illumination. Angle, height and ambient remain available for finish reflections; Environment tint is dormant. Changes restart Surface convergence."
-      : "Changes affect only Surface and apply immediately. Environment is Surface-only.";
+      ? "Authored lights override; changes restart Surface."
+      : "Changes apply immediately; Environment is Surface-only.";
     const environment = this.scalars.get("surfaceEnvLightSlider");
     if (environment?.input instanceof HTMLInputElement) {
       environment.input.disabled = authoredLighting;

@@ -191,7 +191,7 @@ describe("Sphere inversion section", () => {
     );
     ui.updateLabels(withBlock(block, { renderMode: "surface" }));
     expect(el("sphereInversionTimingHint").textContent).toMatch(
-      /restart Surface.*on release/,
+      /restart Surface/,
     );
   });
 });

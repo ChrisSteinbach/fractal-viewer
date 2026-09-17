@@ -7340,7 +7340,7 @@ describe("Ui render mode switch", () => {
       surface: { ...surface.surface, colorSource: "height" },
     });
     expect(byId("transformTimingHint").textContent).toContain(
-      "without resetting the view",
+      "restart Surface",
     );
     expect(byId("colorSection").classList.contains("hidden")).toBe(true);
     expect(byId("surfaceColorSection").classList.contains("hidden")).toBe(
@@ -7419,7 +7419,7 @@ describe("Ui render mode switch", () => {
       }
 
       expect(byId("transformTimingHint").textContent).toMatch(
-        /Surface without resetting the view/,
+        /restart Surface/,
       );
     },
   );
@@ -8750,7 +8750,7 @@ describe("Ui independent renderer lighting", () => {
     expect(group.classList.contains("hidden")).toBe(false);
     expect(group.contains(disclosure)).toBe(true);
     const disclosureText = disclosure.textContent?.replace(/\s+/g, " ");
-    expect(disclosureText).toContain("only Surface");
+    expect(disclosureText).toContain("Surface-only");
     expect(disclosureText).toContain("apply immediately");
   });
 
@@ -10481,13 +10481,12 @@ describe("Ui automatic-motion controls", () => {
     return document.getElementById(id) as HTMLElement;
   }
 
-  it("states why 4D tumble replaces automatic camera orbit without refusing manual orbit", () => {
+  it("states why 4D tumble replaces camera orbit", () => {
     const note = (el("autoMotionMechanismNote").textContent ?? "")
       .replace(/\s+/g, " ")
       .trim();
-    expect(note).toContain("replaces automatic camera orbit");
-    expect(note).toContain("reveal hidden axes");
-    expect(note).toContain("manual camera orbit remains available");
+    expect(note).toContain("tumble replaces camera orbit");
+    expect(note).toContain("hidden axes");
     expect(
       (el("autoMotionToggle") as HTMLInputElement).getAttribute(
         "aria-describedby",
