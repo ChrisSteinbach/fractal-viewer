@@ -117,6 +117,7 @@ import {
   SURFACE_GPU_TRANSPORT_REASON_INVALID_INPUT,
   SURFACE_GPU_TRANSPORT_REASON_VISIT_CAP,
   SURFACE_GPU_TRANSPORT_RESIDUAL,
+  SURFACE_GPU_TRANSPORT_SHADOW_STEPS,
   SURFACE_GPU_TRANSPORT_UNRESOLVED,
 } from "../fractal/surface-de-gpu";
 import type { ShapeTrap, Vec3 } from "../fractal/types";
@@ -1361,15 +1362,193 @@ const transportDomainRadius4D = `  // The 4D query domain is the SLICE ball: |p|
     sqrt(max(uVisibleRadius * uVisibleRadius - sliceMinW * sliceMinW, 0.0)) *
     1.02;`;
 
+/**
+ * The closed-solid straight shadow visibility — the GLSL twins' text for
+ * the compute kernel's `transportShadowVisibility`, token for token (the
+ * rear-scene task's corridor fix). A bounded march of the SIGNED
+ * closed-solid field along an UNREFRACTED ray, pairing the solid's
+ * crossings: each entry pays (1 - Fresnel) into a per-channel
+ * transmittance, Beer attenuates over the traversed interior, each exit
+ * pays (1 - Fresnel), and a total-internal-reflection exit contributes
+ * nothing straight through (the light exits elsewhere — a caustic this
+ * model does not promise). The selected thin-layer visibility model for
+ * direct-light/shadow rays: the solid attenuates instead of occluding.
+ * Bounded work: the strides step the certified field's |f| on both
+ * sides — a signed union field understates the distance on both of them,
+ * so no stride can overshoot the boundary and the band above is always
+ * sampled — and the runtime's own shadow budget paces the march
+ * (SURFACE_GPU_TRANSPORT_SHADOW_STEPS — the caps are the runtime's, not
+ * the document's), and an exhausted march returns the transmittance
+ * accumulated so far — an over-report, disclosed here, never a
+ * fabricated occluder. The material is slot 0's resolved optics lanes
+ * (per-slot scales exist; the corridor reads the session's first slot —
+ * the recorded attribution approximation).
+ *
+ * Spliced AHEAD of the ground-plane arm (beside the signed field, which
+ * moves up with it from surfaceTransportSource for the same reason — the
+ * boundary query and the corridor read ONE definition) so
+ * shadeGroundPlane's corridor can call it. The shared optics body moves
+ * up beside them: the ONE math text, still spliced once, now ahead of
+ * every consumer.
+ */
+export function surfaceSolidShadowSource(fourD: boolean): string {
+  return `#if SURFACE_OPTICS
+  // ---- dielectric optical transport (docs/surface-dielectric-transport.md)
+  // ---- surface-dielectric.ts's emitted GLSL optics body, verbatim — the
+  // ONE shared math text the backends splice; no restated constants.
+  // Spliced ahead of the ground-plane arm so the closed-solid floor
+  // corridor's straight shadow visibility shares it; the transport block
+  // below reuses the same definitions.
+  ${dielectricOpticsSource("glsl")}
+#if SURFACE_OPTICS_CLOSED_SOLID
+${fourD ? transportSolidField4D() : transportSolidField3D()}
+  vec3 transportShadowVisibility(
+    vec3 origin,
+    vec3 dir,
+    vec3 ballC,
+    float ballR,
+    float visR
+  ) {
+    // The corridor's analytic gates, evaluated here so the corridor's
+    // call is one line: ball-behind (along <= 0) and a closest approach
+    // clearing 1.05 R + 0.3 * along certify the ray misses the certified
+    // ball entirely — nothing attenuates it, transmittance 1, zero field
+    // evals (the corridor's own certificates, verbatim).
+    vec3 toC = ballC - origin;
+    float along = dot(toC, dir);
+    float perp2 = dot(toC, toC) - along * along;
+    float corridor = ballR * 1.05 + 0.3 * along;
+    if (along <= 0.0 || perp2 >= corridor * corridor) {
+      return vec3(1.0);
+    }
+    vec4 lane0 = uMapOptics[0];
+    vec4 lane1 = uMapOptics[1];
+    float ior = lane0.x;
+    float radius = lane0.y;
+    vec3 absorb = vec3(lane0.z, lane0.w, lane1.x);
+    float eps = ${DIELECTRIC_CROSSING_EPS_REL} * radius;
+    vec3 trans = vec3(1.0);
+    bool inside = transportSolidField(origin) < 0.0;
+    float cosEnter = 1.0;
+    float segStart = 0.0;
+    float ts = ballR * 4.0e-4;
+    for (int i = 0; i < ${SURFACE_GPU_TRANSPORT_SHADOW_STEPS}; i++) {
+      vec3 sp = origin + dir * ts;
+      float f = transportSolidField(sp);
+      if (!(f > -1.0e30)) {
+        break;
+      }
+      if (abs(f) < eps) {
+        // The declared crossing band: the boundary is here, within the
+        // declared resolution. Fire the state's crossing (entry when
+        // the march is outside, exit when inside), then step past the
+        // band — the anchor suppression's own 2·eps skip — so the next
+        // sample reads the far side.
+        if (inside) {
+          vec2 e = vec2(1.0, -1.0) * 0.5773;
+          vec3 grad = e.xyy * transportSolidField(sp + e.xyy * eps) +
+            e.yyx * transportSolidField(sp + e.yyx * eps) +
+            e.yxy * transportSolidField(sp + e.yxy * eps) +
+            e.xxx * transportSolidField(sp + e.xxx * eps);
+          vec3 n = dot(grad, grad) > 1.0e-12 ? normalize(grad) : -dir;
+          float segLen = ts - segStart;
+          vec3 beer = vec3(
+            exp(-absorb.x * segLen / radius),
+            exp(-absorb.y * segLen / radius),
+            exp(-absorb.z * segLen / radius)
+          );
+          float entryPass = 1.0 - dielectricFresnel(cosEnter, 1.0, ior);
+          float exitPass = 1.0 - dielectricFresnel(abs(dot(dir, n)), ior, 1.0);
+          trans = trans * beer * (entryPass * exitPass);
+          cosEnter = 1.0;
+          inside = false;
+          if (max(max(trans.r, trans.g), trans.b) <= 0.0) {
+            // Total internal reflection at the exit — the straight ray
+            // keeps its energy inside; nothing transmits here.
+            break;
+          }
+        } else {
+          inside = true;
+          segStart = ts;
+          vec2 e = vec2(1.0, -1.0) * 0.5773;
+          vec3 grad = e.xyy * transportSolidField(sp + e.xyy * eps) +
+            e.yyx * transportSolidField(sp + e.yyx * eps) +
+            e.yxy * transportSolidField(sp + e.yxy * eps) +
+            e.xxx * transportSolidField(sp + e.xxx * eps);
+          vec3 n = dot(grad, grad) > 1.0e-12 ? normalize(grad) : -dir;
+          cosEnter = abs(dot(dir, n));
+        }
+        ts = ts + 2.0 * eps;
+        continue;
+      }
+      if ((f < 0.0 ? 1 : 0) != (inside ? 1 : 0)) {
+        // A stride jumped clean across the band: the crossing happened
+        // between the samples; report it here (within one stride — the
+        // strides step the field itself, so no far overshoot exists).
+        if (inside) {
+          vec2 e = vec2(1.0, -1.0) * 0.5773;
+          vec3 grad = e.xyy * transportSolidField(sp + e.xyy * eps) +
+            e.yyx * transportSolidField(sp + e.yyx * eps) +
+            e.yxy * transportSolidField(sp + e.yxy * eps) +
+            e.xxx * transportSolidField(sp + e.xxx * eps);
+          vec3 n = dot(grad, grad) > 1.0e-12 ? normalize(grad) : -dir;
+          float segLen = ts - segStart;
+          vec3 beer = vec3(
+            exp(-absorb.x * segLen / radius),
+            exp(-absorb.y * segLen / radius),
+            exp(-absorb.z * segLen / radius)
+          );
+          float entryPass = 1.0 - dielectricFresnel(cosEnter, 1.0, ior);
+          float exitPass = 1.0 - dielectricFresnel(abs(dot(dir, n)), ior, 1.0);
+          trans = trans * beer * (entryPass * exitPass);
+          if (max(max(trans.r, trans.g), trans.b) <= 0.0) {
+            break;
+          }
+        } else {
+          segStart = ts;
+          vec2 e = vec2(1.0, -1.0) * 0.5773;
+          vec3 grad = e.xyy * transportSolidField(sp + e.xyy * eps) +
+            e.yyx * transportSolidField(sp + e.yyx * eps) +
+            e.yxy * transportSolidField(sp + e.yxy * eps) +
+            e.xxx * transportSolidField(sp + e.xxx * eps);
+          vec3 n = dot(grad, grad) > 1.0e-12 ? normalize(grad) : -dir;
+          cosEnter = abs(dot(dir, n));
+        }
+        inside = f < 0.0;
+      }
+      ts = ts + clamp(abs(f) * uStepScale, ballR * 2.0e-4, visR);
+      if (dot(sp - ballC, dir) > 0.0 && length(sp - ballC) > ballR * 1.05) {
+        break;
+      }
+    }
+    if (inside) {
+      // Budget end inside the solid: the traversed interior attenuates
+      // what accumulated so far; the unclosed exit's Fresnel stays
+      // optimistic (the over-report disclosed above).
+      float segLen = ts - segStart;
+      vec3 beer = vec3(
+        exp(-absorb.x * segLen / radius),
+        exp(-absorb.y * segLen / radius),
+        exp(-absorb.z * segLen / radius)
+      );
+      trans = trans * beer * (1.0 - dielectricFresnel(cosEnter, 1.0, ior));
+    }
+    return clamp(trans, vec3(0.0), vec3(1.0));
+  }
+#endif
+#endif`;
+}
+
 export function surfaceTransportSource(fourD: boolean): string {
   const domainRadius = fourD
     ? transportDomainRadius4D
     : transportDomainRadius3D;
   return `
   // ---- dielectric optical transport (docs/surface-dielectric-transport.md)
-  // ---- surface-dielectric.ts's emitted GLSL optics body, verbatim — the
-  // ONE shared math text the backends splice; no restated constants.
-  ${dielectricOpticsSource("glsl")}
+  // ---- the shared GLSL optics body is spliced AHEAD of the ground-plane
+  // arm (surfaceSolidShadowSource — the closed-solid floor corridor's
+  // straight shadow visibility reads it); the machinery below reuses
+  // those definitions.
   // The runtime's vocabulary and caps — the compute kernel's own numbers
   // (SURFACE_GPU_TRANSPORT_*), never raised to make a failing row green.
   const int TRANSPORT_STATUS_PENDING = ${SURFACE_GPU_TRANSPORT_PENDING};
@@ -1468,12 +1647,13 @@ ${domainRadius}
   // needs.
 #if SURFACE_OPTICS_CLOSED_SOLID
   const int TRANSPORT_REASON_STATE_MISMATCH = 3;
-${fourD ? transportSolidField4D() : transportSolidField3D()}
 
   // The closed-solid normal: the SAME tetrahedron-tap discipline as the
   // estimator normal, on the signed field — a smooth closed solid has no
   // tied-plane corners to resolve, and a vanishing gradient still faces
-  // the incident ray.
+  // the incident ray. (The signed field itself is spliced ahead of the
+  // ground-plane arm, where the floor corridor's straight shadow
+  // visibility shares it.)
   vec3 transportSolidNormal(vec3 p, vec3 dir, float eps) {
     vec2 e = vec2(1.0, -1.0) * 0.5773;
     vec3 grad = e.xyy * transportSolidField(p + e.xyy * eps) +
@@ -1637,11 +1817,25 @@ ${fourD ? transportSolidField4D() : transportSolidField3D()}
 #endif
 
   // The rear scene's radiance behind an escaped ray, in LINEAR light —
-  // the environment only in this emission: the pixel's backdrop, plus the
-  // ground-plane terminal when the session has one (the shade entry's own
-  // floor shade, linearized by the file's 2.2 convention). Rear fractal
-  // geometry is the rear-scene task's seam: this function is the one
-  // place that grows.
+  // resolved in PHYSICAL RAY ORDER (docs/surface-dielectric-transport.md,
+  // the rear-scene contract): an escaped path's boundary query has
+  // already proven the finite scene interval (the domain this function's
+  // callers leave) free of the displayed object — every later fractal
+  // hit is the transport's own boundary event, not a rear scene — so the
+  // interval is empty by certificate, not by omission, and the terminal
+  // order is the analytic plane (within its fade band — "the plane beats
+  // the environment where it intersects") and then the procedural
+  // background. The plane terminal is the shade entry's own floor shade,
+  // linearized by the file's 2.2 convention, and its shadow corridor now
+  // attenuates STRAIGHT through the optical solid under the closed-solid
+  // backend (transportShadowVisibility) instead of reading the glass as
+  // an opaque occluder. A backend whose boundary query is not
+  // co-extensive with the displayed object owes this ONE seam a rear
+  // march (later fractal hits as shaded terminals, own-slot material);
+  // both shipped backends' misses certify the interval, so none is
+  // emitted. Exhaustion is never relabelled: the transport's own
+  // unresolved statuses stay dark, and the corridor's bounded admission
+  // keeps its partial result.
   vec3 transportRearRadiance(vec3 origin, vec3 dir, vec3 bg) {
 #if SURFACE_GROUND_PLANE
     if (origin.y > uGroundY && dir.y < -1.0e-6) {
@@ -5560,6 +5754,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
   }
 
 #endif
+${surfaceSolidShadowSource(false)}
 #if SURFACE_GROUND_PLANE
   /** Ground plane: an infinite one-sided floor at y = uGroundY, dropped
    * below the session ball (uGroundBallC/uGroundBallR — balloonBall's
@@ -5628,6 +5823,21 @@ ${foldValueFormGlsl(shadeDeWidth)}
     // Inside the corridor the loop's exit is outside-AND-receding — the
     // hit path's |sp| > 1.05 R alone would fire immediately down here.
     float shadow = 1.0;
+#if SURFACE_OPTICS_CLOSED_SOLID
+    // Closed-solid: the shadow ray's visibility is the STRAIGHT
+    // transmittance through the optical solid (the emitted
+    // transportShadowVisibility — per-channel, Beer-tinted; the
+    // corridor's analytic gates ride inside it). There is no opaque
+    // occluder to penumbra-march — the displayed object IS the glass —
+    // so the scalar penumbra below is compiled out with the backend.
+    vec3 shadowV = transportShadowVisibility(
+      hp,
+      uLightDir,
+      uGroundBallC,
+      uGroundBallR,
+      uVisibleRadius
+    );
+#else
     vec3 toC = uGroundBallC - hp;
     float along = dot(toC, uLightDir);
     float perp2 = dot(toC, toC) - along * along;
@@ -5647,6 +5857,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
       }
       shadow = clamp(shadow, 0.0, 1.0);
     }
+#endif
 
     // Contact occlusion: the hit path's AO taps straight up from the
     // floor, skipped once the floor point is provably beyond every tap's
@@ -5673,8 +5884,16 @@ ${foldValueFormGlsl(shadeDeWidth)}
     // The hit path's lighting minus specular (a matte floor), in the same
     // linear space: n is +y, so diffuse is just uLightDir.y.
     float diffuse = max(uLightDir.y, 0.0);
+#if SURFACE_OPTICS_CLOSED_SOLID
+    // The shadow term is the straight per-channel transmittance, so the
+    // floor's lighting carries the glass's Beer tint instead of a black
+    // occluder silhouette.
+    vec3 lit = (uAmbient * ao + (1.0 - uAmbient) * diffuse * shadowV) *
+      envTint(vec3(0.0, 1.0, 0.0));
+#else
     vec3 lit = (uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow) *
       envTint(vec3(0.0, 1.0, 0.0));
+#endif
     vec3 floorAlbedo = uGroundAlbedo;
     if (uGroundPattern == 1) {
       float cell = max(uGroundBallR * uGroundTileScale, 1.0e-4);
@@ -7961,7 +8180,16 @@ function withTilingGlsl(
       replaced++;
       return "vec4 q = surfaceTilingQuery4;";
     });
-    const expectedPrologues = hasMarchPair ? 3 : 2;
+    // +1 per prologue the early optics splice contributes to THIS core
+    // half: the closed-solid transport field's own lift rides the same
+    // `vec4 q = uInvRotor * vec4(p, uW0)` line. It sits before the
+    // ground-plane split for non-balloon sources and after the balloon
+    // arm's split otherwise, so the count reads the core half itself;
+    // the backend refuses tiling, so the field's branch never reaches
+    // the driver either way — the rewrite just keeps its count honest.
+    const expectedPrologues =
+      (hasMarchPair ? 3 : 2) +
+      (core.includes("float transportSolidField(vec3 p) {") ? 1 : 0);
     if (replaced !== expectedPrologues) {
       throw new Error(
         `surface-material: expected ${expectedPrologues} 4D tiling query prologues, found ${replaced}`,
@@ -8189,7 +8417,16 @@ function withLatticeTilingGlsl(
       replaced++;
       return "vec4 q = surfaceTilingQuery4;";
     });
-    const expectedPrologues = hasMarchPair ? 3 : 2;
+    // +1 per prologue the early optics splice contributes to THIS core
+    // half: the closed-solid transport field's own lift rides the same
+    // `vec4 q = uInvRotor * vec4(p, uW0)` line. It sits before the
+    // ground-plane split for non-balloon sources and after the balloon
+    // arm's split otherwise, so the count reads the core half itself;
+    // the backend refuses tiling, so the field's branch never reaches
+    // the driver either way — the rewrite just keeps its count honest.
+    const expectedPrologues =
+      (hasMarchPair ? 3 : 2) +
+      (core.includes("float transportSolidField(vec3 p) {") ? 1 : 0);
     if (replaced !== expectedPrologues) {
       throw new Error(
         `surface-material: expected ${expectedPrologues} 4D tiling query prologues, found ${replaced}`,

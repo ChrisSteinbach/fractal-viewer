@@ -59,6 +59,7 @@ import {
   SURFACE_GPU_SHADE_PATTERN_BYTES,
   SURFACE_GPU_TILING_BYTES,
   SURFACE_GPU_TRANSPORT_REASON_STATE_MISMATCH,
+  SURFACE_GPU_TRANSPORT_SHADOW_STEPS,
   SURFACE_GPU_UNIFORM_MAP_SLOTS,
   SURFACE_GPU_SEED_PARAMS_BYTES,
   SURFACE_GPU_SEED_WORKGROUP_SIZE,
@@ -10326,5 +10327,103 @@ describe("the closed-solid transport backend (opticsBackend)", () => {
         }),
       ),
     ).toThrow(/refuses mesh-bearing emitter shapes/);
+  });
+});
+
+describe("the closed-solid floor corridor's straight shadow visibility", () => {
+  const shadowOpts = (
+    overrides: Partial<SurfaceGpuKernelOptions> = {},
+  ): SurfaceGpuKernelOptions =>
+    kernelOpts({
+      mode: "shade",
+      core: "affine",
+      width: 4,
+      groundPlane: true,
+      optics: true,
+      opticsBackend: "closedSolid",
+      condensation: {
+        mapCount: 0,
+        emitters: [{ shape: CONDENSATION_SPHERE, shadeIndex: 0 }],
+      },
+      ...overrides,
+    });
+  const corridorSlice = (source: string): string => {
+    const start = source.indexOf("  let gR = params.groundBallR;");
+    const end = source.indexOf("  var floorAlbedo", start);
+    if (start < 0 || end < 0) throw new Error("corridor slice lost");
+    return source.slice(start, end);
+  };
+
+  it("emits the straight visibility helper and its corridor branch under the closed-solid backend only", () => {
+    const shade = surfaceDeKernelWgsl(shadowOpts());
+    expect(shade).toContain("fn transportShadowVisibility(");
+    expect(shade).toContain(
+      `for (var i = 0u; i < ${SURFACE_GPU_TRANSPORT_SHADOW_STEPS}u; i++) {`,
+    );
+    expect(shade).toContain("var shadowV = transportShadowVisibility(");
+    expect(shade).toContain(
+      "let lit = (shade.ambient * ao + (1.0 - shade.ambient) * diffuse * shadowV) * envTint;",
+    );
+    // The scalar penumbra march is compiled out with the backend: the
+    // displayed object IS the optical solid.
+    expect(corridorSlice(shade)).not.toContain(
+      "shadow = min(shadow, 8.0 * d / ts);",
+    );
+    // The estimator corridor keeps it, byte for byte.
+    const estimator = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "affine",
+        width: 4,
+        groundPlane: true,
+        optics: true,
+      }),
+    );
+    expect(estimator).not.toContain("fn transportShadowVisibility(");
+    expect(estimator).not.toContain("var shadowV");
+    expect(corridorSlice(estimator)).toContain(
+      "shadow = min(shadow, 8.0 * d / ts);",
+    );
+    expect(corridorSlice(estimator)).toContain(
+      "let lit = (shade.ambient * ao + (1.0 - shade.ambient) * diffuse * shadow) * envTint;",
+    );
+    // And an optics-free kernel is byte-identical to the estimator's
+    // corridor: the branch moves bytes under the closed-solid backend
+    // alone.
+    const noOptics = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "affine",
+        width: 4,
+        groundPlane: true,
+      }),
+    );
+    expect(corridorSlice(noOptics)).toBe(corridorSlice(estimator));
+  });
+
+  it("shares the corridor's analytic gates inside the helper — the corridor's call stays one line", () => {
+    const shade = surfaceDeKernelWgsl(shadowOpts());
+    expect(shade).toContain(
+      "if (along <= 0.0 || perp2 >= corridor * corridor) {",
+    );
+    expect(shade).toContain("return vec3f(1.0);");
+  });
+
+  it("keeps the transport's rear-scene floor terminal on the same corridor — one fix, both sites", () => {
+    const shade = surfaceDeKernelWgsl(shadowOpts());
+    expect(shade).toContain("shadeGroundPlane(origin, dir, bg, li).color");
+  });
+
+  it("moves the shared optics body ahead of the shade entry so the helper shares it", () => {
+    const shade = surfaceDeKernelWgsl(shadowOpts());
+    const opticsBody = dielectricOpticsSource("wgsl");
+    const bodyAt = shade.indexOf(opticsBody);
+    const helperAt = shade.indexOf("fn transportShadowVisibility(");
+    const corridorAt = shade.indexOf("fn shadeGroundPlane(");
+    expect(bodyAt).toBeGreaterThanOrEqual(0);
+    expect(bodyAt).toBeLessThan(helperAt);
+    expect(helperAt).toBeLessThan(corridorAt);
+    // Still ONE copy — the transport block reuses the definitions.
+    expect(shade.indexOf(opticsBody, bodyAt + opticsBody.length)).toBe(-1);
   });
 });

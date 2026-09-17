@@ -1,5 +1,7 @@
 import {
   transportBoundaryQueryCPU,
+  transportShadowCorridorGate,
+  transportShadowVisibilityCPU,
   transportSolidBoundaryQueryCPU,
   transportTraceCPU,
   type TransportFixtureSystem,
@@ -199,5 +201,106 @@ describe("transportTraceCPU over the closed-solid query", () => {
     expect(["complete", "residual"]).toContain(result.status);
     expect(result.failure).toBe(0);
     expect(result.radiance).toEqual([0, 0, 0]);
+  });
+});
+
+describe("transportShadowVisibilityCPU — the corridor's straight visibility", () => {
+  const SPHERE: ShapeSpec = {
+    parts: [{ primitive: { kind: "sphere", radius: 1 }, combine: "union" }],
+  };
+  const system: TransportFixtureSystem = {
+    estimate: (p: Vec3) =>
+      SHAPE_MARCH_SAFETY * shapeSdf(SPHERE, p[0], p[1], p[2]),
+    stepScale: 1,
+    visibleRadius: 2,
+  };
+  const material: DielectricMaterial = {
+    ior: 1.45,
+    absorption: [0.17, 0.055, 0.025],
+    radius: 1,
+  };
+  const ballC: Vec3 = [0, 0, 0];
+  // The corridor's own geometry: the certified ball (1.2) just contains
+  // the unit sphere, and the floor point sits below it the way the
+  // corridor's call sites place it — the outside approach must fit the
+  // march's step budget the way a production floor point's does.
+  const ballR = 1.2;
+  const visR = 1.2;
+  const chord = 2;
+  const f0 = ((material.ior - 1) / (material.ior + 1)) ** 2;
+
+  it("pays (1 - Fresnel)^2 and Beer over a normal-incidence chord", () => {
+    const vis = transportShadowVisibilityCPU(
+      system,
+      [0, -1.3, 0],
+      [0, 1, 0],
+      material,
+      ballC,
+      ballR,
+      visR,
+    );
+    for (let c = 0; c < 3; c++) {
+      const expected =
+        (1 - f0) ** 2 *
+        Math.exp((-material.absorption[c] * chord) / material.radius);
+      expect(Math.abs(vis[c] - expected)).toBeLessThan(2e-3);
+    }
+  });
+
+  it("returns exactly 1 on both corridor gate exits", () => {
+    // Ball behind: the shadow ray recedes from the ball.
+    expect(
+      transportShadowVisibilityCPU(
+        system,
+        [4, 0, 0],
+        [1, 0, 0],
+        material,
+        ballC,
+        ballR,
+        visR,
+      ),
+    ).toEqual([1, 1, 1]);
+    // Closest approach clears 1.05 R + 0.3 * along.
+    expect(
+      transportShadowVisibilityCPU(
+        system,
+        [0, -1.3, 0],
+        [1, 0.05, 0],
+        material,
+        ballC,
+        ballR,
+        visR,
+      ).every((c) => c === 1),
+    ).toBe(true);
+  });
+
+  it("goes dark straight through when the exit total-internally-reflects", () => {
+    // A vertical ray through x = 0.9 meets the exit interface at
+    // |cos| = 0.436, past the critical angle (1/1.45): the straight ray
+    // keeps its energy inside, so the straight model transmits nothing
+    // (no caustic is promised).
+    const vis = transportShadowVisibilityCPU(
+      system,
+      [0.9, -1.3, 0],
+      [0, 1, 0],
+      material,
+      ballC,
+      ballR,
+      visR,
+    );
+    for (let c = 0; c < 3; c++) {
+      expect(vis[c]).toBeLessThan(1e-6);
+    }
+  });
+
+  it("keeps the corridor gate's arithmetic exact at its boundary", () => {
+    // along <= 0 is ball-behind: shadow 1 with zero field evals.
+    expect(
+      transportShadowCorridorGate([3, 0, 0], [1, 0, 0], ballC, ballR),
+    ).toBe(false);
+    // Inside the corridor: the march runs.
+    expect(
+      transportShadowCorridorGate([0, -1.3, 0], [0, 1, 0], ballC, ballR),
+    ).toBe(true);
   });
 });

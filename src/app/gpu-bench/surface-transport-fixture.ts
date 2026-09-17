@@ -11,6 +11,7 @@ import {
 import {
   SURFACE_GPU_TRANSPORT_MAX_INTERFACES,
   SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS,
+  SURFACE_GPU_TRANSPORT_SHADOW_STEPS,
 } from "../../fractal/surface-de-gpu";
 
 /**
@@ -541,4 +542,228 @@ export function transportTraceCPU(
     status = residual > 0 ? "residual" : "complete";
   }
   return { radiance, residual, status, failure, reason };
+}
+
+/** The corridor's analytic gate values for one shadow ray — the emitted
+ * `transportShadowVisibility`'s own fast path, mirrored so the leg's
+ * probes can predict the gate answer without marching: ball-behind
+ * (along <= 0) and a closest approach clearing `1.05 R + 0.3 * along`
+ * certify the ray misses the certified ball entirely. */
+export function transportShadowCorridorGate(
+  origin: Vec3,
+  dir: Vec3,
+  ballC: Vec3,
+  ballR: number,
+): boolean {
+  const toC: Vec3 = [
+    ballC[0] - origin[0],
+    ballC[1] - origin[1],
+    ballC[2] - origin[2],
+  ];
+  const along = toC[0] * dir[0] + toC[1] * dir[1] + toC[2] * dir[2];
+  const perp2 =
+    toC[0] * toC[0] + toC[1] * toC[1] + toC[2] * toC[2] - along * along;
+  const corridor = ballR * 1.05 + 0.3 * along;
+  return along > 0 && perp2 < corridor * corridor;
+}
+
+/**
+ * The kernel's closed-solid `transportShadowVisibility`, f64: the floor
+ * corridor's shadow ray through the session's optical solid — a bounded
+ * march of the SIGNED field along an UNREFRACTED ray, pairing the
+ * solid's crossings. Each entry pays (1 - Fresnel) into a per-channel
+ * transmittance, Beer attenuates over the traversed interior, each exit
+ * pays (1 - Fresnel), and a total-internal-reflection exit contributes
+ * nothing straight through. Bounded work: interior strides are |f| (the
+ * certified depth bound), the runtime's shadow budget paces the march,
+ * and an exhausted march returns the transmittance accumulated so far —
+ * the over-report both engines share. The corridor's analytic gates ride
+ * at the top (the fast path that certifies transmittance 1 with zero
+ * field evals). The material is the leg's own (the kernel reads slot 0's
+ * opticsMaps lanes; the leg packs that one-slot wire with the same
+ * numbers), and the ball/step parameters mirror the packed params.
+ */
+export function transportShadowVisibilityCPU(
+  system: TransportFixtureSystem,
+  origin: Vec3,
+  dir: Vec3,
+  material: DielectricMaterial,
+  ballC: Vec3,
+  ballR: number,
+  visR: number,
+  stepScale = system.stepScale,
+): Vec3 {
+  if (!transportShadowCorridorGate(origin, dir, ballC, ballR)) {
+    return [1, 1, 1];
+  }
+  const eps = DIELECTRIC_CROSSING_EPS_REL * material.radius;
+  const solidField = (p: Vec3): number => system.estimate(p);
+  const normal = (p: Vec3): Vec3 => {
+    const e = 0.5773;
+    const ex: Vec3 = [e, -e, -e];
+    const ey: Vec3 = [-e, -e, e];
+    const ez: Vec3 = [-e, e, -e];
+    const ew: Vec3 = [e, e, e];
+    const tap = (o: Vec3) =>
+      solidField([p[0] + o[0] * eps, p[1] + o[1] * eps, p[2] + o[2] * eps]);
+    const gx =
+      tap(ex) * ex[0] + tap(ey) * ey[0] + tap(ez) * ez[0] + tap(ew) * ew[0];
+    const gy =
+      tap(ex) * ex[1] + tap(ey) * ey[1] + tap(ez) * ez[1] + tap(ew) * ew[1];
+    const gz =
+      tap(ex) * ex[2] + tap(ey) * ey[2] + tap(ez) * ez[2] + tap(ew) * ew[2];
+    const m = Math.hypot(gx, gy, gz);
+    if (!(m > 1e-12)) return [-dir[0], -dir[1], -dir[2]];
+    return [gx / m, gy / m, gz / m];
+  };
+  const clamp = (x: number, lo: number, hi: number): number =>
+    Math.min(Math.max(x, lo), hi);
+  let trans: Vec3 = [1, 1, 1];
+  let inside = solidField(origin) < 0;
+  let cosEnter = 1;
+  let segStart = 0;
+  let ts = ballR * 4.0e-4;
+  for (let i = 0; i < SURFACE_GPU_TRANSPORT_SHADOW_STEPS; i++) {
+    const sp: Vec3 = [
+      origin[0] + dir[0] * ts,
+      origin[1] + dir[1] * ts,
+      origin[2] + dir[2] * ts,
+    ];
+    const f = solidField(sp);
+    if (!(f > -1e30)) break;
+    if (Math.abs(f) < eps) {
+      // The declared crossing band: the boundary is here, within the
+      // declared resolution. Fire the state's crossing, then step past
+      // the band (the anchor suppression's own 2·eps skip).
+      if (inside) {
+        const n = normal(sp);
+        const segLen = ts - segStart;
+        const exitPass =
+          1 -
+          dielectricFresnel(
+            Math.abs(dir[0] * n[0] + dir[1] * n[1] + dir[2] * n[2]),
+            material.ior,
+            1,
+          );
+        const entryPass = 1 - dielectricFresnel(cosEnter, 1, material.ior);
+        trans = [
+          trans[0] *
+            dielectricBeerThroughput(
+              material.absorption[0],
+              segLen,
+              material.radius,
+            ) *
+            (entryPass * exitPass),
+          trans[1] *
+            dielectricBeerThroughput(
+              material.absorption[1],
+              segLen,
+              material.radius,
+            ) *
+            (entryPass * exitPass),
+          trans[2] *
+            dielectricBeerThroughput(
+              material.absorption[2],
+              segLen,
+              material.radius,
+            ) *
+            (entryPass * exitPass),
+        ];
+        cosEnter = 1;
+        inside = false;
+        if (Math.max(Math.max(trans[0], trans[1]), trans[2]) <= 0) break;
+      } else {
+        inside = true;
+        segStart = ts;
+        const n = normal(sp);
+        cosEnter = Math.abs(dir[0] * n[0] + dir[1] * n[1] + dir[2] * n[2]);
+      }
+      ts += 2 * eps;
+      continue;
+    }
+    if ((f < 0 ? 1 : 0) !== (inside ? 1 : 0)) {
+      // A stride jumped clean across the band: the crossing happened
+      // between the samples; report it here.
+      if (inside) {
+        const n = normal(sp);
+        const segLen = ts - segStart;
+        const exitPass =
+          1 -
+          dielectricFresnel(
+            Math.abs(dir[0] * n[0] + dir[1] * n[1] + dir[2] * n[2]),
+            material.ior,
+            1,
+          );
+        const entryPass = 1 - dielectricFresnel(cosEnter, 1, material.ior);
+        trans = [
+          trans[0] *
+            dielectricBeerThroughput(
+              material.absorption[0],
+              segLen,
+              material.radius,
+            ) *
+            (entryPass * exitPass),
+          trans[1] *
+            dielectricBeerThroughput(
+              material.absorption[1],
+              segLen,
+              material.radius,
+            ) *
+            (entryPass * exitPass),
+          trans[2] *
+            dielectricBeerThroughput(
+              material.absorption[2],
+              segLen,
+              material.radius,
+            ) *
+            (entryPass * exitPass),
+        ];
+        if (Math.max(Math.max(trans[0], trans[1]), trans[2]) <= 0) break;
+      } else {
+        segStart = ts;
+        const n = normal(sp);
+        cosEnter = Math.abs(dir[0] * n[0] + dir[1] * n[1] + dir[2] * n[2]);
+      }
+      inside = f < 0;
+    }
+    ts += clamp(Math.abs(f) * stepScale, ballR * 2.0e-4, visR);
+    const rx = sp[0] - ballC[0];
+    const ry = sp[1] - ballC[1];
+    const rz = sp[2] - ballC[2];
+    if (rx * dir[0] + ry * dir[1] + rz * dir[2] > 0) {
+      if (Math.hypot(rx, ry, rz) > ballR * 1.05) break;
+    }
+  }
+  if (inside) {
+    const segLen = ts - segStart;
+    const entryPass = 1 - dielectricFresnel(cosEnter, 1, material.ior);
+    trans = [
+      trans[0] *
+        dielectricBeerThroughput(
+          material.absorption[0],
+          segLen,
+          material.radius,
+        ) *
+        entryPass,
+      trans[1] *
+        dielectricBeerThroughput(
+          material.absorption[1],
+          segLen,
+          material.radius,
+        ) *
+        entryPass,
+      trans[2] *
+        dielectricBeerThroughput(
+          material.absorption[2],
+          segLen,
+          material.radius,
+        ) *
+        entryPass,
+    ];
+  }
+  return [
+    Math.min(Math.max(trans[0], 0), 1),
+    Math.min(Math.max(trans[1], 0), 1),
+    Math.min(Math.max(trans[2], 0), 1),
+  ];
 }

@@ -2882,3 +2882,135 @@ describe("the 4D tracer's optics arm (the dielectric transport lane)", () => {
     ).toThrow(/uniformly/);
   });
 });
+
+describe("the 4D closed-solid floor corridor (the straight shadow visibility splice)", () => {
+  /** The floor corridor's own slice: from the shadow seed to the floor's
+   * albedo line — the corridor, the AO taps and the lighting line, i.e.
+   * everything the floor arm shades with. The floor arm is the 3D arm
+   * verbatim, so the 3D suite's markers carry; the first
+   * `float shadow = 1.0;` is the corridor's (the hit path's own penumbra
+   * sits later, in main()), and the albedo line is floor-arm-only. */
+  const corridorSlice = (src: string): string =>
+    src.slice(
+      src.indexOf("float shadow = 1.0;"),
+      src.indexOf("vec3 floorAlbedo = uGroundAlbedo;"),
+    );
+
+  it("the closed-solid floor corridor's straight shadow visibility", () => {
+    const src = surface4FragmentResolvedFor(
+      0,
+      1,
+      0,
+      0,
+      [COND4_SPHERE],
+      0,
+      0,
+      null,
+      0,
+      0,
+      1,
+      1,
+    );
+    // The splice ahead of the ground-plane arm: the corridor's helper,
+    // the SIGNED 4D field — the penalty form through the live rotor/slice
+    // — and the shared optics body's Fresnel.
+    expect(src).toContain("vec3 transportShadowVisibility(");
+    expect(src).toContain("float transportSolidField(vec3 p) {");
+    const field = src.slice(
+      src.indexOf("float transportSolidField(vec3 p) {"),
+      src.indexOf("vec3 transportShadowVisibility("),
+    );
+    expect(field).toContain("vec4 q = uInvRotor * vec4(p, uW0);");
+    expect(field).toContain("abs(local.w)");
+    expect(src).toContain("vec3 shadowV = transportShadowVisibility(");
+    expect(src).toContain("diffuse * shadowV) *");
+    expect(src).toContain("dielectricFresnel");
+  });
+
+  it("keeps the closed-solid floor corridor gated on condensation emitters", () => {
+    // The existing refusal, pinned at this arm: plane + optics + the
+    // closed-solid backend without the union the signed field IS.
+    expect(() =>
+      surface4FragmentResolvedFor(0, 1, 0, 0, null, 0, 0, null, 0, 0, 1, 1),
+    ).toThrow(/needs condensation emitters/);
+  });
+
+  it("the estimator corridor stays byte-identical under the corridor fix", () => {
+    // Explicit zeros, the optics arm on the estimator backend, and the
+    // omitted-argument call: the corridor's slice must not move — the
+    // splice only ever adds the closed-solid branch beside it.
+    const explicitOff = surface4FragmentResolvedFor(
+      0,
+      1,
+      0,
+      0,
+      null,
+      0,
+      0,
+      null,
+      0,
+      0,
+      0,
+      0,
+    );
+    const opticsEstimator = surface4FragmentResolvedFor(
+      0,
+      1,
+      0,
+      0,
+      null,
+      0,
+      0,
+      null,
+      0,
+      0,
+      1,
+      0,
+    );
+    const omitted = surface4FragmentResolvedFor(0, 1);
+    const slices = [
+      corridorSlice(explicitOff),
+      corridorSlice(opticsEstimator),
+      corridorSlice(omitted),
+    ];
+    expect(slices[0]).toBe(slices[1]);
+    expect(slices[0]).toBe(slices[2]);
+    expect(slices[1]).toBe(slices[2]);
+    // The classic scalar penumbra, and no per-channel visibility anywhere.
+    expect(slices[0]).toContain("8.0 * d / ts");
+    expect(slices[0]).toContain("diffuse * shadow) *");
+    expect(slices[0]).not.toContain("shadowV");
+    expect(slices[0]).not.toContain("transportShadowVisibility");
+  });
+
+  it("one definition of the shared optics body and the signed field", () => {
+    const src = surface4FragmentResolvedFor(
+      0,
+      1,
+      0,
+      0,
+      [COND4_SPHERE],
+      0,
+      0,
+      null,
+      0,
+      0,
+      1,
+      1,
+    );
+    const body = dielectricOpticsSource("glsl");
+    // ONE splice of the shared math text and ONE definition of the signed
+    // field — both moved ahead of the floor arm they serve, so the
+    // corridor reads them and nothing restates them.
+    expect(countOccurrences(src, body)).toBe(1);
+    expect(countOccurrences(src, "float transportSolidField(vec3 p) {")).toBe(
+      1,
+    );
+    expect(src.indexOf(body)).toBeLessThan(
+      src.indexOf("vec3 shadeGroundPlane("),
+    );
+    expect(src.indexOf("vec3 transportShadowVisibility(")).toBeLessThan(
+      src.indexOf("vec3 shadeGroundPlane("),
+    );
+  });
+});

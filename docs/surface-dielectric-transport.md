@@ -407,18 +407,102 @@ retained 5.6 MiB, byte-identical repeats). The unresolved fractions are
 grazing paths riding the declared resolution — disclosed per arm, never
 absorbed.
 
-### Rear radiance, and what this backend does not yet trace
+### The rear-scene contract (delivered), and the straight shadow visibility
 
-`transportRearRadiance(origin, direction)` is the rear scene's ONE seam.
-This backend's rear scene is the ENVIRONMENT ONLY: the pixel's backdrop in
-linear light, plus the ground-plane terminal when the session has one (the
-shade entry's own floor shade, linearized by the file's 2.2 convention).
-Rear FRACTAL geometry — escaped rays re-marching the displayed object, the
-study's "reflections of other lobes" — arrives with the rear-scene task and
-grows this one function; the contract's compositing law, bounds and
-residual accounting are unchanged by that growth. The per-sample
-environment bound stays the qualified 4 (`DIELECTRIC_ENVIRONMENT_BOUND`),
-which bounds this rear scene with margin.
+`transportRearRadiance(origin, direction)` is the rear scene's ONE seam, and
+its terminal order is now CONTRACT, resolved in physical ray order:
+
+1. **Later fractal hits** are the transport's own boundary events, resolved
+   by the work-list BEFORE any miss — the union's other lobes enter and exit
+   through `nextBoundary` with the trace's material, never through the rear
+   scene. By the time a path reaches `rearRadiance`, its boundary query has
+   proven the remaining finite scene interval (the domain
+   `transportDomainExit` returns) free of the displayed object — for the
+   closed-solid backend the signed field certifies it directly, and for the
+   estimator backend the query's crossing test is LOOSER than a display hit
+   (it crosses at the optical scale, strictly earlier), so a miss still
+   certifies the interval empty at display resolution. Both shipped
+   backends' misses therefore certify the interval: the rear march that a
+   NOT-co-extensive backend would owe this seam is deliberately NOT emitted
+   — dead machinery for both shipped backends — and the seam stays the one
+   function that grows if a future backend's boundary query stops being
+   co-extensive with the displayed object (per-slot mixed materials are the
+   first candidate).
+2. **The analytic plane** (when the session has a floor): the shade entry's
+   own `shadeGroundPlane` floor shade, linearized by the file's 2.2
+   convention. The plane lies below the whole session ball, so every
+   downward transport path crosses it after the domain exit — the terminal
+   order above is physical by geometry, not by extra marching. "A plane
+   beats the environment where it intersects" is the floor's radial fade:
+   inside the fade band the floor's own shading (albedo, checker pattern,
+   emission) is the terminal; past it the floor IS the background.
+3. **The procedural background**: the pixel's own backdrop — the same
+   full-image `bg` the seed's miss path writes — linearized.
+
+The four outcomes stay DISTINCT: a true miss (the interval certificate),
+the plane terminal, the background, and an unresolved tail. Exhaustion is
+never relabelled — the transport's own unresolved statuses keep the pixel
+dark with the frame's counts disclosing them, and the corridor's bounded
+admission (below) keeps its partial result rather than fabricating an
+occluder or a clear sky.
+
+**The plane terminal's shadow corridor now attenuates STRAIGHT through the
+optical solid** (both engines, both dimensions, closed-solid only): the
+corridor's penumbra march reads the DISPLAYED object as an opaque occluder,
+which is the glass itself in a closed-solid session — the black slab
+silhouette under the glass the rear-scene task calls the falsely-solid
+defect. Under `opticsBackend: "closedSolid"` the corridor replaces the
+penumbra march with `transportShadowVisibility(hp, lightDir, ballC, ballR,
+visR)`: a bounded march of the SIGNED field along the UNREFRACTED shadow
+ray, pairing the solid's crossings — each entry pays `(1 − Fresnel)` into a
+per-channel transmittance, Beer attenuates over the traversed interior,
+each exit pays `(1 − Fresnel)` again, and a total-internal-reflection exit
+contributes nothing straight through (the light exits elsewhere — a caustic
+this model does not promise). The crossing is the declared band
+(`DIELECTRIC_CROSSING_EPS_REL`), with the anchor suppression's own 2·eps
+skip past it; the strides step the certified field's |f| on both sides, so
+no stride can overshoot the boundary and the band is always sampled. The
+corridor's analytic gates (ball-behind, closest-approach clearing
+1.05 R + 0.3·along) ride inside the helper as the fast path that certifies
+transmittance 1 with zero field evals. Bounded work:
+`SURFACE_GPU_TRANSPORT_SHADOW_STEPS` (24) paces the march, and an exhausted
+march returns the transmittance accumulated so far — an over-report,
+disclosed, never a fabricated occluder. The floor's AO stays geometric
+(the glass occludes ambient like any body at its declared resolution — the
+recorded approximation; making AO transmission-aware was measured worth
+neither its cost nor its risk). The material is slot 0's resolved optics
+lanes: a session's lobes may carry per-slot scales, and the corridor reads
+the session's first slot — the recorded attribution approximation. The
+floor's shadow is therefore Beer-TINTED, not scalar: the lighting line
+multiplies the vec3 transmittance into the same lit term the classic
+penumbra fed.
+
+Deliberate lighting approximations, all recorded: shadow rays are STRAIGHT
+(no refraction, no caustics, no multiple-bounce); a TIR exit reads as dark
+along that ray; the corridor's material attribution is slot 0's; AO stays
+geometric; budget exhaustion over-reports. "Ordinary and cinematic"
+coverage follows the supported combinations: the transport is exclusive
+with cinematic lighting (both entries own the hit path's output — the
+refusal stands, unchanged), so the rear scene's shading is the ordinary
+finish path's shared math (`shadeGroundPlane`, the shade entry's own
+lighting), and the legacy gamma-space transmit fade stays confined to its
+backward-compatible path — the cinematic path's linear-light fade is its
+own convention, untouched.
+
+**The rear-image contract, for the distortion task.** The rear scene has
+NO screen-space state: the terminal's radiance and its terminal identity
+(plane at distance `t`, or the background at infinity) are derivable at
+the seam from `(origin, direction)` alone, and capture bands are
+independent by construction (each band renders its own rays at their
+full-image NDC positions; two decompositions of one raster agree
+byte-for-byte). The FIRST-LOCAL-CONTRIBUTION separation is structural and
+must not be blurred: the front interface's Fresnel split (the first local
+contribution — the reflection term a compositor must not displace) is
+carried by the path tree's THROUGHPUT, while every terminal composites
+`throughput · rearRadiance` — so a rear-image distortion applies to the
+terminal rear radiance only, and the front split survives it untouched.
+The per-sample environment bound stays the qualified 4
+(`DIELECTRIC_ENVIRONMENT_BOUND`), which bounds this rear scene with margin.
 
 ### Resumption, scheduling and truthfulness
 
@@ -674,7 +758,7 @@ are the delegated working lines; the appearance selection is untouched.
 | GLSL tracers (`surface-material*.ts`)         | LIVE for the estimator backend, as compiled and routed: the shared `surfaceTransportSource` block splices the kernel's optics emission term for term over the composed public estimator, and the shade site routes optical hits through the SAME replay-pass schedule collapsed INLINE (stateless per strip; the strip draw is the cancellation boundary). A WebGL-routed session on a SOFTWARE rasterizer strips the gate at both route points — measured SwiftShader renderer crash — classic, disclosed. The closed-solid backend is emitted and compile-verified in both dimensions through a temporary backend force; the app routing that selects it is the starter-scene task's. A fold-shaped descent refuses the transport at the gate that would compile it (the kernel's measured frontier-spill timeout); the forward arms refuse at the resolver |
 | `lens` wrapper, both dimensions               | Composes — the boundary query rides the wrapped estimator                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `balloon` (3D/4D)                             | Composes over the union estimator, disclosed envelope; the shell inherits the argmin slot's material                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `ground plane`                                | Composes — the floor is a rear-scene terminal                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `ground plane`                                | Composes — the floor is a rear-scene terminal whose shadow corridor attenuates STRAIGHT through the optical solid under the closed-solid backend (the corridor fix; the estimator backend's corridor stays the classic opaque penumbra, covered by the disclosed vacuous state). The slab query's own field reads the center plane (`transportSolidField` embeds `w0`), so a slab session's corridor is the center-plane field's — the backend's slab admission is the routing task's question, not this corridor's                                                                                                                                                                                                                                                                                                                                           |
 | Cinematic lighting                            | EXCLUSIVE (throw)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | Surface applicability gates                   | Unchanged — authored optics adds NO new admission                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
@@ -687,14 +771,16 @@ backend — the envelope's closed-solid arms resolve in both dimensions with
 every delegated line met — so the first blocker is cleared. What remains,
 in order: the fold core's transport (the measured timeout, three recorded
 paths — the closed-solid backend is now DOUBLY motivated for the
-finite-construction path, being its own recorded scope); rear-scene
-radiance and transparent visibility (`.8`, gated on reflections that
-re-enter the object — the closed-solid query now provides the inside
-traversal those need); distortion and capture integration; panel material
-and starter scenes (`.10` — whose app routing must carry the closed-solid
+finite-construction path, being its own recorded scope); the rear-scene
+contract and the corridor's straight shadow visibility have LANDED (the
+section above — the agreement legs' mode-2 shadow probes pin the corridor
+against the f64 twin, and the through-lobe probe's expected value is the
+analytic `(1 − F0)²·Beer(chord)` control); distortion and capture
+integration; panel material
+and starter scenes (.10 — whose app routing must carry the closed-solid
 backend's pose admission: the 4D field is exact where the displayed slice
 carries the flat, and the wiring must pin the canonical composition or
-derive it); built-app qualification (`.11`). The estimator arms' IFS
+derive it); built-app qualification (.11). The estimator arms' IFS
 vacuity is disclosed, not solved — IFS geometry has no closed solid for
 the signed field to describe. Shader changes require the corresponding
 CPU/GPU agreement gate even before production routing is enabled; the 22
@@ -732,8 +818,10 @@ node scripts/surface-optics-glsl.verify.mjs --display=:0
 The unit suite pins the optics (including the emitted `js` dialect executing
 bit-identically to the f64 oracle), the transport oracle over analytic
 interval/shell/posed-4D scenes, chunked bit-identity, the replay schedule and
-the emission canon. The harness runs re-verify the qualified scalar pins
-against the re-exported optics. The bench's `transportAgreement` rows are
+the emission canon — plus the corridor fix's own pins: the fixture twin's
+analytic controls (normal-incidence chord, both gate exits, the TIR dark
+ray) and the emitted corridor branches' byte-identity when the backend is
+absent. The bench's `transportAgreement` rows are
 the compute backend's per-core record: the kernel's own
 `transportNextBoundary`/`transportTrace` against `surface-transport-fixture.ts`'s
 f64 twin, fail-closed, with the forward cores' chaos exclusions disclosed
@@ -741,7 +829,12 @@ per row (the ULP-ensemble classifier, escape legs' treatment), the fold
 core's measured device-loss skip recorded in the run's notes, and each
 row's `backend`/`opticsSoundness` pair naming what the agreement
 certifies (the closed-solid rows pin the signed query in both
-dimensions). Measured
+dimensions, and now carry `maxShadowDelta` — the mode-2 shadow probes'
+straight-visibility agreement, with the through-lobe probe's analytic
+`(1 − F0)²·Beer(0.7)` control and the two gate exits' exact-1 pin; the
+corridor's shadow work is bounded by its own runtime budget and is
+counted apart from the primary rays the way the lane's tallies always
+were). Measured
 2026-09-14 on the RX 7900 XTX / radeonsi: six of seven cores agree
 (radiance ≤ 1.1e-4, residual ≤ 3.2e-4, normals ≤ 6.6e-3); pristine main
 reproduces the SwiftShader device-loss at an unrelated early leg, so that
