@@ -145,6 +145,32 @@ it with document and runtime predicates such as emitter weight, trap presence
 and conformal-fold restrictions, leaving one final owner for each row's hidden
 or disabled state.
 
+## Copy budget and contrast
+
+The visible-copy rules above are enforced by gates, not advice. The budgets
+are exact:
+
+- **Hints** (`.flame-hint`) — the always-visible timing and status lines: one
+  sentence, at most 16 words.
+- **Warnings and refusals** (`.flame-note`, `.flame-note-info`): at most 24
+  words, because a refusal also names the condition and the action that
+  resolves it.
+- **Help disclosures** (`details.panel-explainer`): at most 60 words for the
+  whole body.
+- An exception is a named `HINT_ALLOWLIST` entry in
+  `src/app/ui-copy-budget.test.ts` with a written reason, so raising one
+  string's budget shows up in review. That test runs in `npm test` and walks
+  every renderer, flat and 4D, through the states that mint generated rows
+  (transform editor, shape part editor, applicability notes).
+
+Contrast is WCAG AA for every visible panel text node against its effective
+background, in Chromium and Firefox:
+`node scripts/panel-contrast.verify.mjs` against a production build (both
+engines; `--mode=sw` for a displayless subset). It also asserts that selects
+resolve `color-scheme: dark` — the native dropdown popups cannot be
+screenshotted headless — and that option/optgroup carry a readable colour
+pair. CI runs it in the `panel-contrast` job.
+
 ## Stable order
 
 Keep active editing ahead of output and library operations. At the top level,
