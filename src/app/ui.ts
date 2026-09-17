@@ -2438,7 +2438,6 @@ export class Ui {
   private readonly xaosAddSource: HTMLSelectElement;
   private readonly xaosAddSourceSaved: HTMLOptGroupElement;
   private readonly xaosBalanceWeights: HTMLInputElement;
-  private readonly xaosAddBtn: HTMLButtonElement;
   private readonly xaosEditHint: HTMLElement;
   private readonly xaosLeakRows: HTMLElement;
   private readonly xaosMatrixNote: HTMLElement;
@@ -3220,7 +3219,6 @@ export class Ui {
     this.xaosAddSource = this.byId("xaosAddSource");
     this.xaosAddSourceSaved = this.byId("xaosAddSourceSaved");
     this.xaosBalanceWeights = this.byId("xaosBalanceWeights");
-    this.xaosAddBtn = this.byId("xaosAddBtn");
     this.xaosEditHint = this.byId("xaosEditHint");
     this.xaosLeakRows = this.byId("xaosLeakRows");
     this.xaosMatrixNote = this.byId("xaosMatrixNote");
@@ -3919,11 +3917,13 @@ export class Ui {
         !this.combineSystemsCheckbox.checked,
       );
     });
-    this.xaosAddBtn.addEventListener("click", () => {
+    this.xaosAddSource.addEventListener("change", () => {
+      if (!this.xaosAddSource.value) return;
       handlers.onXaosAddBlock(
         this.xaosAddSource.value,
         this.xaosBalanceWeights.checked,
       );
+      this.xaosAddSource.value = "";
     });
     this.surpriseBtn.addEventListener("click", () => handlers.onSurprise());
     this.driftBtn.addEventListener("click", () => handlers.onDriftToggle());

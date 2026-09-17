@@ -1181,7 +1181,7 @@ describe("Ui Hybrid schedule controls", () => {
 });
 
 describe("Ui Xaos add-as-block gesture", () => {
-  it("passes the picker's source and the checkbox's checked state to onXaosAddBlock", () => {
+  it("applies on select and resets the picker to its placeholder", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
@@ -1191,22 +1191,31 @@ describe("Ui Xaos add-as-block gesture", () => {
     ) as HTMLSelectElement;
     expect(source.closest("#presetSection")).not.toBeNull();
     expect(source.closest("#xaosSection")).toBeNull();
-    for (const id of ["xaosAddSource", "xaosBalanceWeights", "xaosAddBtn"]) {
+    for (const id of ["xaosAddSource", "xaosBalanceWeights"]) {
       expect(
         document.getElementById(id)?.getAttribute("aria-describedby"),
       ).toBe("xaosAddHint");
     }
-    source.value = "__duplicate";
-    source.dispatchEvent(new Event("change"));
-    expect(handlers.onXaosAddBlock).not.toHaveBeenCalled();
     (
       document.getElementById("xaosBalanceWeights") as HTMLInputElement
     ).checked = false;
-    document
-      .getElementById("xaosAddBtn")
-      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-
+    source.value = "__duplicate";
+    source.dispatchEvent(new Event("change"));
     expect(handlers.onXaosAddBlock).toHaveBeenCalledWith("__duplicate", false);
+    expect(source.value).toBe("");
+  });
+
+  it("ignores placeholder selection", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const source = document.getElementById(
+      "xaosAddSource",
+    ) as HTMLSelectElement;
+    source.value = "";
+    source.dispatchEvent(new Event("change"));
+    expect(handlers.onXaosAddBlock).not.toHaveBeenCalled();
   });
 
   it("labels the separate Workflow action and points back to Scene Xaos editing", () => {
