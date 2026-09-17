@@ -97,6 +97,7 @@ import {
 import {
   DIELECTRIC_ANCHOR_ENVELOPE_REL,
   DIELECTRIC_CROSSING_EPS_REL,
+  DIELECTRIC_DISTORTION_NORMAL_REL,
   DIELECTRIC_ENVIRONMENT_BOUND,
   DIELECTRIC_ERROR_BUDGET,
   DIELECTRIC_INITIAL_BRANCH_THETA,
@@ -8856,6 +8857,12 @@ struct TransportPath {
   anchorPad: u32,
   anchorPoint: vec3f,
   anchorPad2: u32,
+  // The transmitted child of an exit crossing — the only path whose
+  // terminal reads the rear scene through the glass, and the only one
+  // the optical distortion displaces (its origin at a terminal IS that
+  // exit point: the ray origin moves only at events). Every other child
+  // resets the flag, so a mirror view at a later entry never displaces.
+  exitPresent: u32,
 }
 
 struct TransportBoundary {
@@ -8945,6 +8952,25 @@ fn transportOpticalNormal(p: vec3f, dir: vec3f, eps: f32, li: u32) -> vec3f {
     e.yxy * surfaceDE(p + e.yxy * eps, 0.0, li) +
     e.xxx * surfaceDE(p + e.xxx * eps, 0.0, li);
   return select(-dir, normalize(grad), dot(grad, grad) > 1.0e-12);
+}
+
+// The optical distortion's SMOOTHED normal: the SAME tetrahedron-tap
+// discipline, at the coherent world-defined radius
+// (DIELECTRIC_DISTORTION_NORMAL_REL of the material's radius — ~20x the
+// declared crossing scale), independently of the fine visible surface
+// normal. Read over the SAME field the boundary query marches (the signed
+// closed-solid field when the backend is the closed-solid one, the
+// composed public estimator otherwise). A vanishing gradient returns the
+// zero vector — the displacement's applied flag turns that into the
+// deterministic straight terminal, never a guessed direction.
+fn transportSmoothedNormal(p: vec3f, tapR: f32, li: u32) -> vec3f {
+  let e = vec2f(1.0, -1.0) * 0.5773;
+  let grad = e.xyy * ${solidQuery ? "transportSolidField" : "surfaceDE"}(p + e.xyy * tapR${solidQuery ? "" : ", 0.0, li"}) +
+    e.yyx * ${solidQuery ? "transportSolidField" : "surfaceDE"}(p + e.yyx * tapR${solidQuery ? "" : ", 0.0, li"}) +
+    e.yxy * ${solidQuery ? "transportSolidField" : "surfaceDE"}(p + e.yxy * tapR${solidQuery ? "" : ", 0.0, li"}) +
+    e.xxx * ${solidQuery ? "transportSolidField" : "surfaceDE"}(p + e.xxx * tapR${solidQuery ? "" : ", 0.0, li"});
+  let m = length(grad);
+  return select(vec3f(0.0), grad / m, m > 1.0e-12);
 }
 
 ${
@@ -9180,6 +9206,7 @@ fn transportTrace(
   absorb: vec3f,
   bg: vec3f,
   li: u32,
+  distortion: f32,
 ) -> TransportTrace {
   var out: TransportTrace;
   out.radiance = vec3f(0.0);
@@ -9209,6 +9236,7 @@ fn transportTrace(
   refl0.anchorPad = 0u;
   refl0.anchorPoint = origin;
   refl0.anchorPad2 = 0u;
+  refl0.exitPresent = 0u;
   refl0.bound = transportChildBound(refl0.energy);
   var refr0: TransportPath;
   refr0.origin = origin;
@@ -9220,6 +9248,7 @@ fn transportTrace(
   refr0.anchorPad = 0u;
   refr0.anchorPoint = origin;
   refr0.anchorPad2 = 0u;
+  refr0.exitPresent = 0u;
   refr0.bound = transportChildBound(refr0.energy);
   // Push the stronger child first (the oracle's order) so the weaker
   // actual-throughput child is processed first — with the oracle's cut
@@ -9294,7 +9323,44 @@ fn transportTrace(
         out.failure = TRANSPORT_FAILURE_INSIDE_MISS;
         break;
       }
-      let rear = transportRearRadiance(path.origin, path.dir, bg, li);
+      // The rear seam, displaced by the optical distortion when this path
+      // read the rear scene THROUGH the glass (exitPresent — the
+      // transmitted child of an exit crossing, whose origin here IS that
+      // exit point). The origin-only displacement is the parallel slab's
+      // exact ray-space reading: the direction is unchanged, so the
+      // direction-only background is shift-invariant and the structured
+      // plane terminal carries the bend. The front Fresnel split rides the
+      // energy and is never touched; the geometry queries never saw the
+      // displacement. Every fallback is the deterministic straight
+      // terminal: zero distortion, a vanishing smoothed normal, a
+      // degenerate tangent (the emitted fn's applied flag).
+      var rearOrigin = path.origin;
+      if (path.exitPresent == 1u && distortion > 0.0) {
+        let nS = transportSmoothedNormal(
+          path.origin,
+          ${DIELECTRIC_DISTORTION_NORMAL_REL} * radius,
+          li,
+        );
+        let disp = dielectricSlabDisplacement(
+          path.dir[0],
+          path.dir[1],
+          path.dir[2],
+          nS[0],
+          nS[1],
+          nS[2],
+          ior,
+          distortion * radius,
+          distortion * radius,
+        );
+        if (disp[3] > 0.5) {
+          rearOrigin = vec3f(
+            path.origin[0] + disp[0],
+            path.origin[1] + disp[1],
+            path.origin[2] + disp[2],
+          );
+        }
+      }
+      let rear = transportRearRadiance(rearOrigin, path.dir, bg, li);
       radiance = radiance + rear * path.energy;
       if (any(radiance != radiance) || any(abs(radiance) > vec3f(3.0e38))) {
         out.status = TRANSPORT_STATUS_INVALID;
@@ -9332,6 +9398,7 @@ fn transportTrace(
       child.anchorPad = 0u;
       child.anchorPoint = childOrigin;
       child.anchorPad2 = 0u;
+      child.exitPresent = 0u;
       child.bound = transportChildBound(energy);
       if (transportPushCut(child, theta)) {
         residual = residual + child.bound;
@@ -9356,6 +9423,10 @@ fn transportTrace(
       trans.anchorPad = 0u;
       trans.anchorPoint = childOrigin;
       trans.anchorPad2 = 0u;
+      // Only the transmitted child of an EXIT crossing reads the rear
+      // scene through the glass; every other child resets the flag, so a
+      // mirror view at a later entry never displaces.
+      trans.exitPresent = select(0u, 1u, path.inside == 1u);
       trans.bound = transportChildBound(trans.energy);
       var refl: TransportPath;
       refl.origin = childOrigin;
@@ -9367,6 +9438,7 @@ fn transportTrace(
       refl.anchorPad = 0u;
       refl.anchorPoint = childOrigin;
       refl.anchorPad2 = 0u;
+      refl.exitPresent = 0u;
       refl.bound = transportChildBound(refl.energy);
       // Push the stronger child first, so the weaker actual-throughput
       // child is processed first; Fresnel is not assumed below 0.5.
@@ -9464,9 +9536,10 @@ fn transportRays(
   let ior = lane0[0];
   let radius = lane0[1];
   let absorb = vec3f(lane0[2], lane0[3], lane1[0]);
+  let distortion = lane1[1];
   let replayPass = u32(shade.transport[0]);
   let theta = dielectricReplayTheta(f32(replayPass), TRANSPORT_INITIAL_THETA);
-  let traced = transportTrace(pos, rd, theta, ior, radius, absorb, bg, li);
+  let traced = transportTrace(pos, rd, theta, ior, radius, absorb, bg, li, distortion);
   if (traced.status == TRANSPORT_STATUS_INVALID) {
     // Never retried, never presented as background: black, disclosed by
     // the frame's invalid count.

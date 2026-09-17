@@ -3014,3 +3014,55 @@ describe("the 4D closed-solid floor corridor (the straight shadow visibility spl
     );
   });
 });
+
+describe("the optical distortion's terminal splice (the 4D twin)", () => {
+  it("carries the shared transport text's distortion splice — one text, both dimensions", () => {
+    const src = surface4FragmentResolvedFor(
+      0,
+      0,
+      0,
+      0,
+      [COND4_SPHERE],
+      0,
+      0,
+      null,
+      0,
+      0,
+      1,
+      1,
+    );
+    // The SAME shared markers the 3D suite pins: the emitted body's fn,
+    // the smoothed field picking the signed field, the terminal branch,
+    // and the lane word at the call site.
+    expect(src).toContain("vec4 dielectricSlabDisplacement(float dx");
+    expect(src).toContain("float transportSmoothedField(vec3 p) {");
+    expect(src).toContain("return transportSolidField(p);");
+    expect(src).toContain("if (path.exitPresent == 1 && distortion > 0.0) {");
+    expect(src).toContain("float distortionO = opticsLane1.y;");
+    // And the emitted body is spliced exactly once.
+    const body = dielectricOpticsSource("glsl");
+    const bodyAt = src.indexOf(body);
+    expect(bodyAt).toBeGreaterThanOrEqual(0);
+    expect(src.indexOf(body, bodyAt + body.length)).toBe(-1);
+  });
+
+  it("keeps the optics-off 4D program free of the distortion splice", () => {
+    const src = surface4FragmentResolvedFor(
+      0,
+      1,
+      0,
+      0,
+      null,
+      0,
+      0,
+      null,
+      0,
+      0,
+      0,
+      0,
+    );
+    expect(src).not.toContain("dielectricSlabDisplacement");
+    expect(src).not.toContain("transportSmoothedNormal");
+    expect(src).not.toContain("exitPresent");
+  });
+});

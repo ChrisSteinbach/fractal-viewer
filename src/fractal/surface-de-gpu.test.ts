@@ -10427,3 +10427,69 @@ describe("the closed-solid floor corridor's straight shadow visibility", () => {
     expect(shade.indexOf(opticsBody, bodyAt + opticsBody.length)).toBe(-1);
   });
 });
+
+describe("the optical distortion's terminal splice", () => {
+  const opticsOpts = (
+    backend: "estimator" | "closedSolid",
+  ): SurfaceGpuKernelOptions =>
+    kernelOpts({
+      mode: "shade",
+      core: "affine",
+      width: 4,
+      optics: true,
+      ...(backend === "closedSolid"
+        ? {
+            opticsBackend: "closedSolid" as const,
+            condensation: {
+              mapCount: 0,
+              emitters: [{ shape: CONDENSATION_SPHERE, shadeIndex: 0 }],
+            },
+          }
+        : {}),
+    });
+
+  it("splices the smoothed normal, the slab displacement and the terminal branch under both backends", () => {
+    for (const backend of ["estimator", "closedSolid"] as const) {
+      const shade = surfaceDeKernelWgsl(opticsOpts(backend));
+      // The emitted body's displacement fn is spliced once.
+      const body = dielectricOpticsSource("wgsl");
+      const bodyAt = shade.indexOf(body);
+      expect(bodyAt).toBeGreaterThanOrEqual(0);
+      expect(shade.indexOf(body, bodyAt + body.length)).toBe(-1);
+      expect(shade).toContain("fn dielectricSlabDisplacement("); // The smoothed normal taps the backend's own field.
+      expect(shade).toContain(
+        "fn transportSmoothedNormal(p: vec3f, tapR: f32, li: u32) -> vec3f {",
+      );
+      if (backend === "closedSolid") {
+        expect(shade).toContain("* transportSolidField(p + e.xyy * tapR)");
+      } else {
+        expect(shade).toContain("* surfaceDE(p + e.xyy * tapR, 0.0, li)");
+      }
+      // The terminal branch reads the lane's distortion word and passes it
+      // through the trace.
+      expect(shade).toContain("let distortion = lane1[1];");
+      expect(shade).toContain(
+        "let traced = transportTrace(pos, rd, theta, ior, radius, absorb, bg, li, distortion);",
+      );
+      expect(shade).toContain(
+        "if (path.exitPresent == 1u && distortion > 0.0) {",
+      );
+      // The exit flag: only the transmitted child of an exit crossing sets it.
+      expect(shade).toContain(
+        "trans.exitPresent = select(0u, 1u, path.inside == 1u);",
+      );
+      expect(shade).toContain("refl.exitPresent = 0u;");
+      expect(shade).toContain("child.exitPresent = 0u;");
+    }
+  });
+
+  it("keeps the classic kernel free of the distortion splice — optics off, no text", () => {
+    const classic = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "affine", width: 4 }),
+    );
+    expect(classic).not.toContain("dielectricSlabDisplacement");
+    expect(classic).not.toContain("transportSmoothedNormal");
+    expect(classic).not.toContain("exitPresent");
+    expect(classic).not.toContain("lane1[1]");
+  });
+});

@@ -130,6 +130,159 @@ export const DIELECTRIC_QUERY_MAX_STEPS = 192;
 export const DIELECTRIC_ANCHOR_ENVELOPE_REL = 4;
 
 /**
+ * The optical distortion's SMOOTHED normal tap radius, as a fraction of the
+ * optical material's radius — the coherence lesson of the qualified bend
+ * study: the displacement's normal is sampled with the same tetrahedron-tap
+ * discipline as the crossing normal, at a LARGER, world-defined scale
+ * (~20× the declared crossing scale), independently of the fine visible
+ * surface normal. World-defined, so the displacement is stable under zoom,
+ * raster and rotor/slice motion. The value is the study's experimental
+ * figure, qualified by this task's straight-vs-distorted panels; reversible
+ * with its evidence.
+ */
+export const DIELECTRIC_DISTORTION_NORMAL_REL = 0.04;
+
+/**
+ * The virtual parallel slab's lateral displacement — the accepted bounded
+ * distortion model (`docs/surface-transmission-revision.md`, the world-space
+ * displacement contract): the difference between straight and refracted
+ * intersections with a virtual plane parallel to the smoothed optical
+ * normal, represented directly in the incident tangent plane, then smoothly
+ * saturated in world units. The transported ray's DIRECTION is unchanged —
+ * a parallel slab translates the emergent ray without bending it, so the
+ * direction-only background terminal is shift-invariant (exactly unbent)
+ * and the structured rear terminals carry the cue. The displacement has no
+ * interface-normal component and never advances along the incident ray (its
+ * direction dot is ≤ 0): it cannot fabricate nearer geometry.
+ *
+ * Inputs are the unit incident direction, the interface normal in EITHER
+ * orientation (self-correcting: flipped to face the ray), the interior IOR,
+ * the virtual slab thickness and the smooth world-space bound on the
+ * displacement — the task ties the bound to the thickness, so the lateral
+ * offset never exceeds the authored slab. Zero IOR-1/thickness/bound, a
+ * zero-length normal or a degenerate tangent (normal incidence) produce no
+ * displacement — the deterministic fallback, never a NaN. Grazing incidence
+ * saturates smoothly (`maxOffset · tanh(raw/maxOffset)`, the tanh argument
+ * clamped at 40 — tanh(40) is 1 to f64 precision and exactly 1 in f32, so
+ * the three dialects agree). The f64 arithmetic is the bend study's,
+ * verbatim; the emitted `js` dialect executes it bit-identically (the test
+ * pin), and the shader dialects are token renames.
+ */
+export interface DielectricSlabDisplacement {
+  delta: Vec3;
+  applied: boolean;
+  /** The unbounded magnitude, for diagnostics. */
+  rawMagnitude: number;
+  limited: boolean;
+}
+
+export function dielectricSlabDisplacement(
+  direction: Vec3,
+  normal: Vec3,
+  ior: number,
+  thickness: number,
+  maxOffset: number,
+): DielectricSlabDisplacement {
+  if (
+    ![...direction, ...normal, ior, thickness, maxOffset].every(
+      Number.isFinite,
+    ) ||
+    !(ior >= 1) ||
+    !(thickness >= 0) ||
+    !(maxOffset >= 0)
+  )
+    throw new Error(
+      "Virtual slab requires finite nonnegative dimensions and IOR >= 1",
+    );
+  const dirLength = Math.hypot(...direction);
+  const normalLength = Math.hypot(...normal);
+  const zero: DielectricSlabDisplacement = {
+    delta: [0, 0, 0],
+    applied: false,
+    rawMagnitude: 0,
+    limited: false,
+  };
+  if (
+    !(dirLength > 0) ||
+    !(normalLength > 0) ||
+    ior === 1 ||
+    thickness === 0 ||
+    maxOffset === 0
+  )
+    return zero;
+  const rd = direction.map((value) => value / dirLength) as Vec3;
+  let n = normal.map((value) => value / normalLength) as Vec3;
+  if (rd[0] * n[0] + rd[1] * n[1] + rd[2] * n[2] > 0) n = [-n[0], -n[1], -n[2]];
+  const cosI = Math.max(
+    0,
+    Math.min(1, -(rd[0] * n[0] + rd[1] * n[1] + rd[2] * n[2])),
+  );
+  const tangent: Vec3 = [
+    rd[0] + cosI * n[0],
+    rd[1] + cosI * n[1],
+    rd[2] + cosI * n[2],
+  ];
+  const tangentMagnitude = Math.hypot(...tangent);
+  if (!(tangentMagnitude > 1.0e-12)) return zero;
+  const eta = 1 / ior;
+  const cosT = Math.sqrt(Math.max(0, 1 - eta * eta * (1 - cosI * cosI)));
+  const coefficient = cosI > 0 ? eta / cosT - 1 / cosI : -1.0e30;
+  const rawMagnitude = Math.abs(coefficient) * thickness * tangentMagnitude;
+  const tanhArg = Math.min(rawMagnitude / maxOffset, 40);
+  const boundedMagnitude = maxOffset * Math.tanh(tanhArg);
+  const sign = coefficient < 0 ? -1 : 1;
+  const delta = tangent.map(
+    (value) => (sign * boundedMagnitude * value) / tangentMagnitude,
+  ) as Vec3;
+  return {
+    delta,
+    applied: true,
+    rawMagnitude,
+    limited: rawMagnitude > maxOffset,
+  };
+}
+
+/**
+ * The optical distortion's SMOOTHED normal: the displayed field's gradient
+ * by the transport's own tetrahedron taps, at the
+ * {@link DIELECTRIC_DISTORTION_NORMAL_REL} scale — the same four-tap
+ * discipline the crossing normals use, at the coherent radius. Returns
+ * `null` — the deterministic fallback, no displacement — on a vanishing
+ * gradient or any non-finite tap; never an unnormalised or guessed vector.
+ */
+export function dielectricSmoothedNormal(
+  field: (p: Vec3) => number,
+  p: Vec3,
+  tapRadius: number,
+): Vec3 | null {
+  if (!Number.isFinite(tapRadius) || !(tapRadius > 0)) return null;
+  const e = 0.5773;
+  const taps: Vec3[] = [
+    [e, -e, -e],
+    [-e, -e, e],
+    [-e, e, -e],
+    [e, e, e],
+  ];
+  let gx = 0;
+  let gy = 0;
+  let gz = 0;
+  for (const tap of taps) {
+    const value = field([
+      p[0] + tap[0] * tapRadius,
+      p[1] + tap[1] * tapRadius,
+      p[2] + tap[2] * tapRadius,
+    ]);
+    if (!Number.isFinite(value)) return null;
+    gx += tap[0] * value;
+    gy += tap[1] * value;
+    gz += tap[2] * value;
+  }
+  const m = Math.hypot(gx, gy, gz);
+  if (!(m > 1.0e-12)) return null;
+  return [gx / m, gy / m, gz / m];
+}
+
+/**
  * Snell refraction with total internal reflection; `outwardNormal` points
  * from the incident medium toward the other one. Returns the unit refracted
  * direction, or — when `sinT2 > 1` — the reflected direction with `tir` set.
@@ -409,18 +562,30 @@ export interface DielectricScene {
   rearRadiance(origin: Vec3, direction: Vec3): Vec3;
   /** Upper bound on any `rearRadiance` output; multiplies every branch bound. */
   radianceBound: number;
+  /**
+   * The displayed object's own field — the same function `nextBoundary`
+   * marches (the signed closed-solid field, or the composed estimator) —
+   * exposed for the optical distortion's SMOOTHED normal taps. Optional: a
+   * scene that does not provide one never displaces (the deterministic
+   * straight-terminal fallback), never a guessed normal.
+   */
+  opticalField?: (p: Vec3) => number;
 }
 
 /**
  * The optical material: interior IOR (the exterior is 1), per-channel
  * absorption, and the radius absorption is authored per. The qualified
  * appearance is {@link DIELECTRIC_IOR}, {@link DIELECTRIC_ABSORPTION} and the
- * solid's half extent.
+ * solid's half extent. `distortion` (absent ⇒ 0 — straight transmission,
+ * byte-identically) is the restrained virtual-slab thickness as a
+ * DIMENSIONLESS MULTIPLIER of `radius`; the smooth displacement bound is
+ * tied to it, so the lateral offset never exceeds the authored slab.
  */
 export interface DielectricMaterial {
   ior: number;
   absorption: Vec3;
   radius: number;
+  distortion?: number;
 }
 
 export interface DielectricTransportLimits {
@@ -433,7 +598,13 @@ export interface DielectricTransportLimits {
  * One live path: the continuation payload. `origin`/`direction` are displayed
  * 3D; `throughput` is linear energy; `anchor` (when present) is the canonical
  * boundary state the next query must use in preference to the rounded
- * displayed origin; `bound` is the cached contribution bound.
+ * displayed origin; `bound` is the cached contribution bound. `exited` marks
+ * the transmitted child of an exit crossing — the only path whose terminal
+ * reads the rear scene through the glass, and the only one the optical
+ * distortion displaces. Its `origin` at a terminal IS that exit point (the
+ * ray origin moves only at events), so the exit anchor is the origin
+ * itself; every other child resets the flag, so a mirror view at a later
+ * entry never displaces.
  */
 export interface DielectricPath {
   origin: Vec3;
@@ -443,6 +614,7 @@ export interface DielectricPath {
   interfaces: number;
   anchor: DielectricAnchor | null;
   bound: number;
+  exited: boolean;
 }
 
 export type DielectricTraceStatus =
@@ -510,10 +682,16 @@ function validateMaterial(material: DielectricMaterial): void {
     !(material.ior > 0) ||
     !Number.isFinite(material.radius) ||
     !(material.radius > 0) ||
-    !material.absorption.every((value) => Number.isFinite(value) && value >= 0)
+    !material.absorption.every(
+      (value) => Number.isFinite(value) && value >= 0,
+    ) ||
+    !(
+      material.distortion === undefined ||
+      (Number.isFinite(material.distortion) && material.distortion >= 0)
+    )
   )
     throw new Error(
-      "Dielectric material needs a positive IOR/radius and finite non-negative absorption",
+      "Dielectric material needs a positive IOR/radius and finite non-negative absorption/distortion",
     );
 }
 
@@ -555,6 +733,7 @@ export function dielectricTraceStart(
         interfaces: 0,
         anchor: null,
         bound: dielectricBranchBound(throughput, scene.radianceBound),
+        exited: false,
       },
     ],
     radiance: [0, 0, 0],
@@ -654,7 +833,44 @@ export function dielectricTraceStep(
         guard(state, path, { kind: "inside-miss" });
         return state;
       }
-      const rear = scene.rearRadiance(path.origin, path.direction);
+      // The rear seam, displaced by the optical distortion when this path
+      // read the rear scene THROUGH the glass (`exited` — the transmitted
+      // child of an exit crossing, whose origin here IS that exit point).
+      // The origin-only displacement is the parallel slab's exact ray-space
+      // reading: the direction is unchanged, so the direction-only
+      // background is shift-invariant and the structured plane terminal
+      // carries the bend. The front Fresnel split rides the throughput and
+      // is never touched; the geometry queries never saw the displacement.
+      // Every fallback is the deterministic straight terminal: zero or
+      // absent distortion, a scene without a field, a vanishing smoothed
+      // normal, a degenerate tangent.
+      let rearOrigin = path.origin;
+      const distortion = material.distortion ?? 0;
+      if (distortion > 0 && path.exited && scene.opticalField) {
+        const smoothed = dielectricSmoothedNormal(
+          scene.opticalField,
+          path.origin,
+          DIELECTRIC_DISTORTION_NORMAL_REL * material.radius,
+        );
+        if (smoothed) {
+          const thickness = distortion * material.radius;
+          const disp = dielectricSlabDisplacement(
+            path.direction,
+            smoothed,
+            material.ior,
+            thickness,
+            thickness,
+          );
+          if (disp.applied) {
+            rearOrigin = [
+              path.origin[0] + disp.delta[0],
+              path.origin[1] + disp.delta[1],
+              path.origin[2] + disp.delta[2],
+            ];
+          }
+        }
+      }
+      const rear = scene.rearRadiance(rearOrigin, path.direction);
       addRadiance(state, [
         rear[0] * path.throughput[0],
         rear[1] * path.throughput[1],
@@ -703,6 +919,7 @@ export function dielectricTraceStep(
       childEnergy: Vec3,
       direction: Vec3,
       inside: boolean,
+      exited: boolean,
     ): DielectricPath => ({
       origin: childOrigin,
       direction,
@@ -711,10 +928,13 @@ export function dielectricTraceStep(
       interfaces: path.interfaces + 1,
       anchor: result.anchor,
       bound: dielectricBranchBound(childEnergy, scene.radianceBound),
+      exited,
     });
     if (bend.tir) {
       // One child, full (Beer-damped) energy, same medium.
-      if (!pushChild(state, makeChild(energy, bend.direction, path.inside)))
+      if (
+        !pushChild(state, makeChild(energy, bend.direction, path.inside, false))
+      )
         return state;
       continue;
     }
@@ -723,6 +943,10 @@ export function dielectricTraceStep(
       [energy[0] * (1 - f), energy[1] * (1 - f), energy[2] * (1 - f)],
       bend.direction,
       result.entering,
+      // Only the transmitted child of an EXIT crossing reads the rear
+      // scene through the glass; every other child resets the flag, so
+      // a mirror view at a later entry never displaces.
+      path.inside && !result.entering,
     );
     const reflected = makeChild(
       [energy[0] * f, energy[1] * f, energy[2] * f],
@@ -732,6 +956,7 @@ export function dielectricTraceStep(
         path.direction[2] - 2 * dot * n[2],
       ],
       path.inside,
+      false,
     );
     // Push the stronger child first so the weaker actual-throughput child is
     // processed first; Fresnel is not assumed below 0.5.
@@ -795,16 +1020,19 @@ export function dielectricSampleAccepted(
 }
 
 /**
- * The emitted optics body: ONE shared math text for the five scalar-optics
+ * The emitted optics body: ONE shared math text for the six scalar-optics
  * functions the backends need ({@link dielectricFresnel},
  * {@link dielectricRefract}, {@link dielectricBeerThroughput},
- * {@link dielectricReplayTheta}, {@link dielectricBranchBound}), emitted in
- * the GLSL, WGSL and `js` dialects. The GLSL and WGSL bodies are token
- * renames of each other; the `js` dialect executes bit-identically to the f64
- * oracle functions above (that identity is the test pin — `Math.hypot`
- * carries the oracle's length arithmetic where the shader text spells the
- * sqrt form). `dielectricRefract` takes eight scalars and returns the
- * direction with the TIR flag in `w`, so no dialect needs vector operators.
+ * {@link dielectricReplayTheta}, {@link dielectricBranchBound},
+ * {@link dielectricSlabDisplacement}), emitted in the GLSL, WGSL and `js`
+ * dialects. The GLSL and WGSL bodies are token renames of each other; the
+ * `js` dialect executes bit-identically to the f64 oracle functions above
+ * (that identity is the test pin — `Math.hypot` carries the oracle's length
+ * arithmetic where the shader text spells the sqrt form). `dielectricRefract`
+ * takes eight scalars and returns the direction with the TIR flag in `w`, so
+ * no dialect needs vector operators; `dielectricSlabDisplacement` returns
+ * the lateral offset with the applied flag in `w` (0 — the deterministic
+ * straight terminal — on every zero/degenerate guard).
  *
  * The shader text performs NO input validation (a shader cannot throw): the
  * f64 oracle validates, and shader callers are contract-bound to finite
@@ -821,6 +1049,7 @@ export function dielectricOpticsSource(
   const js = dialect === "js";
   const wgsl = dialect === "wgsl";
   const decl = js ? "const " : wgsl ? "let " : "float ";
+  const mutDecl = js ? "let " : wgsl ? "var " : "float ";
   const param = (name: string) =>
     js ? name : wgsl ? `${name}: f32` : `float ${name}`;
   const fn = (name: string, params: string[], ret: string) =>
@@ -831,6 +1060,12 @@ export function dielectricOpticsSource(
         : `${ret} ${name}(${params.map(param).join(", ")}) {`;
   const max = (a: string, b: string) =>
     js ? `Math.max(${a}, ${b})` : `max(${a}, ${b})`;
+  const min = (a: string, b: string) =>
+    js ? `Math.min(${a}, ${b})` : `min(${a}, ${b})`;
+  const abs = (x: string) => (js ? `Math.abs(${x})` : `abs(${x})`);
+  const tanh = (x: string) => (js ? `Math.tanh(${x})` : `tanh(${x})`);
+  const clamp = (x: string, lo: string, hi: string) =>
+    js ? `Math.min(Math.max(${x}, ${lo}), ${hi})` : `clamp(${x}, ${lo}, ${hi})`;
   const sqrt = (x: string) => (js ? `Math.sqrt(${x})` : `sqrt(${x})`);
   const exp = (x: string) => (js ? `Math.exp(${x})` : `exp(${x})`);
   const exp2 = (x: string) => (js ? `Math.pow(2.0, ${x})` : `exp2(${x})`);
@@ -919,6 +1154,57 @@ export function dielectricOpticsSource(
       js ? "" : wgsl ? "f32" : "float",
     ),
     `  return ${max(max("r", "g"), "b")} * radianceBound;`,
+    "}",
+  );
+  lines.push(
+    fn(
+      "dielectricSlabDisplacement",
+      ["dx", "dy", "dz", "nx", "ny", "nz", "ior", "thickness", "maxOffset"],
+      js ? "" : wgsl ? "vec4f" : "vec4",
+    ),
+    // The accepted virtual-slab displacement (the module doc): scalar form
+    // of dielectricSlabDisplacement — the js dialect executes the f64
+    // oracle bit-identically; the shader dialects are token renames. The
+    // shader text performs NO validation (callers are contract-bound to
+    // finite inputs); the zero-normal/degenerate-tangent/zero-knob guards
+    // return applied = 0 — the deterministic straight terminal.
+    `${decl}iLen = ${len3("dx", "dy", "dz")};`,
+    `${decl}nLen = ${len3("nx", "ny", "nz")};`,
+    `  if (iLen <= 0.0 || nLen <= 0.0 || ior == 1.0 || thickness == 0.0 || maxOffset == 0.0) {`,
+    `    return ${vec4("0.0", "0.0", "0.0", "0.0")};`,
+    `  }`,
+    `${decl}rdx = dx / iLen; ${decl}rdy = dy / iLen; ${decl}rdz = dz / iLen;`,
+    `${decl}wx = nx / nLen; ${decl}wy = ny / nLen; ${decl}wz = nz / nLen;`,
+    `${decl}c0 = rdx*wx + rdy*wy + rdz*wz;`,
+    `${decl}b = 1.0 - ${step("0.0", "c0")};`,
+    `${decl}ax = ${mix("-wx", "wx", "b")}; ${decl}ay = ${mix("-wy", "wy", "b")}; ${decl}az = ${mix("-wz", "wz", "b")};`,
+    `${decl}cosI = ${clamp("-(rdx*ax + rdy*ay + rdz*az)", "0.0", "1.0")};`,
+    `${decl}tx = rdx + cosI*ax; ${decl}ty = rdy + cosI*ay; ${decl}tz = rdz + cosI*az;`,
+    `${decl}tMag = ${len3("tx", "ty", "tz")};`,
+    `  if (tMag <= 1.0e-12) {`,
+    `    return ${vec4("0.0", "0.0", "0.0", "0.0")};`,
+    `  }`,
+    `${decl}eta = 1.0 / ior;`,
+    `${decl}cosT = ${sqrt(max("0.0", "1.0 - eta*eta*(1.0 - cosI*cosI)"))};`,
+    // Branch-free canon: the WGSL dialect forbids the ternary, so the
+    // two selections are guarded statements — token-identical across the
+    // three dialects, bit-identical to the f64 oracle in js.
+    `${mutDecl}coef = eta / cosT - 1.0 / cosI;`,
+    "  if (cosI <= 0.0) {",
+    "    coef = -1.0e30;",
+    "  }",
+    `${decl}raw = ${abs("coef")} * thickness * tMag;`,
+    `${decl}bounded = maxOffset * ${tanh(min("raw / maxOffset", "40.0"))};`,
+    `${mutDecl}s = 1.0;`,
+    "  if (coef < 0.0) {",
+    "    s = -1.0;",
+    "  }",
+    `  return ${vec4(
+      "s * bounded * tx / tMag",
+      "s * bounded * ty / tMag",
+      "s * bounded * tz / tMag",
+      "1.0",
+    )};`,
     "}",
   );
   return lines.join("\n") + "\n";

@@ -6656,3 +6656,95 @@ describe("the closed-solid floor corridor (the straight shadow visibility splice
     );
   });
 });
+
+describe("the optical distortion's terminal splice (the GLSL twins)", () => {
+  /** An emitter-only condensation union's shapes — the closed-solid
+   * admission the backend serves. */
+  const emitterShapes: readonly ShapeSpec[] = [
+    {
+      parts: [
+        { primitive: { kind: "box", half: [0.3, 0.3, 0.3] }, combine: "union" },
+      ],
+    },
+  ];
+
+  it("splices the smoothed normal, the slab displacement and the terminal branch under both backends", () => {
+    for (const [optics, backend, cond] of [
+      [1, 0, null],
+      [1, 1, emitterShapes],
+    ] as const) {
+      const src = surfaceFragmentResolvedFor(
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        cond,
+        false,
+        0,
+        0,
+        0,
+        null,
+        0,
+        0,
+        0,
+        optics,
+        backend,
+      );
+      // The emitted body's displacement fn is spliced once — the shared
+      // early splice's own count rule.
+      const body = dielectricOpticsSource("glsl");
+      const bodyAt = src.indexOf(body);
+      expect(bodyAt).toBeGreaterThanOrEqual(0);
+      expect(src.indexOf(body, bodyAt + body.length)).toBe(-1);
+      expect(src).toContain("vec4 dielectricSlabDisplacement(float dx");
+      // The smoothed normal taps the backend's own field.
+      expect(src).toContain("float transportSmoothedField(vec3 p) {");
+      if (backend === 1) {
+        expect(src).toContain("return transportSolidField(p);");
+      } else {
+        expect(src).toContain("return surfaceDE(p, 0.0);");
+      }
+      // The terminal branch reads the lane's distortion word and the trace
+      // call passes it through.
+      expect(src).toContain("float distortionO = opticsLane1.y;");
+      expect(src).toContain("background,\n          distortionO");
+      expect(src).toContain("if (path.exitPresent == 1 && distortion > 0.0) {");
+      expect(src).toContain("trans.exitPresent = path.inside;");
+      expect(src).toContain("refl.exitPresent = 0;");
+    }
+  });
+
+  it("keeps the optics-off program free of the distortion splice", () => {
+    const src = surfaceFragmentResolvedFor(
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      undefined,
+      null,
+      null,
+      false,
+      0,
+      0,
+      0,
+      null,
+      0,
+      0,
+      0,
+      0,
+      0,
+    );
+    expect(src).not.toContain("dielectricSlabDisplacement");
+    expect(src).not.toContain("transportSmoothedNormal");
+    expect(src).not.toContain("exitPresent");
+    expect(src).not.toContain("opticsLane1.y");
+  });
+});

@@ -134,6 +134,7 @@ describe("unified surface material wire", () => {
       ior: 1.45,
       absorption: [0.17, 0.055, 0.025],
       radius: 1,
+      distortion: 0,
     });
     // A finish/pattern session is untouched by the third gate's arithmetic.
     expect(

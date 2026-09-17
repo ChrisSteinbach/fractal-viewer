@@ -298,8 +298,9 @@ export function surfaceMaterialLanes(
  * whose bytes this feature never touches.
  *
  * Lane 0 = (ior, radius, absorption.r, absorption.g); lane 1 =
- * (absorption.b, reserved, reserved, reserved). The three reserved words
- * belong to the restrained distortion task (one authored word there) and
+ * (absorption.b, distortion, reserved, reserved). The distortion word is
+ * the restrained virtual slab's thickness multiplier (zero = the straight
+ * state byte-identically); the two remaining reserved words belong to
  * future approved fields — appends inside the frozen stride, never a
  * relayout. `null` when the slot resolves no optics: the whole buffer is
  * then absent (zero-stride pad, like the maps packers), the classic
@@ -312,6 +313,6 @@ export function surfaceMaterialOpticsLanes(
   if (!optics) return null;
   return [
     [optics.ior, optics.radius, optics.absorption[0], optics.absorption[1]],
-    [optics.absorption[2], 0, 0, 0],
+    [optics.absorption[2], optics.distortion, 0, 0],
   ];
 }

@@ -303,7 +303,12 @@ describe("surfaceSlotMaterials", () => {
         {
           finish: CLASSIC_SURFACE_FINISH,
           pattern: CLASSIC_SURFACE_MATERIAL.pattern,
-          optics: { ior: 1.45, absorption: [0.17, 0.055, 0.025], radius: 8 },
+          optics: {
+            ior: 1.45,
+            absorption: [0.17, 0.055, 0.025],
+            radius: 8,
+            distortion: 0,
+          },
         },
         {
           finish: CLASSIC_SURFACE_FINISH,

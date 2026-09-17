@@ -33,6 +33,7 @@ import type {
 } from "./sphere-inversion";
 import { SURFACE_FINISH_SHININESS_FLOOR } from "./surface-finish";
 import {
+  SURFACE_OPTICS_DISTORTION_CEILING,
   SURFACE_OPTICS_SCALE_CEILING,
   SURFACE_OPTICS_SCALE_FLOOR,
 } from "./surface-optics";
@@ -972,7 +973,10 @@ function jitterSurfacePattern(
  * absent — an optics block never materializes on a map that lacks one, the
  * mutation-grid rule), and the model field — a discrete selection, not a
  * continuous knob — rides through untouched. `scale` jitters
- * multiplicatively into the resolver's own band. */
+ * multiplicatively into the resolver's own band; `distortion` likewise,
+ * into its own band (a present zero stays zero — multiplicative jitter
+ * never crosses it, so the straight state never gains a bend it was not
+ * authored with). */
 function jitterSurfaceOptics(
   rng: Rng,
   base: SurfaceOptics,
@@ -989,6 +993,18 @@ function jitterSurfaceOptics(
         ),
       SURFACE_OPTICS_SCALE_FLOOR,
       SURFACE_OPTICS_SCALE_CEILING,
+    );
+  }
+  if (base.distortion !== undefined) {
+    optics.distortion = clamp(
+      base.distortion *
+        uniform(
+          rng,
+          1 - SURFACE_OPTICS_SCALE_JITTER_HALF_RANGE * spread,
+          1 + SURFACE_OPTICS_SCALE_JITTER_HALF_RANGE * spread,
+        ),
+      0,
+      SURFACE_OPTICS_DISTORTION_CEILING,
     );
   }
   return optics;

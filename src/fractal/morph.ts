@@ -813,13 +813,14 @@ function lerpSurfacePattern(
  * rule without the strength fade, because the transport has no per-slot
  * weight to fade): the model is DISCRETE, so its boundary must be defined —
  * same model on both sides (including both absent) lerps `scale`
- * continuously through the default-1 fallback (absent on one side morphs
- * 1 <-> authored, endpoint-exact, sparse when both sides omit it); a model
- * CHANGE is a different optical object with no meaningful midpoint, so the
- * whole block pops at t = 0.5 — the pattern's own family-change rule, minus
- * the strength ramp it has and optics has no use for. Both sides absent
- * stays absent (never a synthesized block); endpoints are exact by
- * {@link lerpSystem}'s by-reference returns.
+ * continuously through the default-1 fallback and `distortion` through the
+ * default-0 fallback (the straight state — absent on one side morphs
+ * default <-> authored, endpoint-exact, sparse when both sides omit it); a
+ * model CHANGE is a different optical object with no meaningful midpoint,
+ * so the whole block pops at t = 0.5 — the pattern's own family-change
+ * rule, minus the strength ramp it has and optics has no use for. Both
+ * sides absent stays absent (never a synthesized block); endpoints are
+ * exact by {@link lerpSystem}'s by-reference returns.
  */
 function lerpSurfaceOptics(
   a: SurfaceOptics | undefined,
@@ -833,6 +834,8 @@ function lerpSurfaceOptics(
   const result: SurfaceOptics = { model: a!.model };
   const scale = lerpOptional(a?.scale, b?.scale, 1, t);
   if (scale !== undefined) result.scale = scale;
+  const distortion = lerpOptional(a?.distortion, b?.distortion, 0, t);
+  if (distortion !== undefined) result.distortion = distortion;
   return result;
 }
 

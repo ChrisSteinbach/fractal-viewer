@@ -44,13 +44,13 @@ import type { Vec3 } from "./types";
  * NOT AUTHORED (deliberately). IOR and the per-channel absorption ride the
  * qualified constants as defaults — the oracle takes them as parameters so
  * the qualified numbers ride in, and authoring them is a later, separately
- * reviewed decision. The restrained optical distortion is likewise not in
- * this vocabulary: its model is unqualified until the distortion task owns it
- * ("do not promote the prototype's IOR/thickness constants to product
- * defaults without review"), and the transport lane below leaves a reserved
- * word for it so that decision appends rather than relayouts. Work and chunk
- * budgets (processed paths, interfaces, stack) stay OUT of material identity:
- * they are the runtime's, not the document's.
+ * reviewed decision. The restrained optical distortion IS in this vocabulary
+ * now (one authored word: the virtual slab's thickness multiplier, absent ⇒
+ * 0 = straight byte-identically; the transport contract's displaced rear
+ * seam, qualified by the straight-vs-distorted panels), and the transport
+ * lane's first reserved word carries it. Work and chunk budgets (processed
+ * paths, interfaces, stack) stay OUT of material identity: they are the
+ * runtime's, not the document's.
  *
  * FIDELITY SPLIT. As for finish and pattern: `persist.ts` encodes/decodes
  * for fidelity only (finite values survive the wire untouched, no clamp), and
@@ -69,6 +69,17 @@ export const SURFACE_OPTICS_SCALE_FLOOR = 0.01;
 export const SURFACE_OPTICS_SCALE_CEILING = 100;
 
 /**
+ * Distortion domain: the virtual slab's thickness band as a multiplier of
+ * the resolved optical radius. Zero is the STRAIGHT state (byte-identical —
+ * the resolver's default), the ceiling keeps the lateral offset restrained
+ * to a quarter of the optical ball (the displacement never exceeds the
+ * authored slab — its smooth bound is tied to the thickness). The band is
+ * qualified by the straight-vs-distorted panels; negative and non-finite
+ * resolve to 0.
+ */
+export const SURFACE_OPTICS_DISTORTION_CEILING = 0.25;
+
+/**
  * The per-slot optical material a backend consumes — the transport oracle's
  * own {@link import("./surface-dielectric").DielectricMaterial} shape by
  * construction (the type alias makes the two structurally ONE, so a backend
@@ -80,6 +91,11 @@ export type ResolvedSurfaceOptics = {
   ior: number;
   absorption: Vec3;
   radius: number;
+  /**
+   * The resolved distortion: the authored-or-zero slab thickness multiplier
+   * (the resolver's band above). Zero is the straight state, byte-identically.
+   */
+  distortion: number;
 };
 
 /**
@@ -93,7 +109,10 @@ export type ResolvedSurfaceOptics = {
  * the one input this resolver does NOT synthesize: a non-finite or
  * non-positive value is a broken session, not an authoring choice, and
  * throws — the pattern calibration's own refusal shape. `ior`/`absorption`
- * always ride the qualified constants.
+ * always ride the qualified constants; `distortion` resolves through its
+ * own band (absent/non-finite ⇒ 0 — the straight state byte-identically;
+ * negative clamps to 0, past the ceiling clamps down — the resolver is the
+ * ONE domain a resolved value is read through).
  */
 export function resolveSurfaceOptics(
   optics: SurfaceOptics | undefined,
@@ -114,9 +133,16 @@ export function resolveSurfaceOptics(
         Math.max(SURFACE_OPTICS_SCALE_FLOOR, optics?.scale as number),
       )
     : 1;
+  const distortion = Number.isFinite(optics?.distortion)
+    ? Math.min(
+        SURFACE_OPTICS_DISTORTION_CEILING,
+        Math.max(0, optics?.distortion as number),
+      )
+    : 0;
   return {
     ior: DIELECTRIC_IOR,
     absorption: [...DIELECTRIC_ABSORPTION] as Vec3,
     radius: derivedRadius * scale,
+    distortion,
   };
 }

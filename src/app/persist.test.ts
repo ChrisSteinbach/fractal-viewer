@@ -1829,6 +1829,74 @@ describe("decodeScene transform optics", () => {
       scale: 1e-6,
     });
   });
+
+  it("round-trips a distortion beside the selector and scale", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          optics: { model: "dielectric", scale: 1.5, distortion: 0.08 },
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].optics).toEqual({
+      model: "dielectric",
+      scale: 1.5,
+      distortion: 0.08,
+    });
+  });
+
+  it("keeps the selector and drops only a malformed distortion", () => {
+    for (const distortion of ["wide", null, true, Number.NaN]) {
+      const raw = {
+        ...baseSnapshot(),
+        transforms: [
+          {
+            position: [0, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [0.5, 0.5, 0.5],
+            optics: { model: "dielectric", distortion },
+          },
+        ],
+      };
+      const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+      expect(
+        result,
+        `distortion = ${JSON.stringify(distortion)}`,
+      ).not.toBeNull();
+      expect(
+        result!.transforms[0].optics,
+        `distortion = ${JSON.stringify(distortion)}`,
+      ).toEqual({ model: "dielectric" });
+    }
+  });
+
+  it("a legacy optics document (selector + scale, no distortion) re-encodes byte-identically", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          optics: { model: "dielectric", scale: 2 },
+        },
+      ],
+    };
+    const wire = encodeScene(s);
+    const decoded = decodeScene(wire)!;
+    expect(encodeScene(decoded)).toBe(wire);
+    expect(decoded.transforms[0].optics).toEqual({
+      model: "dielectric",
+      scale: 2,
+    });
+  });
 });
 
 describe("decodeScene transform surface pattern", () => {
