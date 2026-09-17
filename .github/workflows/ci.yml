@@ -136,3 +136,53 @@ jobs:
       # scripts/webgl-smoke.mjs spawns its own `npm run dev` and tears it down.
       - name: WebGL smoke test (SwiftShader software GL)
         run: npm run smoke
+
+  # The panel-cleanup epic's browser half: WCAG-AA contrast for every visible
+  # panel text node plus the select color-scheme/option-pair contract, in
+  # Chromium AND Firefox (the owner's requirement — the two engines resolve
+  # option colours differently, which is how the disabled-option regression
+  # shipped in the first place). A separate job from smoke: this one needs a
+  # production build and the preview server (the gate measures the built
+  # bundle), while smoke spawns its own dev server. The browser cache key
+  # matches smoke's, so the Firefox download is the only new network cost.
+  panel-contrast:
+    runs-on: ubuntu-latest
+    # Measured locally: build ~40s, the gate ~90s per engine; 15 keeps a
+    # generous margin for a cold browser cache.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-playwright-
+
+      # Same no-`--with-deps` rule as smoke's step above: the runner image
+      # ships the browser-library closure. If a future image stops launching
+      # Firefox, `npx playwright-core install-deps firefox` is the recovery —
+      # with the known hang risk recorded on gpu-agreement.yml.
+      - name: Install Playwright Chromium and Firefox
+        run: npx playwright-core install chromium firefox
+
+      - run: npm run build
+
+      - name: Panel contrast gate (Chromium + Firefox)
+        run: |
+          # The preview's output is redirected so the backgrounded server
+          # cannot hold the step's stdout open after the gate exits.
+          npm run preview >/tmp/panel-preview.log 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -sk -o /dev/null https://localhost:4173/; then break; fi
+            sleep 1
+          done
+          node scripts/panel-contrast.verify.mjs
