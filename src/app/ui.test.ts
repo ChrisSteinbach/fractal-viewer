@@ -5538,7 +5538,7 @@ describe("Ui finish editor", () => {
         true,
       ]);
       expect(finishNote().classList.contains("hidden")).toBe(false);
-      expect(finishNote().textContent).toMatch(/FIRST active transform/);
+      expect(finishNote().textContent).toMatch(/first active transform/);
       expect(finishNote().id).toBe("finishApplicabilityNote");
       for (const input of finishInputs()) {
         expect(input.getAttribute("aria-describedby")?.split(/\s+/)).toEqual(
@@ -6188,7 +6188,7 @@ describe("Ui pattern editor", () => {
 
       expect(patternInputsDisabled()).toEqual([true, true, true, true]);
       expect(patternNote().classList.contains("hidden")).toBe(false);
-      expect(patternNote().textContent).toMatch(/FIRST active transform/);
+      expect(patternNote().textContent).toMatch(/first active transform/);
       expect(patternNote().id).toBe("patternApplicabilityNote");
       for (const input of patternInputs()) {
         expect(input.getAttribute("aria-describedby")?.split(/\s+/)).toEqual(
@@ -11352,7 +11352,7 @@ describe("Ui finite tiling controls", () => {
       /Active in 4D Solid.*baked into density before projection/i,
     );
     expect(el("tilingTimingHint").textContent).toMatch(
-      /replace the 4D Solid worker and restart accumulation/i,
+      /restart the 4D Solid worker/i,
     );
 
     // The 4D lattice arm discloses its measured copy-detail cost: the volume
@@ -11541,7 +11541,7 @@ describe("Ui finite tiling controls", () => {
         .querySelector(".panel-explainer")
         ?.textContent?.replace(/\s+/g, " ") ?? "";
     expect(explainer).toMatch(/group.*fixed chamber/i);
-    expect(explainer).toMatch(/clip.*does not replace.*chamber/i);
+    expect(explainer).toMatch(/clip.*without reshaping.*chamber/i);
   });
 
   it("shows the lattice arm rows and hides the group row for a lattice block", () => {
@@ -15493,12 +15493,11 @@ describe("Ui background backdrop row", () => {
 });
 
 describe("Ui Fog/Tint consumer applicability", () => {
-  const FLAME_REASON =
-    "Fog and Tint stay saved for Depth Fade, Aerial Haze, Solid, and Surface. Flame has no depth-fog pass.";
+  const FLAME_REASON = "Fog and Tint are kept; Flame has no depth-fog pass.";
   const FOUR_D_DORMANT_REASON =
-    "Fog and Tint stay saved for 3D Depth Fade, Aerial Haze, Solid, and Surface. 4D Points use Depth fade, which dims brightness instead of applying fog.";
+    "Fog and Tint are kept; 4D Points dim with Depth fade instead.";
   const FOUR_D_BALLOON_REASON =
-    "Fog changes Balloon’s fade horizon only. 4D Points use Depth fade for the main cloud, and Tint does not color Balloon.";
+    "Fog changes Balloon’s fade horizon only; Tint does not color Balloon.";
   const styleName: Record<AppState["renderStyle"], string> = {
     depthFade: "Depth Fade",
     aerial: "Aerial Haze",
@@ -15558,7 +15557,7 @@ describe("Ui Fog/Tint consumer applicability", () => {
       densityEnabled: false,
       tintEnabled: false,
       reason:
-        `Fog and Tint stay saved for Depth Fade, Aerial Haze, Solid, and Surface. ` +
+        `Fog and Tint are kept for other renderers; ` +
         `${styleName[renderStyle]} has no depth-fog pass.`,
     });
     cases.push({
@@ -15567,8 +15566,8 @@ describe("Ui Fog/Tint consumer applicability", () => {
       densityEnabled: true,
       tintEnabled: false,
       reason:
-        `Fog changes Balloon’s fade horizon only. ${styleName[renderStyle]} ` +
-        `has no depth-fog pass, and Tint does not color Balloon.`,
+        `Fog affects Balloon’s fade horizon; ${styleName[renderStyle]} ` +
+        `has no fog pass, and Tint ignores Balloon.`,
     });
   }
   cases.push(

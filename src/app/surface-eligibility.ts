@@ -942,8 +942,8 @@ export function deriveSurfaceEligibility(
                 // the sentence again, because a chain may hold a POWER link
                 // and "these N folds" is then simply false.
                 systemHasPowerLink(transforms)
-                ? `Escape-time render: these ${links} maps form a hybrid formula chain — folds and power maps in one sequence — so Surface marches its escape-time set, one link per orbit step, rather than an IFS attractor.`
-                : `Escape-time render: these ${links} folds do not all contract, so Surface marches the escape-time set of the chain they form — one link per orbit step — rather than an IFS attractor.`
+                ? `Escape-time render: these ${links} maps form a hybrid formula chain, so Surface marches one link per orbit step rather than an IFS attractor.`
+                : `Escape-time render: these ${links} folds do not all contract, so Surface marches their escape-time chain, one link per orbit step, not an IFS attractor.`
               : "Escape-time render: this fold does not contract, so Surface marches its escape-time set — the canonical Mandelbox object — rather than an IFS attractor.",
           kind: "escape",
         },
