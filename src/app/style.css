@@ -2,6 +2,8 @@
    One accent and a small surface/text scale keep the panel, help box, and
    controls visually coherent instead of a grab-bag of primary colors. */
 :root {
+  color-scheme: dark;
+
   --bg: #0f1018;
   --surface: rgb(20 22 33 / 82%);
   --surface-2: rgb(255 255 255 / 6%);

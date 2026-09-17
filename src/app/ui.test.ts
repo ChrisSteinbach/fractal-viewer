@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Ui } from "./ui";
 import type { UiHandlers } from "./ui";
 import type {
@@ -16438,5 +16440,12 @@ describe("disabled-reason notes for keyboard/AT users", () => {
       expect(mutations).toBe(0);
       expect(note().textContent).toBe("Add a keyframe or two first.");
     });
+  });
+});
+
+describe("panel dark color scheme", () => {
+  it("declares color-scheme: dark on :root so native dropdowns render dark", () => {
+    const css = readFileSync(join(__dirname, "style.css"), "utf8");
+    expect(css).toMatch(/color-scheme:\s*dark/);
   });
 });
