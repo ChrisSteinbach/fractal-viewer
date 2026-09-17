@@ -151,7 +151,6 @@ import {
 } from "./sphere-inversion-controls";
 import {
   SPHERE_INVERSION_BALLOON_SESSION_REASON,
-  SPHERE_INVERSION_DORMANT_KALEIDOSCOPE,
   SPHERE_INVERSION_DORMANT_LENS,
   SPHERE_INVERSION_SLAB_REFUSAL,
   surfaceTrapGeometryRestriction,
@@ -617,12 +616,11 @@ interface TransformButtonOptions {
 const AXES = ["X", "Y", "Z"] as const;
 const SURFACE_FLOOR_BALLOON_REASON =
   "Floor unavailable while Balloon encloses this Surface. Its saved setting is preserved; turn Balloon off to edit or show it.";
-const FOG_FLAME_REASON =
-  "Fog and Tint stay saved for Depth Fade, Aerial Haze, Solid, and Surface. Flame has no depth-fog pass.";
+const FOG_FLAME_REASON = "Fog and Tint are kept; Flame has no depth-fog pass.";
 const FOG_FOUR_D_DORMANT_REASON =
-  "Fog and Tint stay saved for 3D Depth Fade, Aerial Haze, Solid, and Surface. 4D Points use Depth fade, which dims brightness instead of applying fog.";
+  "Fog and Tint are kept; 4D Points dim with Depth fade instead.";
 const FOG_FOUR_D_BALLOON_REASON =
-  "Fog changes Balloon’s fade horizon only. 4D Points use Depth fade for the main cloud, and Tint does not color Balloon.";
+  "Fog changes Balloon’s fade horizon only; Tint does not color Balloon.";
 
 function foglessPointsStyleName(state: AppState): string {
   switch (state.renderStyle) {
@@ -4576,8 +4574,8 @@ export class Ui {
       } else {
         const style = foglessPointsStyleName(state);
         reason = balloonHorizon
-          ? `Fog changes Balloon’s fade horizon only. ${style} has no depth-fog pass, and Tint does not color Balloon.`
-          : `Fog and Tint stay saved for Depth Fade, Aerial Haze, Solid, and Surface. ${style} has no depth-fog pass.`;
+          ? `Fog affects Balloon’s fade horizon; ${style} has no fog pass, and Tint ignores Balloon.`
+          : `Fog and Tint are kept for other renderers; ${style} has no depth-fog pass.`;
       }
     }
     this.fogNote.textContent = reason;
@@ -5022,8 +5020,8 @@ export class Ui {
             : solidDimensionHeld
               ? "This Solid frame keeps its entry dimension; authored tiling applies after Points regeneration and renderer re-entry."
               : solidWorkerBaked
-                ? "Tiling edits replace the 4D Solid worker and restart accumulation; rotor and W-slice edits restart the active worker after release."
-                : "Tiling edits are live in 3D Solid — the canonical density volume is unchanged; reflected copies re-fold per frame.";
+                ? "Tiling edits restart the 4D Solid worker; rotor and W-slice edits restart it on release."
+                : "Tiling edits are live in 3D Solid; reflected copies re-fold per frame.";
 
     const kind = this.scalarSelect("tilingKind");
     const group = this.scalarSelect("tilingGroup");
@@ -5307,7 +5305,8 @@ export class Ui {
     if (state.sphereInversion !== undefined && state.symmetry.order > 1) {
       // The ownership split: the block's subject replaces the transform
       // system, so its kaleidoscope is kept but not read.
-      this.symmetryNote.textContent = `Dormant in a sphere-inversion scene: ${SPHERE_INVERSION_DORMANT_KALEIDOSCOPE}. It applies again once Sphere inversion is turned off.`;
+      this.symmetryNote.textContent =
+        "Dormant in a sphere-inversion scene: the arrangement's symmetry replaces the kaleidoscope, which returns when the block is off.";
       this.symmetryNote.classList.remove("hidden");
     } else if (effectiveOrder !== state.symmetry.order) {
       this.symmetryNote.textContent = `Reduced to ${effectiveOrder}-fold (from ${state.symmetry.order}-fold) to fit the ${MAX_TRANSFORMS}-transform limit.`;
@@ -5401,8 +5400,8 @@ export class Ui {
         (state.renderMode === "flame" || state.renderMode === "solid"));
     this.automaticMotionParkedHint.textContent =
       state.renderMode === "surface"
-        ? "Surface pauses automatic motion so rendering can settle. Manual view controls still work; your setting resumes in Points or Solid."
-        : "Automatic motion pauses while this 4D render accumulates. Manual 4D turns and W-slice changes restart it after release.";
+        ? "Surface pauses automatic motion while rendering settles; your setting resumes in Points or Solid."
+        : "Automatic motion pauses for this 4D render. Manual 4D turns and W-slice changes restart it.";
     const panelContext: PanelContext = {
       renderMode: state.renderMode,
       dimension: nonFlat ? "nonFlat" : "flat",
@@ -9702,7 +9701,7 @@ export class Ui {
     // whole-document Surface refusal, a forward route's non-head map, or an
     // inactive IFS map. Hidden while the group is applicable.
     const note = this.doc.createElement("p");
-    note.className = "flame-hint finish-note hidden";
+    note.className = "flame-note-info finish-note hidden";
     note.id = FINISH_APPLICABILITY_NOTE_ID;
     group.appendChild(note);
 
@@ -9889,7 +9888,7 @@ export class Ui {
       fullyIneligible || headOnly || inactiveIfs || dormantUnderBlock;
     const reason = (feature: "finish" | "pattern"): string => {
       if (dormantUnderBlock) {
-        return `Sphere inversion replaces the transform system, so this ${feature} is not read. It stays authored; turn off Sphere inversion to edit it.`;
+        return `Sphere inversion replaces the transforms; this ${feature} stays authored, unread. Turn it off to edit.`;
       }
       if (fullyIneligible) {
         const detail = eligibility.note ?? "not marchable";
@@ -9897,7 +9896,7 @@ export class Ui {
         return `Surface render unavailable: ${sentence} This ${feature} stays authored for the next eligible Surface.`;
       }
       if (headOnly) {
-        return `Escape-time and Mandelbulb surfaces ${feature === "finish" ? "shade" : "pattern"} the whole object with the FIRST active transform's ${feature}, so this one is not read there. It still applies to an IFS surface.`;
+        return `Escape-time and Mandelbulb surfaces use the first active transform's ${feature}; this one needs an IFS surface.`;
       }
       if (inactiveIfs) {
         return `IFS surfaces do not read a transform while its Weight is 0. This ${feature} stays authored and applies when the map is active.`;
@@ -10194,7 +10193,7 @@ export class Ui {
 
     // Stable adjacent applicability disclosure; see the Finish twin above.
     const note = this.doc.createElement("p");
-    note.className = "flame-hint pattern-note hidden";
+    note.className = "flame-note-info pattern-note hidden";
     note.id = PATTERN_APPLICABILITY_NOTE_ID;
     group.appendChild(note);
 

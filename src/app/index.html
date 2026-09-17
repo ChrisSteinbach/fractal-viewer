@@ -456,12 +456,11 @@
           <details class="panel-explainer">
             <summary>How sphere inversion works</summary>
             <p>
-              A ring of mirror spheres inverts a seed shape again and again:
-              each inversion shrinks a copy into the gaps between the spheres.
-              Turned on, it replaces the transforms as the scene's subject; the
-              transforms are kept and return when it is turned off. A 3D
-              arrangement makes a 3D scene and a 4D arrangement a native 4D one.
-              Depth is how many inversions deep the copies go.
+              A ring of mirror spheres inverts a seed shape repeatedly,
+              shrinking a copy into each gap. Turned on, it replaces the
+              transforms as the scene's subject; they return when it is turned
+              off. A 3D arrangement makes a 3D scene, a 4D arrangement a native
+              4D one; Depth sets how many inversions deep the copies go.
             </p>
           </details>
           <label class="checkbox-label">
@@ -1233,16 +1232,11 @@
           <details class="panel-explainer">
             <summary>Using light guides</summary>
             <p>
-              In Points, opening this section shows labeled Key and Rim disks at
-              their world positions. Each arrow points out of the emitting face.
-              Adjust position, aim and disk radius below; orbit or zoom out to
-              see the lights from another angle. The guides also appear in the
-              four Points views.
-            </p>
-            <p>
-              For 4D scenes, lights stay in the displayed 3D space as the
-              fractal rotates or slices. Close this section to hide the guides.
-              Guides are omitted from saved images and collection thumbnails.
+              In Points, opening this section shows labeled Key and Rim disks
+              with arrows pointing out of the emitting face; adjust position,
+              aim and disk radius below. In 4D, lights stay in the displayed 3D
+              space as the scene rotates or slices. Close the section to hide
+              the guides; saved images and thumbnails omit them.
             </p>
           </details>
           <div id="surfaceAuthoredLightingControls"></div>
@@ -1370,15 +1364,11 @@
           <details class="panel-explainer">
             <summary>How tiling works</summary>
             <p>
-              A reflection group folds space into its fixed chamber, then
-              repeats the chamber's fractal piece; the mirrored lattice repeats
-              the piece in x and z (and w in 4D) across a bounded presentation
-              window. The optional content clip trims that piece; it does not
-              replace or reshape the chamber. A clip that admits nothing renders
-              an intentionally empty result — reported as such, never replaced
-              by the untiled attractor. Every render mode draws the tiled
-              object; the note below reports what the active one did with your
-              last edit.
+              A reflection group folds space into its fixed chamber and repeats
+              the chamber's fractal piece; the mirrored lattice repeats it in x
+              and z (and w in 4D) across a bounded window. The content clip
+              trims the piece without reshaping the chamber; a clip that admits
+              nothing is reported, never replaced by the untiled attractor.
             </p>
           </details>
           <label class="checkbox-label">
