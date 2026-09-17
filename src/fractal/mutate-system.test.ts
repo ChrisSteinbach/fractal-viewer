@@ -14,6 +14,7 @@ import { MIN_OCCUPIED_CELLS, scoreSystem } from "./random-system";
 import { mulberry32 } from "./rng";
 import { SURFACE_FINISH_SHININESS_FLOOR } from "./surface-finish";
 import {
+  SURFACE_OPTICS_DISTORTION_CEILING,
   SURFACE_OPTICS_SCALE_CEILING,
   SURFACE_OPTICS_SCALE_FLOOR,
 } from "./surface-optics";
@@ -1003,6 +1004,57 @@ describe("mutateSystem optics", () => {
         .transforms[0].optics!;
       expect(optics).toEqual({ model: "dielectric" });
       expect("scale" in optics).toBe(false);
+    }
+  });
+
+  it("jitters a present distortion within its band and never materializes an absent one", () => {
+    const base = system({
+      transforms: [
+        { ...optickedMap, optics: { model: "dielectric", distortion: 0.08 } },
+        ...sierpinskiTetrahedron().slice(1),
+      ],
+    });
+    let sawChange = false;
+    for (let seed = 0; seed < 10; seed++) {
+      for (const wildcard of [false, true]) {
+        const optics = mutateSystem(base, mulberry32(seed), { wildcard })
+          .transforms[0].optics!;
+        expect(
+          optics.distortion,
+          `seed ${seed} wildcard=${wildcard}`,
+        ).toBeGreaterThanOrEqual(0);
+        expect(
+          optics.distortion,
+          `seed ${seed} wildcard=${wildcard}`,
+        ).toBeLessThanOrEqual(SURFACE_OPTICS_DISTORTION_CEILING);
+        if (optics.distortion !== 0.08) sawChange = true;
+      }
+    }
+    expect(sawChange).toBe(true);
+    // A present zero never gains a bend it was not authored with, and an
+    // absent distortion stays absent.
+    const straight = system({
+      transforms: [
+        { ...optickedMap, optics: { model: "dielectric", distortion: 0 } },
+        ...sierpinskiTetrahedron().slice(1),
+      ],
+    });
+    const absent = system({
+      transforms: [
+        { ...optickedMap, optics: { model: "dielectric", scale: 1.5 } },
+        ...sierpinskiTetrahedron().slice(1),
+      ],
+    });
+    for (const wildcard of [false, true]) {
+      expect(
+        mutateSystem(straight, mulberry32(7), { wildcard }).transforms[0]
+          .optics!.distortion,
+      ).toBe(0);
+      expect(
+        "distortion" in
+          mutateSystem(absent, mulberry32(7), { wildcard }).transforms[0]
+            .optics!,
+      ).toBe(false);
     }
   });
 

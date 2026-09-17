@@ -2,11 +2,14 @@ import type { Vec3 } from "../../fractal/types";
 import {
   DIELECTRIC_ANCHOR_ENVELOPE_REL,
   DIELECTRIC_CROSSING_EPS_REL,
+  DIELECTRIC_DISTORTION_NORMAL_REL,
   type DielectricMaterial,
   dielectricBeerThroughput,
   dielectricBranchBound,
   dielectricFresnel,
   dielectricRefract,
+  dielectricSlabDisplacement,
+  dielectricSmoothedNormal,
 } from "../../fractal/surface-dielectric";
 import {
   SURFACE_GPU_TRANSPORT_MAX_INTERFACES,
@@ -542,6 +545,64 @@ export function transportTraceCPU(
     status = residual > 0 ? "residual" : "complete";
   }
   return { radiance, residual, status, failure, reason };
+}
+
+/** The kernel's terminal displacement (the agreement legs' mode-3 probe),
+ * f64: the SMOOTHED optical normal at the exit point — the ORACLE's own
+ * taps over this fixture's field — then the virtual parallel slab's
+ * lateral offset, the ORACLE's own
+ * {@link dielectricSlabDisplacement}. The twin owns no displacement
+ * arithmetic of its own; the returned origin is the exit origin plus the
+ * applied delta (or the origin itself when the displacement falls back —
+ * the deterministic straight terminal). The control kernel's mode-3
+ * branch is compared against this, origin for origin and component for
+ * component; the constant-backdrop trace probes cannot see an origin
+ * displacement (the twin's rear scene is the fixed backdrop), which is
+ * why this probe exists. */
+export interface TransportTerminalDisplacement {
+  origin: Vec3;
+  normal: Vec3;
+  applied: boolean;
+}
+
+export function transportTerminalDisplacementCPU(
+  system: TransportFixtureSystem,
+  origin: Vec3,
+  dir: Vec3,
+  material: DielectricMaterial,
+): TransportTerminalDisplacement {
+  const distortion = material.distortion ?? 0;
+  if (!(distortion > 0)) {
+    return { origin, normal: [0, 0, 0], applied: false };
+  }
+  const smoothed = dielectricSmoothedNormal(
+    (p: Vec3): number => system.estimate(p),
+    origin,
+    DIELECTRIC_DISTORTION_NORMAL_REL * material.radius,
+  );
+  if (!smoothed) {
+    return { origin, normal: [0, 0, 0], applied: false };
+  }
+  const thickness = distortion * material.radius;
+  const disp = dielectricSlabDisplacement(
+    dir,
+    smoothed,
+    material.ior,
+    thickness,
+    thickness,
+  );
+  if (!disp.applied) {
+    return { origin, normal: smoothed, applied: false };
+  }
+  return {
+    origin: [
+      origin[0] + disp.delta[0],
+      origin[1] + disp.delta[1],
+      origin[2] + disp.delta[2],
+    ],
+    normal: smoothed,
+    applied: true,
+  };
 }
 
 /** The corridor's analytic gate values for one shadow ray — the emitted

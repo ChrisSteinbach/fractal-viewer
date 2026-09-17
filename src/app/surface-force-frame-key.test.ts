@@ -462,7 +462,10 @@ describe("surfaceComputeForceFrameKey finishes block", () => {
   });
 
   it("keys the optics block — a scale edit under a parked camera re-traces, and the block never collides with finish or pattern", () => {
-    const opticsSlot = (scale: number | undefined): SurfaceMaterialSlots => ({
+    const opticsSlot = (
+      scale: number | undefined,
+      distortion?: number,
+    ): SurfaceMaterialSlots => ({
       slots: [
         {
           finish: { ...CLASSIC_SURFACE_FINISH },
@@ -474,6 +477,7 @@ describe("surfaceComputeForceFrameKey finishes block", () => {
                   ior: 1.45,
                   absorption: [0.17, 0.055, 0.025] as [number, number, number],
                   radius: scale,
+                  distortion: distortion ?? 0,
                 },
               }),
         },
@@ -489,11 +493,46 @@ describe("surfaceComputeForceFrameKey finishes block", () => {
       baseSpec({ materials: opticsSlot(4) }),
     );
     expect(a).not.toBe(b);
-    // Same key when the resolved five numbers are identical — the
+    // Same key when the resolved six numbers are identical — the
     // resolution's own total-ness, not the authored field's identity.
     expect(a).toBe(
       surfaceComputeForceFrameKey(baseSpec({ materials: opticsSlot(3) })),
     );
+  });
+
+  it("keys the distortion word — a distortion edit under a parked camera re-traces, and the resolved zero never differs from the absent field", () => {
+    const opticsSlot = (
+      distortion: number | undefined,
+    ): SurfaceMaterialSlots => ({
+      slots: [
+        {
+          finish: { ...CLASSIC_SURFACE_FINISH },
+          pattern: { kind: "none", axis: "y", scale: 1, strength: 0 },
+          optics: {
+            ior: 1.45,
+            absorption: [0.17, 0.055, 0.025] as [number, number, number],
+            radius: 3,
+            distortion: distortion ?? 0,
+          },
+        },
+      ],
+      finish: false,
+      pattern: false,
+      optics: true,
+    });
+    const straight = surfaceComputeForceFrameKey(
+      baseSpec({ materials: opticsSlot(0) }),
+    );
+    const bent = surfaceComputeForceFrameKey(
+      baseSpec({ materials: opticsSlot(0.08) }),
+    );
+    expect(straight).not.toBe(bent);
+    // The resolver's totality: an authored zero and the absent field key
+    // the same — they render the same frame byte for byte.
+    const absent = surfaceComputeForceFrameKey(
+      baseSpec({ materials: opticsSlot(undefined) }),
+    );
+    expect(absent).toBe(straight);
   });
 
   it("keeps the legacy key byte-identical when no session carries optics — absent gate, absent block", () => {

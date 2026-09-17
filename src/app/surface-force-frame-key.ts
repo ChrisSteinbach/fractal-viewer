@@ -135,16 +135,18 @@ export function surfaceComputeForceFrameKey(
         ]
       : []),
     // The optical-model gate: a timeline leg re-authoring a slot's optics
-    // (model or scale) under a parked camera must re-trace once the transport
-    // backends consume it, and the key's own rule is to change whenever the
-    // session's resolved material changes — the finish block's reason, one
-    // gate over. Keyed on spec.materials' optics gate; the resolved
-    // five-number lanes per slot need no further defaulting because
-    // resolution is total. Tag + slot COUNT then one comma-tuple per slot —
-    // the finish block's self-delimiting shape. Until a backend consumes the
-    // model this forces a re-trace of pixels that did not change; that is the
-    // safe direction (the stale-frame bug class this key exists for is silent
-    // staleness, never a wasted re-trace).
+    // (model, scale or distortion) under a parked camera must re-trace once
+    // the transport backends consume it, and the key's own rule is to change
+    // whenever the session's resolved material changes — the finish block's
+    // reason, one gate over. Keyed on spec.materials' optics gate; the
+    // resolved six-number lanes per slot need no further defaulting because
+    // resolution is total (distortion resolves to 0 — the straight state —
+    // when the authored field is absent, so an absent distortion and an
+    // explicit zero key the same). Tag + slot COUNT then one comma-tuple per
+    // slot — the finish block's self-delimiting shape. Until a backend
+    // consumes the model this forces a re-trace of pixels that did not
+    // change; that is the safe direction (the stale-frame bug class this key
+    // exists for is silent staleness, never a wasted re-trace).
     ...(spec.materials?.optics
       ? [
           "optics",
@@ -158,6 +160,7 @@ export function surfaceComputeForceFrameKey(
                   optics.absorption[0],
                   optics.absorption[1],
                   optics.absorption[2],
+                  optics.distortion,
                 ].join(","),
           ),
         ]

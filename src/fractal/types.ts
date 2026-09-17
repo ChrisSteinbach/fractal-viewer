@@ -342,6 +342,17 @@ export interface SurfaceOptics {
    * persistence never clamps.
    */
   scale?: number;
+  /**
+   * Restrained optical distortion: the virtual parallel slab's thickness as
+   * a DIMENSIONLESS MULTIPLIER of the resolved optical radius, displaced at
+   * the transport's rear seam only (`docs/surface-dielectric-transport.md`'s
+   * rear-image contract). Absent ⇒ 0 — straight transmission, byte-identically
+   * to every document predating it. Clamped into `surface-optics.ts`'s
+   * distortion band at resolve time; persistence never clamps. The smooth
+   * displacement bound is tied to this value, so the lateral offset never
+   * exceeds the authored slab.
+   */
+  distortion?: number;
 }
 
 /**

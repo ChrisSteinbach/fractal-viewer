@@ -247,6 +247,7 @@ import type {
 import {
   DIELECTRIC_ABSORPTION,
   DIELECTRIC_CROSSING_EPS_REL,
+  DIELECTRIC_DISTORTION_NORMAL_REL,
   DIELECTRIC_IOR,
   DIELECTRIC_INITIAL_BRANCH_THETA,
 } from "../../fractal/surface-dielectric";
@@ -254,6 +255,7 @@ import {
   transportBoundaryQueryCPU,
   transportShadowVisibilityCPU,
   transportSolidBoundaryQueryCPU,
+  transportTerminalDisplacementCPU,
   transportTraceCPU,
   type TransportQueryFn,
 } from "./surface-transport-fixture";
@@ -4203,6 +4205,11 @@ interface SurfaceTransportAgreementRow {
    * analytic control's delta (the twin's tolerance is the tighter of
    * the two pins). */
   maxShadowDelta?: number;
+  /** Closed-solid rows only: max per-channel |gpu − cpu| over the
+   * terminal-displacement probes (the smoothed normal and the virtual
+   * parallel slab's lateral offset, the accepted bounded distortion
+   * model). */
+  maxDisplacementDelta?: number;
   /** Forward cores only: probes the ULP ensemble excluded as chaos
    * flips — disclosed, never absorbed, capped. */
   flipsExcluded?: number;
@@ -7501,6 +7508,11 @@ struct ControlQuery {
   ballC: vec3f,
   ballR: f32,
   visR: f32,
+  // The optical distortion's authored word (lane 1.y) — the trace probes
+  // pass it through; zero on every probe that pins the straight terminal.
+  // Fills the 128-byte stride's last word (offset 116); the stride does
+  // not move.
+  distortion: f32,
 }
 struct ControlResult {
   a: vec4f,
@@ -7542,8 +7554,28 @@ ${
 }
     r.c = vec4f(0.0);
     r.d = vec4f(0.0);
+  } else if (q.mode == 3u) {
+${
+  closedSolid
+    ? `    // The optical distortion's terminal displacement (the accepted
+    // bounded model): the smoothed optical normal at the exit point, then
+    // the virtual parallel slab's lateral offset — the SAME arithmetic the
+    // trace's terminal applies, pinned directly because the constant-bg
+    // trace probes cannot see an origin displacement (the twin's rear
+    // scene is the fixed backdrop — disclosed, never absorbed).
+    let nS = transportSmoothedNormal(q.origin, ${DIELECTRIC_DISTORTION_NORMAL_REL} * q.radius, li);
+    let disp = dielectricSlabDisplacement(q.dir[0], q.dir[1], q.dir[2], nS[0], nS[1], nS[2], q.ior, q.distortion * q.radius, q.distortion * q.radius);
+    r.a = vec4f(disp[0], disp[1], disp[2], disp[3]);
+    r.b = vec4f(nS, 0.0);`
+    : `    // The helper pair is only emitted under the closed-solid backend;
+    // the estimator legs never dispatch mode 3.
+    r.a = vec4f(0.0);
+    r.b = vec4f(0.0);`
+}
+    r.c = vec4f(0.0);
+    r.d = vec4f(0.0);
   } else {
-    let traced = transportTrace(q.origin, q.dir, q.theta, q.ior, q.radius, q.absorb, vec3f(0.25, 0.35, 0.45), li);
+    let traced = transportTrace(q.origin, q.dir, q.theta, q.ior, q.radius, q.absorb, vec3f(0.25, 0.35, 0.45), li, q.distortion);
     r.a = vec4f(f32(traced.status), f32(traced.failure), f32(traced.reason), traced.residual);
     r.b = vec4f(traced.radiance, 0.0);
     r.c = vec4f(0.0);
@@ -8038,9 +8070,14 @@ const SURFACE_TRANSPORT_WG = 64;
 /** One `ControlQuery`'s wire stride: three vec3f at their 16-byte
  * alignment, then eps/ior/radius at 44/48/52, absorb at its aligned 64,
  * theta/anchorPresent/mode/inside at 76/80/84/88, the mode-2 corridor's
- * ballC/ballR/visR at 96/108/112, rounded up to the struct's 16-byte
- * alignment. */
+ * ballC/ballR/visR at 96/108/112, the trace probes' distortion word at
+ * 116, rounded up to the struct's 16-byte alignment. */
 const SURFACE_TRANSPORT_QUERY_STRIDE_BYTES = 128;
+
+/** The distortion trace probes' authored slab (the resolved material's
+ * multiplier of the probe material's radius) — the qualified panels'
+ * working value, mirrored by the twin's own displacement. */
+const SURFACE_TRANSPORT_DISTORTION_PROBE = 0.08;
 /** The trace probe's fixed backdrop, DISPLAY space — MUST stay equal to
  * the control WGSL's literal `vec3f(0.25, 0.35, 0.45)` byte for byte: the
  * kernel's `transportRearRadiance` linearizes it internally (pow 2.2) and
@@ -8800,6 +8837,9 @@ async function runSurfaceTransportAgreementLegs(
       ballC: Vec3;
       ballR: number;
       visR: number;
+      /** The trace probes' authored distortion word (lane 1.y); zero on
+       * every probe that pins the straight terminal. */
+      distortion: number;
     };
     const boundaryQueries: ControlQueryRec[] = [];
     const traceQueries: ControlQueryRec[] = [];
@@ -8828,6 +8868,7 @@ async function runSurfaceTransportAgreementLegs(
           ballC: [0, 0, 0],
           ballR: visR,
           visR,
+          distortion: 0,
         });
         boundaryQueries.push({
           origin: [
@@ -8848,6 +8889,7 @@ async function runSurfaceTransportAgreementLegs(
           ballC: [0, 0, 0],
           ballR: visR,
           visR,
+          distortion: 0,
         });
       } else {
         boundaryQueries.push({
@@ -8869,6 +8911,7 @@ async function runSurfaceTransportAgreementLegs(
           ballC: [0, 0, 0],
           ballR: visR,
           visR,
+          distortion: 0,
         });
         boundaryQueries.push({
           origin: probe.hitPos,
@@ -8885,6 +8928,7 @@ async function runSurfaceTransportAgreementLegs(
           ballC: [0, 0, 0],
           ballR: visR,
           visR,
+          distortion: 0,
         });
       }
       traceQueries.push({
@@ -8902,6 +8946,7 @@ async function runSurfaceTransportAgreementLegs(
         ballC: [0, 0, 0],
         ballR: visR,
         visR,
+        distortion: 0,
       });
     }
     // The closed-solid legs' shadow probes (mode 2): the floor corridor's
@@ -8937,6 +8982,7 @@ async function runSurfaceTransportAgreementLegs(
           ballC: [0, 0, 0],
           ballR: visR,
           visR,
+          distortion: 0,
         });
       };
       probeShadow([0.35, floorY, 0.05], [0, 1, 0]);
@@ -8946,6 +8992,63 @@ async function runSurfaceTransportAgreementLegs(
       // clearing 1.05 R + 0.3 * along — transmittance exactly 1.
       probeShadow([2 * visR, 0, 0], [1, 0, 0]);
       probeShadow([0, floorY, 0], norm3([1, 0.05, 0]));
+    }
+    // The closed-solid legs' DISTORTION trace probes: the same probe rays
+    // re-traced with the authored slab live — the exit-transmitted
+    // terminal's rear query displaces through the virtual parallel slab
+    // (the accepted bounded model). The twin's rear scene is the fixed
+    // backdrop, so the displaced ORIGIN cannot change either side's
+    // radiance — what these probes pin is that the kernel's terminal
+    // branch and exit flag leave the status/residual agreement intact
+    // with the slab live; the displacement itself is the mode-3 probes'
+    // axis, below. Zero stays on every other probe, so the
+    // straight-terminal pins are unchanged.
+    const terminalQueries: ControlQueryRec[] = [];
+    if (leg.backend === "closedSolid") {
+      for (const probe of probes) {
+        traceQueries.push({
+          origin: probe.hitPos,
+          dir: probe.dir,
+          anchorPoint: [0, 0, 0],
+          eps: 0,
+          ior: DIELECTRIC_IOR,
+          radius: visR,
+          absorb: DIELECTRIC_ABSORPTION,
+          theta: DIELECTRIC_INITIAL_BRANCH_THETA,
+          anchorPresent: 0,
+          mode: 0,
+          inside: 0,
+          ballC: [0, 0, 0],
+          ballR: visR,
+          visR,
+          distortion: SURFACE_TRANSPORT_DISTORTION_PROBE,
+        });
+      }
+      // The terminal-displacement probes (mode 3): the same probe rays as
+      // EXIT points — the smoothed normal taps and the slab displacement
+      // the trace's terminal applies, pinned against
+      // transportTerminalDisplacementCPU (the ORACLE's own helpers over
+      // this fixture's field), origin for origin and component for
+      // component.
+      for (const probe of probes) {
+        terminalQueries.push({
+          origin: probe.hitPos,
+          dir: probe.dir,
+          anchorPoint: [0, 0, 0],
+          eps: DIELECTRIC_CROSSING_EPS_REL * visR,
+          ior: DIELECTRIC_IOR,
+          radius: visR,
+          absorb: DIELECTRIC_ABSORPTION,
+          theta: DIELECTRIC_INITIAL_BRANCH_THETA,
+          anchorPresent: 0,
+          mode: 3,
+          inside: 0,
+          ballC: [0, 0, 0],
+          ballR: visR,
+          visR,
+          distortion: SURFACE_TRANSPORT_DISTORTION_PROBE,
+        });
+      }
     }
     const count = boundaryQueries.length + traceQueries.length;
     // Pack one query list into its wire buffer, padding to the workgroup
@@ -8986,6 +9089,7 @@ async function runSurfaceTransportAgreementLegs(
         view.setFloat32(base + 104, q.ballC[2], true);
         view.setFloat32(base + 108, q.ballR, true);
         view.setFloat32(base + 112, q.visR, true);
+        view.setFloat32(base + 116, q.distortion, true);
       };
       list.forEach(write);
       for (let i = list.length; i < padded; i++) {
@@ -9005,6 +9109,7 @@ async function runSurfaceTransportAgreementLegs(
             ballC: [0, 0, 0],
             ballR: 0,
             visR,
+            distortion: 0,
           },
           i,
         );
@@ -9017,6 +9122,7 @@ async function runSurfaceTransportAgreementLegs(
         boundaryQueries.length,
         traceQueries.length,
         shadowQueries.length,
+        terminalQueries.length,
       ),
     );
     // Re-wrapped copy — see ensureSurfaceEvalBuffers' mapsData note.
@@ -9067,6 +9173,7 @@ async function runSurfaceTransportAgreementLegs(
                 ior: DIELECTRIC_IOR,
                 absorption: [...DIELECTRIC_ABSORPTION] as Vec3,
                 radius: visR,
+                distortion: 0,
               },
             },
           ]),
@@ -9147,6 +9254,7 @@ async function runSurfaceTransportAgreementLegs(
     let boundaryOut: Float32Array;
     let traceOut: Float32Array;
     let shadowOut: Float32Array | null = null;
+    let terminalOut: Float32Array | null = null;
     try {
       boundaryOut = await runControl(boundaryQueries);
       note(`transport: ${leg.core} boundary dispatch ok`);
@@ -9155,6 +9263,10 @@ async function runSurfaceTransportAgreementLegs(
       if (shadowQueries.length > 0) {
         shadowOut = await runControl(shadowQueries);
         note(`transport: ${leg.core} shadow dispatch ok`);
+      }
+      if (terminalQueries.length > 0) {
+        terminalOut = await runControl(terminalQueries);
+        note(`transport: ${leg.core} terminal dispatch ok`);
       }
     } finally {
       params.destroy();
@@ -9458,6 +9570,66 @@ async function runSurfaceTransportAgreementLegs(
         }
       });
     }
+    // --- the TERMINAL-displacement probes (mode 3, closed-solid legs):
+    // the smoothed optical normal and the virtual parallel slab's lateral
+    // offset the trace's terminal applies, against the ORACLE's own
+    // helpers (transportTerminalDisplacementCPU) — origin for origin,
+    // normal component for component, applied flag exact. The constant-bg
+    // trace probes cannot see an origin displacement, so this axis is
+    // pinned here.
+    let maxDisplacementDelta = 0;
+    if (leg.backend === "closedSolid") {
+      const material = {
+        ior: DIELECTRIC_IOR,
+        absorption: DIELECTRIC_ABSORPTION,
+        radius: visR,
+        distortion: SURFACE_TRANSPORT_DISTORTION_PROBE,
+      };
+      terminalQueries.forEach((q, ti) => {
+        const cpu = transportTerminalDisplacementCPU(
+          leg.fixture,
+          q.origin,
+          q.dir,
+          material,
+        );
+        const base = ti * 16;
+        const gpuDelta = [0, 1, 2].map((c) => terminalOut![base + c]);
+        const gpuNormal = [0, 1, 2].map((c) => terminalOut![base + 4 + c]);
+        const gpuApplied = terminalOut![base + 3];
+        const expectedApplied = cpu.applied ? 1 : 0;
+        if (Math.abs(gpuApplied - expectedApplied) > 0.5) {
+          fail(
+            ti,
+            "terminal",
+            `applied — gpu ${String(gpuApplied)} vs cpu ${String(expectedApplied)}`,
+          );
+        }
+        const displacedOrigin: Vec3 = cpu.applied
+          ? cpu.origin
+          : [q.origin[0], q.origin[1], q.origin[2]];
+        for (let c = 0; c < 3; c++) {
+          const cpuDelta = displacedOrigin[c] - q.origin[c];
+          const delta = Math.abs(gpuDelta[c] - cpuDelta);
+          maxDisplacementDelta = Math.max(maxDisplacementDelta, delta);
+          if (!(delta <= 3e-3)) {
+            fail(
+              ti,
+              "terminal",
+              `delta[${String(c)}] — gpu ${String(gpuDelta[c])} vs cpu ${String(cpuDelta)}`,
+            );
+          }
+          const normalDelta = Math.abs(gpuNormal[c] - cpu.normal[c]);
+          maxDisplacementDelta = Math.max(maxDisplacementDelta, normalDelta);
+          if (normalDelta > 3e-2) {
+            fail(
+              ti,
+              "terminal",
+              `normal[${String(c)}] — gpu ${String(gpuNormal[c])} vs cpu ${String(cpu.normal[c])}`,
+            );
+          }
+        }
+      });
+    }
     rows.push({
       core: leg.core,
       system: leg.systemName,
@@ -9472,6 +9644,7 @@ async function runSurfaceTransportAgreementLegs(
       maxResidualDelta,
       maxNormalDelta,
       ...(leg.backend === "closedSolid" ? { maxShadowDelta } : {}),
+      ...(leg.backend === "closedSolid" ? { maxDisplacementDelta } : {}),
       ...(forward ? { flipsExcluded: flipped } : {}),
     });
     await new Promise<void>((resolve) => setTimeout(resolve));
@@ -9854,11 +10027,21 @@ async function runSurfaceTransportEnvelopeLeg(
     const de = sys.de;
     // The optics-authored DOCUMENT: every slotted transform dielectric —
     // the whole solid glass, the appearance's own shape and the lane's
-    // worst case. The fixture's transforms are copied so the shared
-    // objects the other legs read are untouched.
+    // worst case. The closed-solid arms author the restrained slab too
+    // (the qualified panels' working value): the envelope then prices the
+    // distortion's smoothed-normal taps in the production path, and its
+    // rows record the displaced-terminal lane at the delegated rasters.
+    // The fixture's transforms are copied so the shared objects the other
+    // legs read are untouched.
     const transforms = sys.transforms.map((transform): Transform => ({
       ...transform,
-      optics: { model: "dielectric" },
+      optics:
+        backend === "closedSolid"
+          ? {
+              model: "dielectric",
+              distortion: SURFACE_TRANSPORT_DISTORTION_PROBE,
+            }
+          : { model: "dielectric" },
     }));
     // The DE's SHADE slot list — the recursive maps PLUS the condensation
     // emitters at their shade indices (the app's ifsShadeSlots rule,
@@ -21376,6 +21559,9 @@ async function runSurfaceDeSection(
             `maxNormalDelta=${row.maxNormalDelta.toExponential(2)} ` +
             (row.maxShadowDelta !== undefined
               ? `maxShadowDelta=${row.maxShadowDelta.toExponential(2)} `
+              : "") +
+            (row.maxDisplacementDelta !== undefined
+              ? `maxDisplacementDelta=${row.maxDisplacementDelta.toExponential(2)} `
               : "") +
             `compileMs=${String(Math.round(row.compileMs))}`,
         );

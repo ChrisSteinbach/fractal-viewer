@@ -5,11 +5,25 @@
  * lateral component is applied at unchanged forward ray parameter. This is a
  * zero-thickness appearance mapping, not a claim about an unknown glass volume.
  * Rear geometry and terminal radiance are queried on the displaced world ray.
+ *
+ * The RE-EXPORT PROOF (the transport oracle's discipline): the slab
+ * displacement's arithmetic no longer lives here — `virtualSlabLateralDelta`
+ * re-exports `surface-dielectric.ts`'s {@link dielectricSlabDisplacement},
+ * so this study's panels and the production transport run the SAME f64
+ * displacement. The one behavioral seam: the oracle's degenerate-tangent
+ * guard is 1e-12 (the shader text's constant, so all dialects agree) where
+ * this file's original used `Number.EPSILON` — a band of ~1e-12 radians
+ * around perfect normal incidence that returns zero instead of a ~1e-12
+ * delta; no fixture pose lands there.
  */
 import {
   finishShadeTs,
   resolveSurfaceFinish,
 } from "../src/fractal/surface-finish";
+import {
+  dielectricSlabDisplacement,
+  type DielectricSlabDisplacement,
+} from "../src/fractal/surface-dielectric";
 import { PREVIEW_EXHAUSTED, PREVIEW_MISS, renderPreview } from "./de-preview";
 import type {
   PanelStats,
@@ -85,11 +99,8 @@ export interface SlabDisplacement {
 }
 
 /**
- * Difference between straight and refracted intersections with a virtual
- * parallel plane. It is represented directly in the incident tangent plane,
- * then smoothly saturated in world units. The saved forward parameter is
- * unchanged; for IOR >= 1 the displacement has no interface-normal component
- * and never advances along the incident ray (its direction dot is <= 0).
+ * Re-exported from `surface-dielectric.ts` (the re-export proof — the
+ * header's note): the production transport's displacement, f64, verbatim.
  */
 export function virtualSlabLateralDelta(
   direction: Vec3,
@@ -98,47 +109,17 @@ export function virtualSlabLateralDelta(
   thickness: number,
   maxOffset: number,
 ): SlabDisplacement {
-  if (
-    ![...direction, ...normal].every(Number.isFinite) ||
-    !Number.isFinite(ior) ||
-    ior < 1 ||
-    !Number.isFinite(thickness) ||
-    thickness < 0 ||
-    !Number.isFinite(maxOffset) ||
-    maxOffset < 0
-  )
-    throw new Error(
-      "Virtual slab requires finite nonnegative dimensions and IOR >= 1",
-    );
-  const rd = norm(direction);
-  let n = norm(normal);
-  if (
-    length(rd) === 0 ||
-    length(n) === 0 ||
-    ior === 1 ||
-    thickness === 0 ||
-    maxOffset === 0
-  )
-    return { delta: [0, 0, 0], rawMagnitude: 0, limited: false };
-  if (dot(n, rd) > 0) n = n.map((v) => -v) as Vec3;
-  const cosI = Math.max(0, Math.min(1, -dot(n, rd)));
-  const tangent = rd.map((v, axis) => v + cosI * n[axis]) as Vec3;
-  const tangentMagnitude = length(tangent);
-  if (tangentMagnitude <= Number.EPSILON)
-    return { delta: [0, 0, 0], rawMagnitude: 0, limited: false };
-  const eta = 1 / ior;
-  const cosT = Math.sqrt(Math.max(0, 1 - eta * eta * (1 - cosI * cosI)));
-  const coefficient = cosI > 0 ? eta / cosT - 1 / cosI : -Infinity;
-  const rawMagnitude = Math.abs(coefficient) * thickness * tangentMagnitude;
-  const boundedMagnitude = maxOffset * Math.tanh(rawMagnitude / maxOffset);
-  const sign = coefficient < 0 ? -1 : 1;
-  const delta = tangent.map(
-    (v) => (sign * boundedMagnitude * v) / tangentMagnitude,
-  ) as Vec3;
+  const disp: DielectricSlabDisplacement = dielectricSlabDisplacement(
+    direction,
+    normal,
+    ior,
+    thickness,
+    maxOffset,
+  );
   return {
-    delta,
-    rawMagnitude,
-    limited: !Number.isFinite(rawMagnitude) || rawMagnitude > maxOffset,
+    delta: disp.delta,
+    rawMagnitude: disp.rawMagnitude,
+    limited: disp.limited,
   };
 }
 

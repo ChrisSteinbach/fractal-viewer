@@ -4,6 +4,7 @@ import {
   type DielectricMaterial,
 } from "./surface-dielectric";
 import {
+  SURFACE_OPTICS_DISTORTION_CEILING,
   SURFACE_OPTICS_SCALE_CEILING,
   SURFACE_OPTICS_SCALE_FLOOR,
   resolveSurfaceOptics,
@@ -26,6 +27,7 @@ describe("surface optics vocabulary", () => {
       ior: DIELECTRIC_IOR,
       absorption: [...DIELECTRIC_ABSORPTION],
       radius: 1.34,
+      distortion: 0,
     });
     const scaled = resolveSurfaceOptics(
       { model: "dielectric", scale: 2 },
@@ -44,6 +46,7 @@ describe("surface optics vocabulary", () => {
       ior: DIELECTRIC_IOR,
       absorption: [...DIELECTRIC_ABSORPTION],
       radius: 1,
+      distortion: 0,
     });
   });
 
@@ -81,5 +84,30 @@ describe("surface optics vocabulary", () => {
     expect(() => resolveSurfaceOptics({ model: "dielectric" }, -1)).toThrow(
       TypeError,
     );
+  });
+
+  it("resolves the distortion through its own band — absent/invalid means the straight 0", () => {
+    // Absent and non-finite resolve to the straight 0.
+    expect(resolveSurfaceOptics({ model: "dielectric" }, 2)?.distortion).toBe(
+      0,
+    );
+    expect(
+      resolveSurfaceOptics({ model: "dielectric", distortion: Number.NaN }, 2)
+        ?.distortion,
+    ).toBe(0);
+    // Negative clamps to 0; past the ceiling clamps down; an authored value
+    // inside the band rides.
+    expect(
+      resolveSurfaceOptics({ model: "dielectric", distortion: -0.5 }, 2)
+        ?.distortion,
+    ).toBe(0);
+    expect(
+      resolveSurfaceOptics({ model: "dielectric", distortion: 1e9 }, 2)
+        ?.distortion,
+    ).toBe(SURFACE_OPTICS_DISTORTION_CEILING);
+    expect(
+      resolveSurfaceOptics({ model: "dielectric", distortion: 0.08 }, 2)
+        ?.distortion,
+    ).toBe(0.08);
   });
 });

@@ -19,6 +19,8 @@ import {
   dielectricReplayTheta,
   dielectricSampleAccepted,
   dielectricSliceNormal,
+  dielectricSlabDisplacement,
+  dielectricSmoothedNormal,
   dielectricTrace,
   dielectricTraceStart,
   dielectricTraceStep,
@@ -1113,6 +1115,64 @@ describe("emitted optics source", () => {
         expect(
           bound(throughput[0], throughput[1], throughput[2], radianceBound),
         ).toBe(dielectricBranchBound(throughput, radianceBound));
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    const slab = new Function(
+      `${sources.js}\nreturn dielectricSlabDisplacement;`,
+    )() as (
+      dx: number,
+      dy: number,
+      dz: number,
+      nx: number,
+      ny: number,
+      nz: number,
+      ior: number,
+      thickness: number,
+      maxOffset: number,
+    ) => { x: number; y: number; z: number; w: number };
+    const slabRays: [Vec3, Vec3][] = [
+      [
+        [0, -1, 0],
+        [0, 1, 0],
+      ],
+      [
+        [sin50, -cos50, 0],
+        [0, 1, 0],
+      ],
+      [
+        [0.3, -0.9, 0.2],
+        [0.1, 1, -0.05],
+      ],
+      [
+        [1, 0, 0],
+        [0, 1, 0],
+      ],
+    ];
+    for (const [incident, normal] of slabRays)
+      for (const thickness of [0, 0.08, 0.25])
+        for (const maxOffset of [thickness, thickness * 2]) {
+          const expected = dielectricSlabDisplacement(
+            incident,
+            normal,
+            DIELECTRIC_IOR,
+            thickness,
+            maxOffset,
+          );
+          const actual = slab(
+            incident[0],
+            incident[1],
+            incident[2],
+            normal[0],
+            normal[1],
+            normal[2],
+            DIELECTRIC_IOR,
+            thickness,
+            maxOffset,
+          );
+          expect(actual.x).toBe(expected.delta[0]);
+          expect(actual.y).toBe(expected.delta[1]);
+          expect(actual.z).toBe(expected.delta[2]);
+          expect(actual.w).toBe(expected.applied ? 1 : 0);
+        }
   });
 
   it("emits one shared body for GLSL and WGSL", () => {
@@ -1122,10 +1182,11 @@ describe("emitted optics source", () => {
       "dielectricBeerThroughput",
       "dielectricReplayTheta",
       "dielectricBranchBound",
+      "dielectricSlabDisplacement",
     ]) {
       const normalize = (text: string) =>
         text
-          .replace(/\b(?:float|let|const) /g, "")
+          .replace(/\b(?:float|let|const|var) /g, "")
           .replace(/\bvec4\(/g, "vec4f(")
           .replace(/\s+/g, " ");
       expect(normalize(body(sources.glsl, name))).toBe(
@@ -1158,5 +1219,249 @@ describe("emitted optics source", () => {
     expect(sources.wgsl).not.toContain("?");
     expect(sources.js).not.toContain("mix(");
     expect(sources.js).not.toContain("vec4f(");
+  });
+});
+
+describe("the optical distortion (the accepted virtual parallel slab)", () => {
+  const UP: Vec3 = [0, 1, 0];
+
+  it("returns zero and does not apply on every zero/degenerate guard", () => {
+    for (const [dir, normal, ior, thickness, maxOffset] of [
+      [[0, -1, 0], UP, DIELECTRIC_IOR, 0, 0],
+      [[0, -1, 0], UP, 1, 0.08, 0.08],
+      [[0, -1, 0], [0, 0, 0], DIELECTRIC_IOR, 0.08, 0.08],
+      [[0, 0, 0], UP, DIELECTRIC_IOR, 0.08, 0.08],
+    ] as [Vec3, Vec3, number, number, number][]) {
+      const disp = dielectricSlabDisplacement(
+        dir,
+        normal,
+        ior,
+        thickness,
+        maxOffset,
+      );
+      expect(disp.delta).toEqual([0, 0, 0]);
+      expect(disp.applied).toBe(false);
+      expect(disp.limited).toBe(false);
+    }
+    expect(() =>
+      dielectricSlabDisplacement([0, -1, 0], UP, 0.5, 0.08, 0.08),
+    ).toThrow();
+    expect(() =>
+      dielectricSlabDisplacement([0, -1, 0], UP, DIELECTRIC_IOR, -0.1, 0.08),
+    ).toThrow();
+    expect(() =>
+      dielectricSlabDisplacement(
+        [0, -1, 0],
+        UP,
+        DIELECTRIC_IOR,
+        Number.NaN,
+        0.08,
+      ),
+    ).toThrow();
+  });
+
+  it("is zero at normal incidence and lies in the tangent plane, never advancing along the ray", () => {
+    // Normal incidence: the tangent component degenerates — no displacement.
+    const straight: Vec3 = [0, -1, 0];
+    expect(
+      dielectricSlabDisplacement(straight, UP, DIELECTRIC_IOR, 0.08, 0.08)
+        .applied,
+    ).toBe(false);
+    const sin45 = Math.SQRT1_2;
+    const cos45 = Math.SQRT1_2;
+    const rd: Vec3 = [sin45, -cos45, 0];
+    const disp = dielectricSlabDisplacement(rd, UP, DIELECTRIC_IOR, 0.08, 0.08);
+    expect(disp.applied).toBe(true);
+    // No interface-normal component: the delta lies in the tangent plane.
+    expect(Math.abs(disp.delta[1])).toBeLessThan(1e-12);
+    // And never advances along the incident ray.
+    expect(
+      disp.delta[0] * rd[0] + disp.delta[1] * rd[1] + disp.delta[2] * rd[2],
+    ).toBeLessThanOrEqual(0);
+  });
+
+  it("matches the parallel slab's closed-form lateral shift at 45 degrees", () => {
+    // The textbook shift t·(tanθi − tanθt)·sinθ, through the accepted
+    // model's smooth saturation — with the bound tied to the thickness the
+    // compression applies at every incidence: bounded = t·tanh(raw/t).
+    const sin45 = Math.SQRT1_2;
+    const cos45 = Math.SQRT1_2;
+    const rd: Vec3 = [sin45, -cos45, 0];
+    const t = 0.08;
+    const eta = 1 / DIELECTRIC_IOR;
+    const cosT = Math.sqrt(1 - eta * eta * (1 - cos45 * cos45));
+    const raw = t * (Math.tan(Math.acos(cos45)) - Math.tan(Math.acos(cosT)));
+    const expected = t * Math.tanh(raw / t);
+    const disp = dielectricSlabDisplacement(rd, UP, DIELECTRIC_IOR, t, t);
+    expect(Math.hypot(...disp.delta)).toBeCloseTo(expected, 12);
+    expect(disp.limited).toBe(false);
+  });
+
+  it("saturates smoothly at grazing incidence, bounded by the thickness", () => {
+    const c = 1e-4;
+    const rd: Vec3 = [Math.sqrt(1 - c * c), -c, 0];
+    const t = 0.08;
+    const disp = dielectricSlabDisplacement(rd, UP, DIELECTRIC_IOR, t, t);
+    expect(disp.applied).toBe(true);
+    expect(disp.limited).toBe(true);
+    expect(Math.hypot(...disp.delta)).toBeLessThanOrEqual(t);
+    expect(Math.hypot(...disp.delta)).toBeGreaterThan(t * 0.9);
+    // Every component finite — no NaN escapes the guard chain.
+    expect(disp.delta.every(Number.isFinite)).toBe(true);
+  });
+
+  it("samples the smoothed normal with the shared tetrahedron taps", () => {
+    // A plane field f(p) = p[1] has gradient +y everywhere.
+    const n = dielectricSmoothedNormal((p) => p[1], [1, 2, 3], 0.05);
+    expect(n).not.toBeNull();
+    expect(n![0]).toBeCloseTo(0, 12);
+    expect(n![1]).toBeCloseTo(1, 12);
+    expect(n![2]).toBeCloseTo(0, 12);
+    // A vanishing gradient is the deterministic fallback, as is a
+    // non-finite tap and a non-positive tap radius.
+    expect(dielectricSmoothedNormal(() => 0, [0, 0, 0], 0.05)).toBeNull();
+    expect(
+      dielectricSmoothedNormal(() => Number.NaN, [0, 0, 0], 0.05),
+    ).toBeNull();
+    expect(dielectricSmoothedNormal((p) => p[1], [0, 0, 0], 0)).toBeNull();
+  });
+
+  it("displaces only the exit-transmitted terminals, and never the entry reflection", () => {
+    // An oblique ray through the interval slab at the DEFAULT theta (both
+    // primary children survive): the entry reflection's rear query — the
+    // FIRST rear call, LIFO — is bit-identical with and without the slab;
+    // the exit-transmitted ones are displaced off the origin. The field is
+    // x-only, so the exit normals are ±x and the tangent-plane delta moves
+    // only y (the ray has no z component).
+    const base = axisIntervalsScene([[-0.5, 0.5]]);
+    const field = (p: Vec3) => Math.max(-0.5 - p[0], p[0] - 0.5);
+    const dir: Vec3 = [1, -0.25, 0];
+    const dirLen = Math.hypot(...dir);
+    const unit: Vec3 = [dir[0] / dirLen, dir[1] / dirLen, dir[2] / dirLen];
+    const origin: Vec3 = [-2, 0.55, 0];
+    const straightRear: Vec3[] = [];
+    const bentRear: Vec3[] = [];
+    const withRearLog = (log: Vec3[]): DielectricScene => ({
+      ...base,
+      opticalField: field,
+      rearRadiance: (o) => {
+        log.push([...o] as Vec3);
+        return base.rearRadiance(o, unit);
+      },
+    });
+    const straight = dielectricTrace(
+      withRearLog(straightRear),
+      origin,
+      unit,
+      CLEAR_GLASS,
+    );
+    const bent = dielectricTrace(withRearLog(bentRear), origin, unit, {
+      ...CLEAR_GLASS,
+      distortion: 0.08,
+    });
+    expect(straight.status).toBe(bent.status);
+    expect(straightRear.length).toBe(bentRear.length);
+    // The entry reflection's terminal (the first rear call) is
+    // byte-identical — a mirror view never displaces.
+    expect(bentRear[0]).toEqual(straightRear[0]);
+    // Every later (exit-transmitted) terminal moved, in the tangent plane
+    // only: the y coordinate shifts, x and z do not.
+    let displaced = 0;
+    for (let i = 1; i < bentRear.length; i++) {
+      expect(bentRear[i][0]).toBe(straightRear[i][0]);
+      expect(bentRear[i][2]).toBe(straightRear[i][2]);
+      if (bentRear[i][1] !== straightRear[i][1]) displaced++;
+    }
+    expect(displaced).toBeGreaterThan(0);
+  });
+
+  it("displaces a born-inside ray's first exit too", () => {
+    const base = axisIntervalsScene([[-0.5, 0.5]]);
+    const field = (p: Vec3) => Math.max(-0.5 - p[0], p[0] - 0.5);
+    const dir: Vec3 = [1, -0.25, 0];
+    const dirLen = Math.hypot(...dir);
+    const unit: Vec3 = [dir[0] / dirLen, dir[1] / dirLen, dir[2] / dirLen];
+    const rearStraight: Vec3[] = [];
+    const rearBent: Vec3[] = [];
+    const withRearLog = (log: Vec3[]): DielectricScene => ({
+      ...base,
+      opticalField: field,
+      rearRadiance: (o) => {
+        log.push([...o] as Vec3);
+        return base.rearRadiance(o, unit);
+      },
+    });
+    const straight = dielectricTrace(
+      withRearLog(rearStraight),
+      [0, 0.2, 0],
+      unit,
+      CLEAR_GLASS,
+      { theta: 0.4, initialMedium: true },
+    );
+    const bent = dielectricTrace(
+      withRearLog(rearBent),
+      [0, 0.2, 0],
+      unit,
+      { ...CLEAR_GLASS, distortion: 0.08 },
+      { theta: 0.4, initialMedium: true },
+    );
+    expect(straight.status).toBe(bent.status);
+    // The very first crossing here is the exit — its transmitted child
+    // displaces, so the FIRST rear call already differs.
+    expect(rearBent[0]).not.toEqual(rearStraight[0]);
+  });
+
+  it("keeps distortion zero byte-identical to straight transmission", () => {
+    const base = axisIntervalsScene([[-0.5, 0.5]]);
+    const field = (p: Vec3) => Math.max(-0.5 - p[0], p[0] - 0.5);
+    const scene: DielectricScene = { ...base, opticalField: field };
+    const dir: Vec3 = [1, -0.25, 0];
+    const dirLen = Math.hypot(...dir);
+    const unit: Vec3 = [dir[0] / dirLen, dir[1] / dirLen, dir[2] / dirLen];
+    const origin: Vec3 = [-2, 0.55, 0];
+    const absent = dielectricTrace(scene, origin, unit, CLEAR_GLASS, {
+      theta: 0.4,
+    });
+    const explicitZero = dielectricTrace(
+      scene,
+      origin,
+      unit,
+      {
+        ...CLEAR_GLASS,
+        distortion: 0,
+      },
+      { theta: 0.4 },
+    );
+    expect(explicitZero.radiance).toEqual(absent.radiance);
+    expect(explicitZero.residual).toBe(absent.residual);
+    expect(explicitZero.status).toBe(absent.status);
+  });
+
+  it("reproduces the displaced run bit-for-bit across chunk boundaries", () => {
+    const base = axisIntervalsScene([[-0.5, 0.5]]);
+    const field = (p: Vec3) => Math.max(-0.5 - p[0], p[0] - 0.5);
+    const scene: DielectricScene = { ...base, opticalField: field };
+    const dir: Vec3 = [1, -0.25, 0];
+    const dirLen = Math.hypot(...dir);
+    const unit: Vec3 = [dir[0] / dirLen, dir[1] / dirLen, dir[2] / dirLen];
+    const material: DielectricMaterial = { ...CLEAR_GLASS, distortion: 0.08 };
+    const whole = dielectricTrace(scene, [-2, 0.55, 0], unit, material, {
+      theta: 0.4,
+    });
+    for (const chunk of [1, 2, 3, 7]) {
+      const stepped = dielectricTraceStart(
+        scene,
+        [-2, 0.55, 0],
+        unit,
+        material,
+        {
+          theta: 0.4,
+        },
+      );
+      while (stepped.status === "running")
+        dielectricTraceStep(stepped, scene, material, chunk);
+      expect(stepped.radiance).toEqual(whole.radiance);
+      expect(stepped.residual).toBe(whole.residual);
+    }
   });
 });

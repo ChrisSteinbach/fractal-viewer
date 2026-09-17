@@ -2750,6 +2750,7 @@ ${surfaceTransportSource(true)}
       float iorO = opticsLane0.x;
       float radiusO = opticsLane0.y;
       vec3 absorbO = vec3(opticsLane0.z, opticsLane0.w, opticsLane1.x);
+      float distortionO = opticsLane1.y;
       for (int pass = 0; pass < TRANSPORT_REPLAY_PASSES; pass++) {
         float thetaO = dielectricReplayTheta(float(pass), TRANSPORT_INITIAL_THETA);
         TransportTrace traced = transportTrace(
@@ -2759,7 +2760,8 @@ ${surfaceTransportSource(true)}
           iorO,
           radiusO,
           absorbO,
-          background
+          background,
+          distortionO
         );
         if (traced.status == TRANSPORT_STATUS_INVALID) {
           // Never retried, never presented as background: black.

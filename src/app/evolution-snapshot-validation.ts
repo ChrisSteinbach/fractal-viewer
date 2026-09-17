@@ -138,6 +138,7 @@ const PATTERN_FIELDS = {
 const OPTICS_FIELDS = {
   model: true,
   scale: true,
+  distortion: true,
 } satisfies Fields<SurfaceOptics>;
 const W_FIELDS = {
   position: true,

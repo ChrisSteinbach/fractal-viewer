@@ -95,6 +95,7 @@ import {
 import {
   DIELECTRIC_ANCHOR_ENVELOPE_REL,
   DIELECTRIC_CROSSING_EPS_REL,
+  DIELECTRIC_DISTORTION_NORMAL_REL,
   DIELECTRIC_ENVIRONMENT_BOUND,
   DIELECTRIC_ERROR_BUDGET,
   DIELECTRIC_INITIAL_BRANCH_THETA,
@@ -1573,6 +1574,7 @@ export function surfaceTransportSource(fourD: boolean): string {
   const float TRANSPORT_CROSSING_EPS_REL = ${DIELECTRIC_CROSSING_EPS_REL};
   const float TRANSPORT_ANCHOR_ENVELOPE_REL = ${DIELECTRIC_ANCHOR_ENVELOPE_REL.toFixed(1)};
   const int TRANSPORT_QUERY_MAX_STEPS = ${DIELECTRIC_QUERY_MAX_STEPS};
+  const float DIELECTRIC_DISTORTION_NORMAL_REL = ${DIELECTRIC_DISTORTION_NORMAL_REL};
 
   // One live path: the oracle's continuation payload, the kernel's
   // TransportPath struct. (The uMapOptics lane pair the trace reads is
@@ -1588,6 +1590,12 @@ export function surfaceTransportSource(fourD: boolean): string {
     float bound;
     int anchorPresent;
     vec3 anchorPoint;
+    // The transmitted child of an exit crossing — the only path whose
+    // terminal reads the rear scene through the glass, and the only one
+    // the optical distortion displaces (its origin at a terminal IS that
+    // exit point: the ray origin moves only at events). Every other child
+    // resets the flag, so a mirror view at a later entry never displaces.
+    int exitPresent;
   };
 
   // One boundary query's answer: 1 boundary, 2 miss, 3 refused.
@@ -1634,6 +1642,33 @@ ${domainRadius}
       e.yxy * surfaceDE(p + e.yxy * eps, 0.0) +
       e.xxx * surfaceDE(p + e.xxx * eps, 0.0);
     return dot(grad, grad) > 1.0e-12 ? normalize(grad) : -dir;
+  }
+
+  // The optical distortion's SMOOTHED normal: the SAME tetrahedron-tap
+  // discipline, at the coherent world-defined radius (the oracle's
+  // DIELECTRIC_DISTORTION_NORMAL_REL of the material's radius — ~20x the
+  // declared crossing scale), independently of the fine visible surface
+  // normal. Read over the SAME field the boundary query marches (the
+  // signed closed-solid field when the backend is the closed-solid one,
+  // the composed public estimator otherwise). A vanishing gradient
+  // returns the zero vector — the displacement's applied flag turns that
+  // into the deterministic straight terminal, never a guessed direction.
+  float transportSmoothedField(vec3 p) {
+#if SURFACE_OPTICS_CLOSED_SOLID
+    return transportSolidField(p);
+#else
+    return surfaceDE(p, 0.0);
+#endif
+  }
+
+  vec3 transportSmoothedNormal(vec3 p, float tapR) {
+    vec2 e = vec2(1.0, -1.0) * 0.5773;
+    vec3 grad = e.xyy * transportSmoothedField(p + e.xyy * tapR) +
+      e.yyx * transportSmoothedField(p + e.yyx * tapR) +
+      e.yxy * transportSmoothedField(p + e.yxy * tapR) +
+      e.xxx * transportSmoothedField(p + e.xxx * tapR);
+    float m = length(grad);
+    return m > 1.0e-12 ? grad / m : vec3(0.0);
   }
 
   // The production boundary query (module doc), one of TWO backends the
@@ -1887,7 +1922,8 @@ ${domainRadius}
     float ior,
     float radius,
     vec3 absorb,
-    vec3 bg
+    vec3 bg,
+    float distortion
   ) {
     // GLSL reserves the kernel text's result-variable name, so the struct
   // carries a legal one here.
@@ -1917,6 +1953,7 @@ ${domainRadius}
     refl0.interfaces = 1;
     refl0.anchorPresent = 1;
     refl0.anchorPoint = origin;
+    refl0.exitPresent = 0;
     refl0.bound = transportChildBound(refl0.energy);
     TransportPath refr0;
     refr0.origin = origin;
@@ -1926,6 +1963,7 @@ ${domainRadius}
     refr0.interfaces = 1;
     refr0.anchorPresent = 1;
     refr0.anchorPoint = origin;
+    refr0.exitPresent = 0;
     refr0.bound = transportChildBound(refr0.energy);
     // Push the stronger child first (the oracle's order) so the weaker
     // actual-throughput child is processed first — with the oracle's cut
@@ -2018,7 +2056,44 @@ ${domainRadius}
           result.failure = TRANSPORT_FAILURE_INSIDE_MISS;
           break;
         }
-        vec3 rear = transportRearRadiance(path.origin, path.dir, bg);
+        // The rear seam, displaced by the optical distortion when this
+        // path read the rear scene THROUGH the glass (exitPresent — the
+        // transmitted child of an exit crossing, whose origin here IS
+        // that exit point). The origin-only displacement is the parallel
+        // slab's exact ray-space reading: the direction is unchanged, so
+        // the direction-only background is shift-invariant and the
+        // structured plane terminal carries the bend. The front Fresnel
+        // split rides the energy and is never touched; the geometry
+        // queries never saw the displacement. Every fallback is the
+        // deterministic straight terminal: zero distortion, a vanishing
+        // smoothed normal, a degenerate tangent (the emitted fn's
+        // applied flag).
+        vec3 rearOrigin = path.origin;
+        if (path.exitPresent == 1 && distortion > 0.0) {
+          vec3 nS = transportSmoothedNormal(
+            path.origin,
+            DIELECTRIC_DISTORTION_NORMAL_REL * radius
+          );
+          vec4 disp = dielectricSlabDisplacement(
+            path.dir.x,
+            path.dir.y,
+            path.dir.z,
+            nS.x,
+            nS.y,
+            nS.z,
+            ior,
+            distortion * radius,
+            distortion * radius
+          );
+          if (disp.w > 0.5) {
+            rearOrigin = vec3(
+              path.origin.x + disp.x,
+              path.origin.y + disp.y,
+              path.origin.z + disp.z
+            );
+          }
+        }
+        vec3 rear = transportRearRadiance(rearOrigin, path.dir, bg);
         radiance = radiance + rear * path.energy;
         if (any(isnan(radiance)) ||
             any(greaterThan(abs(radiance), vec3(3.0e38)))) {
@@ -2064,6 +2139,7 @@ ${domainRadius}
         child.interfaces = path.interfaces + 1;
         child.anchorPresent = 1;
         child.anchorPoint = childOrigin;
+        child.exitPresent = 0;
         child.bound = transportChildBound(energy);
         if (transportPushCut(child.bound, theta)) {
           residual = residual + child.bound;
@@ -2086,6 +2162,10 @@ ${domainRadius}
         trans.interfaces = path.interfaces + 1;
         trans.anchorPresent = 1;
         trans.anchorPoint = childOrigin;
+        // Only the transmitted child of an EXIT crossing reads the rear
+        // scene through the glass; every other child resets the flag, so
+        // a mirror view at a later entry never displaces.
+        trans.exitPresent = path.inside;
         trans.bound = transportChildBound(trans.energy);
         TransportPath refl;
         refl.origin = childOrigin;
@@ -2095,6 +2175,7 @@ ${domainRadius}
         refl.interfaces = path.interfaces + 1;
         refl.anchorPresent = 1;
         refl.anchorPoint = childOrigin;
+        refl.exitPresent = 0;
         refl.bound = transportChildBound(refl.energy);
         // Push the stronger child first, so the weaker actual-throughput
         // child is processed first; Fresnel is not assumed below 0.5.
@@ -6245,6 +6326,7 @@ ${surfaceTransportSource(false)}
       float iorO = opticsLane0.x;
       float radiusO = opticsLane0.y;
       vec3 absorbO = vec3(opticsLane0.z, opticsLane0.w, opticsLane1.x);
+      float distortionO = opticsLane1.y;
       for (int pass = 0; pass < TRANSPORT_REPLAY_PASSES; pass++) {
         float thetaO = dielectricReplayTheta(float(pass), TRANSPORT_INITIAL_THETA);
         TransportTrace traced = transportTrace(
@@ -6254,7 +6336,8 @@ ${surfaceTransportSource(false)}
           iorO,
           radiusO,
           absorbO,
-          background
+          background,
+          distortionO
         );
         if (traced.status == TRANSPORT_STATUS_INVALID) {
           // Never retried, never presented as background: black.

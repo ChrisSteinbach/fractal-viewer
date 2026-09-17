@@ -1463,11 +1463,13 @@ function decodeFinish(raw: unknown): SurfaceFinish | undefined {
  * against `SURFACE_OPTICS_MODELS` — an unknown model id (a future document
  * on an old binary, or garbage) drops the WHOLE block, because the scale
  * alone has no meaning without the model that interprets it and absence is
- * the classic state the zero-transmission rule keys on; `scale` decodes
- * via {@link decodeFinishField} — finite only, no coercion, no clamp (the
- * domain is `surface-optics.ts`'s resolver, not persistence's). A block
- * whose model survives but whose scale does not decodes as
- * `{model}` — the resolver's default scale is 1, so nothing is lost.
+ * the classic state the zero-transmission rule keys on; `scale` and
+ * `distortion` decode via {@link decodeFinishField} — finite only, no
+ * coercion, no clamp (the domain is `surface-optics.ts`'s resolver, not
+ * persistence's). A block whose model survives but whose scale does not
+ * decodes as `{model}` — the resolver's default scale is 1, so nothing is
+ * lost; likewise a dropped `distortion` decodes to the resolver's default
+ * 0, the straight state.
  */
 function decodeSurfaceOptics(raw: unknown): SurfaceOptics | undefined {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
@@ -1484,6 +1486,8 @@ function decodeSurfaceOptics(raw: unknown): SurfaceOptics | undefined {
   const optics: SurfaceOptics = { model: model as SurfaceOpticsModel };
   const scale = decodeFinishField(o.scale);
   if (scale !== undefined) optics.scale = scale;
+  const distortion = decodeFinishField(o.distortion);
+  if (distortion !== undefined) optics.distortion = distortion;
   return optics;
 }
 
@@ -2720,13 +2724,14 @@ function encodeFinish(
 /**
  * Encode a transform's optional `optics` (see `types.ts`'s
  * {@link SurfaceOptics}): the model selector always written when the block
- * is present at all, `scale` written only when present and finite — the
- * identical per-field omission as {@link encodeFinish}, and `scale` rides
- * the same round4 precision the finish fields do. An absent field writes
- * nothing, so a document that never authored one encodes byte-identically
- * to one that predates it. There is deliberately no "is classic" early
- * return: the model selector has no classic VALUE to compare — its absence
- * IS the classic state, and it is the field's own presence that encodes.
+ * is present at all, `scale`/`distortion` written only when present and
+ * finite — the identical per-field omission as {@link encodeFinish}, and
+ * both ride the same round4 precision the finish fields do. An absent field
+ * writes nothing, so a document that never authored one encodes
+ * byte-identically to one that predates it. There is deliberately no "is
+ * classic" early return: the model selector has no classic VALUE to
+ * compare — its absence IS the classic state, and it is the field's own
+ * presence that encodes.
  */
 function encodeSurfaceOptics(
   optics: SurfaceOptics | undefined,
@@ -2735,6 +2740,8 @@ function encodeSurfaceOptics(
   const e: SurfaceOptics = { model: optics.model };
   const scale = encodeFinishField(optics.scale);
   if (scale !== undefined) e.scale = scale;
+  const distortion = encodeFinishField(optics.distortion);
+  if (distortion !== undefined) e.distortion = distortion;
   return e;
 }
 

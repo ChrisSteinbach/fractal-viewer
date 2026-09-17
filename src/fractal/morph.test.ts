@@ -1184,6 +1184,44 @@ describe("lerpSystem optics", () => {
     });
   });
 
+  it("lerps distortion through the default 0 — the straight state — and keeps a shared sparsity", () => {
+    const a = system({
+      transforms: [
+        transform({ optics: { model: "dielectric", distortion: 0.08 } }),
+      ],
+    });
+    const b = system({
+      transforms: [
+        transform({ position: [1, 1, 1], optics: { model: "dielectric" } }),
+      ],
+    });
+    // Absent on one side morphs 0 <-> authored, endpoint-exact.
+    expect(lerpSystem(a, b, 0.5).transforms[0].optics).toEqual({
+      model: "dielectric",
+      distortion: 0.04,
+    });
+    expect(lerpSystem(a, b, 0).transforms[0].optics).toEqual({
+      model: "dielectric",
+      distortion: 0.08,
+    });
+    // Endpoint-exact: t = 1 is b's own block by reference — absent
+    // distortion stays absent there.
+    expect(lerpSystem(a, b, 1).transforms[0].optics).toEqual({
+      model: "dielectric",
+    });
+    // Both sides omit distortion: the result omits it too, never a
+    // synthesized 0.
+    const sparseA = system({
+      transforms: [transform({ optics: { model: "dielectric" } })],
+    });
+    const sparseB = system({
+      transforms: [transform({ optics: { model: "dielectric" } })],
+    });
+    expect(lerpSystem(sparseA, sparseB, 0.5).transforms[0].optics).toEqual({
+      model: "dielectric",
+    });
+  });
+
   it("pops the whole block at the midpoint when the model changes in either direction", () => {
     const glass = system({
       transforms: [transform({ optics: { model: "dielectric", scale: 3 } })],
