@@ -337,11 +337,16 @@ describe("GPU workflow gates", () => {
     expect(condition).not.toContain("||");
     expect(condition.split("&&")).toHaveLength(2);
   });
-  it("preserves the four ci.yml required checks on every PR and main push", () => {
+  it("preserves the ci.yml required checks on every PR and main push", () => {
     const ci = workflow("ci");
+    // build/lint/smoke/test are the four names main's ruleset requires;
+    // panel-contrast is the panel-cleanup epic's browser gate and runs
+    // beside them (folding it into the ruleset is a repo-settings change,
+    // not a workflow one).
     expect(Object.keys(ci.jobs).sort()).toEqual([
       "build",
       "lint",
+      "panel-contrast",
       "smoke",
       "test",
     ]);
