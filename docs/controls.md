@@ -227,7 +227,7 @@ morphs into place instead of snapping (see **Presets** below).
   transforms: mirror spheres invert a seed shape again and again, nesting ever
   smaller copies in the gaps between them. It sits right after **Transforms**
   because it is the scene's subject. Points samples the result exactly, Surface
-  traces it, and Flame and Sampled Solid refuse the family. With no scene
+  traces it, and Flame and Solid refuse the family. With no scene
   present, the section's controls are disabled in Flame and Solid, with that
   reason beside them.
 

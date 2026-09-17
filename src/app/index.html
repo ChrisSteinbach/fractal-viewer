@@ -199,9 +199,9 @@
           type="button"
           aria-pressed="false"
           aria-describedby="sphereInversionModeNote"
-          title="Sampled voxel-density Solid; distinct from analytic Surface"
+          title="Voxel-density solid"
         >
-          ◆ Sampled Solid
+          ◆ Solid
         </button>
         <button
           class="segment"
@@ -235,7 +235,7 @@
         Turn trap geometry off
       </button>
       <!-- Document-level refusal for the renderers a sphere-inversion scene
-           has no representation in (Flame, Sampled Solid). Beside the mode
+           has no representation in (Flame, Solid). Beside the mode
            switch for the same reason as surfaceNote: the disabled buttons
            describe themselves with it, and it must stay readable from every
            renderer. Text alone drives visibility. -->
@@ -324,8 +324,7 @@
 
       <div id="solidStatus" class="hidden">
         <p class="flame-hint">
-          Keep orbiting while sampled Solid converges; lighting responds
-          immediately.
+          Keep orbiting while Solid converges; lighting responds immediately.
         </p>
         <div id="solidProgress" class="flame-progress">0%</div>
       </div>
@@ -1993,13 +1992,13 @@
         >
           <summary>Floor</summary>
           <p class="flame-hint">
-            A world-space floor under sampled Solid. Balloon temporarily hides
-            it without clearing these settings.
+            A world-space floor under Solid. Balloon temporarily hides it
+            without clearing these settings.
           </p>
           <label
             class="checkbox-label"
             id="solidFloorEnabledRow"
-            title="Floor under the sampled Solid volume, catching its shadow"
+            title="Floor under the Solid volume, catching its shadow"
           >
             <input type="checkbox" id="solidFloorEnabledCheckbox" />
             Floor

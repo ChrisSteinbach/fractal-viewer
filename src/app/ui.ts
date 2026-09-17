@@ -5803,7 +5803,7 @@ export class Ui {
     } else if (state.renderMode === "solid") {
       // Unlike the flame's frozen view, the solid render's volume is
       // world-space: the camera stays fully interactive while it converges.
-      this.helpTitle.textContent = "Sampled Solid Render";
+      this.helpTitle.textContent = "Solid Render";
       this.setHelpLines(
         this.mouse
           ? ["Drag: Orbit", "Right-drag: Pan", "Scroll: Zoom"]
@@ -6990,7 +6990,7 @@ export class Ui {
       scene.mode === "flame"
         ? "✺ "
         : scene.mode === "solid"
-          ? `◆ ${scene.solidStatus ? sampledSolidSnapshotText(scene.solidStatus) : "Sampled Solid · resolution and convergence unavailable"} · `
+          ? `◆ ${scene.solidStatus ? sampledSolidSnapshotText(scene.solidStatus) : "Solid · resolution and convergence unavailable"} · `
           : scene.mode === "surface"
             ? "◈ "
             : "";
@@ -6998,7 +6998,7 @@ export class Ui {
       scene.mode === undefined
         ? ""
         : scene.mode === "solid"
-          ? ` (${scene.solidStatus ? sampledSolidSnapshotText(scene.solidStatus) : "Sampled Solid; resolution and convergence unavailable"})`
+          ? ` (${scene.solidStatus ? sampledSolidSnapshotText(scene.solidStatus) : "Solid; resolution and convergence unavailable"})`
           : ` (${scene.mode} render)`;
     const card = this.doc.createElement("div");
     card.className = "gallery-card";
@@ -7123,17 +7123,17 @@ export class Ui {
         step.mode === "flame"
           ? "✺"
           : step.mode === "solid"
-            ? `◆ ${step.solidStatus ? sampledSolidSnapshotText(step.solidStatus) : "Sampled Solid · resolution and convergence unavailable"}`
+            ? `◆ ${step.solidStatus ? sampledSolidSnapshotText(step.solidStatus) : "Solid · resolution and convergence unavailable"}`
             : "◈";
       mode.title =
         step.mode === "solid"
-          ? `Plays as ${step.solidStatus ? sampledSolidSnapshotText(step.solidStatus) : "Sampled Solid; saved resolution and convergence unavailable"} — playback builds a fresh sampled session and holds until it converges`
+          ? `Plays as ${step.solidStatus ? sampledSolidSnapshotText(step.solidStatus) : "Solid; saved resolution and convergence unavailable"} — playback builds a fresh sampled session and holds until it converges`
           : `Plays as a ${step.mode} render — playback holds until it converges`;
       mode.setAttribute("role", "img");
       mode.setAttribute(
         "aria-label",
         step.mode === "solid"
-          ? `${step.solidStatus ? sampledSolidSnapshotText(step.solidStatus) : "Sampled Solid; resolution and convergence unavailable"} keyframe`
+          ? `${step.solidStatus ? sampledSolidSnapshotText(step.solidStatus) : "Solid; resolution and convergence unavailable"} keyframe`
           : `${step.mode} render keyframe`,
       );
       row.appendChild(mode);
@@ -7735,7 +7735,7 @@ export class Ui {
       return;
     }
     const { armed, text } = crossedProgressQuartile(
-      "Sampled Solid render",
+      "Solid render",
       pct,
       this.solidAnnouncedQuartile,
     );
