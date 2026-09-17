@@ -4908,7 +4908,12 @@ describe("SURFACE_OPTICS variant (the dielectric transport lane)", () => {
     null,
     0,
     0,
+    // main's sphere-inversion arm took the slot between lighting and
+    // optics: every positional caller — these included — now feeds the
+    // sphere-inversion slot (0) before the optics gate.
+    0,
     1,
+    0,
   ] as const;
 
   it("strips every optics token from every descent variant while the flag is off — the byte-identity mechanism", () => {
@@ -5055,7 +5060,8 @@ describe("SURFACE_OPTICS variant (the dielectric transport lane)", () => {
         null,
         0,
         1,
-        1,
+        0, // sphereInversion
+        1, // optics
       ),
     ).toThrow(/cinematic lighting/);
   });
@@ -6146,6 +6152,7 @@ describe("SURFACE_OPTICS_CLOSED_SOLID (the signed closed-solid backend)", () => 
         null,
         0,
         0,
+        0,
         1,
         1,
       ),
@@ -6168,6 +6175,7 @@ describe("SURFACE_OPTICS_CLOSED_SOLID (the signed closed-solid backend)", () => 
         0,
         1,
         null,
+        0,
         0,
         0,
         1,
@@ -6193,6 +6201,7 @@ describe("SURFACE_OPTICS_CLOSED_SOLID (the signed closed-solid backend)", () => 
         null,
         0,
         0,
+        0,
         1,
         1,
       ),
@@ -6214,6 +6223,7 @@ describe("SURFACE_OPTICS_CLOSED_SOLID (the signed closed-solid backend)", () => 
         0,
         0,
         null,
+        0,
         0,
         0,
         1,
@@ -6239,6 +6249,7 @@ describe("SURFACE_OPTICS_CLOSED_SOLID (the signed closed-solid backend)", () => 
         resolveTiling({ group: "f4" }),
         0,
         0,
+        0,
         1,
         1,
       ),
@@ -6260,6 +6271,7 @@ describe("SURFACE_OPTICS_CLOSED_SOLID (the signed closed-solid backend)", () => 
         0,
         0,
         null,
+        0,
         0,
         0,
         1,
@@ -6298,6 +6310,7 @@ describe("SURFACE_OPTICS_CLOSED_SOLID (the signed closed-solid backend)", () => 
         null,
         0,
         0,
+        0,
         1,
         1,
       ),
@@ -6320,6 +6333,7 @@ describe("SURFACE_OPTICS_CLOSED_SOLID (the signed closed-solid backend)", () => 
       0,
       0,
       null,
+      0,
       0,
       0,
       1,
@@ -6353,6 +6367,7 @@ describe("SURFACE_OPTICS_CLOSED_SOLID (the signed closed-solid backend)", () => 
         null,
         0,
         0,
+        0,
         1,
       ),
     ).not.toContain("transportSolidField");
@@ -6375,6 +6390,7 @@ describe("SURFACE_OPTICS_CLOSED_SOLID (the signed closed-solid backend)", () => 
         null,
         0,
         0,
+        0,
         1,
         0,
       ),
@@ -6395,6 +6411,7 @@ describe("SURFACE_OPTICS_CLOSED_SOLID (the signed closed-solid backend)", () => 
         0,
         0,
         null,
+        0,
         0,
         0,
         1,
