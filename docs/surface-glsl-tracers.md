@@ -1154,6 +1154,17 @@ resolved bytes at absent (it is a resolved arm of the spliced text) and
 is compile-verified in both dimensions on the real driver through a
 temporary backend force.
 
+The lane's real-browser gates (RX 7900 XTX / radeonsi, settled, the
+invalidation sweep's shared fixtures): `scripts/surface-optics-glsl.verify.mjs`
+traces the settled `?surfacegl` frame per dimension — live near-black
+14.08% (3D tetra) / 0.32% (4D w-slice) against a stripped control ~0,
+structural diff 16.5% / 8.0% (max delta 249) — and the invalidation
+sweep's `--lane=webgl` runs the invalidation arms (byte-identical
+reloads, mid-trace edits, mode exit, restart storm) with that signature
+as the lane-live observable. A near-black frame is the estimator
+backend's disclosed vacuous state on IFS geometry, not a glass render;
+the full rows live in the transport contract's GLSL-twins section.
+
 ## The probe-width verdict
 
 The three shading taps (normal/shadow/AO) ride the value form, which fold

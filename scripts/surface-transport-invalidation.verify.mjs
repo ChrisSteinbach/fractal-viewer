@@ -8,6 +8,7 @@
  *
  *   npm run build && npm run preview &
  *   node scripts/surface-transport-invalidation.verify.mjs --display=:0
+ *   node scripts/surface-transport-invalidation.verify.mjs --display=:0 --lane=webgl
  *
  * THE PREMISE, and its honest scope: the app routes an optics-authored IFS
  * session to the compute renderer with the transport lane live — the
@@ -26,6 +27,24 @@
  * proves the premise per arm — `engine === "compute"` AND
  * `?surfacetrace`'s ring carries `transport pass=` lines — and reports
  * INCONCLUSIVE (exit 2) rather than passing if the lane never went live.
+ *
+ * THE LANES. `--lane=compute` (default) is the sweep above. `--lane=webgl`
+ * drives the SAME arms against the GLSL twins: the fixtures' URLs swap
+ * `?surfacecompute` for `?surfacegl` (the fragment tracer is the fallback
+ * arm; `?surfacetrace` is inert there and dropped), `engine === "webgl"` is
+ * asserted in place of `"compute"`, and the lane-live observable is the
+ * settled frame's ABSOLUTE near-black fraction (on IFS geometry every
+ * inside path refuses and unresolved samples paint black — the same
+ * vacuous state — so the object's ray coverage reads as near-black: 14.08%
+ * on the tetra, 0.32% on the sparse w-slice (0.21% at the slice arm's
+ * edited pose); both stripped controls ~0.
+ * The floors sit under the measured minima. The webgl lane runs
+ * WITHOUT the device-failure arm: the GPU-process kill loses every GL
+ * context with the process, the app does not handle WebGL context
+ * restoration, and the arm is meaningful only against the compute device.
+ * A software rasterizer is INCONCLUSIVE in the webgl lane by measurement —
+ * the optics program crashed the SwiftShader renderer on the 4D arm's
+ * first frame, and the wire strips the lane there.
  *
  * THE ARMS (each a fresh page against the built app, entered FROM THE UI):
  *
@@ -75,6 +94,7 @@ import { chromium } from "playwright-core";
 import fs from "node:fs";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
 import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
+import { OPTICS_SCENES } from "./lib/optics-fixtures.mjs";
 
 const NON_BACKDROP_TOL = 10;
 
@@ -84,6 +104,7 @@ function parseArgs(argv) {
     display: undefined,
     settleMs: 240000,
     arm: null,
+    lane: "compute",
   };
   for (const raw of argv) {
     const [key, value] = raw.replace(/^--/, "").split("=");
@@ -91,25 +112,15 @@ function parseArgs(argv) {
     else if (key === "display") out.display = value ?? ":0";
     else if (key === "settle" && value) out.settleMs = Number(value);
     else if (key === "arm" && value) out.arm = value;
+    else if (key === "lane" && value) out.lane = value;
+  }
+  if (!["compute", "webgl"].includes(out.lane)) {
+    throw new Error(`--lane must be compute or webgl (got ${out.lane})`);
   }
   return out;
 }
 
-const SCENES = {
-  3: {
-    name: "opticsTetra3",
-    what: "the Sierpinski tetra, dielectric authored on all four maps, ?surfacecompute",
-    hash: "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAsMC44LDBdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV0sIm9wdGljcyI6eyJtb2RlbCI6ImRpZWxlY3RyaWMifX0seyJwb3NpdGlvbiI6WzAuNzUsLTAuNCwwXSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdLCJvcHRpY3MiOnsibW9kZWwiOiJkaWVsZWN0cmljIn19LHsicG9zaXRpb24iOlstMC4zNzUsLTAuNCwwLjY1XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdLCJvcHRpY3MiOnsibW9kZWwiOiJkaWVsZWN0cmljIn19LHsicG9zaXRpb24iOlstMC4zNzUsLTAuNCwtMC42NV0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwib3B0aWNzIjp7Im1vZGVsIjoiZGllbGVjdHJpYyJ9fV0sIm51bVBvaW50cyI6MTAwMDAwLCJwb2ludFNpemUiOjEsImNvbG9yTW9kZSI6InRyYW5zZm9ybSIsImNvbG9yR2FtbWEiOjEsInJhbXBQYWxldHRlSWQiOiJsZWdhY3kiLCJmb3VyRENvbG9yIjoid0JsdWVPcmFuZ2UiLCJmb3VyRERlcHRoRmFkZSI6ZmFsc2UsInJlbmRlclN0eWxlIjoiZGVwdGhGYWRlIiwic2hvd0d1aWRlcyI6ZmFsc2UsImZsYW1lIjp7ImV4cG9zdXJlIjoxLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwiZ2FtbWEiOjIuNCwidmlicmFuY3kiOjEsInN1cGVyc2FtcGxlIjoyLCJlc3RpbWF0b3JSYWRpdXMiOjYsImVzdGltYXRvck1pbmltdW1SYWRpdXMiOjAsImVzdGltYXRvckN1cnZlIjowLjQsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInNvbGlkIjp7InJlc29sdXRpb24iOjE5MiwiaXRlcmF0aW9ucyI6MjAwMDAwMDAsInRocmVzaG9sZCI6MC4zLCJsaWdodEF6aW11dGgiOjEzNSwibGlnaHRFbGV2YXRpb24iOjUwLCJhbWJpZW50IjowLjI1LCJlbnZMaWdodCI6MCwiZmxvb3JFbmFibGVkIjpmYWxzZSwiZmxvb3JQYXR0ZXJuIjoic29saWQiLCJmbG9vclRpbGVTY2FsZSI6MC42NCwiZmxvb3JFbWlzc2lvbiI6MCwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic3VyZmFjZSI6eyJsaWdodEF6aW11dGgiOjEzNSwibGlnaHRFbGV2YXRpb24iOjUwLCJhbWJpZW50IjowLjI1LCJjb2xvclNvdXJjZSI6InRyYW5zZm9ybSIsInBhbGV0dGVJZCI6InNwZWN0cnVtIiwiY29sb3JTcGVlZCI6MC41LCJlbnZMaWdodCI6MC4zNSwiZmxvb3JQYXR0ZXJuIjoic29saWQiLCJmbG9vclRpbGVTY2FsZSI6MC42NCwiZmxvb3JFbWlzc2lvbiI6MH0sInN5bW1ldHJ5Ijp7Im9yZGVyIjoxLCJwbGFuZSI6Inh6In0sImdsb3dCcmlnaHRuZXNzIjoxLCJiYWxsb29uRWNobyI6ZmFsc2UsImJhbGxvb25SYWRpdXMiOjEuNiwiYmFsbG9vblRpbnQiOiIjMDAwMDAwIiwiYmFsbG9vblRpbnRTdHJlbmd0aCI6MCwiZm9nRGVuc2l0eSI6MSwiZm9nVGludCI6IiNmZmZmZmYiLCJmb2dUaW50U3RyZW5ndGgiOjAsImdyb3VuZFBsYW5lIjpmYWxzZSwiY2FtZXJhIjp7InRhcmdldCI6WzAsMCwwXSwicmFkaXVzIjozLjIsInRoZXRhIjotMC4zNSwicGhpIjoxLjE1fX0",
-    query:
-      "surfacestate&surfacetrace&surfacesamples=1&surfacecompute&surfacemarchsteps=32",
-  },
-  4: {
-    name: "opticsPenta4",
-    what: "the w-lifted pentatope, dielectric authored on all four maps, canonical pose",
-    hash: "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuNSwwLjUsMC41XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdLCJ3Ijp7InBvc2l0aW9uIjowLjMsInJvdGF0aW9uIjp7Inh3IjowLjR9fSwib3B0aWNzIjp7Im1vZGVsIjoiZGllbGVjdHJpYyJ9fSx7InBvc2l0aW9uIjpbLTAuNSwwLjUsLTAuNV0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwib3B0aWNzIjp7Im1vZGVsIjoiZGllbGVjdHJpYyJ9fSx7InBvc2l0aW9uIjpbMC41LC0wLjUsLTAuNV0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwidyI6eyJyb3RhdGlvbiI6eyJ5dyI6MC4yNX19LCJvcHRpY3MiOnsibW9kZWwiOiJkaWVsZWN0cmljIn19LHsicG9zaXRpb24iOlstMC41LC0wLjUsMC41XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdLCJvcHRpY3MiOnsibW9kZWwiOiJkaWVsZWN0cmljIn19XSwibnVtUG9pbnRzIjoxMDAwMDAsInBvaW50U2l6ZSI6MSwiY29sb3JNb2RlIjoidHJhbnNmb3JtIiwiY29sb3JHYW1tYSI6MSwicmFtcFBhbGV0dGVJZCI6ImxlZ2FjeSIsImZvdXJEQ29sb3IiOiJ3Qmx1ZU9yYW5nZSIsImZvdXJERGVwdGhGYWRlIjpmYWxzZSwicmVuZGVyU3R5bGUiOiJkZXB0aEZhZGUiLCJzaG93R3VpZGVzIjpmYWxzZSwiZmxhbWUiOnsiZXhwb3N1cmUiOjEsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJnYW1tYSI6Mi40LCJ2aWJyYW5jeSI6MSwic3VwZXJzYW1wbGUiOjIsImVzdGltYXRvclJhZGl1cyI6NiwiZXN0aW1hdG9yTWluaW11bVJhZGl1cyI6MCwiZXN0aW1hdG9yQ3VydmUiOjAuNCwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic29saWQiOnsicmVzb2x1dGlvbiI6MTkyLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwidGhyZXNob2xkIjowLjMsImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImVudkxpZ2h0IjowLCJmbG9vckVuYWJsZWQiOmZhbHNlLCJmbG9vclBhdHRlcm4iOiJzb2xpZCIsImZsb29yVGlsZVNjYWxlIjowLjY0LCJmbG9vckVtaXNzaW9uIjowLCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzdXJmYWNlIjp7ImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImNvbG9yU291cmNlIjoidHJhbnNmb3JtIiwicGFsZXR0ZUlkIjoic3BlY3RydW0iLCJjb2xvclNwZWVkIjowLjUsImVudkxpZ2h0IjowLjM1LCJmbG9vclBhdHRlcm4iOiJzb2xpZCIsImZsb29yVGlsZVNjYWxlIjowLjY0LCJmbG9vckVtaXNzaW9uIjowfSwic3ltbWV0cnkiOnsib3JkZXIiOjEsInBsYW5lIjoieHoifSwiZ2xvd0JyaWdodG5lc3MiOjEsImJhbGxvb25FY2hvIjpmYWxzZSwiYmFsbG9vblJhZGl1cyI6MS42LCJiYWxsb29uVGludCI6IiMwMDAwMDAiLCJiYWxsb29uVGludFN0cmVuZ3RoIjowLCJmb2dEZW5zaXR5IjoxLCJmb2dUaW50IjoiI2ZmZmZmZiIsImZvZ1RpbnRTdHJlbmd0aCI6MCwiZ3JvdW5kUGxhbmUiOmZhbHNlLCJjYW1lcmEiOnsidGFyZ2V0IjpbMCwwLDBdLCJyYWRpdXMiOjMuMiwidGhldGEiOi0wLjM1LCJwaGkiOjEuMTV9fQ",
-    query: "surfacestate&surfacetrace&surfacesamples=1",
-  },
-};
+const SCENES = OPTICS_SCENES;
 
 const log = (...a) => console.log("[surface-transport-sweep]", ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -196,7 +207,7 @@ async function newPage(browser, args, scene, armTag) {
   page.on("crash", () => consoleLines.push("[page] CRASHED"));
   // A unique query per arm: navigating to a URL that differs only in its
   // fragment does not reload, and the app reads the scene hash exactly once.
-  const url = `${args.url}/?${scene.query}&scene=${armTag}#${scene.hash}`;
+  const url = `${args.url}/?${laneQuery(scene, args.lane)}&scene=${armTag}#${scene.hash}`;
   await page.goto(url, { waitUntil: "load", timeout: 60000 });
   // Mutter only sends frame callbacks to VISIBLE surfaces — the settle latch
   // is present-gated (the 4D lift gate's measured occlusion stall). Keep the
@@ -217,6 +228,80 @@ const transportLines = (page) =>
     if (!Array.isArray(log)) return 0;
     return log.filter((l) => l.includes("transport pass=")).length;
   });
+
+/** The engine route's URL query. The compute lane keeps the sweep's original
+ * queries (`?surfacecompute` forcing 3D past the plain-affine WebGL verdict,
+ * `?surfacetrace` feeding the premise's `transport pass=` census); the WebGL
+ * lane forces the fragment tracer instead — a compute-only `?surfacetrace`
+ * is inert there, so it is dropped. */
+const laneQuery = (scene, lane) =>
+  lane === "webgl" ? scene.webglQuery : scene.computeQuery;
+
+/** The WebGL lane's lane-live observable: the ABSOLUTE near-black fraction
+ * of the settled frame (all channels < 10, the 128-wide downsample the
+ * coverage probe uses). On IFS geometry the estimator backend's every
+ * inside path refuses and unresolved samples paint black — the disclosed
+ * vacuous state — so a lane that ran shows the object's ray coverage as
+ * near-black, while a classic frame (the lane stripped) renders the object
+ * in palette colours and reads ~0. The fixtures' gradient backdrop keeps
+ * every backdrop model (corner or row) above the threshold. */
+async function blackFraction(page) {
+  const shot = await canvasShot(page);
+  if (!shot) return null;
+  return page.evaluate(
+    async ({ bytes }) => {
+      const blob = new Blob([new Uint8Array(bytes)], { type: "image/png" });
+      const bitmap = await createImageBitmap(blob);
+      const w = 128;
+      const h = Math.max(1, Math.round((bitmap.height / bitmap.width) * w));
+      const off = document.createElement("canvas");
+      off.width = w;
+      off.height = h;
+      const ctx = off.getContext("2d");
+      if (!ctx) return null;
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      const { data } = ctx.getImageData(0, 0, w, h);
+      let black = 0;
+      for (let i = 0; i < w * h; i++) {
+        const p = i * 4;
+        if (data[p] < 10 && data[p + 1] < 10 && data[p + 2] < 10) black++;
+      }
+      return black / (w * h);
+    },
+    { bytes: Array.from(shot) },
+  );
+}
+
+/** The lane-live predicate, per lane: compute asserts the `?surfacetrace`
+ * ring's `transport pass=` lines; webgl asserts the near-black signature.
+ * The 4D floor sits under the edited poses' measured minimum (the slice
+ * arm's measured 0.21%), not just the canonical one. */
+const LANE_FLOORS = { 3: 0.05, 4: 0.001 };
+
+function sceneDim(scene) {
+  return scene === SCENES[3] ? 3 : 4;
+}
+
+/** The lane's live census, read wherever an arm asserts the transport ran:
+ * the compute lane counts `transport pass=` trace lines; the webgl lane
+ * counts the settled frame's near-black signature against the dimension's
+ * floor. */
+async function laneCensus(page, lane, scene, settled) {
+  if (lane === "webgl") return laneLive(page, scene, settled);
+  const transport = settled ? await transportLines(page) : 0;
+  return { live: transport > 0, detail: `transportLines=${transport}` };
+}
+
+async function laneLive(page, scene, settled) {
+  if (!settled) return { live: false, detail: "not settled" };
+  const dim = sceneDim(scene);
+  const black = await blackFraction(page);
+  const floor = LANE_FLOORS[dim];
+  return {
+    live: black !== null && black >= floor,
+    detail: `nearBlack=${black === null ? "n/a" : (black * 100).toFixed(2) + "%"} floor=${(floor * 100).toFixed(2)}%`,
+  };
+}
 
 /** Enter Surface FROM THE UI and wait for the TRUE settled state. */
 async function settle(page, budgetMs) {
@@ -405,20 +490,20 @@ async function armSettleIdentity(browser, args, scene) {
   );
   try {
     const first = await settle(page, args.settleMs);
-    const transport = first.settled ? await transportLines(page) : 0;
+    const lane1 = await laneCensus(page, args.lane, scene, first.settled);
     const shotA = first.settled ? await canvasShot(page) : null;
     const drawn = shotA ? await frameCoverage(page, shotA) : null;
     r.checks.push({
-      what: "first settle (engine compute, lane live, drawn)",
+      what: `first settle (engine ${args.lane}, lane live, drawn)`,
       pass:
         first.entered &&
         first.settled &&
-        first.engine === "compute" &&
+        first.engine === args.lane &&
         first.software === false &&
-        transport > 0 &&
+        lane1.live &&
         drawn !== null &&
         drawn > 0.005,
-      detail: `engine=${first.engine} software=${first.software} transportLines=${transport} drawn=${drawn === null ? "n/a" : (drawn * 100).toFixed(1) + "%"} settle=${(first.settleMs / 1000).toFixed(1)}s`,
+      detail: `engine=${first.engine} software=${first.software} ${lane1.detail} drawn=${drawn === null ? "n/a" : (drawn * 100).toFixed(1) + "%"} settle=${(first.settleMs / 1000).toFixed(1)}s`,
     });
     // The RESTART IDENTITY is reload-vs-reload: two fresh boots of the same
     // document must reproduce each other BYTE FOR BYTE. The FIRST boot is
@@ -439,7 +524,7 @@ async function armSettleIdentity(browser, args, scene) {
       );
       const boot = await settle(page, args.settleMs);
       const shot = boot.settled ? await canvasShot(page) : null;
-      const lane = boot.settled ? await transportLines(page) : 0;
+      const lane = await laneCensus(page, args.lane, scene, boot.settled);
       boots.push({ boot, shot, lane });
     }
     const [boot1, boot2] = boots;
@@ -455,7 +540,7 @@ async function armSettleIdentity(browser, args, scene) {
         boot2.boot.settled &&
         identity !== null &&
         identity.maxDelta === 0,
-      detail: `boot1=${boot1.boot.settled} boot2=${boot2.boot.settled} laneLines=${boot1.lane}/${boot2.lane} identity=${identity === null ? "n/a" : `max${identity.maxDelta} changed ${(identity.changedFraction * 100).toFixed(3)}%`}`,
+      detail: `boot1=${boot1.boot.settled} boot2=${boot2.boot.settled} lane[boot1]=${boot1.lane.detail} identity=${identity === null ? "n/a" : `max${identity.maxDelta} changed ${(identity.changedFraction * 100).toFixed(3)}%`}`,
     });
     r.checks.push({
       what: "no uncaught page errors",
@@ -519,11 +604,11 @@ async function armMidTraceEdits(browser, args, scene, dim) {
         async () => (await probe(page))?.settled === true,
         args.settleMs,
       );
-      const transport = reSettled ? await transportLines(page) : 0;
+      const lane = await laneCensus(page, args.lane, scene, reSettled);
       r.checks.push({
         what: `edit round ${round}: lane in flight, edit lands, invalidate, settle`,
-        pass: inFlight && invalidated && reSettled && transport > 0,
-        detail: `inFlight=${inFlight} wasSettled=${before?.settled} invalidated=${invalidated} reSettled=${reSettled} transportLines=${transport}`,
+        pass: inFlight && invalidated && reSettled && lane.live,
+        detail: `inFlight=${inFlight} wasSettled=${before?.settled} invalidated=${invalidated} reSettled=${reSettled} ${lane.detail}`,
       });
     }
     r.checks.push({
@@ -566,7 +651,7 @@ async function armModeExit(browser, args, scene) {
       () => false,
     );
     const final = reEntered ? await settle(page, args.settleMs) : null;
-    const transport = final?.settled ? await transportLines(page) : 0;
+    const lane = await laneCensus(page, args.lane, scene, final?.settled);
     r.checks.push({
       what: "exit landed mid-flight (mode points, engine null)",
       pass: inFlight && exited && afterExit?.engine === null,
@@ -578,9 +663,9 @@ async function armModeExit(browser, args, scene) {
         reEntered &&
         final?.entered &&
         final?.settled &&
-        final?.engine === "compute" &&
-        transport > 0,
-      detail: `reEntered=${reEntered} settled=${final?.settled} engine=${final?.engine} transportLines=${transport}`,
+        final?.engine === args.lane &&
+        lane.live,
+      detail: `reEntered=${reEntered} settled=${final?.settled} engine=${final?.engine} ${lane.detail}`,
     });
     r.checks.push({
       what: "no uncaught page errors",
@@ -629,15 +714,15 @@ async function armRestartStorm(browser, args, scene) {
       detail: `toggles=${toggles}/6`,
     });
     const final = await settle(page, args.settleMs);
-    const transport = final.settled ? await transportLines(page) : 0;
+    const lane = await laneCensus(page, args.lane, scene, final.settled);
     r.checks.push({
-      what: "post-storm settle, lane live, engine compute",
+      what: `post-storm settle, lane live, engine ${args.lane}`,
       pass:
         final.entered &&
         final.settled &&
-        final.engine === "compute" &&
-        transport > 0,
-      detail: `settled=${final.settled} engine=${final.engine} transportLines=${transport}`,
+        final.engine === args.lane &&
+        lane.live,
+      detail: `settled=${final.settled} engine=${final.engine} ${lane.detail}`,
     });
     r.checks.push({
       what: "no uncaught page errors",
@@ -674,7 +759,7 @@ async function armDeviceFailure(browser, args, scene) {
       args.settleMs,
     );
     const inFlight = await waitForLaneInFlight(page);
-    const laneLive = await pollUntil(
+    const traceLive = await pollUntil(
       page,
       async () => (await transportLines(page)) > 0,
       20000,
@@ -706,8 +791,8 @@ async function armDeviceFailure(browser, args, scene) {
     const responsive = after !== null && after.mode !== undefined;
     r.checks.push({
       what: "GPU process killed mid-flight",
-      pass: inFlight && laneLive && killed,
-      detail: `inFlight=${inFlight} laneLive=${laneLive} killed=${killed}`,
+      pass: inFlight && traceLive && killed,
+      detail: `inFlight=${inFlight} traceLive=${traceLive} killed=${killed}`,
     });
     r.checks.push({
       what: "renderer's device-lost path fired; page alive",
@@ -743,28 +828,45 @@ async function main() {
   try {
     // The premise check comes first, once per dimension: if the transport
     // lane never went live, every arm would "fail" for apparatus reasons.
-    // Exit 2 and say so instead.
+    // Exit 2 and say so instead. The webgl lane's premise is the near-black
+    // signature (its `?surfacetrace` census is inert) — and a software
+    // rasterizer reads INCONCLUSIVE there, because the wire strips the lane
+    // on one by measured crash (the session record's SwiftShader finding).
     for (const dim of [3, 4]) {
       const scene = SCENES[dim];
       const { page } = await newPage(browser, args, scene, "premise");
       let laneLive = false;
       try {
         const first = await settle(page, args.settleMs);
-        laneLive =
-          first.settled &&
-          first.engine === "compute" &&
-          first.software === false &&
-          (await transportLines(page)) > 0;
-        log(
-          `premise [${scene.name}]: engine=${first.engine} software=${first.software} settled=${first.settled} laneLive=${laneLive}`,
-        );
+        const engineOk = first.settled && first.engine === args.lane;
+        if (args.lane === "webgl") {
+          const census = await laneCensus(page, args.lane, scene, engineOk);
+          laneLive = engineOk && first.software === false && census.live;
+          log(
+            `premise [${scene.name}]: engine=${first.engine} software=${first.software} settled=${first.settled} laneLive=${laneLive} ${census.detail}`,
+          );
+          if (engineOk && first.software !== false) {
+            console.error(
+              `INCONCLUSIVE: ${scene.name} ran on a software rasterizer — ` +
+                "the WebGL optics lane is stripped there by measured crash. Rerun on the real driver.",
+            );
+          }
+        } else {
+          laneLive =
+            engineOk &&
+            first.software === false &&
+            (await transportLines(page)) > 0;
+          log(
+            `premise [${scene.name}]: engine=${first.engine} software=${first.software} settled=${first.settled} laneLive=${laneLive}`,
+          );
+        }
       } finally {
         await page.close().catch(() => {});
       }
       if (!laneLive) {
         console.error(
           `INCONCLUSIVE: the transport lane never went live in ${scene.name} — ` +
-            "no real compute adapter, or the optics never routed. Rerun on the real driver.",
+            "no real adapter, or the optics never routed. Rerun on the real driver.",
         );
         inconclusive = true;
       }
@@ -778,7 +880,18 @@ async function main() {
         ["mode-exit-3d", () => armModeExit(browser, args, SCENES[3])],
         ["mode-exit-4d", () => armModeExit(browser, args, SCENES[4])],
         ["restart-storm", () => armRestartStorm(browser, args, SCENES[3])],
-        ["device-failure", () => armDeviceFailure(browser, args, SCENES[3])],
+        // The GPU-process kill loses every GL context with the process and
+        // the app does not handle WebGL context restoration — the arm is
+        // meaningful only against the compute device, so the webgl lane
+        // runs without it (the module doc's standing disclosure).
+        ...(args.lane === "compute"
+          ? [
+              [
+                "device-failure",
+                () => armDeviceFailure(browser, args, SCENES[3]),
+              ],
+            ]
+          : []),
       ];
       for (const [name, run] of args.arm
         ? arms.filter(([n]) => n === args.arm)

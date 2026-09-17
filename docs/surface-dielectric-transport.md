@@ -636,6 +636,33 @@ are the delegated working lines; the appearance selection is untouched.
   render through a temporary backend force (the app routing that selects
   the backend is the starter-scene task's). Absent optics resolves
   byte-identically against the pre-change module on every descent arm.
+- **The real-browser gate rows.** `scripts/surface-optics-glsl.verify.mjs`
+  (--display=:0, real driver) traces the settled ?surfacegl frame per
+  dimension — the optics-authored fixture and its optics-stripped twin
+  (derived in-script, round-trip checked) — and asserts the engine is
+  WebGL on hardware, the live frame carries the lane's near-black
+  signature, the stripped control renders classic, and the two frames
+  differ STRUCTURALLY across the object. MEASURED (1024x640, settled):
+  live near-black 14.08% (3D tetra) / 0.32% (4D w-slice) against stripped
+  ~0; structural diff 16.5% / 8.0%, max delta 249. A near-black frame on
+  IFS geometry is the estimator backend's disclosed vacuous state, not a
+  glass render — the gate pins that the lane REACHES pixels, the same
+  premise shape the sweep's compute census proves.
+- **The invalidation sweep's WebGL lane.** The sweep's `--lane=webgl` runs
+  the same arms (settle+reload byte identity, mid-trace edits, mode exit,
+  restart storm) against the GLSL twins with engine=webgl asserted and the
+  near-black signature as the lane-live observable; the device-failure arm
+  stays compute-only (the GPU-process kill takes every GL context with it).
+  MEASURED (all arms PASS, both dimensions): byte-identical reloads, live
+  signatures after every edit/exit/storm (the 4D slice edits read 0.21% at
+  the edited poses — the floor sits under it), no uncaught errors. The
+  extension's earlier session had debugged an all-miss diversion on this
+  path; the committed apparatus + committed fixtures do not reproduce it on
+  either browser (bundled Chromium and system Chrome both render the full
+  14.08% signature through the sweep's own newPage/settle path — the
+  diversion was that session's unreverted overrides, and the
+  software-crash finding is the reason the lane is INCONCLUSIVE, not
+  failed, on software rasterizers).
 
 ### Capability matrix, updated
 
@@ -660,12 +687,7 @@ backend — the envelope's closed-solid arms resolve in both dimensions with
 every delegated line met — so the first blocker is cleared. What remains,
 in order: the fold core's transport (the measured timeout, three recorded
 paths — the closed-solid backend is now DOUBLY motivated for the
-finite-construction path, being its own recorded scope); the GLSL twins'
-real-browser gate rows and the invalidation sweep's WebGL arms (the
-estimator and closed-solid arms are compiled, pinned and real-driver
-verified; the sweep's `--lane=webgl` extension was debugged to an
-apparatus divergence — see its own record — and is the standing
-follow-up); rear-scene
+finite-construction path, being its own recorded scope); rear-scene
 radiance and transparent visibility (`.8`, gated on reflections that
 re-enter the object — the closed-solid query now provides the inside
 traversal those need); distortion and capture integration; panel material
@@ -698,6 +720,13 @@ npm run bench:surface -- --display=:0
 # The real-app invalidation sweep (built app, quiet real driver):
 npm run build && npm run preview &
 node scripts/surface-transport-invalidation.verify.mjs --display=:0
+
+# The same arms against the GLSL twins (?surfacegl, real driver):
+node scripts/surface-transport-invalidation.verify.mjs --display=:0 --lane=webgl
+
+# The GLSL twins' gate rows: the lane reaches the settled frame, per
+# dimension, authored-vs-stripped (built app, quiet real driver):
+node scripts/surface-optics-glsl.verify.mjs --display=:0
 ```
 
 The unit suite pins the optics (including the emitted `js` dialect executing
