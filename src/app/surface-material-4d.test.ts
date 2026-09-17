@@ -2207,6 +2207,30 @@ describe("the 4D tracer's finish arm", () => {
     expect(surface4FragmentFor(1, 0, 1)).not.toContain("//");
   });
 
+  it("composes optics with the pattern arm — measured on resolved 97832 / emitted 38476, strips on, under the cliff", () => {
+    // Measured row (the module doc's size table): the 4D optics+pattern
+    // pairing strips and sits far under the Mesa cliff; the inequalities
+    // keep it honest through unrelated template churn.
+    const resolved = surface4FragmentResolvedFor(
+      0,
+      0,
+      0,
+      1,
+      null,
+      0,
+      0,
+      null,
+      0,
+      0,
+      1,
+    );
+    const emitted = surface4FragmentFor(0, 0, 0, 1, null, 0, 0, null, 0, 0, 1);
+    expect(resolved.length).toBeGreaterThan(SURFACE_GLSL_STRIP_BYTES);
+    expect(emitted).not.toContain("//");
+    expect(emitted).toContain("TransportTrace transportTrace(");
+    expect(emitted.length).toBeLessThan(82_200);
+  });
+
   it("backs the block's new members with placeholders, in the group's last slots", () => {
     const material = createSurfaceMaterial4();
     expect(material.defines.SURFACE4_FINISH).toBe(0);

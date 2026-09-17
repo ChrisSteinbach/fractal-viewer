@@ -5004,6 +5004,31 @@ describe("SURFACE_OPTICS variant (the dielectric transport lane)", () => {
     }
   });
 
+  it("composes with the pattern arm — the worst measured 3D pairing, emitted 51526 B, still under the cliff", () => {
+    const resolved = surfaceFragmentResolvedFor(
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      ...opticsOn,
+    );
+    const emitted = surfaceFragmentFor(0, 0, 0, 0, 0, 0, 1, ...opticsOn);
+    // Measured row (the module doc's size table): optics+pattern is the 3D
+    // arm's worst emitted pairing — resolved 118210 / emitted 51526 over an
+    // off arm of 96425/39216 — the inequalities keep it honest through
+    // unrelated template churn.
+    expect(resolved.length).toBeGreaterThan(SURFACE_GLSL_STRIP_BYTES);
+    expect(emitted.length).toBeLessThan(MESA_CLIFF);
+    expect(emitted.length).toBeGreaterThan(50_000);
+    expect(emitted).toContain("TransportTrace transportTrace(");
+    const off = surfaceFragmentResolvedFor(0, 0, 0, 0, 0, 0, 1);
+    expect(off).not.toContain("uMapOptics");
+    expect(off).not.toContain("transportTrace");
+  });
+
   it("refuses the forward-orbit arms and the cinematic lighting rig", () => {
     expect(() =>
       surfaceFragmentResolvedFor(1, 0, 0, 0, 0, 0, 0, ...opticsOn),
