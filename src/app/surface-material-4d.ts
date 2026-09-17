@@ -50,6 +50,7 @@ import {
   surfaceShapeMeshSdfUniform,
   surfaceFragmentFor,
   surfaceFragmentResolvedFor,
+  surfaceSolidShadowSource,
   surfaceTransportSource,
 } from "./surface-material";
 import type {
@@ -2314,6 +2315,7 @@ uniform float uBalloonPaletteEnabled;
   }
 
 #endif
+${surfaceSolidShadowSource(true)}
 #if SURFACE_GROUND_PLANE
   /** Ground plane, the 3D arm VERBATIM: an infinite one-sided floor at y =
    * uGroundY, dropped below the session ball (uGroundBallC/uGroundBallR —
@@ -2399,6 +2401,24 @@ uniform float uBalloonPaletteEnabled;
     // Inside the corridor the loop's exit is outside-AND-receding — the
     // hit path's |sp| > 1.05 R alone would fire immediately down here.
     float shadow = 1.0;
+#if SURFACE_OPTICS_CLOSED_SOLID
+    // Closed-solid: the shadow ray's visibility is the STRAIGHT
+    // transmittance through the optical solid (the emitted
+    // transportShadowVisibility — per-channel, Beer-tinted; the
+    // corridor's analytic gates ride inside it). There is no opaque
+    // occluder to penumbra-march — the displayed object IS the glass —
+    // so the scalar penumbra below is compiled out with the backend.
+    // The field the visibility reads is the SIGNED closed-solid union
+    // (the 4D penalty form) — the public estimator's hypot form reads
+    // ZERO throughout its interior and cannot carry the sign.
+    vec3 shadowV = transportShadowVisibility(
+      hp,
+      uLightDir,
+      uGroundBallC,
+      uGroundBallR,
+      uVisibleRadius
+    );
+#else
     vec3 toC = uGroundBallC - hp;
     float along = dot(toC, uLightDir);
     float perp2 = dot(toC, toC) - along * along;
@@ -2418,6 +2438,7 @@ uniform float uBalloonPaletteEnabled;
       }
       shadow = clamp(shadow, 0.0, 1.0);
     }
+#endif
 
     // Contact occlusion: the hit path's AO taps straight up from the
     // floor, skipped once the floor point is provably beyond every tap's
@@ -2444,8 +2465,16 @@ uniform float uBalloonPaletteEnabled;
     // The hit path's lighting minus specular (a matte floor), in the same
     // linear space: n is +y, so diffuse is just uLightDir.y.
     float diffuse = max(uLightDir.y, 0.0);
+#if SURFACE_OPTICS_CLOSED_SOLID
+    // The shadow term is the straight per-channel transmittance, so the
+    // floor's lighting carries the glass's Beer tint instead of a black
+    // occluder silhouette.
+    vec3 lit = (uAmbient * ao + (1.0 - uAmbient) * diffuse * shadowV) *
+      envTint(vec3(0.0, 1.0, 0.0));
+#else
     vec3 lit = (uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow) *
       envTint(vec3(0.0, 1.0, 0.0));
+#endif
     vec3 floorAlbedo = uGroundAlbedo;
     if (uGroundPattern == 1) {
       float cell = max(uGroundBallR * uGroundTileScale, 1.0e-4);

@@ -1598,6 +1598,15 @@ export const SURFACE_GPU_SHADE_OPTICS_BYTES =
 export const SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS = 2048;
 export const SURFACE_GPU_TRANSPORT_MAX_INTERFACES = 2048;
 
+/** The closed-solid floor corridor's straight shadow-visibility march
+ * step budget (`transportShadowVisibility`, one ray per call — the
+ * rear-scene task's corridor fix). The strides step the certified
+ * field's |f| on both sides — no stride can overshoot the boundary — so
+ * a lobe traversal costs a handful of steps and the budget paces only
+ * the outside approach. The caps are the runtime's, not the document's —
+ * never raised to make a failing row green. */
+export const SURFACE_GPU_TRANSPORT_SHADOW_STEPS = 24;
+
 /** Per-ray transport record status codes (transportState[ray*2+1].x, as
  * f32 values of these). PENDING re-traces from scratch at the next
  * replay pass; COMPLETE/RESIDUAL are accepted outcomes (the residual
@@ -8653,12 +8662,189 @@ fn transportSolidField(p: vec3f) -> f32 {
 fn transportSolidField(p: vec3f) -> f32 {
   return condensationTerm(p, 1.0, 0u);
 }`;
+  // The closed-solid straight shadow visibility (the rear-scene task):
+  // the floor corridor's shadow ray through the session's optical
+  // solid. A bounded march of the SIGNED field along an UNREFRACTED ray,
+  // pairing the solid's crossings — each entry pays (1 - Fresnel) into a
+  // per-channel transmittance, Beer attenuates over the traversed
+  // interior, each exit pays (1 - Fresnel), and a
+  // total-internal-reflection exit contributes nothing straight through
+  // (the light exits elsewhere — a caustic this model does not promise).
+  // This is the selected thin-layer visibility model for
+  // direct-light/shadow rays: the solid attenuates instead of
+  // occluding, and geometry outside it shades exactly as the corridor's
+  // penumbra always did (there is none in a closed-solid session — the
+  // displayed object IS the solid, so the penumbra's opaque-occluder
+  // test would read the glass itself and black out the floor beneath
+  // it). Bounded work: the strides step the certified field's |f| on
+  // both sides — a signed union field understates the distance on both
+  // of them, so no stride can overshoot the boundary and the band above
+  // is always sampled — and the runtime's own shadow budget paces the
+  // march
+  // (SURFACE_GPU_TRANSPORT_SHADOW_STEPS — the caps are the runtime's,
+  // not the document's), and an exhausted march returns the
+  // transmittance accumulated so far — an over-report, disclosed here,
+  // never a fabricated occluder. The material is slot 0's resolved
+  // optics lanes (per-slot scales exist; the corridor reads the
+  // session's first slot — the recorded attribution approximation).
+  //
+  // Emitted AHEAD of the shade entry (beside the field the transport
+  // block also reads) so shadeGroundPlane's corridor can call it; the
+  // optics body moves up beside it for the same reason — the ONE shared
+  // math text, still spliced once, now ahead of every consumer.
+  const solidShadowVisibilityWgsl = /* wgsl */ `fn transportShadowVisibility(
+  origin: vec3f,
+  dir: vec3f,
+  ballC: vec3f,
+  ballR: f32,
+  visR: f32,
+) -> vec3f {
+  // The corridor's analytic gates, evaluated here so the corridor's
+  // call is one line: ball-behind (along <= 0) and a closest approach
+  // clearing 1.05 R + 0.3 * along certify the ray misses the certified
+  // ball entirely — nothing attenuates it, transmittance 1, zero field
+  // evals (the GLSL arm's corridor certificates, verbatim).
+  let toC = ballC - origin;
+  let along = dot(toC, dir);
+  let perp2 = dot(toC, toC) - along * along;
+  let corridor = ballR * 1.05 + 0.3 * along;
+  if (along <= 0.0 || perp2 >= corridor * corridor) {
+    return vec3f(1.0);
+  }
+  let lane0 = opticsMaps[0u];
+  let lane1 = opticsMaps[1u];
+  let ior = lane0[0];
+  let radius = lane0[1];
+  let absorb = vec3f(lane0[2], lane0[3], lane1[0]);
+  let eps = ${DIELECTRIC_CROSSING_EPS_REL} * radius;
+  var trans = vec3f(1.0);
+  var inside = transportSolidField(origin) < 0.0;
+  var cosEnter = 1.0;
+  var segStart = 0.0;
+  var ts = ballR * 4.0e-4;
+  for (var i = 0u; i < ${SURFACE_GPU_TRANSPORT_SHADOW_STEPS}u; i++) {
+    let sp = origin + dir * ts;
+    let f = transportSolidField(sp);
+    if (!(f > -1.0e30)) {
+      break;
+    }
+    if (abs(f) < eps) {
+      // The declared crossing band: the boundary is here, within the
+      // declared resolution. Fire the state's crossing (entry when the
+      // march is outside, exit when inside), then step past the band —
+      // the anchor suppression's own 2·eps skip — so the next sample
+      // reads the far side.
+      if (inside) {
+        let e = vec2f(1.0, -1.0) * 0.5773;
+        let grad = e.xyy * transportSolidField(sp + e.xyy * eps) +
+          e.yyx * transportSolidField(sp + e.yyx * eps) +
+          e.yxy * transportSolidField(sp + e.yxy * eps) +
+          e.xxx * transportSolidField(sp + e.xxx * eps);
+        let n = select(-dir, normalize(grad), dot(grad, grad) > 1.0e-12);
+        let segLen = ts - segStart;
+        let beer = vec3f(
+          exp(-absorb[0] * segLen / radius),
+          exp(-absorb[1] * segLen / radius),
+          exp(-absorb[2] * segLen / radius),
+        );
+        let entryPass = 1.0 - dielectricFresnel(cosEnter, 1.0, ior);
+        let exitPass = 1.0 - dielectricFresnel(abs(dot(dir, n)), ior, 1.0);
+        trans = trans * beer * (entryPass * exitPass);
+        cosEnter = 1.0;
+        inside = false;
+        if (max(max(trans.r, trans.g), trans.b) <= 0.0) {
+          // Total internal reflection at the exit — the straight ray
+          // keeps its energy inside; nothing transmits here.
+          break;
+        }
+      } else {
+        inside = true;
+        segStart = ts;
+        let e = vec2f(1.0, -1.0) * 0.5773;
+        let grad = e.xyy * transportSolidField(sp + e.xyy * eps) +
+          e.yyx * transportSolidField(sp + e.yyx * eps) +
+          e.yxy * transportSolidField(sp + e.yxy * eps) +
+          e.xxx * transportSolidField(sp + e.xxx * eps);
+        let n = select(-dir, normalize(grad), dot(grad, grad) > 1.0e-12);
+        cosEnter = abs(dot(dir, n));
+      }
+      ts = ts + 2.0 * eps;
+      continue;
+    }
+    if ((f < 0.0) != inside) {
+      // A stride jumped clean across the band: the crossing happened
+      // between the samples; report it here (within one stride — the
+      // strides step the field itself, so no far overshoot exists).
+      if (inside) {
+        let e = vec2f(1.0, -1.0) * 0.5773;
+        let grad = e.xyy * transportSolidField(sp + e.xyy * eps) +
+          e.yyx * transportSolidField(sp + e.yyx * eps) +
+          e.yxy * transportSolidField(sp + e.yxy * eps) +
+          e.xxx * transportSolidField(sp + e.xxx * eps);
+        let n = select(-dir, normalize(grad), dot(grad, grad) > 1.0e-12);
+        let segLen = ts - segStart;
+        let beer = vec3f(
+          exp(-absorb[0] * segLen / radius),
+          exp(-absorb[1] * segLen / radius),
+          exp(-absorb[2] * segLen / radius),
+        );
+        let entryPass = 1.0 - dielectricFresnel(cosEnter, 1.0, ior);
+        let exitPass = 1.0 - dielectricFresnel(abs(dot(dir, n)), ior, 1.0);
+        trans = trans * beer * (entryPass * exitPass);
+        if (max(max(trans.r, trans.g), trans.b) <= 0.0) {
+          break;
+        }
+      } else {
+        segStart = ts;
+        let e = vec2f(1.0, -1.0) * 0.5773;
+        let grad = e.xyy * transportSolidField(sp + e.xyy * eps) +
+          e.yyx * transportSolidField(sp + e.yyx * eps) +
+          e.yxy * transportSolidField(sp + e.yxy * eps) +
+          e.xxx * transportSolidField(sp + e.xxx * eps);
+        let n = select(-dir, normalize(grad), dot(grad, grad) > 1.0e-12);
+        cosEnter = abs(dot(dir, n));
+      }
+      inside = f < 0.0;
+    }
+    ts = ts + clamp(abs(f) * params.stepScale, ballR * 2.0e-4, visR);
+    if (dot(sp - ballC, dir) > 0.0 && length(sp - ballC) > ballR * 1.05) {
+      break;
+    }
+  }
+  if (inside) {
+    // Budget end inside the solid: the traversed interior attenuates
+    // what accumulated so far; the unclosed exit's Fresnel stays
+    // optimistic (the over-report disclosed above).
+    let segLen = ts - segStart;
+    let beer = vec3f(
+      exp(-absorb[0] * segLen / radius),
+      exp(-absorb[1] * segLen / radius),
+      exp(-absorb[2] * segLen / radius),
+    );
+    trans = trans * beer * (1.0 - dielectricFresnel(cosEnter, 1.0, ior));
+  }
+  return clamp(trans, vec3f(0.0), vec3f(1.0));
+}
+`;
+  const solidShadowEarly = optics
+    ? `// ---- dielectric optical transport (docs/surface-dielectric-transport.md)
+// ---- surface-dielectric.ts's emitted WGSL optics body, verbatim — the
+// ONE shared math text the backends splice; no restated constants.
+// Emitted AHEAD of the shade entry so the closed-solid floor corridor's
+// straight shadow visibility shares it; the transport block below
+// reuses the same definitions.
+${dielectricOpticsSource("wgsl")}${
+        solidQuery
+          ? `\n${transportSolidFieldWgsl}\n${solidShadowVisibilityWgsl}`
+          : ""
+      }`
+    : "";
   const opticsBlock = optics
     ? `
 // ---- dielectric optical transport (docs/surface-dielectric-transport.md)
-// ---- surface-dielectric.ts's emitted WGSL optics body, verbatim — the
-// ONE shared math text the backends splice; no restated constants.
-${dielectricOpticsSource("wgsl")}
+// ---- the shared WGSL optics body is spliced AHEAD of the shade entry
+// (the closed-solid floor corridor's straight shadow visibility reads
+// it); the transport machinery below reuses those definitions.
 struct TransportPath {
   origin: vec3f,
   dir: vec3f,
@@ -8763,12 +8949,12 @@ fn transportOpticalNormal(p: vec3f, dir: vec3f, eps: f32, li: u32) -> vec3f {
 
 ${
   solidQuery
-    ? `${transportSolidFieldWgsl}
-
-// The closed-solid normal: the SAME tetrahedron-tap discipline as the
+    ? `// The closed-solid normal: the SAME tetrahedron-tap discipline as the
 // estimator normal, on the signed field — a smooth closed solid has no
 // tied-plane corners to resolve, and a vanishing gradient still faces
-// the incident ray.
+// the incident ray. (The signed field itself is spliced ahead of the
+// shade entry, where the floor corridor's straight shadow visibility
+// shares it.)
 fn transportSolidNormal(p: vec3f, dir: vec3f, eps: f32) -> vec3f {
   let e = vec2f(1.0, -1.0) * 0.5773;
   let grad = e.xyy * transportSolidField(p + e.xyy * eps) +
@@ -8940,11 +9126,25 @@ fn transportNextBoundary(
 
 
 // The rear scene's radiance behind an escaped ray, in LINEAR light —
-// the environment only in this emission: the pixel's backdrop, plus the
-// ground-plane terminal when the session has one (the shade entry's own
-// floor shade, linearized by the file's 2.2 convention). Rear fractal
-// geometry is the rear-scene task's seam: this function is the one
-// place that grows.
+// resolved in PHYSICAL RAY ORDER (docs/surface-dielectric-transport.md,
+// the rear-scene contract): an escaped path's boundary query has
+// already proven the finite scene interval (the domain this function's
+// callers leave) free of the displayed object — every later fractal
+// hit is the transport's own boundary event, not a rear scene — so the
+// interval is empty by certificate, not by omission, and the terminal
+// order is the analytic plane (within its fade band — "the plane beats
+// the environment where it intersects") and then the procedural
+// background. The plane terminal is the shade entry's own floor shade,
+// linearized by the file's 2.2 convention, and its shadow corridor now
+// attenuates STRAIGHT through the optical solid under the closed-solid
+// backend (transportShadowVisibility) instead of reading the glass as
+// an opaque occluder. A backend whose boundary query is not
+// co-extensive with the displayed object owes this ONE seam a rear
+// march (later fractal hits as shaded terminals, own-slot material);
+// both shipped backends' misses certify the interval, so none is
+// emitted. Exhaustion is never relabelled: the transport's own
+// unresolved statuses stay dark, and the corridor's bounded admission
+// keeps its partial result.
 fn transportRearRadiance(origin: vec3f, dir: vec3f, bg: vec3f, li: u32) -> vec3f {
 ${
   groundPlane
@@ -9488,9 +9688,9 @@ fn surfaceCoc(cameraDepth: f32) -> f32 {
 }
 
 ${PACK_SURFACE_LAYER_WGSL}
-${
-  groundPlane
-    ? `
+${solidShadowEarly}${
+            groundPlane
+              ? `
 struct GroundPlaneShade {
   color: vec3f,
   coverage: f32,
@@ -9526,8 +9726,22 @@ fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> GroundPlaneShad
   // Inside the corridor the loop's exit is outside-AND-receding — the
   // hit path's |sp| > 1.05 R alone would fire immediately down here.
   var shadow = 1.0;${
-    latticeTiling
-      ? `  // Lattice: the single-ball corridor certificate is invalid
+    solidQuery
+      ? `  // Closed-solid: the shadow ray's visibility is the STRAIGHT
+  // transmittance through the optical solid (the emitted
+  // transportShadowVisibility — per-channel, Beer-tinted; the corridor's
+  // analytic gates ride inside it). There is no opaque occluder to
+  // penumbra-march — the displayed object IS the glass — so the scalar
+  // penumbra below is compiled out with the backend.
+  var shadowV = transportShadowVisibility(
+    hp,
+    shade.lightDir,
+    params.groundBallC,
+    gR,
+    visR
+  );`
+      : latticeTiling
+        ? `  // Lattice: the single-ball corridor certificate is invalid
   // (content repeats beyond the ball — the contract's ground paragraph),
   // so the shadow ray marches through its own presentation carrier
   // instead; out-of-carrier probes read open space through the guarded
@@ -9536,12 +9750,15 @@ fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> GroundPlaneShad
     core4 ? ", params.w0, params.rotorInvR1" : ""
   }, ${latticeRadiusExpr}, params.tilingPresentationR);
   if (gShadowCarrier.ok) {`
-      : `  let toC = params.groundBallC - hp;
+        : `  let toC = params.groundBallC - hp;
   let along = dot(toC, shade.lightDir);
   let perp2 = dot(toC, toC) - along * along;
   let corridor = gR * 1.05 + 0.3 * along;
   if (along > 0.0 && perp2 < corridor * corridor) {`
-  }
+  }${
+    solidQuery
+      ? ``
+      : `
     var ts = gR * 4.0e-4;
     for (var i = 0u; i < shade.shadowSteps; i++) {
       let sp = hp + shade.lightDir * ts;
@@ -9559,6 +9776,7 @@ fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> GroundPlaneShad
       }
     }
     shadow = clamp(shadow, 0.0, 1.0);
+  }`
   }
   // Contact occlusion: the hit path's AO taps straight up from the
   // floor, skipped once the floor point is provably beyond every tap's
@@ -9599,7 +9817,16 @@ fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> GroundPlaneShad
   let envE = mix(shade.bgBottom, shade.bgTop, vec3f(0.0, 1.0, 0.0).y * 0.5 + 0.5);
   let envTint =
     mix(vec3f(1.0), envE / max(max(envE.r, max(envE.g, envE.b)), 1.0e-4), shade.envStrength);
-  let lit = (shade.ambient * ao + (1.0 - shade.ambient) * diffuse * shadow) * envTint;
+  ${
+    solidQuery
+      ? `// The shadow term is the straight per-channel transmittance, so the
+  // floor's lighting carries the glass's Beer tint instead of a black
+  // occluder silhouette.
+  `
+      : ""
+  }let lit = (shade.ambient * ao + (1.0 - shade.ambient) * diffuse * ${
+    solidQuery ? "shadowV" : "shadow"
+  }) * envTint;
   var floorAlbedo = params.groundAlbedo;
   if (shade.balloonTint.z >= 0.5) {
     let cell = max(params.groundBallR * shade.balloonTint.x, 1.0e-4);
@@ -9628,8 +9855,8 @@ fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> GroundPlaneShad
   );
 }
 `
-    : ""
-}${finishFnText}${patternFnText}
+              : ""
+          }${finishFnText}${patternFnText}
 @compute @workgroup_size(${workgroupSize})
 fn shadeRays(
   @builtin(global_invocation_id) gid: vec3u,

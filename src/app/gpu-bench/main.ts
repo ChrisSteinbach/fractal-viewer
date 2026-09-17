@@ -229,11 +229,14 @@ import {
   packSurface4GpuParams,
   packSurfaceGpuMaps,
   packSurfaceGpuMaps4,
+  packSurfaceGpuOpticsMaps,
   packSurfaceGpuParams,
   packSurfaceGpuShade,
   surfaceDeKernelWgsl,
   surfaceGpuWorkgroupBytes,
 } from "../../fractal/surface-de-gpu";
+import { resolveSurfaceFinish } from "../../fractal/surface-finish";
+import { resolveSurfacePattern } from "../../fractal/surface-pattern";
 import type {
   SurfaceGpu4View,
   SurfaceGpuGroundPlane,
@@ -249,6 +252,7 @@ import {
 } from "../../fractal/surface-dielectric";
 import {
   transportBoundaryQueryCPU,
+  transportShadowVisibilityCPU,
   transportSolidBoundaryQueryCPU,
   transportTraceCPU,
   type TransportQueryFn,
@@ -4194,6 +4198,11 @@ interface SurfaceTransportAgreementRow {
   /** Max per-channel |gpu − cpu| over the boundary probes' optical
    * normals (f32 taps at a fractal surface — the loosest of the three). */
   maxNormalDelta: number;
+  /** Closed-solid rows only: max per-channel |gpu − cpu| over the shadow
+   * probes' straight visibility (the corridor fix), which includes the
+   * analytic control's delta (the twin's tolerance is the tighter of
+   * the two pins). */
+  maxShadowDelta?: number;
   /** Forward cores only: probes the ULP ensemble excluded as chaos
    * flips — disclosed, never absorbed, capped. */
   flipsExcluded?: number;
@@ -7485,6 +7494,13 @@ struct ControlQuery {
   anchorPresent: u32,
   mode: u32,
   inside: u32,
+  // Mode 2 (the closed-solid straight shadow visibility) reads the
+  // corridor's ball: center, radius, and the session's visible radius
+  // for the stride clamp's ceiling. The estimator legs pack zeros and
+  // never reach mode 2.
+  ballC: vec3f,
+  ballR: f32,
+  visR: f32,
 }
 struct ControlResult {
   a: vec4f,
@@ -7507,6 +7523,23 @@ fn controlTransport(
     }q.eps, li);
     r.a = vec4f(f32(hit.kind), f32(hit.reason), hit.t, 0.0);
     r.b = vec4f(hit.normal, 0.0);
+    r.c = vec4f(0.0);
+    r.d = vec4f(0.0);
+  } else if (q.mode == 2u) {
+${
+  closedSolid
+    ? `    // The closed-solid floor corridor's straight shadow visibility (the
+    // rear-scene task's corridor fix): the material rides slot 0's
+    // opticsMaps lanes, which the leg packs with the same numbers the
+    // trace probes' material carries.
+    let vis = transportShadowVisibility(q.origin, q.dir, q.ballC, q.ballR, q.visR);
+    r.a = vec4f(0.0);
+    r.b = vec4f(vis, 0.0);`
+    : `    // The helper is only emitted under the closed-solid backend; the
+    // estimator legs never dispatch mode 2.
+    r.a = vec4f(0.0);
+    r.b = vec4f(0.0);`
+}
     r.c = vec4f(0.0);
     r.d = vec4f(0.0);
   } else {
@@ -8004,9 +8037,10 @@ async function runSurfaceSwirlBalloonEvalLeg(
 const SURFACE_TRANSPORT_WG = 64;
 /** One `ControlQuery`'s wire stride: three vec3f at their 16-byte
  * alignment, then eps/ior/radius at 44/48/52, absorb at its aligned 64,
- * theta/anchorPresent/mode at 76/80/84, rounded up to the struct's
- * 16-byte alignment. */
-const SURFACE_TRANSPORT_QUERY_STRIDE_BYTES = 96;
+ * theta/anchorPresent/mode/inside at 76/80/84/88, the mode-2 corridor's
+ * ballC/ballR/visR at 96/108/112, rounded up to the struct's 16-byte
+ * alignment. */
+const SURFACE_TRANSPORT_QUERY_STRIDE_BYTES = 128;
 /** The trace probe's fixed backdrop, DISPLAY space — MUST stay equal to
  * the control WGSL's literal `vec3f(0.25, 0.35, 0.45)` byte for byte: the
  * kernel's `transportRearRadiance` linearizes it internally (pow 2.2) and
@@ -8760,6 +8794,12 @@ async function runSurfaceTransportAgreementLegs(
        * Read only by the closed-solid backend's query; the estimator
        * legs pack 0 and never read it. */
       inside: number;
+      /** Mode 2's corridor ball: center, radius and the session's
+       * visible radius (the stride clamp's ceiling). The estimator legs
+       * pack zeros and never reach mode 2. */
+      ballC: Vec3;
+      ballR: number;
+      visR: number;
     };
     const boundaryQueries: ControlQueryRec[] = [];
     const traceQueries: ControlQueryRec[] = [];
@@ -8785,6 +8825,9 @@ async function runSurfaceTransportAgreementLegs(
           anchorPresent: 1,
           mode: 1,
           inside: 1,
+          ballC: [0, 0, 0],
+          ballR: visR,
+          visR,
         });
         boundaryQueries.push({
           origin: [
@@ -8802,6 +8845,9 @@ async function runSurfaceTransportAgreementLegs(
           anchorPresent: 0,
           mode: 1,
           inside: 0,
+          ballC: [0, 0, 0],
+          ballR: visR,
+          visR,
         });
       } else {
         boundaryQueries.push({
@@ -8820,6 +8866,9 @@ async function runSurfaceTransportAgreementLegs(
           anchorPresent: 0,
           mode: 1,
           inside: 0,
+          ballC: [0, 0, 0],
+          ballR: visR,
+          visR,
         });
         boundaryQueries.push({
           origin: probe.hitPos,
@@ -8833,6 +8882,9 @@ async function runSurfaceTransportAgreementLegs(
           anchorPresent: 1,
           mode: 1,
           inside: 0,
+          ballC: [0, 0, 0],
+          ballR: visR,
+          visR,
         });
       }
       traceQueries.push({
@@ -8847,7 +8899,53 @@ async function runSurfaceTransportAgreementLegs(
         anchorPresent: 0,
         mode: 0,
         inside: 0,
+        ballC: [0, 0, 0],
+        ballR: visR,
+        visR,
       });
+    }
+    // The closed-solid legs' shadow probes (mode 2): the floor corridor's
+    // straight shadow visibility through the session's optical solid —
+    // the rear-scene task's corridor fix. Deterministic floor points
+    // below the certified ball, light-ish directions through it, plus
+    // the two gate exits (ball-behind, corridor-clearing) that must
+    // return exactly 1 with zero field evals. The through-lobe probe's
+    // expected value is the ANALYTIC control (checked below): one
+    // crossing pair through the fixture's sphere emitter at normal
+    // incidence — (1-F0)² · Beer(chord) — from the fixture's own
+    // geometry.
+    const shadowQueries: ControlQueryRec[] = [];
+    if (leg.backend === "closedSolid") {
+      const floorY = -1.2 * visR;
+      const norm3 = (v: Vec3): Vec3 => {
+        const l = Math.hypot(v[0], v[1], v[2]);
+        return [v[0] / l, v[1] / l, v[2] / l];
+      };
+      const probeShadow = (origin: Vec3, dir: Vec3): void => {
+        shadowQueries.push({
+          origin,
+          dir,
+          anchorPoint: [0, 0, 0],
+          eps: DIELECTRIC_CROSSING_EPS_REL * visR,
+          ior: DIELECTRIC_IOR,
+          radius: visR,
+          absorb: DIELECTRIC_ABSORPTION,
+          theta: DIELECTRIC_INITIAL_BRANCH_THETA,
+          anchorPresent: 0,
+          mode: 2,
+          inside: 0,
+          ballC: [0, 0, 0],
+          ballR: visR,
+          visR,
+        });
+      };
+      probeShadow([0.35, floorY, 0.05], [0, 1, 0]);
+      probeShadow([0.35, floorY, 0.05], norm3([0.4, 1, 0.2]));
+      probeShadow([-0.4, floorY, -0.05], norm3([-0.5, 1, -0.3]));
+      // Gate exits: ball-behind (along <= 0) and a closest approach
+      // clearing 1.05 R + 0.3 * along — transmittance exactly 1.
+      probeShadow([2 * visR, 0, 0], [1, 0, 0]);
+      probeShadow([0, floorY, 0], norm3([1, 0.05, 0]));
     }
     const count = boundaryQueries.length + traceQueries.length;
     // Pack one query list into its wire buffer, padding to the workgroup
@@ -8883,6 +8981,11 @@ async function runSurfaceTransportAgreementLegs(
         view.setUint32(base + 80, q.anchorPresent, true);
         view.setUint32(base + 84, q.mode, true);
         view.setUint32(base + 88, q.inside, true);
+        view.setFloat32(base + 96, q.ballC[0], true);
+        view.setFloat32(base + 100, q.ballC[1], true);
+        view.setFloat32(base + 104, q.ballC[2], true);
+        view.setFloat32(base + 108, q.ballR, true);
+        view.setFloat32(base + 112, q.visR, true);
       };
       list.forEach(write);
       for (let i = list.length; i < padded; i++) {
@@ -8899,6 +9002,9 @@ async function runSurfaceTransportAgreementLegs(
             anchorPresent: 0,
             mode: 1,
             inside: 0,
+            ballC: [0, 0, 0],
+            ballR: 0,
+            visR,
           },
           i,
         );
@@ -8907,7 +9013,11 @@ async function runSurfaceTransportAgreementLegs(
     };
 
     const paramsData = leg.packParams(
-      Math.max(boundaryQueries.length, traceQueries.length),
+      Math.max(
+        boundaryQueries.length,
+        traceQueries.length,
+        shadowQueries.length,
+      ),
     );
     // Re-wrapped copy — see ensureSurfaceEvalBuffers' mapsData note.
     const mapsData = leg.packMaps?.() ?? null;
@@ -8928,6 +9038,40 @@ async function runSurfaceTransportAgreementLegs(
       );
       // Re-wrapped copy — see ensureSurfaceEvalBuffers' mapsData note.
       device.queue.writeBuffer(maps, 0, new Float32Array(mapsData));
+    }
+    // The opticsMaps lanes (binding 13): mode 2's shadow-visibility
+    // helper reads slot 0's material, so the CLOSED-SOLID legs pack the
+    // one-slot wire with the same numbers the trace probes' material
+    // carries. The estimator legs' control entry never reaches it — the
+    // helper is only emitted under the closed-solid backend — and an
+    // unused binding must stay out of the derived layout's bind group.
+    const legOpticsMaps: GPUBuffer | null =
+      leg.backend === "closedSolid"
+        ? await createSurfaceBuffer(
+            device,
+            `surface-de transport optics maps ${leg.core}`,
+            8 * 4,
+            GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+          )
+        : null;
+    if (legOpticsMaps) {
+      device.queue.writeBuffer(
+        legOpticsMaps,
+        0,
+        new Float32Array(
+          packSurfaceGpuOpticsMaps([
+            {
+              finish: resolveSurfaceFinish(undefined),
+              pattern: resolveSurfacePattern(undefined),
+              optics: {
+                ior: DIELECTRIC_IOR,
+                absorption: [...DIELECTRIC_ABSORPTION] as Vec3,
+                radius: visR,
+              },
+            },
+          ]),
+        ),
+      );
     }
     // One dispatch per query list (boundary first, then trace) so a fault
     // names its half; layout "auto" — the bind group derives from the
@@ -8963,6 +9107,9 @@ async function runSurfaceTransportAgreementLegs(
         entries: [
           { binding: 0, resource: { buffer: params } },
           ...(maps ? [{ binding: 1, resource: { buffer: maps } }] : []),
+          ...(legOpticsMaps
+            ? [{ binding: 13, resource: { buffer: legOpticsMaps } }]
+            : []),
           { binding: 16, resource: { buffer: queriesBuf } },
           { binding: 17, resource: { buffer: resultsBuf } },
         ],
@@ -8999,14 +9146,20 @@ async function runSurfaceTransportAgreementLegs(
     };
     let boundaryOut: Float32Array;
     let traceOut: Float32Array;
+    let shadowOut: Float32Array | null = null;
     try {
       boundaryOut = await runControl(boundaryQueries);
       note(`transport: ${leg.core} boundary dispatch ok`);
       traceOut = await runControl(traceQueries);
       note(`transport: ${leg.core} trace dispatch ok`);
+      if (shadowQueries.length > 0) {
+        shadowOut = await runControl(shadowQueries);
+        note(`transport: ${leg.core} shadow dispatch ok`);
+      }
     } finally {
       params.destroy();
       maps?.destroy();
+      legOpticsMaps?.destroy();
     }
 
     let maxRadianceDelta = 0;
@@ -9236,6 +9389,75 @@ async function runSurfaceTransportAgreementLegs(
           "treatment) — disclosed, not absorbed",
       );
     }
+    // --- the SHADOW probes (mode 2, closed-solid legs): the floor
+    // corridor's straight shadow visibility against the f64 twin, plus
+    // the analytic control (the through-lobe probe's expected
+    // (1-F0)²·Beer(chord) through the fixture's sphere emitter at normal
+    // incidence) and the two gate exits' exact-1 pin.
+    let maxShadowDelta = 0;
+    if (leg.backend === "closedSolid") {
+      const material = {
+        ior: DIELECTRIC_IOR,
+        absorption: DIELECTRIC_ABSORPTION,
+        radius: visR,
+      };
+      const chord = 0.7;
+      const f0 = ((material.ior - 1) / (material.ior + 1)) ** 2;
+      const analytic = [0, 1, 2].map(
+        (c) =>
+          (1 - f0) ** 2 * Math.exp((-DIELECTRIC_ABSORPTION[c] * chord) / visR),
+      );
+      shadowQueries.forEach((q, si) => {
+        const cpu = transportShadowVisibilityCPU(
+          leg.fixture,
+          q.origin,
+          q.dir,
+          material,
+          q.ballC,
+          q.ballR,
+          q.visR,
+        );
+        const base = si * 16;
+        const gpuVals = [0, 1, 2].map((c) => shadowOut![base + 4 + c]);
+        for (let c = 0; c < 3; c++) {
+          const gpu = gpuVals[c];
+          const twinDelta = Math.abs(gpu - cpu[c]);
+          maxShadowDelta = Math.max(maxShadowDelta, twinDelta);
+          if (!(twinDelta <= 3e-3)) {
+            fail(
+              si,
+              "shadow",
+              `twin[${String(c)}] — gpu ${String(gpu)} vs cpu ${String(cpu[c])}`,
+            );
+          }
+          if (q.dir[1] > 0.99 && Math.abs(q.origin[0] - 0.35) < 1e-9) {
+            // The analytic control: one crossing pair through the
+            // sphere emitter, normal incidence, chord 0.7 — the
+            // independent control the criterion asks the transmitted
+            // shading to match.
+            const analyticDelta = Math.abs(gpu - analytic[c]);
+            maxShadowDelta = Math.max(maxShadowDelta, analyticDelta);
+            if (!(analyticDelta <= 6e-3)) {
+              fail(
+                si,
+                "shadow",
+                `analytic[${String(c)}] — gpu ${String(gpu)} vs expected ${String(analytic[c])}`,
+              );
+            }
+          }
+        }
+        if (
+          (q.dir[0] > 0.99 || (q.dir[1] > 0.04 && q.dir[1] < 0.06)) &&
+          gpuVals.some((value) => Math.abs(value - 1) > 1e-6)
+        ) {
+          fail(
+            si,
+            "shadow",
+            `gate exit — gpu ${String(gpuVals)} vs expected 1`,
+          );
+        }
+      });
+    }
     rows.push({
       core: leg.core,
       system: leg.systemName,
@@ -9249,6 +9471,7 @@ async function runSurfaceTransportAgreementLegs(
       maxRadianceDelta,
       maxResidualDelta,
       maxNormalDelta,
+      ...(leg.backend === "closedSolid" ? { maxShadowDelta } : {}),
       ...(forward ? { flipsExcluded: flipped } : {}),
     });
     await new Promise<void>((resolve) => setTimeout(resolve));
@@ -21151,6 +21374,9 @@ async function runSurfaceDeSection(
             `maxRadianceDelta=${row.maxRadianceDelta.toExponential(2)} ` +
             `maxResidualDelta=${row.maxResidualDelta.toExponential(2)} ` +
             `maxNormalDelta=${row.maxNormalDelta.toExponential(2)} ` +
+            (row.maxShadowDelta !== undefined
+              ? `maxShadowDelta=${row.maxShadowDelta.toExponential(2)} `
+              : "") +
             `compileMs=${String(Math.round(row.compileMs))}`,
         );
       }

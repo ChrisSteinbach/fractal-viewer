@@ -985,13 +985,24 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     4D interior is the penalty `sigmaMin·sd+|w|`)
     RESOLVES: the envelope's closed-solid arms meet each line in
     BOTH dimensions; estimator arms stay vacuous on IFS hits,
-    disclosed. App routing: the starter-scene task.
+    disclosed. REAR SCENE DELIVERED: the rear-radiance seam resolves in
+    physical ray order — later fractal hits are the transport's own
+    boundary events (both backends' misses CERTIFY the interval, so no
+    rear march is emitted), then the plane terminal, then the
+    background; four outcomes distinct, exhaustion never relabelled —
+    and the floor corridor's shadow attenuates STRAIGHT through the
+    optical solid under the closed-solid backend (the falsely-solid
+    defect's fix: per-channel Fresnel×Beer, TIR dark, band-crossed,
+    AO stays geometric, slot-0 material, shadow work counted apart from
+    primary rays; the rear-image contract and its first-local separation
+    are the distortion task's).
+    App routing: the starter-scene task.
     Pattern-albedo REFUSED (`scripts/finish-pattern.harness.ts`).
     Authored rigs (`surface-lighting.ts`): ONE shader emitter, both
     dimensions/engines; absent legacy, visibility the displayed DE,
     unresolved rays dark, HDR averages pre-clip. NO PARTICIPATING
     MEDIUM (measured cost; its return is a look call).
-    Points authors the rig in both dimensions (transient displayed-space disk/aim
+    Points authors the rig in both dimensions (transient disk/aim
     guides; never in PNGs/thumbnails).
     Record: `docs/cinematic-surface-lighting.md`.
   - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
