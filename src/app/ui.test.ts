@@ -1178,7 +1178,7 @@ describe("Ui Hybrid schedule controls", () => {
       document
         .getElementById("scheduleEditHint")
         ?.textContent?.replace(/\s+/g, " "),
-    ).toMatch(/copies it; later source changes do not follow/i);
+    ).toMatch(/copies it\. Changes update Points/i);
   });
 });
 
@@ -1233,9 +1233,7 @@ describe("Ui Xaos add-as-block gesture", () => {
     ).toEqual(["Replace or explore"]);
     expect(
       document.getElementById("xaosAddHint")?.textContent?.replace(/\s+/g, " "),
-    ).toMatch(
-      /separate copy.*later source changes do not carry over.*links in Xaos/i,
-    );
+    ).toMatch(/separate copy.*Edit its links in Xaos/i);
     expect(
       document
         .querySelector("#xaosSection .panel-explainer")
@@ -15893,7 +15891,7 @@ describe("document-level panel disclosures", () => {
     }
     expect(
       document.getElementById("driftBtn")?.getAttribute("aria-describedby"),
-    ).toBe("presetTimingHint driftNote");
+    ).toBe("driftNote");
   });
 
   it.each(["points", "flame", "solid", "surface"] as const)(
