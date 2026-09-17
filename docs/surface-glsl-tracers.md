@@ -1139,10 +1139,14 @@ bytes against the pre-optics tree:
 | 3D balloon |        93618 |       31919 |      114392 |      44133 |    +12214 |
 | 3D plane   |        92051 |       33444 |      113229 |      45924 |    +12480 |
 | 3D finish  |        86584 |       31080 |      107358 |      43294 |    +12214 |
+| 3D pattern |        96425 |       39216 |      118210 |      51526 |    +12310 |
 
-Every 3D optics program strips (the base sources already sit past the
+The pattern row completes the shipped-arm table: optics+pattern composes
+on both twins (the 4D pairing resolves at 97832 B, emitted 38476 B,
++12370 — strips on, under the cliff), so no 3D optics pairing exceeds
+51.6KB emitted. Every 3D optics program strips (the base sources already sit past the
 64KB threshold), and the emitted figures sit far under the 82.2KB Mesa
-cliff — 45.9KB is the worst measured pairing. Refused pairings: the two
+cliff — 51.5KB (pattern) is the worst measured pairing. Refused pairings: the two
 forward arms and the cinematic rig (resolver throws); the fold frontier
 (the material gate). The 4D twin's optics lane rides the std140 block's
 unconditional trailing member instead of a default-block array — its
