@@ -44,6 +44,7 @@ import { sphericalFromCartesian } from "./orbit";
 
 export const SURFACE_TRANSMISSION_STARTERS = [
   { id: "glass-garden", label: "Glass garden (3D)" },
+  { id: "glass-menger", label: "Glass Menger (3D)" },
   { id: "glass-cells", label: "Glass cells (4D)" },
 ] as const;
 
@@ -242,11 +243,47 @@ function glassCells(): SceneSnapshot {
   };
 }
 
+/** The intricate tier: one glass emitter whose shape is the EIGHT-CELL
+ * level-1 Menger corner cluster — eight posed half-unit boxes at ±0.28,
+ * scale 0.42, a gapped tessellation whose every sight line crosses
+ * multiple faces. The union field is exact per part (one ShapeSpec, the
+ * part min the certified fold), so the transport treats it as ONE solid —
+ * the multi-cell traversal the lone-box probes scaled up to. Measured
+ * resolving on the real driver (80% of the ray set, the floor visibly
+ * refracting through the cells); the residual speckle is the TIR-trapped
+ * billiard class, not a field seam. */
+function glassMenger(): SceneSnapshot {
+  const state = baseState();
+  const cell = (i: number, j: number, k: number) => ({
+    primitive: { kind: "box" as const, half: [0.5, 0.5, 0.5] as Vec3 },
+    combine: "union" as const,
+    pose: {
+      offset: [i ? 0.28 : -0.28, j ? 0.28 : -0.28, k ? 0.28 : -0.28] as Vec3,
+      scale: 0.42,
+    },
+  });
+  state.transforms = [
+    glassEmitter(0, [0, -0.35, 0], 1, 0.5, {
+      parts: [0, 1].flatMap((i) =>
+        [0, 1].flatMap((j) => [0, 1].map((k) => cell(i, j, k))),
+      ),
+    }),
+  ];
+  return {
+    ...toSnapshot(state),
+    camera: camera([1.5, 0.5, 2.5], [0, -0.3, 0], 0.62),
+  };
+}
+
 /** Every call owns its transforms, optics, camera, backdrop and floor.
  * Callers load the snapshot through the normal scene-replacement path; the
  * surface-mode entry is the caller's (the shared load-hint arm). */
 export function createSurfaceTransmissionStarter(
   id: SurfaceTransmissionStarterId,
 ): SceneSnapshot {
-  return id === "glass-garden" ? glassGarden() : glassCells();
+  return id === "glass-garden"
+    ? glassGarden()
+    : id === "glass-menger"
+      ? glassMenger()
+      : glassCells();
 }
