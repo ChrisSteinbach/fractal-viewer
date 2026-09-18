@@ -15,9 +15,13 @@
  * `#v1=` document carries `optics: { model: "dielectric" }` on every
  * transform, `?surfacecompute` (3D only; every 4D session already prefers
  * compute) forces the compute tracer past the plain-affine WebGL verdict,
- * and `gatedSlotMaterials` admits the authored optics. The app does not yet
- * select the closed-solid backend (that routing is the starter-scene task's),
- * so this sweep drives the ESTIMATOR boundary query: the lane pays its
+ * and `gatedSlotMaterials` admits the authored optics. These fixtures are
+ * map-bearing IFS systems, so the app's routing admission (the closed-solid
+ * backend's emitter-only shape) keeps them on the ESTIMATOR boundary query
+ * by its own rule — the routing itself landed 2026-09-18 and resolves on
+ * the closed-solid vocabulary (the starters' leg; the tile gate asserts
+ * it) — and this sweep drives the estimator query deliberately: the lane
+ * pays its
  * buffers, dispatches, replay passes and cancellation generations whatever
  * the samples resolve, and on IFS geometry every inside path refuses — the
  * capability matrix's disclosed vacuous state. That is exactly right for
