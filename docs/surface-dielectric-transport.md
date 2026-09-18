@@ -985,6 +985,70 @@ crossing band boundaries. The transport lane ran in both arms (3D
 1022/726 passes untiled/tiled, 4D 1288/944). Run-to-run untiled exports
 of the 3D starter are byte-identical (mean 0, max 0, three boots).
 
+## The finite-solid optical oracle (landed, 2026-09-18)
+
+The owner's scope correction the same day: rendering fractal shapes with a
+glass finish is the only goal — the emitter-only compositions were
+scaffolding. The attractor of a recursive IFS has no volume; glass is a
+MEDIUM with an interior. The honest optical solid is this study's selected
+object: the finite level-N cell decomposition, displayed CO-EXTENSIVELY
+(the rear-scene rule's own demand), with the posed 4D hyper-Menger slice as
+half the milestone, not a follow-up.
+
+The production oracle for that object has LANDED as
+[`src/fractal/finite-solid.ts`](../src/fractal/finite-solid.ts), one
+construction and its query forms:
+
+- **The construction** — the study's exact ternary grid (each axis split
+  in thirds per level, a child kept when at most ONE of its coordinates is
+  the middle third; 20 children/level 3D, 48 in 4D), an occupancy bitmap
+  over the centred rational plane form. The 4D rule is the 3D rule one
+  axis over, and the posed slice rides row-major world→intrinsic rows plus
+  slice — the qualified fixture's frozen f32 pose contract.
+- **The exact boundary query** — the qualified fixture's DDA (integer
+  cells, analytic planes, NO distance epsilon, the anchor contract with
+  the tied-plane mask and post-incident cell indices, the exact-corner
+  normal convention). This is the STUDY'S oracle, not a marched min-SDF —
+  the distinction the abutting-seam measurement made load-bearing: an
+  interval query never marches a field, so the ~0 a min-combined union
+  field reads at shared interior planes cannot produce phantom crossings.
+- **The signed field** — min over occupied cells of the exact box SDF
+  (outside scaled by the shared march-safety budget), for the display
+  estimator and the shader mirrors; its interior-shared-plane zero is
+  documented, and the transport never marches it.
+- **The exact ray intervals** — per-cell slab clips derived from the
+  CANONICAL grid planes (not center±half, whose 1-ulp noise splits
+  touching intervals), unioned with NO optical epsilon.
+- **The admission** (`analyzeFiniteSolidSystem`) — exactly the shipped
+  level-1 map sets (composed through the shared affine twins; VALUES and
+  signs both checked), no kaleidoscope above order 1, no warping final
+  transform, level 0..2 (the proxy's certified band).
+
+Pinned by `scripts/finite-solid.harness.ts`: the grid agrees exhaustively
+with the qualified fixture's occupancy at level 2 in both dimensions; the
+DDA replays the fixture's control rays and 24-ray event-chained interior
+sweeps BIT-FOR-BIT (t, entering, normal, plane mask, plane/cell indices)
+in 3D and posed 4D (the fixture's frozen f32 pose rows — re-deriving them
+from f64 rotation arithmetic drifts by ULPs); the corner convention
+reproduces the fixture's recorded tied-plane controls; the interval union
+matches the proxy's box union by coverage (the proxy's own box-center
+rounding splits ulp-adjacent intervals at shared planes; the plane-derived
+union merges them). The display co-extension is a construction decision:
+shape (A), the session renders the level-N cells, and the optical solid is
+exactly what is displayed.
+
+Remaining for the fractal milestone (in order): the kernel emission — the
+exact DDA as the transport boundary query and the hierarchical box-union
+display DE (outside: the occupied level-1 boxes are a certified lower
+bound; inside one, its occupied children — the local true surface), as a
+new core pair in `surface-de-gpu.ts` with the GLSL shared source and the
+CPU twin under the bench's oracle discipline; the routing admission
+extension (`surface-optics-backend.ts`'s shape, which currently refuses
+`de.maps.length > 0` — the refusal stays until the co-extensive
+finite-solid document exists to admit); the trapped-billiard termination
+policy; the preset/panel path; the built-app visual acceptance against
+`scripts/out/transmission-dielectric-gpu/`.
+
 ## What is not yet qualified
 
 The compute kernel emission and the host buffer contracts are real state;
