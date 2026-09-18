@@ -998,6 +998,49 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
     elsewhere it shows on the next **◈ Surface** entry. The transform list
     names an authored finish on its row (`Chrome` becomes `Finish: Chrome`) and
     uses `Finish: custom` otherwise.
+  - **Optics (Glass)** — the finish group's third material sibling: what the
+    surface is made of, optically, in a **◈ Surface** render. The bundle
+    menu's **Glass** entry selects the dielectric model — real refraction,
+    Fresnel reflections and a Beer–Lambert tint over the scene's closed-solid
+    geometry (`docs/surface-dielectric-transport.md` is the contract) — and it
+    is the one bundle whose point is NOT the six finish numbers: picking it
+    stores only the optical model (the glass slot's own finish fields are
+    inert, so the document stays minimal), and picking any other bundle clears
+    the optics, because a bundle fully determines the material. A legacy
+    **Translucent** document keeps its original thin-shell meaning — its
+    `Transmit` slider fades toward the backdrop and never shows rear geometry;
+    only the Glass bundle (or a scene that already carries the model, such as
+    the **Glass transmission** starters) opts in. Two rows sit under the six
+    finish sliders, dormant until the transform authors the model:
+    **Distortion** (`0–0.25`, `0` = straight transmission byte-identically;
+    the restrained virtual-slab offset that bends the view seen THROUGH the
+    glass — the frosted cue — at about `0.08`) and **Optical scale** (a
+    logarithmic `0.01–100` slider whose centre is exactly `1`, the qualified
+    appearance; higher is a clearer tint, lower a denser one, and both
+    extremes are indistinguishable beyond the band's ends). Like the finish
+    fields, each leaf stays unset until its own slider moves and vanishes
+    again when it returns there; the model itself is the object's spine, so a
+    pure Glass default is real data, and clearing happens through the bundle.
+    The glass replaces the hit's shaded colour with the traced refracted view
+    of everything behind it — later members, the checker floor, the backdrop —
+    so it needs actual rear structure to read: the starters provide a checker
+    floor and stacked members. It routes to the **closed-solid** backend
+    (which resolves) only where the composition is the closed-solid vocabulary
+    — an emitter-only union in 3D, or the same in native 4D at the canonical
+    pose (the members' plane carried by the slice, a w-preserving rotor) —
+    and keeps the classic fallback (estimator-backend sessions on ordinary
+    IFS geometry render the disclosed vacuous state; escape-time, Mandelbulb,
+    3D-fold and software-rendered sessions keep the classic finish entirely;
+    cinematic lighting and optics never compile together). The panel's own
+    restriction note says so beside the rows. In native 4D the pose coupling
+    is live: scrubbing the slice off the members' plane or turning a w-plane
+    rotor moves the displayed object off the composition the signed field
+    describes, and the transmission degrades to honest refusals (unresolved
+    dark), never an invented interior — scrub back to the carried flat to
+    restore it. An optics edit re-enters Surface once like a finish edit, is
+    saved in every renderer, survives share links, undo, collections and
+    keyframes, and the transform list names it on the row (`Glass` becomes
+    `Optics: Glass`).
   - **Pattern** — one group below **Finish**: how this map's part of the
     surface is patterned in a **◈ Surface** render, and nowhere else — the
     albedo texture the lighting then responds to. A **family** menu picks
@@ -1079,6 +1122,15 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   A renderer-authored preset enters Flame, Solid, or Surface only after that
   new cloud lands, so even two consecutive Surface presets rebuild the second
   session from its own document rather than leaving the old trace on screen.
+  Two optgroups carry **complete compositions** rather than bare transform
+  systems — the **Lit interiors** (whole lighting rigs) and the **Glass
+  transmission** starters: **Glass garden (3D)** — stacked glass members and
+  a slab over a checker floor, every member carrying the dielectric model at
+  the distortion study's working value — and **Glass cells (4D)** — the same
+  material on the hypertetrahedron's four corners at the canonical posed
+  slice. Loading either replaces the whole scene (camera, backdrop, floor,
+  palette and per-transform optics included) and arms the Surface entry, the
+  Lit interiors' contract one material over.
 - **Systems → + Add isolated block** — preserves the current system, copies a
   chosen preset, saved scene, or the current system, measures both x extents,
   seats the copy beyond the old with a gap, and writes block-diagonal Xaos rows
