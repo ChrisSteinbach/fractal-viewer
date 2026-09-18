@@ -817,17 +817,130 @@ are the delegated working lines; the appearance selection is untouched.
 
 ### Capability matrix, updated
 
-| Core / wrapper                                | Transport status now                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| compute `affine`, `affine4`, `fold4`          | LIVE as compiled and routed: the session-materials flow admits them — an optics-authored session compiles the transport, the lane and the buffers (agreement rows: radiance ≤ 1.1e-4, residual ≤ 3.2e-4, normals ≤ 6.6e-3 against the f64 twin). NOT optically resolving on IFS geometry with the estimator backend: every transport sample is unresolved on hits (the renderer envelope's finding — the estimator-march boundary query has no inside traversal), marked `vacuous-inside` per row. The CLOSED-SOLID backend (`opticsBackend: "closedSolid"`) over the condensation union RESOLVES in both dimensions — the envelope's closed-solid arms meet every delegated line with real resolved counts (3D 5,769 / 4D 7,856 at the settle), and the agreement legs pin the signed query against the f64 twin (`resolving` rows)                          |
-| compute `fold` (3D frontier)                  | MEASURED REFUSAL on real hardware: a fold transport invocation exceeds the kernel driver's GPU-job timeout at every budget that exercises the work-list (`ring gfx_0.0.0 timeout`, GPU reset, every attempt — the width-12 frontier's dynamic indexing spills to scratch inside the transport's deep call nesting, the kernel module's own frontier-spill precedent, and the spilled per-eval cost puts any full trace past ~10 s on the RX 7900 XTX). Routing strips the gate (`admitOptics: false`) so a fold session renders classic, disclosed. Reopens on a spill fix or a per-invocation time bound                                                                                                                                                                                                                                                     |
-| compute `escape`, `bulb`, `escape4` (forward) | Kernel emitted and bench-pinned (the agreement legs); ROUTING does not admit the families — the slot resolver's `admitOptics: false` strips the gate, so an optics-authored forward session renders classic, disclosed. The estimators are heuristics, not certified lower bounds: the legs pin the kernel's arithmetic, not the material's optical soundness                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| GLSL tracers (`surface-material*.ts`)         | LIVE for the estimator backend, as compiled and routed: the shared `surfaceTransportSource` block splices the kernel's optics emission term for term over the composed public estimator, and the shade site routes optical hits through the SAME replay-pass schedule collapsed INLINE (stateless per strip; the strip draw is the cancellation boundary). A WebGL-routed session on a SOFTWARE rasterizer strips the gate at both route points — measured SwiftShader renderer crash — classic, disclosed. The closed-solid backend is emitted and compile-verified in both dimensions through a temporary backend force; the app routing that selects it is the starter-scene task's. A fold-shaped descent refuses the transport at the gate that would compile it (the kernel's measured frontier-spill timeout); the forward arms refuse at the resolver |
-| `lens` wrapper, both dimensions               | Composes — the boundary query rides the wrapped estimator                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `balloon` (3D/4D)                             | Composes over the union estimator, disclosed envelope; the shell inherits the argmin slot's material                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `ground plane`                                | Composes — the floor is a rear-scene terminal whose shadow corridor attenuates STRAIGHT through the optical solid under the closed-solid backend (the corridor fix; the estimator backend's corridor stays the classic opaque penumbra, covered by the disclosed vacuous state). The slab query's own field reads the center plane (`transportSolidField` embeds `w0`), so a slab session's corridor is the center-plane field's — the backend's slab admission is the routing task's question, not this corridor's                                                                                                                                                                                                                                                                                                                                           |
-| Cinematic lighting                            | EXCLUSIVE (throw)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| Surface applicability gates                   | Unchanged — authored optics adds NO new admission                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Core / wrapper                                | Transport status now                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| compute `affine`, `affine4`, `fold4`          | LIVE as compiled and routed: the session-materials flow admits them — an optics-authored session compiles the transport, the lane and the buffers (agreement rows: radiance ≤ 1.1e-4, residual ≤ 3.2e-4, normals ≤ 6.6e-3 against the f64 twin). NOT optically resolving on IFS geometry with the estimator backend: every transport sample is unresolved on hits (the renderer envelope's finding — the estimator-march boundary query has no inside traversal), marked `vacuous-inside` per row. The CLOSED-SOLID backend (`opticsBackend: "closedSolid"`) over the condensation union RESOLVES in both dimensions — the envelope's closed-solid arms meet every delegated line with real resolved counts (3D 5,769 / 4D 7,856 at the settle), and the agreement legs pin the signed query against the f64 twin (`resolving` rows). ROUTED (2026-09-18): the app selects closedSolid wherever the composition admits it (`surface-optics-backend.ts`'s pure admission, the section below) and keeps the estimator everywhere else; emitter-only C0 sessions resolve in the built app in both dimensions                                                                                                                                    |
+| compute `fold` (3D frontier)                  | MEASURED REFUSAL on real hardware: a fold transport invocation exceeds the kernel driver's GPU-job timeout at every budget that exercises the work-list (`ring gfx_0.0.0 timeout`, GPU reset, every attempt — the width-12 frontier's dynamic indexing spills to scratch inside the transport's deep call nesting, the kernel module's own frontier-spill precedent, and the spilled per-eval cost puts any full trace past ~10 s on the RX 7900 XTX). Routing strips the gate (`admitOptics: false`) so a fold session renders classic, disclosed. Reopens on a spill fix or a per-invocation time bound                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| compute `escape`, `bulb`, `escape4` (forward) | Kernel emitted and bench-pinned (the agreement legs); ROUTING does not admit the families — the slot resolver's `admitOptics: false` strips the gate, so an optics-authored forward session renders classic, disclosed. The estimators are heuristics, not certified lower bounds: the legs pin the kernel's arithmetic, not the material's optical soundness                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| GLSL tracers (`surface-material*.ts`)         | LIVE for the estimator backend, as compiled and routed: the shared `surfaceTransportSource` block splices the kernel's optics emission term for term over the composed public estimator, and the shade site routes optical hits through the SAME replay-pass schedule collapsed INLINE (stateless per strip; the strip draw is the cancellation boundary). A WebGL-routed session on a SOFTWARE rasterizer strips the gate at both route points — measured SwiftShader renderer crash — classic, disclosed. The closed-solid backend is ROUTED like the compute one (the same admission, one decision per session, stamped before the system install so the rebuild that carries the optics define compiles the signed query over the condensation shapes that install stamps; the inactive dimension's material is reset to the estimator because the tail's materials install flips both defines and only the active one carries shapes). Both starters settle with the closed-solid GLSL arm on a hardware rasterizer (`?surfacegl`), 3D and native 4D, error-free. A fold-shaped descent refuses the transport at the gate that would compile it (the kernel's measured frontier-spill timeout); the forward arms refuse at the resolver |
+| `lens` wrapper, both dimensions               | Composes — the boundary query rides the wrapped estimator                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `balloon` (3D/4D)                             | Composes over the union estimator, disclosed envelope; the shell inherits the argmin slot's material                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `ground plane`                                | Composes — the floor is a rear-scene terminal whose shadow corridor attenuates STRAIGHT through the optical solid under the closed-solid backend (the corridor fix; the estimator backend's corridor stays the classic opaque penumbra, covered by the disclosed vacuous state). The slab query's own field reads the center plane (`transportSolidField` embeds `w0`), so a slab session's corridor is the center-plane field's — the backend's slab admission is the routing task's question, not this corridor's                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Cinematic lighting                            | EXCLUSIVE (throw)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Surface applicability gates                   | Unchanged — authored optics adds NO new admission                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+
+## The app routing, the panel material and the starter scenes (delivered, 2026-09-18)
+
+The capability matrix's "live as compiled and routed" becomes literal: the
+app now selects the backend.
+
+### The routing admission (`surface-optics-backend.ts`)
+
+`surfaceOpticsBackend` is the ONE pure decision, unit-tested, consumed by
+both engines: the compute create's `opticsBackend` option and the GLSL
+fallback's material stamp. It answers `"closedSolid"` only where the
+qualified composition holds, `"estimator"` (the absent path's meaning,
+byte-identically) everywhere else — because the backends' codegen refusals
+throw at compile time, and a caller that passed closedSolid for an
+unqualified session would fail the whole create instead of rendering
+classic. It mirrors the codegen's own refusal list term for term and adds
+the two qualifications the codegen cannot see:
+
+- **The emitter-only shape.** The signed field is the condensation union at
+  the root, so the displayed object must BE that union: `de.maps.length ===
+0` (with maps, paths through the IFS part refuse `state-mismatch` — the
+  honest refusal, but an all-dark material), no chaos, no schedule, no
+  final transform of any kind (a plain-affine final warps the query before
+  the condensation term, exactly like the fold-final lens it twins), no
+  tiling, no balloon, and no mesh-bearing emitter shape.
+- **The 4D canonical pose.** The 4D field is the intrinsic solid plus the
+  shape flat's distance as a penalty, exact only where the displayed slice
+  CARRIES every member's flat. The admission checks exactly that, in WORLD
+  w units — the packer's `w0` is the normalized centre times the cloud's
+  w-support (the same conversion `setSurface4View` performs; the document's
+  own `sliceW` is preferred when the pose carries one, the same preference
+  the decode gives it): zero slab thickness, a w-preserving rotor (both
+  plane rotations avoid w), and per member a w-untouched inverse map whose
+  flat lies in the slice — `invM[15]·w0 + invT[3] === 0`, the signed w
+  distance from the slice to the flat. Members at ONE common world w with
+  the slice on it are admitted (the penalty vanishes identically, exactly
+  as at the w0 = 0 lift); the w0 = 0 lift is the one pose whose pack is
+  exact at ANY cloud w-support, which is why the 4D starter pins it (a
+  cloud whose members share one w has zero w-extent, and every other
+  slice position's normalized round trip degenerates).
+
+The decision is made ONCE per session in the IFS routing branches, landed
+BEFORE the session's first system install so the rebuild that carries the
+optics define compiles the same answer, and it never re-routes
+mid-session. The 4D pose input is the view's pose at entry; scrubbing the
+slice or turning a w-plane rotor afterward moves the displayed object off
+the composition the field describes, and the transport degrades to its
+own honest refusals — the panel's optics restriction note discloses the
+coupling. A live optics wire prefers compute in 3D exactly like an
+authored lighting rig, still gated on availability so `?surfacegl` stays
+WebGL; on the GLSL route the admitted backend is stamped onto the ACTIVE
+dimension's material before the system install (the inactive dimension's
+material is reset to the estimator — the tail's materials install flips
+both defines, and only the active one carries condensation shapes).
+
+### The panel material
+
+The Finish group's bundle select gains **Glass**, the model's selector:
+picking it materializes `Transform.optics` ALONE (its finish values are
+the classic set, so the document stays minimal — the transport replaces a
+glass slot's shaded output and no finish number would be read), every
+other bundle clears the optics, and a legacy Translucent document keeps
+its thin-shell meaning untouched. Two rows follow the six finish sliders,
+dormant until a model exists (the pattern rows' family gate):
+**Distortion** (`0–0.25`, the resolver's own band, 0 = straight
+byte-identically) and **Optical scale** (the resolver's whole `[0.01,
+100]` band on a 53-point geometric grid whose centre is exactly the
+qualified default 1 — the pattern scale row's construction one band
+over). Both write through the per-field rule's own twin; the model is the
+object's spine, never a leaf (a pure `{model: "dielectric"}` is the
+qualified Glass default, and clearing happens through the bundle). The
+group carries one static restriction note naming where the transport
+routes. State rides the finish group's own timing (a row edit re-enters
+Surface once at the editor's settlement boundary) and the finish codec's
+wire; the transform list names the material (`Optics: Glass`).
+
+### The starter scenes
+
+Two whole-scene compositions ride the preset menu's one door under the
+`glass:` prefix (`surface-transmission-starters.ts`, the Lit interiors'
+split), both emitter-only C0 with the dielectric model and the
+distortion working value 0.08 on every member and the checker floor on
+(the bright rear structure the transmission and its distortion are for):
+
+- **Glass garden (3D)** — stacked glass spheres and a posed box slab over
+  the floor; the depth arrangement puts rear structure behind every
+  sight line through the front glass.
+- **Glass cells (4D)** — the hypertetrahedron's four corners, each member
+  carrying a `w` scale (the non-flat degree of freedom that lifts the
+  session onto the native 4D pipeline) parked at the value that keeps
+  every flat in the displayed slice, with a saved w-preserving rotor
+  pose (`yz` 0.42, slice `w = 0`).
+
+A starter supports discovery; it cannot be the only scene on which the
+material is correct. The unit pins each starter's eligibility, its
+closed-solid admission at the saved pose (and the refusal off it), and
+the share-link round trip of optics, `w`, floor and camera. The
+composition review instrument is `scripts/transmission-starters.probe.mjs`
+(real driver: enter from the real preset menu, settle on the latch,
+screenshot).
+
+### The app-level export-tile leg
+
+`scripts/surface-export-tile.verify.mjs --scene=transmission` boots the
+two starters' own documents untiled and under the pretended ceiling, in
+3D and native 4D, with the `?surfacetrace` ring's `transport pass=` lines
+asserted so the comparison cannot pass vacuously. MEASURED (quiet RX 7900
+XTX, radeonsi, 900×560, 9 bands, distortion 0.08 authored): both pairs
+byte-exact — 3D mean 0.0000/255 max 0, 4D mean 0.0000/255 max 0 — the
+boxfold leg's bar, with the checker floor and members of several sizes
+crossing band boundaries. The transport lane ran in both arms (3D
+1022/726 passes untiled/tiled, 4D 1288/944). Run-to-run untiled exports
+of the 3D starter are byte-identical (mean 0, max 0, three boots).
 
 ## What is not yet qualified
 
@@ -839,16 +952,18 @@ every delegated line met — so the first blocker is cleared. The rear-scene
 contract, the corridor's straight shadow visibility and the restrained
 rear-image distortion have LANDED (the sections above — the agreement
 legs' mode-2 shadow probes pin the corridor against the f64 twin, and the
-mode-3 displacement probes pin the accepted slab model). What remains:
+mode-3 displacement probes pin the accepted slab model). The app-level
+routing and the panel material have LANDED (2026-09-18, the section
+below): the app selects the closed-solid backend wherever the
+composition admits it, the panel authors the model, and the two Glass
+starters carry it in both dimensions; the export-tile gate's
+transmission leg is byte-exact in both dimensions with the distortion
+authored. What remains:
 the fold core's transport (the measured timeout, three recorded paths —
 the closed-solid backend is now DOUBLY motivated for the finite-construction
-path, being its own recorded scope); capture integration's app-level tile
-leg (distorted rays crossing band edges — deferred with the routing, the
-section above); panel material
-and starter scenes (.10 — whose app routing must carry the closed-solid
-backend's pose admission: the 4D field is exact where the displayed slice
-carries the flat, and the wiring must pin the canonical composition or
-derive it); built-app qualification (.11). The estimator arms' IFS
+path, being its own recorded scope); built-app qualification (.11 — the
+final visual review and the measured envelope on a quiet real driver).
+The estimator arms' IFS
 vacuity is disclosed, not solved — IFS geometry has no closed solid for
 the signed field to describe. Shader changes require the corresponding
 CPU/GPU agreement gate even before production routing is enabled; the 22
@@ -874,6 +989,13 @@ npm run bench:surface -- --display=:0
 # The real-app invalidation sweep (built app, quiet real driver):
 npm run build && npm run preview &
 node scripts/surface-transport-invalidation.verify.mjs --display=:0
+
+# The app routing's export-tile leg (byte-exact both dimensions, closed
+# solid + distortion): the transmission scenes are the two starters.
+node scripts/surface-export-tile.verify.mjs --display=:0 --scene=transmission
+
+# The starters' composition screenshots (real driver, real preset menu):
+node scripts/transmission-starters.probe.mjs --display=:0
 
 # The same arms against the GLSL twins (?surfacegl, real driver):
 node scripts/surface-transport-invalidation.verify.mjs --display=:0 --lane=webgl

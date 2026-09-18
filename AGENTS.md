@@ -973,26 +973,23 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     Finish persists/morphs/mutates like fold lengths; random-system
     never rolls it. TRANSMISSION: finite-solid 3D/4D glass; envelope
     DECIDED. `surface-dielectric.ts` is the ONE transport oracle;
-    contract:
-    `docs/surface-dielectric-transport.md`. Optics
-    (`surface-optics.ts`: per-slot `Transform.optics`) is LIVE on
-    compute affine/affine4/fold4 (fold REFUSED on its measured timeout;
-    forward unadmitted). The closed-solid
-    backend (the SIGNED condensation-union query — the sign IS the
-    inside traversal) RESOLVES in both dimensions; estimator arms
-    vacuous on IFS hits (disclosed).
-    REAR SCENE DELIVERED in physical ray order — later
-    fractal hits ARE its boundary events (misses CERTIFY
-    the interval; no rear march), then plane, then background;
-    exhaustion never relabelled; the floor corridor's
-    shadow attenuates STRAIGHT through the solid (per-channel
-    Fresnel×Beer, TIR dark). DISTORTION DELIVERED: the
-    accepted virtual-slab offset (`dielectricSlabDisplacement`,
-    the bend study's re-export) displaces exit terminals'
-    rear ORIGIN only — background unbent, front Fresnel untouched; one
-    authored word, 0 = straight byte-identically; tile leg rides .10's
-    routing. Pattern-albedo REFUSED
-    (`scripts/finish-pattern.harness.ts`).
+    contract: `docs/surface-dielectric-transport.md`. Optics
+    (`surface-optics.ts`) is LIVE on compute affine/affine4/fold4
+    (fold REFUSED, measured timeout; forward unadmitted; estimator
+    arms vacuous on IFS hits, disclosed). The closed-solid backend
+    (the SIGNED condensation-union query) RESOLVES in both dimensions.
+    ROUTED (`surface-optics-backend.ts`): the app picks closedSolid
+    only where the composition admits it — emitter-only C0, the
+    codegen refusal list, the 4D canonical pose (every flat in the
+    slice) — else the estimator; one decision per session, both
+    engines; optics prefers compute in 3D. PANEL: the Glass bundle
+    materializes the model alone (legacy Translucent keeps its
+    thin-shell meaning); Distortion/Optical-scale rows ride the
+    per-field rule; two Glass starters (3D + posed 4D) ride the preset
+    menu's glass: prefix. DISTORTION: the virtual-slab offset
+    displaces exit terminals' rear ORIGIN only, 0 = straight
+    byte-identically; export-tile leg byte-exact both dimensions;
+    pattern albedo REFUSED (the finish-pattern sheet).
     Cinematic rigs (`surface-lighting.ts`): ONE both-dialect emitter,
     unresolved rays dark;
     NO PARTICIPATING MEDIUM (measured cost; a look call). Record:
