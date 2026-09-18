@@ -5980,6 +5980,8 @@ export class SurfaceComputeRenderer {
     // keyed to the march/shade lanes, and a transport pass has no
     // sibling work to share a fence with.
     let transportResolved = 0;
+    let transportLastResolved = 0;
+    let transportLastUnresolved = 0;
     let transportUnresolved = 0;
     let transportInvalid = 0;
     const transportBatchMs: number[] = [];
@@ -6106,6 +6108,12 @@ export class SurfaceComputeRenderer {
           // SKIPPED: a classic slot — shadeRays owns the pixel; not
           // transport work to count or re-dispatch.
         }
+        // The LAST pass's own split is the final verdict — the cumulative
+        // counts above re-count every replay retry, so a ray that resolved
+        // at pass 5 was "unresolved" at passes 0-4 and only this split says
+        // how the FRAME actually landed (the black-pixel question).
+        transportLastResolved = transportResolved;
+        transportLastUnresolved = transportUnresolved;
         if (!(await maybePresent(rays - pending.length))) return null;
         pending = nextPending;
         transportPass++;
@@ -6115,6 +6123,16 @@ export class SurfaceComputeRenderer {
       // `truncated` above discloses the incompleteness. The full
       // schedule's own exit classifies every ray — the kernel's last-pass
       // write leaves no PENDING status behind.
+    }
+
+    if (this.optics && transportPipeline !== null) {
+      // The transport lane's own per-frame tally — the failure-mode
+      // diagnostic the field-qualification work reads (resolved /
+      // unresolved / invalid split the black-pixel question three ways:
+      // budget exhaustion, refused queries, and NaN paths respectively).
+      tr(
+        `transport done final resolved=${transportLastResolved} unresolved=${transportLastUnresolved} (cumulative resolved=${transportResolved} unresolved=${transportUnresolved} invalid=${transportInvalid}) passes=${transportPassesStarted}`,
+      );
     }
 
     tr("final readback BEGIN");

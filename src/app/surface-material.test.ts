@@ -5139,7 +5139,7 @@ describe("SURFACE_OPTICS variant (the dielectric transport lane)", () => {
     expect(material.fragmentShader).not.toContain("transportTrace");
   });
 
-  it("refuses a mixed wire and a fold-shaped descent loudly", () => {
+  it("packs a mixed wire's lanes — zero lanes for a classic slot, not a refusal", () => {
     const material = createSurfaceMaterial();
     const opticsMaterial = resolveSurfaceMaterial(
       undefined,
@@ -5153,7 +5153,13 @@ describe("SURFACE_OPTICS variant (the dielectric transport lane)", () => {
       pattern: false,
       optics: true,
     };
-    expect(() => setSurfaceMaterials(material, mixed)).toThrow(/uniformly/);
+    setSurfaceMaterials(material, mixed);
+    const laneOptics = material.uniforms.uMapOptics.value as THREE.Vector4[];
+    // Slot 0 carries its lanes (ior 1.45 first); slot 1 pads the zero
+    // lanes — ior 0 is the per-hit route-around.
+    expect(laneOptics[0].x).toBeCloseTo(1.45, 5);
+    expect(laneOptics[2].x).toBe(0);
+    expect(laneOptics[3].x).toBe(0);
     // The fold refusal: the same measured verdict the wire's
     // admitOptics=false records, enforced at the gate that would compile it.
     material.defines.SURFACE_FOLDS = 1;
@@ -6419,6 +6425,86 @@ describe("SURFACE_OPTICS_CLOSED_SOLID (the signed closed-solid backend)", () => 
     );
   });
 
+  it("forces the backend under a dropped optics gate — the kernel's own rule, mirrored", () => {
+    // A stamped closed-solid backend surviving an optics drop (the session
+    // wire stripped, the fold path dropped the define) used to compile the
+    // floor corridor's transportShadowVisibility call sites WITHOUT their
+    // definition — the program failed to link. The emitted source with
+    // optics=0 must be byte-identical whether the caller passed the
+    // backend or not.
+    const withBackend = surfaceFragmentResolvedFor(
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      undefined,
+      null,
+      emitterShapes,
+      false,
+      0,
+      0,
+      0,
+      null,
+      0,
+      0,
+      0,
+      0,
+      1,
+    );
+    const without = surfaceFragmentResolvedFor(
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      undefined,
+      null,
+      emitterShapes,
+      false,
+      0,
+      0,
+      0,
+      null,
+      0,
+      0,
+      0,
+      0,
+      0,
+    );
+    expect(withBackend).toBe(without);
+    expect(withBackend).not.toContain("transportShadowVisibility");
+    // And the optics-on pair still differs: the backend emission is real.
+    const opticsOn = surfaceFragmentResolvedFor(
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      undefined,
+      null,
+      emitterShapes,
+      false,
+      0,
+      0,
+      0,
+      null,
+      0,
+      0,
+      0,
+      1,
+      1,
+    );
+    expect(opticsOn).toContain("transportShadowVisibility");
+    expect(opticsOn.length).not.toBe(withBackend.length);
+  });
+
   it("the 4D arm mirrors the ADDITIVE-PENALTY signed field through the live rotor/slice", () => {
     const src = surface4FragmentResolvedFor(
       0,
@@ -6714,7 +6800,7 @@ describe("the optical distortion's terminal splice (the GLSL twins)", () => {
       expect(src).toContain("float distortionO = opticsLane1.y;");
       expect(src).toContain("background,\n          distortionO");
       expect(src).toContain("if (path.exitPresent == 1 && distortion > 0.0) {");
-      expect(src).toContain("trans.exitPresent = path.inside;");
+      expect(src).toContain("trans.exitPresent = incidentInGlass ? 1 : 0;");
       expect(src).toContain("refl.exitPresent = 0;");
     }
   });

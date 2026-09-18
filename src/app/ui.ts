@@ -10172,7 +10172,7 @@ export class Ui {
     const opticsNote = this.doc.createElement("p");
     opticsNote.className = "flame-note-info";
     opticsNote.textContent =
-      "Transmission renders on affine and 4D IFS surfaces; escape-time, Mandelbulb, 3D fold and software-rendered sessions keep the classic finish.";
+      "Transmission resolves on closed-solid (emitter) scenes — load a Glass starter to see it; other surfaces keep the classic finish.";
     group.appendChild(opticsNote);
 
     this.syncFinishBundleSelect(bundle, finish, optics);

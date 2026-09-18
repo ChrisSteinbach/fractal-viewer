@@ -2864,7 +2864,7 @@ describe("the 4D tracer's optics arm (the dielectric transport lane)", () => {
     expect(material.fragmentShader).not.toContain("transportTrace");
   });
 
-  it("refuses a mixed wire under a live optics gate", () => {
+  it("packs a mixed wire's lanes — zero lanes for a classic slot, not a refusal", () => {
     const material = createSurfaceMaterial4();
     const opticsMaterial = resolveSurfaceMaterial(
       undefined,
@@ -2872,14 +2872,17 @@ describe("the 4D tracer's optics arm (the dielectric transport lane)", () => {
       { model: "dielectric" },
       2,
     );
-    expect(() =>
-      setSurface4Materials(material, {
-        slots: [opticsMaterial, resolveSurfaceMaterial(undefined, undefined)],
-        finish: false,
-        pattern: false,
-        optics: true,
-      }),
-    ).toThrow(/uniformly/);
+    setSurface4Materials(material, {
+      slots: [opticsMaterial, resolveSurfaceMaterial(undefined, undefined)],
+      finish: false,
+      pattern: false,
+      optics: true,
+    });
+    const maps = mapBlock(material);
+    // Slot 0 carries its lanes; slot 1 pads the zero lanes — ior 0 is the
+    // per-hit route-around.
+    expect(maps.optics[0]).toBeCloseTo(1.45, 5);
+    expect(maps.optics.subarray(8, 16)).toEqual(new Float32Array(8));
   });
 });
 

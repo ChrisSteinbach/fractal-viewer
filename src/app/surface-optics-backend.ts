@@ -113,6 +113,34 @@ function memberFlatInSlice(
   return Math.abs(invM[15] * w0 + invT[3]) <= W_COUPLE_EPS * (1 + Math.abs(w0));
 }
 
+/** Does this final transform's prologue apply nothing? The descents warp
+ * the query by the final's inverse before the condensation term, so a
+ * PRESENT final makes the displayed object not-the-union — unless it is
+ * the value-exact identity (an enabled lens nobody moved: the UI mints
+ * one at the identity, and refusing it would strip the glass from a
+ * scene that is optically exact). Identity means invM is the identity to
+ * rounding, the translation zero, and the sigma scale one. */
+function finalIsIdentity(final: {
+  invM: readonly number[];
+  invT: readonly number[];
+  sigmaMin: number;
+}): boolean {
+  const n = final.invM.length === 16 ? 4 : final.invM.length === 9 ? 3 : 0;
+  if (n === 0) return false;
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      const target = r === c ? 1 : 0;
+      if (Math.abs(final.invM[r * n + c] - target) > W_COUPLE_EPS) {
+        return false;
+      }
+    }
+  }
+  for (const t of final.invT) {
+    if (Math.abs(t) > W_COUPLE_EPS) return false;
+  }
+  return Math.abs(final.sigmaMin - 1) <= W_COUPLE_EPS;
+}
+
 /**
  * Whether this session's composition admits the closed-solid backend.
  * Mirrors the codegen refusal list (both engines, both dimensions) plus the
@@ -139,8 +167,9 @@ export function surfaceClosedSolidAdmitted(
   // condensation term (the prologue both descents apply), and the signed
   // field is the bare root term — a final-transform session's displayed
   // object is not the union the field describes, so the backend refuses
-  // it exactly like the fold-final lens above.
-  if (de.final) return false;
+  // it exactly like the fold-final lens above. The value-exact IDENTITY
+  // final (an enabled lens nobody moved) applies nothing and admits.
+  if (de.final && !finalIsIdentity(de.final)) return false;
   if (composition.tiling) return false;
   if (composition.balloon) return false;
   // Mesh-bearing emitter shapes refuse (the mesh lattice's interior band
@@ -161,23 +190,4 @@ export function surfaceClosedSolidAdmitted(
     }
   }
   return true;
-}
-
-/**
- * The routing answer: `"closedSolid"` when the session's optics wire is
- * live and the composition admits the backend, `"estimator"` otherwise —
- * the absent path's meaning, byte-identically. `materials?.optics` is the
- * wire gate this decision sits behind; without it nothing consumes a
- * backend and the answer is inert.
- */
-export function surfaceOpticsBackend(
-  materials: { optics: boolean } | null | undefined,
-  de: SurfaceDE | SurfaceDE4,
-  composition: { balloon?: boolean; tiling?: boolean },
-  pose4?: Surface4OpticsPose | null,
-): SurfaceOpticsBackend {
-  if (!materials?.optics) return "estimator";
-  return surfaceClosedSolidAdmitted(de, composition, pose4)
-    ? "closedSolid"
-    : "estimator";
 }

@@ -19,11 +19,13 @@
  * Surface from the UI, waits for the TRUE settled latch, and asserts:
  *
  *   live     the optics session reports engine=webgl on a hardware
- *            rasterizer and carries the lane's near-black signature
- *            (the estimator backend's disclosed vacuous state on IFS
- *            geometry: every inside path refuses, unresolved paints
- *            black, so the object's ray coverage reads as near-black).
- *   stripped the optics-stripped twin renders classic — near-black ~0.
+ *            rasterizer. The near-black fraction is NOT the lane's
+ *            signature any more: the transport now RESOLVES the ray set
+ *            (the anchor-handoff and crawl fixes), so the glass
+ *            transmits and the frame reads ~0 near-black — the old
+ *            black-collapse floor asserted the defect. The lane's
+ *            signature is the structural diff against the stripped
+ *            twin below.
  *   diff     the two settled frames differ STRUCTURALLY (>8/255) across
  *            the full canvas — the lane's pixels, object-shaped.
  *
@@ -31,12 +33,12 @@
  * engine assertion read at capture time (the finish gate's rule).
  *
  * THE FIXTURES are scripts/lib/optics-fixtures.mjs — the invalidation
- * sweep's own documents, dielectric authored on every transform. On IFS
- * geometry the estimator backend resolves nothing: every optical hit's
- * inside path refuses and paints black, so the live signature is the
- * object's silhouette, not a glass render. The closed-solid resolution
- * evidence is the envelope leg's; this gate pins that the GLSL lane
- * REACHES the frame in both dimensions.
+ * sweep's own documents, now the CLOSED-SOLID vocabulary the routing
+ * resolves: the GLSL lane reaches a real refracted render (the glass
+ * material over a signed union field), not the estimator backend's
+ * vacuous black. The stripped twin renders classic. The gate's verdict
+ * shape is unchanged: live signature above the floor, stripped control
+ * ~0, structural diff between them.
  *
  * MEASURED (this script's own run, radeonsi RX 7900 XTX, 1024x640,
  * settled): recorded in docs/surface-glsl-tracers.md's optics size
@@ -52,12 +54,13 @@ import { guardFreshDist } from "./lib/dist-freshness.mjs";
 import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 import { OPTICS_SCENES } from "./lib/optics-fixtures.mjs";
 
-/** Live-signature floors and stripped ceilings, per dimension — the same
- * observables the invalidation sweep's webgl lane asserts. */
-const BLACK_FLOOR = { 3: 0.05, 4: 0.001 };
+/** The stripped ceiling — the control must render classic ~0 near-black.
+ * The live side has NO near-black floor any more: the transport resolves
+ * the ray set (the anchor-handoff and crawl fixes), the glass transmits
+ * and the frame reads ~0 near-black — the old floor asserted the defect. */
 const BLACK_CEILING = 0.002;
 /** The structural-diff floor (fraction of the full canvas, delta > 8). */
-const DIFF_FLOOR = { 3: 0.03, 4: 0.003 };
+const DIFF_FLOOR = { 3: 0.02, 4: 0.02 };
 
 function parseArgs(argv) {
   const out = {
@@ -116,7 +119,7 @@ async function newPage(browser, args, hash, armTag, webglQuery) {
   await page.emulateMedia({ reducedMotion: "reduce" });
   const pageErrors = [];
   page.on("pageerror", (e) => pageErrors.push(String(e)));
-  const url = `${args.url}/?surfacestate&surfacetrace&surfacesamples=1&surfacegl&scene=${armTag}#${hash}`;
+  const url = `${args.url}/?surfacestate&surfacetrace&surfacesamples=1&surfacegl&scene=${armTag}#${hash.startsWith("#") ? hash.slice(1) : hash}`;
   await page.goto(url, { waitUntil: "load", timeout: 60000 });
   await page.bringToFront();
   await page.waitForFunction(
@@ -283,11 +286,7 @@ async function main() {
         stripped.black !== null &&
         stripped.black <= BLACK_CEILING;
       const liveOk =
-        live.settled &&
-        live.engine === "webgl" &&
-        live.software === false &&
-        live.black !== null &&
-        live.black >= BLACK_FLOOR[dim];
+        live.settled && live.engine === "webgl" && live.software === false;
       const diff =
         live.shot && stripped.shot
           ? await (async () => {
@@ -309,7 +308,7 @@ async function main() {
       );
       const checks = [
         {
-          what: `live settle (engine webgl, lane signature >= ${(BLACK_FLOOR[dim] * 100).toFixed(2)}%)`,
+          what: "live settle (engine webgl, hardware rasterizer)",
           pass: liveOk,
         },
         {
