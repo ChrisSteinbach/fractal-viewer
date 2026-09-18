@@ -45,6 +45,7 @@ import {
   SURFACE_FULL_MARCH_STEPS,
   SURFACE_FULL_SHADOW_STEPS,
   installSurfaceTiling,
+  materialOpticsBackend,
   materialSurfaceTiling,
   setSurfaceShapeMeshSdf,
   surfaceShapeMeshSdfUniform,
@@ -3886,6 +3887,7 @@ export function setSurfaceSystem4(
       wantSwirlLens,
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
       material.defines.SURFACE4_OPTICS === 1 ? 1 : 0,
+      materialOpticsBackend(material),
     );
     material.needsUpdate = true;
   }
@@ -4131,6 +4133,7 @@ export function setSurface4Balloon(
       material.defines.SURFACE4_SWIRL_LENS === 1 ? 1 : 0,
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
       material.defines.SURFACE4_OPTICS === 1 ? 1 : 0,
+      materialOpticsBackend(material),
     );
     material.needsUpdate = true;
   }
@@ -4179,6 +4182,7 @@ export function setSurface4GroundPlane(
           material.defines.SURFACE4_SWIRL_LENS === 1 ? 1 : 0,
           material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
           material.defines.SURFACE4_OPTICS === 1 ? 1 : 0,
+          materialOpticsBackend(material),
         );
   const u = material.uniforms;
   if (spec) {
@@ -4319,6 +4323,7 @@ export function setSurface4Materials(
       material.defines.SURFACE4_SWIRL_LENS === 1 ? 1 : 0,
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
       wantOptics,
+      materialOpticsBackend(material),
     );
     material.needsUpdate = true;
   }
@@ -4346,6 +4351,7 @@ export function setSurface4Lighting(
     material.defines.SURFACE4_SWIRL_LENS === 1 ? 1 : 0,
     enabled ? 1 : 0,
     material.defines.SURFACE4_OPTICS === 1 ? 1 : 0,
+    materialOpticsBackend(material),
   );
   material.needsUpdate = true;
 }

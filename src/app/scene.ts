@@ -100,6 +100,7 @@ import {
   packSurfaceBalloonPalette,
   packSurfaceBalloonTint,
   setSurfaceMaterials as packSurfaceMaterials,
+  setSurfaceOpticsBackend as setSurfaceOpticsBackendMaterial,
   setSurfaceLighting as packSurfaceLighting,
   setSurfaceGroundPlane as packSurfaceGroundPlane,
   installSurfaceTiling,
@@ -4797,6 +4798,36 @@ export class FractalScene {
     this.surfaceMaterials = materials;
     packSurfaceMaterials(this.surfaceMaterial, materials);
     packSurface4Materials(this.surfaceMaterial4, materials);
+  }
+
+  /**
+   * Stamp the session's optical-transport boundary backend onto the
+   * fragment tracers' materials — main.ts's per-session routing decision
+   * (`surface-optics-backend.ts`'s admission). The ACTIVE dimension's
+   * material takes the decided answer; the INACTIVE one is reset to the
+   * estimator, because the tail's materials install flips BOTH materials'
+   * optics defines and the inactive material carries no condensation
+   * shapes for the signed field to describe (a closed-solid program with
+   * no emitters is exactly what its resolver refuses). Session-scoped like
+   * the balloon and the ground plane: a system-set or materials-set inside
+   * the session rebuilds with whatever this last stamped, so the caller
+   * lands it BEFORE the session's first system install and every rebuild
+   * of the session takes the same answer. The value is inert whenever the
+   * optics define is off (the estimator body's bytes are the absent
+   * path's own).
+   */
+  setSurfaceOpticsBackend(
+    backend: "estimator" | "closedSolid",
+    fourD: boolean,
+  ): void {
+    setSurfaceOpticsBackendMaterial(
+      this.surfaceMaterial,
+      fourD ? "estimator" : backend,
+    );
+    setSurfaceOpticsBackendMaterial(
+      this.surfaceMaterial4,
+      fourD ? backend : "estimator",
+    );
   }
 
   /**
