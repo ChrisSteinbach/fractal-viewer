@@ -617,6 +617,30 @@ async function main() {
       audits.push(await auditState(page, `editor/${groups[i]}`));
     }
 
+    // The optics rows wake when the transform authors an optics model: pick
+    // the Glass bundle and re-audit the Finish group — the two new minted
+    // rows enabled (they ship dormant beside the bundle that materializes
+    // the model), with the same pairing/44px/unclipped contract. Picking
+    // Glass also proves the bundle's own write path drives real sliders.
+    await page.evaluate(() => {
+      const bundle = document.querySelector("#transformEditor .finish-bundle");
+      if (bundle) {
+        bundle.value = "glass";
+        bundle.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
+    await sleep(400);
+    await page.evaluate(() => {
+      const details = [
+        ...document.querySelectorAll("#transformEditor > details"),
+      ].find(
+        (d) => d.querySelector("summary")?.textContent?.trim() === "Finish",
+      );
+      if (details && !details.open) details.querySelector("summary")?.click();
+    });
+    await sleep(300);
+    audits.push(await auditState(page, "editor/Finish (glass)"));
+
     // The xaos leak dials only exist for a system that carries chaos rows.
     const loadedXaos = await page.evaluate(() => {
       const select = document.getElementById("presetSelect");
