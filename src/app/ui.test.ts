@@ -3185,7 +3185,8 @@ describe("Ui.renderTransformEditor", () => {
     // 3 Shear W — always built, just collapsed for a w-less transform like
     // this one); a plain transform has no variations, so the Variations
     // group adds no range sliders (just a menu).
-    expect(editorSliders()).toHaveLength(31);
+    // 31 classic rows + the two optics rows (distortion, optical scale).
+    expect(editorSliders()).toHaveLength(33);
   });
 
   it("pairs every rendered dynamic range and retains formatted/unit readouts", () => {
@@ -4219,7 +4220,8 @@ describe("Ui.renderTransformEditor", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     ui.renderTransformEditor(transforms[0], 0, transforms.length);
-    expect(editorSliders()).toHaveLength(31);
+    // 31 classic rows + the two optics rows (distortion, optical scale).
+    expect(editorSliders()).toHaveLength(33);
 
     ui.renderTransformEditor(null, null, 1);
     expect(document.getElementById("transformEditor")?.children).toHaveLength(
@@ -5399,6 +5401,7 @@ describe("Ui finish editor", () => {
       "plastic",
       "metal",
       "chrome",
+      "glass",
       "translucent",
     ]);
     for (const id of ids) {
@@ -5674,6 +5677,168 @@ describe("Ui finish editor", () => {
       ui.setSurfaceEligibility("ineligible", "not marchable", null);
       expect(finishInputsDisabled()).toEqual(Array(8).fill(true));
       expect(finishNote().textContent).toContain("not marchable");
+    });
+  });
+
+  // The optics rows — the third material sibling's UI, one bundle pick and
+  // two sliders over. The contract under test: Glass materializes ONLY the
+  // model (the classic finish fields stay absent), the rows are dormant
+  // until a model exists, a drag opt-ins visibly and a drag back to the
+  // classic number removes the field (and the object), and every legacy
+  // bundle keeps its pre-optics meaning.
+  describe("Ui optics editor", () => {
+    function opticsSlider(label: string): HTMLInputElement {
+      const slider = [
+        ...document.querySelectorAll<HTMLInputElement>(
+          "#transformEditor .optics-row input[type=range]",
+        ),
+      ].find((s) => s.getAttribute("aria-label") === label);
+      if (!slider) throw new Error(`No optics slider ${label}`);
+      return slider;
+    }
+
+    function opticsReadout(label: string): HTMLElement {
+      const slider = opticsSlider(label);
+      const row = slider.closest(".optics-row");
+      const readout = row?.querySelector<HTMLElement>(".value");
+      if (!readout) throw new Error("No optics readout");
+      return readout;
+    }
+
+    function opticsRows(): HTMLInputElement[] {
+      return [
+        ...document.querySelectorAll<HTMLInputElement>(
+          "#transformEditor .optics-row input[type=range]",
+        ),
+      ];
+    }
+
+    function dragOptics(label: string, value: string): void {
+      const slider = opticsSlider(label);
+      slider.value = value;
+      slider.dispatchEvent(new Event("input"));
+    }
+
+    it("shows the Glass bundle and the two dormant rows for a map that authors no optics", () => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      ui.renderTransformEditor(plain, 0, 1);
+
+      expect(bundleSelect().value).toBe("classic");
+      expect(opticsSlider("Optics Distortion").value).toBe("0");
+      expect(opticsSlider("Optics Optical scale").value).toBe("26");
+      expect(opticsReadout("Optics Optical scale").textContent).toBe("1.00");
+      // Dormant while no optics model is authored: the leaves have nothing
+      // to tune, and the bundle is the visible way to opt in.
+      expect(opticsRows().every((s) => s.disabled)).toBe(true);
+    });
+
+    it("picking Glass materializes only the dielectric model, reads Glass, and wakes the rows", () => {
+      const handlers = noopHandlers();
+      const ui = new Ui(document);
+      ui.bind(handlers);
+      ui.renderTransformEditor(plain, 0, 1);
+
+      pickBundle("glass");
+
+      const geometry = lastGeometry(handlers);
+      expect(geometry.optics).toEqual({ model: "dielectric" });
+      expect(geometry.finish).toBeUndefined();
+      expect(bundleSelect().value).toBe("glass");
+      expect(opticsRows().every((s) => !s.disabled)).toBe(true);
+    });
+
+    it("drags a distortion value in, and dragging back to 0 removes optics outright", () => {
+      const handlers = noopHandlers();
+      const ui = new Ui(document);
+      ui.bind(handlers);
+      ui.renderTransformEditor(plain, 0, 1);
+
+      pickBundle("glass");
+      dragOptics("Optics Distortion", "0.08");
+      expect(lastGeometry(handlers).optics).toEqual({
+        model: "dielectric",
+        distortion: 0.08,
+      });
+
+      dragOptics("Optics Distortion", "0");
+      const last = lastGeometry(handlers);
+      expect(last).toHaveProperty("optics");
+      // The leaf is gone but the model spine stays — the qualified Glass
+      // default is real data, not absence. The bundle still names it.
+      expect(last.optics).toEqual({ model: "dielectric" });
+      expect(bundleSelect().value).toBe("glass");
+    });
+
+    it("maps the scale slider through its logarithmic grid, 1 landing exactly on the middle position", () => {
+      const handlers = noopHandlers();
+      const ui = new Ui(document);
+      ui.bind(handlers);
+      ui.renderTransformEditor(
+        { ...plain, optics: { model: "dielectric" } },
+        0,
+        1,
+      );
+
+      // Position 26 is the band's exact geometric centre: 1.
+      dragOptics("Optics Optical scale", "26");
+      expect(lastGeometry(handlers).optics).toEqual({ model: "dielectric" });
+
+      dragOptics("Optics Optical scale", "0");
+      expect(lastGeometry(handlers).optics).toEqual({
+        model: "dielectric",
+        scale: 0.01,
+      });
+      dragOptics("Optics Optical scale", "52");
+      expect(lastGeometry(handlers).optics).toEqual({
+        model: "dielectric",
+        scale: 100,
+      });
+    });
+
+    it("picking a non-glass bundle clears authored optics", () => {
+      const handlers = noopHandlers();
+      const ui = new Ui(document);
+      ui.bind(handlers);
+      ui.renderTransformEditor(
+        { ...plain, optics: { model: "dielectric", distortion: 0.1 } },
+        0,
+        1,
+      );
+      expect(bundleSelect().value).toBe("glass");
+
+      pickBundle("matte");
+      const last = lastGeometry(handlers);
+      expect(last.optics).toBeUndefined();
+      expect(last.finish).toEqual({ specular: 0 });
+      expect(opticsRows().every((s) => s.disabled)).toBe(true);
+    });
+
+    it("keeps the Translucent bundle's legacy meaning: finish numbers only, never optics", () => {
+      const handlers = noopHandlers();
+      const ui = new Ui(document);
+      ui.bind(handlers);
+      ui.renderTransformEditor(plain, 0, 1);
+
+      pickBundle("translucent");
+
+      const geometry = lastGeometry(handlers);
+      expect(geometry.optics).toBeUndefined();
+      expect(geometry.finish).toEqual(
+        expect.objectContaining({ transmit: 0.35, reflect: 0.5 }),
+      );
+      expect(bundleSelect().value).toBe("translucent");
+    });
+
+    it("names a scale drift Glass, not Custom — the model is the bundle's spine", () => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      ui.renderTransformEditor(
+        { ...plain, optics: { model: "dielectric", scale: 3 } },
+        0,
+        1,
+      );
+      expect(bundleSelect().value).toBe("glass");
     });
   });
 });
