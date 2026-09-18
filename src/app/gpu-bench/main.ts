@@ -7531,8 +7531,8 @@ fn controlTransport(
   var r: ControlResult;
   if (q.mode == 1u) {
     let hit = transportNextBoundary(q.origin, q.dir, q.anchorPresent, q.anchorPoint, ${
-      closedSolid ? "q.inside, " : ""
-    }q.eps, li);
+      closedSolid ? "q.inside, q.eps, li" : "q.eps, li"
+    });
     r.a = vec4f(f32(hit.kind), f32(hit.reason), hit.t, 0.0);
     r.b = vec4f(hit.normal, 0.0);
     r.c = vec4f(0.0);
@@ -7575,6 +7575,8 @@ ${
     r.c = vec4f(0.0);
     r.d = vec4f(0.0);
   } else {
+    // The control probes anchor at the fixture's TRUE boundary, so the
+    // trace's primary anchor skip is zero (the CPU twin's default).
     let traced = transportTrace(q.origin, q.dir, q.theta, q.ior, q.radius, q.absorb, vec3f(0.25, 0.35, 0.45), li, q.distortion);
     r.a = vec4f(f32(traced.status), f32(traced.failure), f32(traced.reason), traced.residual);
     r.b = vec4f(traced.radiance, 0.0);
