@@ -8845,7 +8845,8 @@ struct TransportPath {
   interfaces: u32,
   bound: f32,
   anchorPresent: u32,
-  anchorPad: u32,
+  // The extra anchored-restart skip beyond the 2·eps baseline, in world
+  // units. Zero for every child (their anchors are the query's own
   anchorPoint: vec3f,
   anchorPad2: u32,
   // The transmitted child of an exit crossing — the only path whose
@@ -9045,22 +9046,53 @@ fn transportNextBoundary(
       return result;
     }
     if (abs(f) < eps) {
-      let dd = max(f, 0.0);
-      let hitP = p + dir * dd;
-      let tc = t + dd;
-      if (anchorPresent == 1u &&
-          distance(hitP, anchorPoint) <= TRANSPORT_ANCHOR_ENVELOPE_REL * eps) {
-        // Same-boundary suppression, part 2 (the estimator query's rule).
-        let skip = 2.0 * eps;
-        p = hitP + dir * skip;
-        t = tc + skip;
-        continue;
+      // Land the crossing ON the surface: one secant step along the ray
+      // with the field's unit-normalized gradient at the query point.
+      // The old band-edge advance (max(f, 0) along the ray) left the
+      // hit short of the surface by f·(1−cos) for oblique approaches —
+      // the grazing TIR crawl's children drifted across the wall, whose
+      // phantom events stalled into caps or escaped the solid entirely.
+      // The landing is short by at most (1−|∇f|)·eps and always on the
+      // approach side. A touch whose zero is not ahead of the query
+      // point within the band's own scale (heading deeper, or a
+      // tangency) is not a crossing: step past the band and keep
+      // marching, the anchor suppression's own hop.
+      let n0 = transportSolidNormal(p, dir, eps);
+      let dN = dot(dir, n0);
+      let run = select(-1.0, -f / dN, abs(dN) > 1.0e-4);
+      if (run >= 0.0 && run <= 32.0 * eps) {
+        let dd = run;
+        let hitP = p + dir * dd;
+        let tc = t + dd;
+        // Same-boundary suppression, part 2 (the estimator query's
+        // rule), MEDIUM-AWARE: suppress only while the claimed medium
+        // continues beyond the landing. A union's corner region puts a
+        // DIFFERENT face within the anchor envelope — the distance
+        // test alone ate an honest exit crossing there, hopped the
+        // child outside with a stale medium, and stranded it (the
+        // multi-cell inside-miss mass).
+        var suppress = false;
+        if (anchorPresent == 1u &&
+            distance(hitP, anchorPoint) <= TRANSPORT_ANCHOR_ENVELOPE_REL * eps) {
+          let fBeyond = transportSolidField(hitP + dir * (2.0 * eps));
+          suppress = (inside == 1u && fBeyond < 0.0) ||
+            (inside == 0u && fBeyond > 0.0);
+        }
+        if (suppress) {
+          let skip = 2.0 * eps;
+          p = hitP + dir * skip;
+          t = tc + skip;
+          continue;
+        }
+        result.kind = 1u;
+        result.reason = 0u;
+        result.t = tc;
+        result.normal = transportSolidNormal(hitP, dir, eps);
+        return result;
       }
-      result.kind = 1u;
-      result.reason = 0u;
-      result.t = tc;
-      result.normal = transportSolidNormal(hitP, dir, eps);
-      return result;
+      p = p + dir * (2.0 * eps);
+      t = t + 2.0 * eps;
+      continue;
     }
     let stride = abs(f) * params.stepScale;
     p = p + dir * stride;
@@ -9212,6 +9244,17 @@ fn transportTrace(
   var residual = 0.0;
   let eps = TRANSPORT_CROSSING_EPS_REL * radius;
   // --- the primary split (the march's own hit, entering from outside) ---
+  // The accepted hit may sit up to one pixel footprint OUTSIDE the
+  // surface; the child's anchored restart keeps the 2·eps baseline and
+  // the query's own march reaches the surface — the anchor suppression
+  // absorbs the entry crossing (the same boundary the split already bent
+  // at) and the crawl machinery owns what follows. Two earlier primary
+  // treatments were measured and discarded: a 1.5·hitEps restart skip
+  // (it jumped the entry region and stranded edge hits of small cells
+  // outside their solid entirely) and a secant re-landing of the child
+  // origin (at an edge the smoothed normal faces away from the approach
+  // and the landing cannot fire; re-sampling the split normal at the
+  // landing re-drew the corner normals for a net loss).
   let n0 = transportOpticalNormal(origin, dir, eps, li);
   let cosI0 = abs(dot(dir, n0));
   let f0 = dielectricFresnel(cosI0, 1.0, ior);
@@ -9224,7 +9267,6 @@ fn transportTrace(
   refl0.inside = 0u;
   refl0.interfaces = 1u;
   refl0.anchorPresent = 1u;
-  refl0.anchorPad = 0u;
   refl0.anchorPoint = origin;
   refl0.anchorPad2 = 0u;
   refl0.exitPresent = 0u;
@@ -9236,7 +9278,6 @@ fn transportTrace(
   refr0.inside = 1u;
   refr0.interfaces = 1u;
   refr0.anchorPresent = 1u;
-  refr0.anchorPad = 0u;
   refr0.anchorPoint = origin;
   refr0.anchorPad2 = 0u;
   refr0.exitPresent = 0u;
@@ -9297,8 +9338,8 @@ fn transportTrace(
     }
     processed = processed + 1u;
     let hit = transportNextBoundary(path.origin, path.dir, path.anchorPresent, path.anchorPoint, ${
-      solidQuery ? "path.inside, " : ""
-    }eps, li);
+      solidQuery ? "path.inside, eps, li" : "eps, li"
+    });
     if (hit.kind == 3u) {
       residual = residual + path.bound;
       out.status = TRANSPORT_STATUS_UNRESOLVED;
@@ -9307,8 +9348,10 @@ fn transportTrace(
       break;
     }
     if (hit.kind == 2u) {
-      if (path.inside == 1u) {
-        // An inside miss is unresolved, never a background hit.
+      if (path.inside == 1u && path.interfaces != 1u) {
+        // An inside miss is unresolved, never a background hit — a path
+        // that entered through a real crossing cannot miss a closed
+        // solid, so this is an anomaly the frame discloses.
         residual = residual + path.bound;
         out.status = TRANSPORT_STATUS_UNRESOLVED;
         out.failure = TRANSPORT_FAILURE_INSIDE_MISS;
@@ -9361,19 +9404,27 @@ fn transportTrace(
     }
     // Boundary event: Beer over the traversed interior segment, then the
     // Fresnel split — the oracle's lines, the emitted optics body's fns.
+    // The interface's media derive from the SEGMENT GEOMETRY — which side
+    // of the surface the segment started on — not the inherited medium
+    // flag: on every honest event the two agree exactly, and on a stale
+    // one (the grazing TIR crawl's phantom band crossings, whose child
+    // used to escape the solid and miss) the geometry re-anchors the
+    // split. The path's inside flag stays the claimed medium the boundary
+    // query cross-checks.
+    let n = hit.normal;
+    let dotDN = dot(path.dir, n);
+    let childOrigin = path.origin + path.dir * hit.t;
+    let incidentInGlass = dot(path.origin - childOrigin, n) < 0.0;
     var energy = path.energy;
-    if (path.inside == 1u) {
+    if (incidentInGlass) {
       energy = vec3f(
         path.energy[0] * dielectricBeerThroughput(absorb[0], hit.t, radius),
         path.energy[1] * dielectricBeerThroughput(absorb[1], hit.t, radius),
         path.energy[2] * dielectricBeerThroughput(absorb[2], hit.t, radius),
       );
     }
-    let n = hit.normal;
-    let dotDN = dot(path.dir, n);
-    let childOrigin = path.origin + path.dir * hit.t;
-    let fromIor = select(1.0, ior, path.inside == 1u);
-    let toIor = select(ior, 1.0, path.inside == 1u);
+    let fromIor = select(1.0, ior, incidentInGlass);
+    let toIor = select(ior, 1.0, incidentInGlass);
     let bend = dielectricRefract(path.dir[0], path.dir[1], path.dir[2], n[0], n[1], n[2], fromIor, toIor);
     var abort = false;
     if (bend[3] > 0.5) {
@@ -9383,10 +9434,9 @@ fn transportTrace(
       child.origin = childOrigin;
       child.dir = bend.xyz;
       child.energy = energy;
-      child.inside = path.inside;
+      child.inside = select(0u, 1u, incidentInGlass);
       child.interfaces = path.interfaces + 1u;
       child.anchorPresent = 1u;
-      child.anchorPad = 0u;
       child.anchorPoint = childOrigin;
       child.anchorPad2 = 0u;
       child.exitPresent = 0u;
@@ -9408,25 +9458,23 @@ fn transportTrace(
       trans.origin = childOrigin;
       trans.dir = bend.xyz;
       trans.energy = energy * (1.0 - f);
-      trans.inside = select(1u, 0u, path.inside == 1u);
+      trans.inside = select(1u, 0u, incidentInGlass);
       trans.interfaces = path.interfaces + 1u;
       trans.anchorPresent = 1u;
-      trans.anchorPad = 0u;
       trans.anchorPoint = childOrigin;
       trans.anchorPad2 = 0u;
       // Only the transmitted child of an EXIT crossing reads the rear
       // scene through the glass; every other child resets the flag, so a
       // mirror view at a later entry never displaces.
-      trans.exitPresent = select(0u, 1u, path.inside == 1u);
+      trans.exitPresent = select(0u, 1u, incidentInGlass);
       trans.bound = transportChildBound(trans.energy);
       var refl: TransportPath;
       refl.origin = childOrigin;
       refl.dir = path.dir - 2.0 * dotDN * n;
       refl.energy = energy * f;
-      refl.inside = path.inside;
+      refl.inside = select(0u, 1u, incidentInGlass);
       refl.interfaces = path.interfaces + 1u;
       refl.anchorPresent = 1u;
-      refl.anchorPad = 0u;
       refl.anchorPoint = childOrigin;
       refl.anchorPad2 = 0u;
       refl.exitPresent = 0u;

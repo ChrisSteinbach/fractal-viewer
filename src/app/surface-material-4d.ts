@@ -4246,19 +4246,12 @@ export function setSurface4Materials(
     );
   }
   if (materials?.optics) {
-    // The packer's own uniformity rule, one dimension down
-    // (packSurfaceGpuOpticsMaps): an optics gate covers EVERY slot — a
-    // mixed wire is the packer's thrown range error on every engine, not
-    // a silent mix. (The 4D tracer has no fold GLSL, so the 3D setter's
-    // fold refusal has no twin here.)
-    const classic = materials.slots.findIndex(
-      (slot) => slot.optics === undefined,
-    );
-    if (classic >= 0) {
-      throw new RangeError(
-        `surface-material-4d: slot ${classic} resolves no optics under a live optics gate — the opticsMaps lane pair must cover every slot uniformly`,
-      );
-    }
+    // MIXED WIRES ARE THE SUPPORTED SHAPE (the packer's own rule one
+    // dimension down, packSurfaceGpuOpticsMaps): a slot that resolves no
+    // optics packs the zero lanes, ior 0 is the per-hit route-around, and
+    // this tracer's shade site reads its optics lanes per hit slot with
+    // the same `> 0` test. (The 4D tracer has no fold GLSL, so the 3D
+    // setter's fold refusal has no twin here.)
   }
   const maps = mapBuffers.get(material);
   if (!maps) {

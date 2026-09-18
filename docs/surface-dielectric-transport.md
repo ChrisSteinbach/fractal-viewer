@@ -328,11 +328,46 @@ primary hit — with these rules, each owned by one definition:
 - **The anchor.** A child query restarts AT its boundary (the rounded f32
   hit point is the anchor — the transport never re-derives it). The query
   suppresses the anchored boundary by stepping `2·eps` past it before
-  marching, and treats any crossing whose hit point lies within
+  marching, and treats a crossing whose hit point lies within
   `DIELECTRIC_ANCHOR_ENVELOPE_REL` (4·eps) of the anchored point as the
-  same boundary, stepping past it — the distance-field analog of the
-  fixture's exact same-face rule. Gaps narrower than the envelope merge
-  optically; a long grazing stretch burns the step budget and refuses.
+  same boundary — MEDIUM-AWARE: suppressed only while the claimed medium
+  continues beyond the landing (a union's corner region puts a DIFFERENT
+  face within the envelope, and the distance test alone ate an honest exit
+  crossing there, hopped the child outside with a stale medium and
+  stranded it). Gaps narrower than the envelope merge optically; a long
+  grazing stretch burns the step budget and refuses. Two earlier primary
+  treatments were measured and discarded: a display-tolerance restart
+  skip on the primary refracted child (the anchor-skip wire — it jumped
+  the entry region and stranded edge hits of small cells outside their
+  solid entirely; measured on the lone-box probe 19%→44% resolved when
+  removed, and the wire is gone), and a secant re-landing of the primary
+  child origin on the true surface (at an edge the smoothed normal faces
+  away from the approach and the landing cannot fire; re-sampling the
+  split normal at the landing re-drew the corner normals for a net loss).
+- **The crossing lands ON the surface (the closed-solid backend).** The
+  band touch advances by one secant step along the ray with the field's
+  own gradient (`run = −f/dN`, clamped to the band's own scale), not the
+  old band-edge advance (`max(f, 0)` along the ray), which left the hit
+  short of the surface by `f·(1−cos)` for oblique approaches — the
+  grazing TIR crawl's children drifted across their wall, whose phantom
+  band crossings stalled into the caps or escaped the solid entirely. A
+  touch whose zero is not ahead of the query point (heading deeper, or a
+  tangency) is not a crossing: the query steps past the band and keeps
+  marching.
+- **The interface's media derive from the segment geometry (the
+  closed-solid backend).** Each boundary event's from/to media come from
+  which side of the surface the traversed segment started on
+  (`dot(origin − childOrigin, n) < 0`), not the inherited medium flag —
+  on every honest event the two agree exactly, and on a stale one the
+  geometry re-anchors the split (the crawl's phantom events re-enter the
+  glass instead of escaping as TIR children of a medium the field no
+  longer agrees with). The path's `inside` flag stays the claimed medium
+  the query cross-checks. The ONE exception to "an inside miss is
+  unresolved": the primary refracted child (interfaces = 1) — the display
+  march's acceptance band catches near-miss grazes at silhouettes and
+  cell edges, whose refracted child misses the solid entirely; the ray
+  slipped past the glass and the honest terminal is the rear scene
+  behind it.
 - **Domain and caps.** Leaving the primary march's own gates (the visible
   sphere, the balloon far horizon, the lattice carrier — the same
   arithmetic, evaluated from the query's origin) is a miss; exceeding

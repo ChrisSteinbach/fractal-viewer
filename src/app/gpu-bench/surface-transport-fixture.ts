@@ -241,11 +241,34 @@ export function transportSolidBoundaryQueryCPU(
       return { kind: "refused", reason: 2, t, normal: [0, 0, 0] };
     }
     if (Math.abs(f) < eps) {
-      const dd = Math.max(f, 0);
+      // Land the crossing ON the surface: one secant step along the ray
+      // with the field's unit-normalized gradient at the query point (the
+      // kernel's closed-solid query's own rule — the band-edge advance
+      // left the hit short of the surface for oblique approaches and the
+      // grazing TIR crawl's children drifted). A touch whose zero is not
+      // ahead of the query point within the band's own scale is not a
+      // crossing: step past the band and keep marching.
+      const n0 = transportOpticalNormal(system, [px, py, pz], dir, eps);
+      const dN = dir[0] * n0[0] + dir[1] * n0[1] + dir[2] * n0[2];
+      const run = Math.abs(dN) > 1e-4 ? -f / dN : -1;
+      if (!(run >= 0 && run <= 32 * eps)) {
+        px += dir[0] * 2 * eps;
+        py += dir[1] * 2 * eps;
+        pz += dir[2] * 2 * eps;
+        t += 2 * eps;
+        continue;
+      }
+      const dd = run;
       const hx = px + dir[0] * dd;
       const hy = py + dir[1] * dd;
       const hz = pz + dir[2] * dd;
       const tc = t + dd;
+      // Same-boundary suppression, part 2, MEDIUM-AWARE (the kernel's
+      // rule): suppress only while the claimed medium continues beyond
+      // the landing — a union's corner region puts a DIFFERENT face
+      // within the anchor envelope, and the distance test alone ate an
+      // honest exit crossing there.
+      let suppress = false;
       if (
         anchorPresent &&
         Math.hypot(
@@ -255,6 +278,14 @@ export function transportSolidBoundaryQueryCPU(
         ) <=
           DIELECTRIC_ANCHOR_ENVELOPE_REL * eps
       ) {
+        const fBeyond = system.estimate([
+          hx + dir[0] * 2 * eps,
+          hy + dir[1] * 2 * eps,
+          hz + dir[2] * 2 * eps,
+        ]);
+        suppress = (inside && fBeyond < 0) || (!inside && fBeyond > 0);
+      }
+      if (suppress) {
         const skip = 2 * eps;
         px = hx + dir[0] * skip;
         py = hy + dir[1] * skip;
@@ -356,6 +387,11 @@ export function transportTraceCPU(
   };
   // --- the primary split (the march's own hit, entering from outside) ---
   const n0 = transportOpticalNormal(system, origin, dir, eps);
+  // The accepted hit may sit up to one pixel footprint OUTSIDE the
+  // surface; the child's anchored restart keeps only the 2·eps baseline
+  // (the kernel's rule — the query's own march reaches the surface and
+  // the anchor suppression absorbs the entry crossing).
+  const origin0: Vec3 = [origin[0], origin[1], origin[2]];
   const cosI0 = Math.abs(dir[0] * n0[0] + dir[1] * n0[1] + dir[2] * n0[2]);
   const f0 = dielectricFresnel(cosI0, 1, material.ior);
   const bend0 = dielectricRefract(dir, n0, 1, material.ior);
@@ -365,23 +401,23 @@ export function transportTraceCPU(
     dir[2] - 2 * (dir[0] * n0[0] + dir[1] * n0[1] + dir[2] * n0[2]) * n0[2],
   ];
   const refl0: FixturePath = {
-    origin,
+    origin: origin0,
     dir: reflDir0,
     energy: [f0, f0, f0],
     inside: false,
     interfaces: 1,
     anchorPresent: true,
-    anchorPoint: origin,
+    anchorPoint: origin0,
     bound: dielectricBranchBound([f0, f0, f0], ENVIRONMENT_BOUND),
   };
   const refr0: FixturePath = {
-    origin,
+    origin: origin0,
     dir: bend0.direction,
     energy: [1 - f0, 1 - f0, 1 - f0],
     inside: true,
     interfaces: 1,
     anchorPresent: true,
-    anchorPoint: origin,
+    anchorPoint: origin0,
     bound: dielectricBranchBound([1 - f0, 1 - f0, 1 - f0], ENVIRONMENT_BOUND),
   };
   const first0 = refl0.bound >= refr0.bound ? refl0 : refr0;
@@ -440,7 +476,15 @@ export function transportTraceCPU(
       break;
     }
     if (hit.kind === "miss") {
-      if (path.inside) {
+      if (path.inside && path.interfaces !== 1) {
+        // An inside miss is unresolved, never a background hit — a path
+        // that entered through a real crossing cannot miss a closed
+        // solid, so this is an anomaly. The ONE exception is the primary
+        // refracted child (interfaces === 1): the display march's
+        // acceptance band catches near-miss grazes at silhouettes and
+        // cell edges, whose refracted child then misses the solid
+        // entirely — the ray slipped past the glass, and the honest
+        // terminal is the rear scene behind it (the kernel's rule).
         residual += path.bound;
         status = "unresolved";
         failure = 5;
@@ -459,7 +503,24 @@ export function transportTraceCPU(
     }
     const n = hit.normal;
     const dot = path.dir[0] * n[0] + path.dir[1] * n[1] + path.dir[2] * n[2];
-    const energy: Vec3 = path.inside
+    const childOrigin: Vec3 = [
+      path.origin[0] + hit.t * path.dir[0],
+      path.origin[1] + hit.t * path.dir[1],
+      path.origin[2] + hit.t * path.dir[2],
+    ];
+    // The interface's media derive from the SEGMENT GEOMETRY — which side
+    // of the surface the segment started on — not the inherited medium
+    // flag: on every honest event the two agree exactly, and on a stale
+    // one (the grazing TIR crawl's phantom band crossings, whose child
+    // used to escape the solid and miss) the geometry re-anchors the
+    // split. `path.inside` stays the claimed medium the boundary query
+    // cross-checks.
+    const incidentInGlass =
+      (path.origin[0] - childOrigin[0]) * n[0] +
+        (path.origin[1] - childOrigin[1]) * n[1] +
+        (path.origin[2] - childOrigin[2]) * n[2] <
+      0;
+    const energy: Vec3 = incidentInGlass
       ? [
           path.energy[0] *
             dielectricBeerThroughput(
@@ -481,13 +542,8 @@ export function transportTraceCPU(
             ),
         ]
       : [...path.energy];
-    const childOrigin: Vec3 = [
-      path.origin[0] + hit.t * path.dir[0],
-      path.origin[1] + hit.t * path.dir[1],
-      path.origin[2] + hit.t * path.dir[2],
-    ];
-    const fromIor = path.inside ? material.ior : 1;
-    const toIor = path.inside ? 1 : material.ior;
+    const fromIor = incidentInGlass ? material.ior : 1;
+    const toIor = incidentInGlass ? 1 : material.ior;
     const bend = dielectricRefract(path.dir, n, fromIor, toIor);
     const makeChild = (
       childEnergy: Vec3,
@@ -504,7 +560,7 @@ export function transportTraceCPU(
       bound: dielectricBranchBound(childEnergy, ENVIRONMENT_BOUND),
     });
     if (bend.tir) {
-      const child = makeChild(energy, bend.direction, path.inside);
+      const child = makeChild(energy, bend.direction, incidentInGlass);
       if (!push(child)) {
         status = "unresolved";
         failure = 3;
@@ -516,7 +572,7 @@ export function transportTraceCPU(
     const transmitted = makeChild(
       [energy[0] * (1 - f), energy[1] * (1 - f), energy[2] * (1 - f)],
       bend.direction,
-      !path.inside,
+      !incidentInGlass,
     );
     const reflected = makeChild(
       [energy[0] * f, energy[1] * f, energy[2] * f],
@@ -525,7 +581,7 @@ export function transportTraceCPU(
         path.dir[1] - 2 * dot * n[1],
         path.dir[2] - 2 * dot * n[2],
       ],
-      path.inside,
+      incidentInGlass,
     );
     const first =
       reflected.bound >= transmitted.bound ? reflected : transmitted;
