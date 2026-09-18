@@ -544,10 +544,9 @@ non-finite tap is the deterministic straight terminal.
 pure function of per-path state, the per-slot material and the scene
 field — no screen-space state exists to wrap, clamp or read. The app-level
 tile-gate leg (distorted rays crossing every band edge in the built app)
-is DEFERRED to the starter-scene task's routing, which is what first makes
-distorted production rays exist (the app does not yet select the
-closed-solid backend); the renderer-level evidence below stands in until
-then.
+has LANDED with the routing (2026-09-18, the app-routing section's export
+tile: byte-exact in both dimensions with the distortion authored, the
+transport pass lines asserted so it cannot pass vacuously).
 
 **The zero byte-identity.** Distortion zero (the absent field's resolved
 value) never executes the displacement: the branch is on the lane word,
@@ -699,8 +698,9 @@ per boot and ~0.1% of grazing pixels flip hit/miss, which eats the identity
 claim). THE PREMISE IS ASSERTED PER RUN: `engine === "compute"` AND
 `?surfacetrace`'s ring carries `transport pass=` lines — otherwise exit 2.
 
-The app does not yet select the closed-solid backend (that routing is the
-starter-scene task's), so the sweep drives the ESTIMATOR query — the lane
+The routing has LANDED (2026-09-18) and these fixtures stay on the
+ESTIMATOR query by its own rule — they are map-bearing IFS systems, not the
+closed-solid vocabulary — so the sweep drives the estimator query: the lane
 pays its buffers, dispatches, replay passes and cancellation generations
 whatever the samples resolve, and on IFS geometry every inside path refuses
 (the disclosed vacuous state). That is the right subject for THIS criterion:
@@ -784,8 +784,8 @@ are the delegated working lines; the appearance selection is untouched.
   verification (RX 7900 XTX / radeonsi): the estimator-arm fixtures reach
   their first frame in ~2 s in both dimensions with the lane live, painting
   the disclosed vacuous-inside black; the closed-solid arms compile and
-  render through a temporary backend force (the app routing that selects
-  the backend is the starter-scene task's). Absent optics resolves
+  render through the routing (2026-09-18: the app selects closedSolid on
+  the admitted compositions, the section above). Absent optics resolves
   byte-identically against the pre-change module on every descent arm.
 - **The real-browser gate rows.** `scripts/surface-optics-glsl.verify.mjs`
   (--display=:0, real driver) traces the settled ?surfacegl frame per
