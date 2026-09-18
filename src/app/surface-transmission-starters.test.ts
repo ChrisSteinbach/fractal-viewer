@@ -25,9 +25,10 @@ import { surfaceClosedSolidAdmitted } from "./surface-optics-backend";
  */
 
 describe("surface transmission starters", () => {
-  it("exposes the two compositions under glass: values", () => {
+  it("exposes the three compositions under glass: values", () => {
     expect(SURFACE_TRANSMISSION_STARTERS.map((s) => s.id)).toEqual([
       "glass-garden",
+      "glass-menger",
       "glass-cells",
     ]);
     expect(surfaceTransmissionStarterValue("glass-garden")).toBe(
@@ -39,29 +40,36 @@ describe("surface transmission starters", () => {
     expect(surfaceTransmissionStarterFromValue("glass-garden")).toBeUndefined();
   });
 
-  it("builds a 3D emitter-only union that is eligible and closed-solid admitted", () => {
-    const snap = createSurfaceTransmissionStarter("glass-garden");
-    const eligibility = analyzeSurfaceSystem(
-      snap.transforms,
-      snap.finalTransform ?? null,
-      null,
-      { order: 1, plane: "xy" },
-    );
-    expect(eligibility.status).toBe("eligible");
-    const de = buildSurfaceDE(
-      snap.transforms,
-      snap.finalTransform ?? null,
-      { order: 1, plane: "xy" },
-      {},
-    );
-    expect(de.maps.length).toBe(0);
-    expect(de.condensation?.emitters.length).toBeGreaterThan(0);
-    expect(surfaceClosedSolidAdmitted(de, {})).toBe(true);
-    // Every transform authors the dielectric model with the distortion
-    // study's working value — the Glass bundle's own selector.
-    for (const t of snap.transforms) {
-      expect(t.optics).toEqual({ model: "dielectric", distortion: 0.08 });
+  it("builds 3D emitter-only unions that are eligible and closed-solid admitted", () => {
+    for (const id of ["glass-garden", "glass-menger"] as const) {
+      const snap = createSurfaceTransmissionStarter(id);
+      const eligibility = analyzeSurfaceSystem(
+        snap.transforms,
+        snap.finalTransform ?? null,
+        null,
+        { order: 1, plane: "xy" },
+      );
+      expect(eligibility.status).toBe("eligible");
+      const de = buildSurfaceDE(
+        snap.transforms,
+        snap.finalTransform ?? null,
+        { order: 1, plane: "xy" },
+        {},
+      );
+      expect(de.maps.length).toBe(0);
+      expect(de.condensation?.emitters.length).toBeGreaterThan(0);
+      expect(surfaceClosedSolidAdmitted(de, {})).toBe(true);
+      // Every transform authors the dielectric model with the distortion
+      // study's working value — the Glass bundle's own selector.
+      for (const t of snap.transforms) {
+        expect(t.optics).toEqual({ model: "dielectric", distortion: 0.08 });
+      }
     }
+    // The Menger's one emitter is the eight-cell posed-box union — the
+    // intricate tier's multi-face traversal, one solid to the field.
+    const menger = createSurfaceTransmissionStarter("glass-menger");
+    expect(menger.transforms).toHaveLength(1);
+    expect(menger.transforms[0].emitter?.parts).toHaveLength(8);
   });
 
   it("builds a native 4D composition whose saved slice carries every flat", () => {
@@ -109,7 +117,7 @@ describe("surface transmission starters", () => {
     ).toBe(false);
   });
 
-  it("round-trips both documents through the share-link encode/decode", () => {
+  it("round-trips every document through the share-link encode/decode", () => {
     for (const entry of SURFACE_TRANSMISSION_STARTERS) {
       const snap = createSurfaceTransmissionStarter(entry.id);
       const decoded = decodeScene(encodeScene(snap));

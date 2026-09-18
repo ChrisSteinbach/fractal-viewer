@@ -607,6 +607,14 @@ are byte-unchanged (4D off exactly 64,679 B as recorded).
 
 ### Resumption, scheduling and truthfulness
 
+- **The tally line is the lane's frame verdict.** `?surfacetrace`'s ring
+  carries one `transport done final resolved=N unresolved=M (cumulative
+…) passes=K` line per settled frame — the LAST pass's own split (the
+  cumulative counts re-count every replay retry, so a ray that resolved
+  at pass 5 was "unresolved" at passes 0–4; only the last pass's split
+  says how the FRAME landed, the black-pixel question). The invalidation
+  sweep, the envelope leg and the resolve gate all read it; it is
+  permanent ring vocabulary, not a diagnostic to revert.
 - **The replay-pass shape is the resumption.** Per pixel the record is two
   vec4f (radiance.rgb + residual; status/failure/reason/generation); the
   seed zeroes it per frame. A pass dispatches a batch of rays; each still-
