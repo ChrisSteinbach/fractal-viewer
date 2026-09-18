@@ -73,6 +73,7 @@ import {
 } from "./surface-compute";
 import { surfaceComputeForceFrameKey } from "./surface-force-frame-key";
 import { createSurfaceLightingStarter } from "./surface-lighting-starters";
+import { createSurfaceTransmissionStarter } from "./surface-transmission-starters";
 import { setSurfaceLighting } from "./state";
 import {
   exactSurfaceRayCensus,
@@ -103,6 +104,10 @@ import {
   surfaceSlotMaterials,
   surfaceTrapIndices,
 } from "./surface-slots";
+import {
+  surfaceOpticsBackend,
+  type SurfaceOpticsBackend,
+} from "./surface-optics-backend";
 import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
 import type { SurfaceNativeCalibration } from "../fractal/surface-pattern";
 import {
@@ -4668,7 +4673,13 @@ async function main(): Promise<void> {
   // wraps either core in descendLens's branch sweep, so the lens-over-affine
   // field class routes here too, off the fragile fold GLSL entirely). Plain
   // affine systems use WebGL's refined estimator and grid unless an authored
-  // rig needs compute's separately scheduled surface and mist visibility.
+  // rig needs compute's separately scheduled surface and mist visibility —
+  // and the same for a live OPTICS wire (checked at the call site, where
+  // the session's derived materials exist): the closed-solid backend the
+  // routing admits on condensation sessions is a compute capability, so an
+  // optics-authored plain-affine session prefers compute exactly like a
+  // lit one (the GLSL fallback keeps the lane for a hardware rasterizer,
+  // the software strip still strips it).
   function surfaceComputeEligible(de: SurfaceDE): boolean {
     return (
       surfaceComputeAvailable() &&
@@ -4827,6 +4838,19 @@ async function main(): Promise<void> {
     ui.setSoftwareRendererNote(null);
   }
 
+  /**
+   * The session's optical-transport boundary backend, decided ONCE per
+   * start() in the IFS routing branches (the only wires that can carry a
+   * live optics gate) and consumed by BOTH engines: the compute create
+   * below and the GLSL fallback's setSurfaceMaterials. Initialized to the
+   * estimator — the absent path's meaning — because every branch that
+   * leaves it there (forward, sphere-inversion) derives a wire whose
+   * optics gate is off, so the answer is inert; a future branch that
+   * forgets to decide degrades to today's behavior, never to a backend
+   * its composition cannot follow.
+   */
+  let sessionOpticsBackend: SurfaceOpticsBackend = "estimator";
+
   // The compute path's first-frame gate — the compile gate's twin, one
   // async resource over: device + pipeline instead of a GLSL link. Same
   // token discipline, same deferred canvas-guide retirement
@@ -4871,8 +4895,16 @@ async function main(): Promise<void> {
       slotColors,
       slotTraps,
       // The session's unified materials — null for classic+none — keeping
-      // both codegen flags and stride-3 shadeMaps packing in lockstep.
-      { materials, lighting: state.surface.lighting !== undefined },
+      // both codegen flags and stride-3 shadeMaps packing in lockstep. The
+      // boundary backend rides the same routing answer the GLSL fallback's
+      // setSurfaceOpticsBackend carries below: closedSolid where the
+      // composition admits it (the resolving route), estimator — the
+      // disclosed vacuous state — everywhere else.
+      {
+        materials,
+        lighting: state.surface.lighting !== undefined,
+        opticsBackend: sessionOpticsBackend,
+      },
     )
       .then((renderer) => {
         if (token !== surfaceCompileToken || state.renderMode !== "surface") {
@@ -6278,6 +6310,33 @@ async function main(): Promise<void> {
                     ? "condensation"
                     : null,
             );
+            // The boundary-backend decision (both engines read it), landed
+            // BEFORE any system install so the session's first rebuild —
+            // and every later one — stamps the same answer. The 4D pose
+            // input is the canonical-slice admission's own, in WORLD w
+            // units — the packer's `view4.w0` is the normalized centre
+            // times the cloud's w-support (setSurface4View's conversion),
+            // and the document's own world `sliceW` is preferred when the
+            // pose carries one (the same preference the decode gives it),
+            // so the admission reads the plane the RENDERING will slice,
+            // not the slider's fraction. Scrubbing the slice or turning a
+            // w-plane rotor afterward moves the displayed object off the
+            // composition the signed field describes; the transport
+            // degrades to its own honest refusals and the panel's optics
+            // note discloses the coupling.
+            const support4 = scene.fourDWSupport();
+            sessionOpticsBackend = surfaceOpticsBackend(
+              sessionMaterials,
+              de,
+              { balloon: state.balloonEcho, tiling: surfaceTiling !== null },
+              {
+                rotor: fourDView.matrix(),
+                w0: fourDView.sliceW ?? liveSliceCenter() * support4,
+                sliceHalfW: surface4SlabAvailable
+                  ? fourDView.sliceThickness * support4
+                  : 0,
+              },
+            );
             // Routing by MEASURED verdict: PLAIN 4D prefers compute, EVERY 4D
             // SESSION PREFERS COMPUTE, kaleidoscope included. The fragment 4D
             // tracer is the fallback arm (`?surfacegl` / no adapter / device
@@ -6356,6 +6415,11 @@ async function main(): Promise<void> {
                 state.balloonEcho,
                 groundPlane4,
               );
+              // The GLSL 4D tracer is not this session's renderer: clear
+              // any previous GLSL session's closed-solid stamp, so the
+              // tail's materials install cannot compile a signed query
+              // over a material that carries no condensation shapes.
+              scene.setSurfaceOpticsBackend("estimator", true);
             } else if (foldShaped4) {
               // Reachable only through mid-session compute loss (device
               // loss / create failure re-enter this routing with the block
@@ -6394,6 +6458,10 @@ async function main(): Promise<void> {
                   "Surface render: optics lane disabled on the software rasterizer; rendering classic.",
                 );
               }
+              // The GLSL tracer is THIS session's renderer: stamp the
+              // admitted backend before the system install, the 3D
+              // branch's move one dimension up.
+              scene.setSurfaceOpticsBackend(sessionOpticsBackend, true);
               scene.setSurfaceSystem4(
                 de,
                 surfaceSlotColors(state.transforms, ifsShadeSlots(de)),
@@ -6666,7 +6734,29 @@ async function main(): Promise<void> {
             de.visibleBoundingRadius,
             !deHasFolds(de),
           );
-          if (surfaceComputeEligible(de)) {
+          // The boundary-backend decision (both engines read it), landed
+          // BEFORE any system install so the session's first rebuild — and
+          // every later one — stamps the same answer: emitter-only C0
+          // admits the closed-solid backend; every other IFS shape keeps
+          // the estimator and its disclosed vacuous-optics state. The
+          // composition here is the 3D session's own: the balloon flag the
+          // target below carries and the tiling this branch posed.
+          sessionOpticsBackend = surfaceOpticsBackend(
+            sessionMaterials,
+            de,
+            { balloon: state.balloonEcho, tiling: surfaceTiling !== null },
+            null,
+          );
+          scene.setSurfaceOpticsBackend("estimator", false);
+          // The optics wire prefers compute in 3D too — see
+          // surfaceComputeEligible's doc. Availability gates BOTH terms:
+          // the deliberate ?surfacegl route stays WebGL even with optics
+          // authored (the GLSL fallback's own lane is the point of that
+          // flag).
+          if (
+            surfaceComputeAvailable() &&
+            (surfaceComputeEligible(de) || sessionMaterials?.optics === true)
+          ) {
             // The WebGPU compute path: no GLSL system upload — the fold
             // variant must never compile here (its ~25s Mesa link and the
             // kernel-confirmed i915 preemption hang at entry are what this
@@ -6735,6 +6825,11 @@ async function main(): Promise<void> {
                 "Surface render: optics lane disabled on the software rasterizer; rendering classic.",
               );
             }
+            // The GLSL tracer is THIS session's renderer: stamp the
+            // admitted backend before the system install so the rebuild
+            // that carries the optics define compiles the closed-solid
+            // query over the condensation shapes it is about to stamp.
+            scene.setSurfaceOpticsBackend(sessionOpticsBackend, false);
             scene.setSurfaceSystem(
               de,
               surfaceSlotColors(state.transforms, ifsShadeSlots(de)),
@@ -11545,6 +11640,16 @@ async function main(): Promise<void> {
     onSurfaceLightingStarter: (id) => {
       void loadSceneSnapshot(
         createSurfaceLightingStarter(id),
+        true,
+        false,
+      ).then((loaded) => {
+        if (!loaded) return;
+        loadHints.armMode("surface");
+      });
+    },
+    onSurfaceTransmissionStarter: (id) => {
+      void loadSceneSnapshot(
+        createSurfaceTransmissionStarter(id),
         true,
         false,
       ).then((loaded) => {

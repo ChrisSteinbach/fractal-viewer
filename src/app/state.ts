@@ -1683,6 +1683,7 @@ export function updateTransform(
     | "colorSpeed"
     | "finish"
     | "surfacePattern"
+    | "optics"
   >,
 ): AppState {
   const transforms = state.transforms.map((t, i) =>

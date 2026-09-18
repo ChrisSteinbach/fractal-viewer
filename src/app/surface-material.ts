@@ -7946,6 +7946,7 @@ export function setSurfaceSystem(
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
       0, // sphereInversion — handed back above in this rebuild path
       optics,
+      materialOpticsBackend(material),
     );
     material.needsUpdate = true;
   }
@@ -9955,6 +9956,7 @@ export function setSphereInversionSystem(
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
       1, // sphereInversion — this install's own arm
       material.defines.SURFACE_OPTICS === 1 ? 1 : 0,
+      materialOpticsBackend(material),
     );
     material.needsUpdate = true;
   }
@@ -10029,6 +10031,7 @@ export function setSurfaceBalloon(
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
       material.defines.SURFACE_SPHERE_INVERSION === 1 ? 1 : 0,
       material.defines.SURFACE_OPTICS === 1 ? 1 : 0,
+      materialOpticsBackend(material),
     );
     material.needsUpdate = true;
   }
@@ -10165,9 +10168,36 @@ export function setSurfaceGroundPlane(
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
       material.defines.SURFACE_SPHERE_INVERSION === 1 ? 1 : 0,
       material.defines.SURFACE_OPTICS === 1 ? 1 : 0,
+      materialOpticsBackend(material),
     );
     material.needsUpdate = true;
   }
+}
+
+/** The optical transport's boundary backend, as the resolvers spell it:
+ * 0 = the estimator march (absent's meaning, byte-identically), 1 = the
+ * closed-solid signed query over the session's condensation union. The
+ * value is SESSION state stamped onto the material's userData by
+ * {@link setSurfaceOpticsBackend} — main.ts's per-session routing decision
+ * — and read by every `surfaceFragmentFor` rebuild site, so a
+ * balloon/plane/lighting/tiling toggle inside a session re-assembles with
+ * the backend the session was admitted under rather than re-deciding it. */
+export function setSurfaceOpticsBackend(
+  material: THREE.ShaderMaterial,
+  backend: "estimator" | "closedSolid",
+): void {
+  (material.userData as { surfaceOpticsBackend?: 0 | 1 }).surfaceOpticsBackend =
+    backend === "closedSolid" ? 1 : 0;
+}
+
+/** {@link setSurfaceOpticsBackend}'s read side: the stamped value, or 0 —
+ * the estimator — for a material nothing stamped (every document predating
+ * the routing). */
+export function materialOpticsBackend(material: THREE.ShaderMaterial): 0 | 1 {
+  return (
+    (material.userData as { surfaceOpticsBackend?: 0 | 1 })
+      .surfaceOpticsBackend ?? 0
+  );
 }
 
 /** Install the unified per-map A/B material wire and its independent compile
@@ -10284,6 +10314,7 @@ export function setSurfaceMaterials(
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
       material.defines.SURFACE_SPHERE_INVERSION === 1 ? 1 : 0,
       wantOptics,
+      materialOpticsBackend(material),
     );
     material.needsUpdate = true;
   }
@@ -10319,6 +10350,7 @@ export function setSurfaceLighting(
     enabled ? 1 : 0,
     material.defines.SURFACE_SPHERE_INVERSION === 1 ? 1 : 0,
     material.defines.SURFACE_OPTICS === 1 ? 1 : 0,
+    materialOpticsBackend(material),
   );
   material.needsUpdate = true;
 }
