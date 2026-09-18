@@ -105,7 +105,7 @@ import {
   surfaceTrapIndices,
 } from "./surface-slots";
 import {
-  surfaceOpticsBackend,
+  surfaceClosedSolidAdmitted,
   type SurfaceOpticsBackend,
 } from "./surface-optics-backend";
 import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
@@ -630,6 +630,9 @@ interface SurfaceStateProbe {
   mode: RenderMode;
   /** Which engine owns the session — null outside surface mode. */
   engine: "compute" | "webgl" | null;
+  /** The session's decided optical boundary backend — null outside
+   * surface mode. */
+  opticsBackend: "closedSolid" | "estimator" | null;
   /** The renderer actually executing this surface session. */
   backend: { label: string | null; software: boolean } | null;
   /** Exact terminal statuses for the current completed settle pass. */
@@ -6281,11 +6284,54 @@ async function main(): Promise<void> {
             if (surfaceTiling && isResolvedLatticeTiling(surfaceTiling)) {
               fitLatticeCamera(surfaceTiling, true);
             }
-            sessionMaterials = gatedSlotMaterials(
+            // The optics admission — the 3D branch's block one dimension
+            // up, with the pose input the 4D field needs: the canonical
+            // slice admission reads WORLD w — the packer's `view4.w0` is
+            // the normalized centre times the cloud's w-support
+            // (setSurface4View's conversion), and the document's own world
+            // `sliceW` is preferred when the pose carries one (the same
+            // preference the decode gives it), so the admission reads the
+            // plane the RENDERING will slice, not the slider's fraction.
+            // Scrubbing the slice or turning a w-plane rotor afterward
+            // moves the displayed object off the composition the signed
+            // field describes; the transport degrades to its own honest
+            // refusals and the panel's optics note discloses the coupling.
+            const support4 = scene.fourDWSupport();
+            const opticsAdmitted = surfaceClosedSolidAdmitted(
+              de,
+              { balloon: state.balloonEcho, tiling: surfaceTiling !== null },
+              {
+                rotor: fourDView.matrix(),
+                w0: fourDView.sliceW ?? liveSliceCenter() * support4,
+                sliceHalfW: surface4SlabAvailable
+                  ? fourDView.sliceThickness * support4
+                  : 0,
+              },
+            );
+            const authoredWire = gatedSlotMaterials(
               ifsShadeSlots(de),
               de.patternCalibration,
               de.visibleBoundingRadius,
+              true,
             );
+            if (authoredWire?.optics && !opticsAdmitted) {
+              console.info(
+                "Surface render: glass transmits only on emitter (condensation) scenes at the canonical slice — see the Glass starters; rendering classic.",
+              );
+              sessionMaterials = gatedSlotMaterials(
+                ifsShadeSlots(de),
+                de.patternCalibration,
+                de.visibleBoundingRadius,
+                false,
+              );
+            } else {
+              sessionMaterials = authoredWire;
+            }
+            // The stamp follows the WIRE — the 3D branch's rule one
+            // dimension up (a closed-solid stamp on an optics-off material
+            // fails to link).
+            sessionOpticsBackend =
+              sessionMaterials?.optics === true ? "closedSolid" : "estimator";
             // An IFS-shaped 4D session — the balloon's live shape one
             // dimension up, so its rows stay reachable.
             ui.setSurfaceSessionKind("ifs");
@@ -6309,33 +6355,6 @@ async function main(): Promise<void> {
                   : de.condensation !== undefined
                     ? "condensation"
                     : null,
-            );
-            // The boundary-backend decision (both engines read it), landed
-            // BEFORE any system install so the session's first rebuild —
-            // and every later one — stamps the same answer. The 4D pose
-            // input is the canonical-slice admission's own, in WORLD w
-            // units — the packer's `view4.w0` is the normalized centre
-            // times the cloud's w-support (setSurface4View's conversion),
-            // and the document's own world `sliceW` is preferred when the
-            // pose carries one (the same preference the decode gives it),
-            // so the admission reads the plane the RENDERING will slice,
-            // not the slider's fraction. Scrubbing the slice or turning a
-            // w-plane rotor afterward moves the displayed object off the
-            // composition the signed field describes; the transport
-            // degrades to its own honest refusals and the panel's optics
-            // note discloses the coupling.
-            const support4 = scene.fourDWSupport();
-            sessionOpticsBackend = surfaceOpticsBackend(
-              sessionMaterials,
-              de,
-              { balloon: state.balloonEcho, tiling: surfaceTiling !== null },
-              {
-                rotor: fourDView.matrix(),
-                w0: fourDView.sliceW ?? liveSliceCenter() * support4,
-                sliceHalfW: surface4SlabAvailable
-                  ? fourDView.sliceThickness * support4
-                  : 0,
-              },
             );
             // Routing by MEASURED verdict: PLAIN 4D prefers compute, EVERY 4D
             // SESSION PREFERS COMPUTE, kaleidoscope included. The fragment 4D
@@ -6728,25 +6747,51 @@ async function main(): Promise<void> {
           // exists. The affine ladder carries no frontier and is
           // measured OK, as is the 4D pair (fold4 included — its
           // frontier does not spill under the transport's nesting).
-          sessionMaterials = gatedSlotMaterials(
+          // The optics admission: authored optics rides the wire ONLY where
+          // the closed-solid backend — the app's one resolving backend — is
+          // admitted. Everywhere else (a map-bearing IFS has no signed
+          // field for the query to traverse; a fold-final, tiling or
+          // balloon composition moves or wraps the union; the 4D pose off
+          // the canonical slice erodes every member) the gate strips and
+          // the session renders classic, disclosed — the fold refusal's
+          // own pattern, one admission wider. Keeping the estimator lane
+          // live here instead would compile the transport only to paint
+          // every inside path's unresolved black. The admission subsumes
+          // the old fold check: an emitter-only system has no maps to
+          // carry fold variations, and a fold-final lens is refused
+          // outright.
+          const opticsAdmitted = surfaceClosedSolidAdmitted(de, {
+            balloon: state.balloonEcho,
+            tiling: surfaceTiling !== null,
+          });
+          const authoredWire = gatedSlotMaterials(
             ifsShadeSlots(de),
             de.patternCalibration,
             de.visibleBoundingRadius,
-            !deHasFolds(de),
+            true,
           );
-          // The boundary-backend decision (both engines read it), landed
-          // BEFORE any system install so the session's first rebuild — and
-          // every later one — stamps the same answer: emitter-only C0
-          // admits the closed-solid backend; every other IFS shape keeps
-          // the estimator and its disclosed vacuous-optics state. The
-          // composition here is the 3D session's own: the balloon flag the
-          // target below carries and the tiling this branch posed.
-          sessionOpticsBackend = surfaceOpticsBackend(
-            sessionMaterials,
-            de,
-            { balloon: state.balloonEcho, tiling: surfaceTiling !== null },
-            null,
-          );
+          if (authoredWire?.optics && !opticsAdmitted) {
+            console.info(
+              "Surface render: glass transmits only on emitter (condensation) scenes — see the Glass starters; rendering classic.",
+            );
+            sessionMaterials = gatedSlotMaterials(
+              ifsShadeSlots(de),
+              de.patternCalibration,
+              de.visibleBoundingRadius,
+              false,
+            );
+          } else {
+            sessionMaterials = authoredWire;
+          }
+          // The stamp follows the WIRE, not the geometry alone: a session
+          // that authored no optics (or whose wire just stripped) gets the
+          // estimator even on admitted geometry — a closed-solid stamp on
+          // an optics-off material compiles corridor call sites whose
+          // definition splices under the optics gate, and the program
+          // fails to link. The resolver forces the same way (the kernel's
+          // own rule); this is the routing-side half.
+          sessionOpticsBackend =
+            sessionMaterials?.optics === true ? "closedSolid" : "estimator";
           scene.setSurfaceOpticsBackend("estimator", false);
           // The optics wire prefers compute in 3D too — see
           // surfaceComputeEligible's doc. Availability gates BOTH terms:
@@ -12758,6 +12803,11 @@ async function main(): Promise<void> {
       return {
         mode: state.renderMode,
         engine: !inSurface ? null : compute !== null ? "compute" : "webgl",
+        // The session's decided boundary backend (the stamp the GLSL
+        // fallback's material carries and the compute spec packs) — the
+        // lane-live signal the transport gates read: a transmission
+        // fixture is live only where the routing ADMITTED the session.
+        opticsBackend: !inSurface ? null : sessionOpticsBackend,
         backend: !inSurface
           ? null
           : compute !== null

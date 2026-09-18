@@ -184,13 +184,18 @@ export function sphereInversionShadeSlots(
  * throws, exactly like a missing pattern calibration.
  *
  * `admitOptics` (default true) is the ROUTING admission, not a resolver
- * rule: the compute transport's forward-family admission is a measured
- * question (the capability matrix's own row — the forward estimators are
- * heuristics, not certified lower bounds, so their optical behavior is
- * unqualified), so the forward arms derive their wire with it false and
- * an optics-authored forward session renders classic, disclosed. False
- * also makes `opticsRadius` genuinely unused — an optics-authored slot
- * resolves classic without the radius and never throws for it.
+ * rule: the app's one resolving transport backend is the closed-solid one,
+ * admitted only where the session's composition qualifies
+ * (`surface-optics-backend.ts`'s admission — emitter-only C0, the codegen
+ * refusal list, the 4D canonical pose). The arms that can never qualify —
+ * the forward families (their estimators are heuristics, not certified
+ * lower bounds), a 3D fold descent (the kernel-measured frontier-spill
+ * timeout), a software rasterizer — derive their wire with it false, and
+ * so does any session the closed-solid admission refuses: an
+ * optics-authored session that cannot resolve renders classic, disclosed,
+ * never the estimator query's unresolved black. False also makes
+ * `opticsRadius` genuinely unused — an optics-authored slot resolves
+ * classic without the radius and never throws for it.
  */
 export function surfaceSlotMaterials(
   transforms: readonly Transform[],

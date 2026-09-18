@@ -5,7 +5,6 @@ import type { Transform } from "../fractal/types";
 import { identityRotorPair, rotorMatrix } from "./rotor4";
 import {
   surfaceClosedSolidAdmitted,
-  surfaceOpticsBackend,
   type Surface4OpticsPose,
 } from "./surface-optics-backend";
 
@@ -180,32 +179,21 @@ describe("surfaceClosedSolidAdmitted", () => {
   });
 });
 
-describe("surfaceOpticsBackend", () => {
-  it("answers estimator whenever the optics wire is not live", () => {
-    const de = buildSurfaceDE(emitterOnly, null, { order: 1, plane: "xy" }, {});
-    expect(surfaceOpticsBackend(null, de, {})).toBe("estimator");
-    expect(
-      surfaceOpticsBackend({ optics: false }, de, {}, canonicalPose4),
-    ).toBe("estimator");
-  });
-
-  it("answers closedSolid exactly when the wire is live and the composition qualifies", () => {
-    const de = buildSurfaceDE4(
+describe("surfaceClosedSolidAdmitted — the identity final", () => {
+  it("admits an enabled-but-identity final transform (the lens nobody moved)", () => {
+    const identityLens: Transform = {
+      id: 9,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    };
+    const de = buildSurfaceDE(
       emitterOnly,
-      null,
+      identityLens,
       { order: 1, plane: "xy" },
       {},
     );
-    expect(surfaceOpticsBackend({ optics: true }, de, {}, canonicalPose4)).toBe(
-      "closedSolid",
-    );
-    expect(
-      surfaceOpticsBackend(
-        { optics: true },
-        de,
-        { tiling: true },
-        canonicalPose4,
-      ),
-    ).toBe("estimator");
+    expect(de.final).not.toBeNull();
+    expect(surfaceClosedSolidAdmitted(de, {})).toBe(true);
   });
 });

@@ -4094,19 +4094,14 @@ export function packSurfaceGpuShadeMaps(
  * The optical transport storage for mode "shade": ONE vec4f pair per map
  * slot, laid out by `surface-material-wire.ts`'s
  * `surfaceMaterialOpticsLanes` — `[i*2]` = (ior, radius, absorption.r,
- * absorption.g), `[i*2+1]` = (absorption.b, reserved, reserved, reserved).
- * Pads to one zero stride when no slot resolves optics (the classic route's
- * exact bytes — one 8-float zero stride, like packSurfaceGpuMaps), and
- * throws `RangeError` when a materials list is present but does not cover
- * every slot, or when the optics gate disagrees with the lanes (a slot list
- * whose `optics` member is false may not carry a resolved optics — the
- * wire's own consistency rule).
- *
- * SHIPPED DORMANT: no kernel declares the `opticsMaps` binding yet — this
- * packer is the FROZEN layout both transport backends adopt (the compute
- * backend first, the GLSL twins' uniform re-pack second), pinned by tests so
- * the offsets cannot move. Consumed by the compute surface path when the
- * resumable-transport work wires the buffer in.
+ * absorption.g), `[i*2+1]` = (absorption.b, distortion, reserved,
+ * reserved). A slot that resolves no optics packs the zero lanes — ior 0
+ * is the kernel's per-hit route-around (transportRays skips the hit and
+ * shadeRays owns the pixel), which is what makes per-transform MIXED
+ * opaque/transmissive wires the supported shape. Pads to zero strides
+ * when no slot resolves optics (the classic route's exact bytes); the
+ * buffer's length is always the slot count's, so a kernel indexing any
+ * real slot stays in bounds.
  */
 export function packSurfaceGpuOpticsMaps(
   materials: readonly ResolvedSurfaceMaterial[],
@@ -4114,23 +4109,19 @@ export function packSurfaceGpuOpticsMaps(
   if (materials.length === 0) {
     return new Float32Array(8);
   }
-  const opticsCount = materials.filter((m) => m.optics !== undefined).length;
-  if (opticsCount === 0) {
-    return new Float32Array(8);
-  }
-  if (opticsCount !== materials.length) {
-    throw new RangeError(
-      `surface-de-gpu: ${opticsCount} of ${materials.length} slots resolve ` +
-        "optics — an optics buffer must cover every slot uniformly",
-    );
-  }
+  // MIXED WIRES PACK: a slot that resolves no optics pads the zero lanes,
+  // and ior 0 is exactly the kernel's per-hit route-around
+  // (transportRays skips a hit whose slot's lanes read ior <= 0 and hands
+  // the pixel back to shadeRays) — per-transform mixed
+  // opaque/transmissive materials are the wire's supported shape, not a
+  // caller bug. The uniformity throw this loop used to raise predates the
+  // per-hit routing being reachable and made every mixed document a
+  // failed session build.
   const out = new Float32Array(materials.length * 8);
   materials.forEach((material, j) => {
     const lanes = surfaceMaterialOpticsLanes(material);
     if (!lanes) {
-      throw new RangeError(
-        `surface-de-gpu: slot ${j} lost its optics between gate and pack`,
-      );
+      return;
     }
     out.set(lanes[0], j * 8);
     out.set(lanes[1], j * 8 + 4);
