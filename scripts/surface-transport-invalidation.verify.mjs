@@ -15,9 +15,13 @@
  * `#v1=` document carries `optics: { model: "dielectric" }` on every
  * transform, `?surfacecompute` (3D only; every 4D session already prefers
  * compute) forces the compute tracer past the plain-affine WebGL verdict,
- * and `gatedSlotMaterials` admits the authored optics. The app does not yet
- * select the closed-solid backend (that routing is the starter-scene task's),
- * so this sweep drives the ESTIMATOR boundary query: the lane pays its
+ * and `gatedSlotMaterials` admits the authored optics. These fixtures are
+ * map-bearing IFS systems, so the app's routing admission (the closed-solid
+ * backend's emitter-only shape) keeps them on the ESTIMATOR boundary query
+ * by its own rule — the routing itself landed 2026-09-18 and resolves on
+ * the closed-solid vocabulary (the starters' leg; the tile gate asserts
+ * it) — and this sweep drives the estimator query deliberately: the lane
+ * pays its
  * buffers, dispatches, replay passes and cancellation generations whatever
  * the samples resolve, and on IFS geometry every inside path refuses — the
  * capability matrix's disclosed vacuous state. That is exactly right for
@@ -272,20 +276,13 @@ async function blackFraction(page) {
   );
 }
 
-/** The lane-live predicate, per lane: compute asserts the `?surfacetrace`
- * ring's `transport pass=` lines; webgl asserts the near-black signature.
- * The 4D floor sits under the edited poses' measured minimum (the slice
- * arm's measured 0.21%), not just the canonical one. */
-const LANE_FLOORS = { 3: 0.05, 4: 0.001 };
-
-function sceneDim(scene) {
-  return scene === SCENES[3] ? 3 : 4;
-}
-
 /** The lane's live census, read wherever an arm asserts the transport ran:
  * the compute lane counts `transport pass=` trace lines; the webgl lane
- * counts the settled frame's near-black signature against the dimension's
- * floor. */
+ * asserts the session's DECIDED backend (the app probe's `opticsBackend`)
+ * — the near-black fraction is recorded as detail but no longer gates:
+ * the transport now resolves the ray set, the glass transmits and the
+ * frame reads ~0 near-black, so the old black-collapse floor asserted the
+ * defect it was named for. */
 async function laneCensus(page, lane, scene, settled) {
   if (lane === "webgl") return laneLive(page, scene, settled);
   const transport = settled ? await transportLines(page) : 0;
@@ -294,12 +291,13 @@ async function laneCensus(page, lane, scene, settled) {
 
 async function laneLive(page, scene, settled) {
   if (!settled) return { live: false, detail: "not settled" };
-  const dim = sceneDim(scene);
   const black = await blackFraction(page);
-  const floor = LANE_FLOORS[dim];
+  const backend = await page.evaluate(
+    () => window.__surfaceState?.().opticsBackend ?? null,
+  );
   return {
-    live: black !== null && black >= floor,
-    detail: `nearBlack=${black === null ? "n/a" : (black * 100).toFixed(2) + "%"} floor=${(floor * 100).toFixed(2)}%`,
+    live: backend === "closedSolid",
+    detail: `opticsBackend=${backend ?? "null"} nearBlack=${black === null ? "n/a" : (black * 100).toFixed(2) + "%"}`,
   };
 }
 

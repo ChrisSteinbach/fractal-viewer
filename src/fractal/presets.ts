@@ -1,6 +1,7 @@
 import { composeAffine } from "./affine";
 import type { FlamePaletteId, PaletteSelection } from "./palette";
 import type { Rng } from "./rng";
+import type { FiniteSolid } from "./finite-solid";
 import { GEAR_SHAPE, PEACE_SIGN_SHAPE, STAR_PRISM_SHAPE } from "./shapes";
 import type { SphereInversionAuthored } from "./sphere-inversion";
 import type { TilingSpec } from "./tiling";
@@ -132,6 +133,43 @@ export function mengerSponge(): Transform[] {
           rotation: [0, 0, 0],
           scale: [s, s, s],
         });
+      }
+    }
+  }
+  return transforms;
+}
+
+/**
+ * The hyper-Menger's level-1 maps: the 3D Menger's rule one dimension up —
+ * keep the child when at most ONE of its four coordinates is the middle
+ * third (16 with no middle axis + 4·8 with exactly one = 48 children).
+ * The 4D half's ONE definition; the 3D preset's maps above are reused
+ * verbatim where the rules coincide. Lives beside its 3D twin rather than
+ * in `finite-solid.ts` (which imports this module) so both constructions
+ * have one home.
+ */
+export function hyperMengerSpongeTransforms(): Transform[] {
+  const s = 1 / 3;
+  const transforms: Transform[] = [];
+  let id = 0;
+  for (let x = -1; x <= 1; x++) {
+    for (let y = -1; y <= 1; y++) {
+      for (let z = -1; z <= 1; z++) {
+        for (let w = -1; w <= 1; w++) {
+          const middles =
+            (x === 0 ? 1 : 0) +
+            (y === 0 ? 1 : 0) +
+            (z === 0 ? 1 : 0) +
+            (w === 0 ? 1 : 0);
+          if (middles >= 2) continue;
+          transforms.push({
+            id: id++,
+            position: [x * 0.5, y * 0.5, z * 0.5],
+            rotation: [0, 0, 0],
+            scale: [s, s, s],
+            w: { position: w * 0.5 },
+          });
+        }
       }
     }
   }
@@ -2321,6 +2359,28 @@ export function starFoundry(): Transform[] {
   ];
 }
 
+/** The Glass bundle's model at the distortion study's working value — the
+ * ONE optics definition the finite-solid glass showcases author, on every
+ * map (the finite cores read one material lane, the head map's, so an
+ * all-maps authoring keeps every future slot semantics honest and the
+ * document reads as the construction it is). */
+const GLASS_OPTICS = { model: "dielectric", distortion: 0.08 } as const;
+
+/** The shipped construction's maps with the Glass model authored on every
+ * one: the dielectric study's selected object, at last reachable. */
+export function glassMengerMaps(): Transform[] {
+  return mengerSponge().map((t) => ({ ...t, optics: { ...GLASS_OPTICS } }));
+}
+
+/** The Glass showcase's native 4D twin: the posed hyper-Menger's maps,
+ * same authoring. */
+export function glassHyperMengerMaps(): Transform[] {
+  return hyperMengerSpongeTransforms().map((t) => ({
+    ...t,
+    optics: { ...GLASS_OPTICS },
+  }));
+}
+
 /**
  * The named systems offered in the preset menu, mapped to their transform
  * factories. `default` is the system the viewer boots with (see
@@ -2470,6 +2530,17 @@ const PRESETS = {
   inversionLace: sierpinskiTetrahedron,
   inversionVault4: sierpinskiTetrahedron,
   inversionMedallions4: sierpinskiTetrahedron,
+  // The finite-solid family's GLASS showcases — the dielectric study's
+  // selected object at last reachable. The transform system IS the shipped
+  // construction (the finite gate refuses edited maps) and
+  // PRESET_FINITE_SOLIDS authors the level-2 decomposition the Surface
+  // session marches; every map carries the Glass model, and
+  // PRESET_SURFACE_ROOMS installs the checker floor — the bright rear
+  // structure the transmission is FOR. The 4D twin is the NATIVE posed
+  // hyper-Menger slice (PRESET_VIEWS carries the rotor), not a
+  // w-preserving lift of the 3D object.
+  glassMenger: glassMengerMaps,
+  glassMenger4: glassHyperMengerMaps,
 } as const satisfies Record<string, () => Transform[]>;
 
 export type Preset = keyof typeof PRESETS;
@@ -2522,6 +2593,11 @@ export const PRESET_RENDER_HINTS: Partial<
   // Tier-3's distinctive new consumer is the baked mesh SDF; Points remains
   // one mode switch away on the identical emitter document.
   starFoundry: "surface",
+  // The glass showcases: their payoff lives in the Surface render's optical
+  // transport — the explorer cloud of the construction is the attractor
+  // dust, while the level-2 solid with glass is the deliverable.
+  glassMenger: "surface",
+  glassMenger4: "surface",
   // Flat 2D sheets in the XY plane: the flame's log-density
   // exposure is what turns an IIM Julia set's tip-heavy point density into
   // a legible curve instead of a faint, mostly-empty sparkle.
@@ -2872,6 +2948,34 @@ export const PRESET_SURFACE_ROOMS: Partial<
     floorTileScale: 0.64,
     floorEmission: 1.4,
   },
+  // The glass showcases: the checker floor is the bright rear structure
+  // the transmission and its restrained distortion are FOR — bent lines
+  // read through the level-2 cells where a uniform backdrop shows nothing.
+  glassMenger: {
+    groundPlane: true,
+    floorPattern: "checker",
+    floorTileScale: 0.64,
+    floorEmission: 1.4,
+  },
+  glassMenger4: {
+    groundPlane: true,
+    floorPattern: "checker",
+    floorTileScale: 0.64,
+    floorEmission: 1.4,
+  },
+};
+
+/**
+ * The FINITE-SOLID block a preset IS — the authored construction and the
+ * displayed level (`finite-solid.ts`'s `FiniteSolid`), which reroute the
+ * Surface session to the level-N cell decomposition the glass transport
+ * walks. {@link PRESET_SPHERE_INVERSIONS}' ABSENT-MEANS-CLEAR rule: a
+ * leftover block would reroute an unrelated system (or refuse it), so
+ * every other preset load clears the block.
+ */
+export const PRESET_FINITE_SOLIDS: Partial<Record<Preset, FiniteSolid>> = {
+  glassMenger: { shape: "menger", level: 2 },
+  glassMenger4: { shape: "hyperMenger", level: 2 },
 };
 
 /**
@@ -3027,6 +3131,28 @@ export const PRESET_VIEWS: Partial<Record<Preset, PresetView>> = {
     // A single xw turn off the kiss slice: fuller medallions (pearl rings
     // round a central rosette) than the double rotation at the kiss slice.
     fourD: { rotation: [["xw", 0.3]], w0: 0.1 },
+  },
+  // The glass Menger, framed like the starters' discovery shots: high
+  // enough for the checker floor behind and below, close enough that the
+  // tunnel mouths read through the front cells.
+  glassMenger: {
+    camera: { eye: [1.5, 0.5, 2.5], target: [0, -0.15, 0], fov: 62 },
+  },
+  // The glass hyper-Menger's POSED slice: a w-preserving yz turn (a rigid
+  // 3D-looking rotation of the sliced object) over a small xw tilt — the
+  // tilt is what makes the pose NATIVE 4D (the slice cuts the posed 4D
+  // grid at an angle) while keeping the silhouette legible, and the
+  // centre slice w0 = 0 is where the level-2 cells are densest. The
+  // camera rides the same starter framing one dimension up.
+  glassMenger4: {
+    camera: { eye: [1.9, 0.85, 2.9], target: [0, 0, 0], fov: 62 },
+    fourD: {
+      rotation: [
+        ["yz", 0.42],
+        ["xw", 0.18],
+      ],
+      w0: 0,
+    },
   },
 };
 

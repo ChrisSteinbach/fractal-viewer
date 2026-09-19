@@ -17,6 +17,11 @@
 
 import { systemPartsAreNonFlat, toTransform4 } from "../fractal/affine4";
 import { analyzeBulbSystem } from "../fractal/bulb-de";
+import {
+  analyzeFiniteSolidSystem,
+  resolveFiniteSolid,
+} from "../fractal/finite-solid";
+import type { FiniteSolidAuthored } from "../fractal/finite-solid";
 import { analyzeEscapeSystem, systemHasPowerLink } from "../fractal/escape-de";
 import { analyzeEscapeSystem4 } from "../fractal/escape-de-4d";
 import { systemHasActiveQSquare } from "../fractal/qjulia-de";
@@ -71,7 +76,9 @@ export type SurfaceRouteKind =
   | "ifs4"
   | "escape4"
   | "sphereInversion"
-  | "sphereInversion4";
+  | "sphereInversion4"
+  | "finiteSolid"
+  | "finiteSolid4";
 
 /** A narrowly-scoped action the mode gate can offer to resolve the refusal
  * it is currently disclosing. This is structured analyzer output, never
@@ -108,6 +115,7 @@ export interface SurfaceEligibilityDocument {
   tiling?: TilingSpec | null;
   condensationDepthBand?: CondensationDepthBand;
   sphereInversion?: SphereInversionAuthored | null;
+  finiteSolid?: FiniteSolidAuthored | null;
 }
 
 /**
@@ -263,6 +271,117 @@ export const SPHERE_INVERSION_DORMANT_FINISHES =
  * thickness row's note and the gate's. */
 export const SPHERE_INVERSION_SLAB_REFUSAL =
   "slice thickness is held at zero: a thick slice has no certified estimator for sphere-inversion scenes";
+
+/**
+ * The FINITE-SOLID ROUTE. Unlike a sphere-inversion block, the finite-solid
+ * block does NOT replace the transform system — it reroutes it: the
+ * document's maps must BE the shipped construction's level-1 map set
+ * (`analyzeFiniteSolidSystem` refuses edited maps by values and signs), and
+ * the block authors which construction and displayed level. The block takes
+ * precedence over the affine/fold, escape and bulb gates because those
+ * would march the construction's attractor — the limit set — while the
+ * finite route marches the level-N SOLID, the object the optical
+ * transport's exact DDA is co-extensive with.
+ *
+ * COMBINATION POLICY: refused (document) — Space tiling (the mirrored
+ * copies are not the construction), a shape trap, and a hybrid schedule
+ * (the B maps would move the subject off the bare construction); refused
+ * outright by the analyzer — kaleidoscopes above order 1, warping finals,
+ * per-map variations/emitters/posts/chaos rows. COMPOSES — the ground
+ * plane, authored finishes on the head map (the kernels' one shade slot),
+ * and the optical transport through the finite DDA backend. ENGINE:
+ * WebGPU compute only — no fragment arm exists for the finite cores (the
+ * escape4 verdict one family over), so without compute the route is
+ * refused, never handed to a WebGL tracer that would draw the attractor.
+ */
+function deriveFiniteSolidEligibility(
+  block: FiniteSolidAuthored,
+  transforms: Transform[],
+  finalTransform: Transform | null,
+  symmetry: SymmetryParams,
+  shapeTrap: ShapeTrap | null,
+  tiling: TilingSpec | null,
+  schedule: HybridSchedule | null,
+  opts: SurfaceEligibilityOptions,
+): SurfaceEligibilityResult {
+  const resolution = resolveFiniteSolid(block);
+  if (!resolution.ok) {
+    return {
+      status: "ineligible",
+      note: `Finite-solid scene refused: ${resolution.reasons.join("; ")}`,
+      kind: null,
+    };
+  }
+  const shape = resolution.value.shape;
+  const fourD = systemPartsAreNonFlat(transforms, finalTransform, symmetry);
+  // The construction names the dimension; the document must agree. A
+  // mismatch means the maps were edited away from the block's construction,
+  // and rendering either object would lie about the other.
+  if (shape === "hyperMenger" && !fourD) {
+    return {
+      status: "ineligible",
+      note: "Finite-solid scene refused: the hyper-Menger construction is native 4D, but this document's maps are flat — restore the maps' w offsets or choose the 3D Menger.",
+      kind: null,
+    };
+  }
+  if (shape === "menger" && fourD) {
+    return {
+      status: "ineligible",
+      note: "Finite-solid scene refused: the 3D Menger construction is flat, but this document reaches into 4D — remove the w extension or choose the hyper-Menger.",
+      kind: null,
+    };
+  }
+  const refusals: string[] = [];
+  if (tiling) {
+    refusals.push(
+      "Space tiling is not available with a finite-solid scene (the mirrored copies are not the document's construction)",
+    );
+  }
+  if (shapeTrap) {
+    refusals.push(
+      "a shape trap is not available with a finite-solid scene (the escape family's forward-orbit channel)",
+    );
+  }
+  if (scheduleRecordCount(schedule) > 0) {
+    refusals.push(
+      "a hybrid schedule is not available with a finite-solid scene (the construction is the bare affine maps)",
+    );
+  }
+  if (refusals.length > 0) {
+    return {
+      status: "ineligible",
+      note: `Finite-solid scene refused: ${refusals.join("; ")}`,
+      kind: null,
+    };
+  }
+  const analysis = analyzeFiniteSolidSystem(
+    transforms,
+    finalTransform,
+    symmetry,
+    shape,
+    resolution.value.level,
+  );
+  if (analysis.status === "ineligible") {
+    return {
+      status: "ineligible",
+      note: `Finite-solid scene refused: ${analysis.reasons.join("; ")}`,
+      kind: null,
+    };
+  }
+  if (!opts.computeAvailable) {
+    return {
+      status: "ineligible",
+      note: "finite-solid scenes render on WebGPU compute, which is unavailable here",
+      kind: null,
+    };
+  }
+  const dim = shape === "hyperMenger" ? 4 : 3;
+  return {
+    status: "degraded",
+    note: `Finite-solid render: Surface marches the level-${resolution.value.level} ${dim === 4 ? "hyper-Menger" : "Menger"} cell decomposition — the solid the glass transport walks — rather than the transform system's IFS attractor.`,
+    kind: dim === 4 ? "finiteSolid4" : "finiteSolid",
+  };
+}
 
 /**
  * The session-level half of the combination policy
@@ -651,6 +770,7 @@ export function deriveSurfaceEligibility(
   tiling: TilingSpec | null = null,
   condensationDepthBand?: CondensationDepthBand,
   sphereInversion: SphereInversionAuthored | null = null,
+  finiteSolid: FiniteSolidAuthored | null = null,
 ): SurfaceEligibilityResult {
   // A sphere-inversion block replaces the transform system as the subject:
   // it takes precedence over, and is disjoint from, every gate below.
@@ -662,6 +782,24 @@ export function deriveSurfaceEligibility(
       symmetry,
       shapeTrap,
       tiling,
+      opts,
+    );
+  }
+  // A finite-solid block reroutes the SAME subject (the transform system,
+  // which must be the shipped construction) to the level-N cell
+  // decomposition — it takes precedence over the affine/fold, escape and
+  // bulb gates below, which would otherwise march the construction's
+  // attractor (a different object: the limit set, not the level-N solid
+  // the transport's DDA needs to be co-extensive with).
+  if (finiteSolid) {
+    return deriveFiniteSolidEligibility(
+      finiteSolid,
+      transforms,
+      finalTransform,
+      symmetry,
+      shapeTrap,
+      tiling,
+      schedule,
       opts,
     );
   }
@@ -721,6 +859,8 @@ export function deriveSurfaceEligibility(
       shapeTrap,
       tiling,
       { maxDepth: 0 },
+      null,
+      finiteSolid,
     );
     return {
       status: "ineligible",
@@ -1060,5 +1200,6 @@ export function deriveSurfaceDocumentEligibility(
     document.tiling ?? null,
     document.condensationDepthBand,
     document.sphereInversion ?? null,
+    document.finiteSolid ?? null,
   );
 }

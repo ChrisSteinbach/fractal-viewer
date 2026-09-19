@@ -1749,7 +1749,7 @@ describe("packSurfaceGpuShadeMaps", () => {
 });
 
 describe("packSurfaceGpuOpticsMaps", () => {
-  it("packs the frozen two-vec4 lane pair per slot at exact indices", () => {
+  it("packs the frozen two-vec4 lane pair per slot at exact indices, mixed wires included", () => {
     const optics = resolveSurfaceMaterial(
       undefined,
       undefined,
@@ -1757,15 +1757,29 @@ describe("packSurfaceGpuOpticsMaps", () => {
       1.5,
     );
     const classic = resolveSurfaceMaterial(undefined, undefined);
-    // The optics buffer must cover every slot uniformly; a mixed list is a
-    // caller bug and throws.
-    expect(() => packSurfaceGpuOpticsMaps([optics, classic])).toThrow(
-      RangeError,
-    );
+    // MIXED WIRES PACK: a classic slot pads the zero lanes — ior 0 is the
+    // kernel's per-hit route-around, so per-transform mixed
+    // opaque/transmissive materials are the supported shape, not a caller
+    // bug.
+    const mixed = packSurfaceGpuOpticsMaps([optics, classic]);
+    expect(mixed.length).toBe(16);
+    expect(Array.from(mixed.subarray(0, 4))).toEqual([
+      Math.fround(1.45),
+      3,
+      Math.fround(0.17),
+      Math.fround(0.055),
+    ]);
+    expect(Array.from(mixed.subarray(4, 8))).toEqual([
+      Math.fround(0.025),
+      0,
+      0,
+      0,
+    ]);
+    expect(Array.from(mixed.subarray(8, 16))).toEqual(Array<number>(8).fill(0));
     const two = packSurfaceGpuOpticsMaps([optics, optics]);
     expect(two.length).toBe(16);
     // Slot 0: (ior, radius, absorption.r, absorption.g) at [0..4), then
-    // (absorption.b, reserved, reserved, reserved) at [4..8). Slot 1 the
+    // (absorption.b, distortion, reserved, reserved) at [4..8). Slot 1 the
     // same shape at +8 — the appends never move an earlier offset.
     expect(Array.from(two.subarray(0, 4))).toEqual([
       Math.fround(1.45),
@@ -10476,7 +10490,7 @@ describe("the optical distortion's terminal splice", () => {
       );
       // The exit flag: only the transmitted child of an exit crossing sets it.
       expect(shade).toContain(
-        "trans.exitPresent = select(0u, 1u, path.inside == 1u);",
+        "trans.exitPresent = select(0u, 1u, incidentInGlass);",
       );
       expect(shade).toContain("refl.exitPresent = 0u;");
       expect(shade).toContain("child.exitPresent = 0u;");

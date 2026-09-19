@@ -100,6 +100,7 @@ import {
   packSurfaceBalloonPalette,
   packSurfaceBalloonTint,
   setSurfaceMaterials as packSurfaceMaterials,
+  setSurfaceOpticsBackend as setSurfaceOpticsBackendMaterial,
   setSurfaceLighting as packSurfaceLighting,
   setSurfaceGroundPlane as packSurfaceGroundPlane,
   installSurfaceTiling,
@@ -146,6 +147,7 @@ import {
 import type { EscapeDE } from "../fractal/escape-de";
 import { ESCAPE_TIME_ITERATIONS } from "../fractal/escape-de";
 import { resolveShapeTrap } from "../fractal/shape-trap";
+import { FINITE_SOLID_MAX_LEVEL } from "../fractal/finite-solid";
 import type { BulbDE } from "../fractal/bulb-de";
 import { BULB_ITERATIONS } from "../fractal/bulb-de";
 import type { SurfaceDE } from "../fractal/surface-de";
@@ -4800,6 +4802,36 @@ export class FractalScene {
   }
 
   /**
+   * Stamp the session's optical-transport boundary backend onto the
+   * fragment tracers' materials — main.ts's per-session routing decision
+   * (`surface-optics-backend.ts`'s admission). The ACTIVE dimension's
+   * material takes the decided answer; the INACTIVE one is reset to the
+   * estimator, because the tail's materials install flips BOTH materials'
+   * optics defines and the inactive material carries no condensation
+   * shapes for the signed field to describe (a closed-solid program with
+   * no emitters is exactly what its resolver refuses). Session-scoped like
+   * the balloon and the ground plane: a system-set or materials-set inside
+   * the session rebuilds with whatever this last stamped, so the caller
+   * lands it BEFORE the session's first system install and every rebuild
+   * of the session takes the same answer. The value is inert whenever the
+   * optics define is off (the estimator body's bytes are the absent
+   * path's own).
+   */
+  setSurfaceOpticsBackend(
+    backend: "estimator" | "closedSolid",
+    fourD: boolean,
+  ): void {
+    setSurfaceOpticsBackendMaterial(
+      this.surfaceMaterial,
+      fourD ? "estimator" : backend,
+    );
+    setSurfaceOpticsBackendMaterial(
+      this.surfaceMaterial4,
+      fourD ? backend : "estimator",
+    );
+  }
+
+  /**
    * Escape-time sibling of {@link setSurfaceSystem}: upload the
    * fold CHAIN's forward affines + fold params (one slot per
    * link, the document's transform list being the formula sequence) and
@@ -5733,6 +5765,43 @@ export class FractalScene {
       : null;
     this.surfaceComputeGroundPlane = groundPlane;
     this.installSurfaceDepth(depth, null);
+    this.surfacePreviewGovernor.reset();
+    this.surfacePreviewPxCostMs = null;
+    this.flushStripBacklog();
+  }
+
+  /**
+   * The FINITE-SOLID compute entry, both dimensions — the sphere-inversion
+   * entry's sibling with one difference: the depth clamp is the
+   * construction LEVEL (the display DE is exact-cost, not iterative, so
+   * the descent-depth machinery has nothing to adapt; the value only
+   * shapes the preview tier's depth rung). One origin-centred ball (the
+   * construction's circumscribed sphere, the FULL 4D radius in 4D), no
+   * balloon ever (the session door refuses it), no trap channel, and a
+   * plain governor reset. A 4D session's rotor/slice rides every frame
+   * spec exactly as the other 4D kinds' do — the DDA lifts world→intrinsic
+   * through the shared tail's rows, so ANY pose renders the posed slice
+   * (no canonical-pose admission needed, unlike the closed-solid field).
+   */
+  enterSurfaceComputeFiniteSession(
+    fourD: boolean,
+    groundPlane: boolean,
+    ballRadius: number,
+  ): void {
+    this.renderNeeded = true;
+    this.surfaceComputeActive = true;
+    this.surfaceCompute4 = fourD;
+    this.surfaceComputeShapeTrap = false;
+    this.surfaceShapeTrapLive = false;
+    this.surfaceLightingBoundRadius = ballRadius;
+    this.surfaceFocusBall = { center: [0, 0, 0], radius: ballRadius };
+    this.surfaceBalloonBall = null;
+    this.surfaceComputeBalloon = false;
+    this.surfaceGroundBall = groundPlane
+      ? { center: [0, 0, 0], radius: ballRadius }
+      : null;
+    this.surfaceComputeGroundPlane = groundPlane;
+    this.installSurfaceDepth(FINITE_SOLID_MAX_LEVEL, null);
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
     this.flushStripBacklog();

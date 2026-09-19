@@ -28,6 +28,7 @@ import { mulberry32 } from "../fractal/rng";
 import type { TilingSpec } from "../fractal/tiling";
 import { scenePartsAreNonFlat } from "../fractal/scene-dimension";
 import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
+import type { FiniteSolidAuthored } from "../fractal/finite-solid";
 import {
   SHAPE_TRAP_GEOMETRY_LEVEL_MAX,
   resolveShapeTrap,
@@ -529,6 +530,21 @@ export interface AppState {
    * replace-load's first push, the schedule's placement).
    */
   sphereInversion?: SphereInversionAuthored;
+  /**
+   * Optional finite-solid block (`fractal/finite-solid.ts`'s authored form).
+   * When present it routes Surface to the level-N cell decomposition — the
+   * transform system REMAINS the subject and must BE the shipped
+   * construction's level-1 map set (`analyzeFiniteSolidSystem` refuses
+   * edited maps), and the block authors the construction shape and the
+   * displayed level 0..2. Stored EXACTLY as authored or decoded — a block
+   * the resolver refuses (an unknown shape, an out-of-band level, a field
+   * from a newer version) is kept verbatim and surfaces its refusal through
+   * the Surface gate, never clamped or dropped. Absent ⇒ byte-identical to
+   * every document predating the field, and every renderer reads the plain
+   * IFS attractor. Scene content: persists and rides shared links; morphs
+   * never interpolate it (it is read once per Surface enter).
+   */
+  finiteSolid?: FiniteSolidAuthored;
   numPoints: number;
   /** Multiplier on each render style's base point size; 1 = as authored. */
   pointSize: number;
@@ -1683,6 +1699,7 @@ export function updateTransform(
     | "colorSpeed"
     | "finish"
     | "surfacePattern"
+    | "optics"
   >,
 ): AppState {
   const transforms = state.transforms.map((t, i) =>
@@ -2265,6 +2282,20 @@ export function setSphereInversion(
 ): AppState {
   if (!sphereInversion) return { ...state, sphereInversion: undefined };
   return { ...state, sphereInversion };
+}
+
+/**
+ * Install/replace the finite-solid block, or clear it with `null` —
+ * {@link setSphereInversion}'s shape: stored AS AUTHORED with no
+ * normalization, because the resolver refuses rather than clamps and the
+ * Surface gate must describe the block the document actually carries.
+ */
+export function setFiniteSolid(
+  state: AppState,
+  finiteSolid: FiniteSolidAuthored | null,
+): AppState {
+  if (!finiteSolid) return { ...state, finiteSolid: undefined };
+  return { ...state, finiteSolid };
 }
 
 export function setNumPoints(state: AppState, numPoints: number): AppState {

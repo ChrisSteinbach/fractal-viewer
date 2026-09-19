@@ -1761,12 +1761,38 @@ ${domainRadius}
         return result;
       }
       if (abs(f) < eps) {
-        float dd = max(f, 0.0);
+        // Land the crossing ON the surface: one secant step along the
+        // ray with the field's unit-normalized gradient at the query
+        // point (the kernel's closed-solid query's own rule — the
+        // band-edge advance left the hit short of the surface for
+        // oblique approaches and the grazing TIR crawl's children
+        // drifted). A touch whose zero is not ahead of the query point
+        // within the band's own scale is not a crossing: step past the
+        // band and keep marching.
+        vec3 n0 = transportSolidNormal(p, dir, eps);
+        float dN = dot(dir, n0);
+        float run = abs(dN) > 1.0e-4 ? -f / dN : -1.0;
+        if (!(run >= 0.0 && run <= 32.0 * eps)) {
+          p += dir * (2.0 * eps);
+          t += 2.0 * eps;
+          continue;
+        }
+        float dd = run;
         vec3 hitP = p + dir * dd;
         float tc = t + dd;
+        // Same-boundary suppression, part 2, MEDIUM-AWARE (the kernel's
+        // rule): suppress only while the claimed medium continues
+        // beyond the landing — a union's corner region puts a DIFFERENT
+        // face within the anchor envelope, and the distance test alone
+        // ate an honest exit crossing there.
+        bool suppress = false;
         if (anchorPresent == 1 &&
             distance(hitP, anchorPoint) <= TRANSPORT_ANCHOR_ENVELOPE_REL * eps) {
-          // Same-boundary suppression, part 2 (the estimator query's rule).
+          float fBeyond = transportSolidField(hitP + dir * (2.0 * eps));
+          suppress = (inside == 1 && fBeyond < 0.0) ||
+            (inside == 0 && fBeyond > 0.0);
+        }
+        if (suppress) {
           float skip = 2.0 * eps;
           p = hitP + dir * skip;
           t = tc + skip;
@@ -1940,29 +1966,34 @@ ${domainRadius}
     float residual = 0.0;
     float eps = TRANSPORT_CROSSING_EPS_REL * radius;
     // --- the primary split (the march's own hit, entering from outside) ---
+    // The accepted hit may sit up to one pixel footprint OUTSIDE the
+    // surface; the child's anchored restart keeps only the 2·eps baseline
+    // (the kernel's rule — the query's own march reaches the surface and
+    // the anchor suppression absorbs the entry crossing).
+    vec3 origin0 = origin;
     vec3 n0 = transportOpticalNormal(origin, dir, eps);
     float cosI0 = abs(dot(dir, n0));
     float f0 = dielectricFresnel(cosI0, 1.0, ior);
     vec4 bend0 = dielectricRefract(dir.x, dir.y, dir.z, n0.x, n0.y, n0.z, 1.0, ior);
     vec3 reflDir0 = dir - 2.0 * dot(dir, n0) * n0;
     TransportPath refl0;
-    refl0.origin = origin;
+    refl0.origin = origin0;
     refl0.dir = reflDir0;
     refl0.energy = vec3(f0);
     refl0.inside = 0;
     refl0.interfaces = 1;
     refl0.anchorPresent = 1;
-    refl0.anchorPoint = origin;
+    refl0.anchorPoint = origin0;
     refl0.exitPresent = 0;
     refl0.bound = transportChildBound(refl0.energy);
     TransportPath refr0;
-    refr0.origin = origin;
+    refr0.origin = origin0;
     refr0.dir = bend0.xyz;
     refr0.energy = vec3(1.0 - f0);
     refr0.inside = 1;
     refr0.interfaces = 1;
     refr0.anchorPresent = 1;
-    refr0.anchorPoint = origin;
+    refr0.anchorPoint = origin0;
     refr0.exitPresent = 0;
     refr0.bound = transportChildBound(refr0.energy);
     // Push the stronger child first (the oracle's order) so the weaker
@@ -2049,8 +2080,10 @@ ${domainRadius}
         break;
       }
       if (hit.kind == 2) {
-        if (path.inside == 1) {
-          // An inside miss is unresolved, never a background hit.
+        if (path.inside == 1 && path.interfaces != 1) {
+          // An inside miss is unresolved, never a background hit — a
+          // path that entered through a real crossing cannot miss a
+          // closed solid, so this is an anomaly the frame discloses.
           residual = residual + path.bound;
           result.status = TRANSPORT_STATUS_UNRESOLVED;
           result.failure = TRANSPORT_FAILURE_INSIDE_MISS;
@@ -2104,19 +2137,27 @@ ${domainRadius}
       }
       // Boundary event: Beer over the traversed interior segment, then the
       // Fresnel split — the oracle's lines, the emitted optics body's fns.
+      // The interface's media derive from the SEGMENT GEOMETRY — which side
+      // of the surface the segment started on — not the inherited medium
+      // flag: on every honest event the two agree exactly, and on a stale
+      // one (the grazing TIR crawl's phantom band crossings, whose child
+      // used to escape the solid and miss) the geometry re-anchors the
+      // split. The path's inside flag stays the claimed medium the
+      // boundary query cross-checks.
+      vec3 n = hit.normal;
+      float dotDN = dot(path.dir, n);
+      vec3 childOrigin = path.origin + path.dir * hit.t;
+      bool incidentInGlass = dot(path.origin - childOrigin, n) < 0.0;
       vec3 energy = path.energy;
-      if (path.inside == 1) {
+      if (incidentInGlass) {
         energy = vec3(
           path.energy.r * dielectricBeerThroughput(absorb.r, hit.t, radius),
           path.energy.g * dielectricBeerThroughput(absorb.g, hit.t, radius),
           path.energy.b * dielectricBeerThroughput(absorb.b, hit.t, radius)
         );
       }
-      vec3 n = hit.normal;
-      float dotDN = dot(path.dir, n);
-      vec3 childOrigin = path.origin + path.dir * hit.t;
-      float fromIor = path.inside == 1 ? ior : 1.0;
-      float toIor = path.inside == 1 ? 1.0 : ior;
+      float fromIor = incidentInGlass ? ior : 1.0;
+      float toIor = incidentInGlass ? 1.0 : ior;
       vec4 bend = dielectricRefract(
         path.dir.x,
         path.dir.y,
@@ -2135,7 +2176,7 @@ ${domainRadius}
         child.origin = childOrigin;
         child.dir = bend.xyz;
         child.energy = energy;
-        child.inside = path.inside;
+        child.inside = incidentInGlass ? 1 : 0;
         child.interfaces = path.interfaces + 1;
         child.anchorPresent = 1;
         child.anchorPoint = childOrigin;
@@ -2158,20 +2199,20 @@ ${domainRadius}
         trans.origin = childOrigin;
         trans.dir = bend.xyz;
         trans.energy = energy * (1.0 - f);
-        trans.inside = path.inside == 1 ? 0 : 1;
+        trans.inside = incidentInGlass ? 0 : 1;
         trans.interfaces = path.interfaces + 1;
         trans.anchorPresent = 1;
         trans.anchorPoint = childOrigin;
         // Only the transmitted child of an EXIT crossing reads the rear
         // scene through the glass; every other child resets the flag, so
         // a mirror view at a later entry never displaces.
-        trans.exitPresent = path.inside;
+        trans.exitPresent = incidentInGlass ? 1 : 0;
         trans.bound = transportChildBound(trans.energy);
         TransportPath refl;
         refl.origin = childOrigin;
         refl.dir = path.dir - 2.0 * dotDN * n;
         refl.energy = energy * f;
-        refl.inside = path.inside;
+        refl.inside = incidentInGlass ? 1 : 0;
         refl.interfaces = path.interfaces + 1;
         refl.anchorPresent = 1;
         refl.anchorPoint = childOrigin;
@@ -7946,6 +7987,7 @@ export function setSurfaceSystem(
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
       0, // sphereInversion — handed back above in this rebuild path
       optics,
+      materialOpticsBackend(material),
     );
     material.needsUpdate = true;
   }
@@ -9112,7 +9154,15 @@ export function surfaceFragmentResolvedFor(
     SURFACE_POST: post,
     SURFACE_SPHERE_INVERSION: sphereInversion,
     SURFACE_OPTICS: optics,
-    SURFACE_OPTICS_CLOSED_SOLID: opticsBackend,
+    // The backend define FORCES under the optics gate — the compute
+    // kernel's own rule (its `opticsBackend` local resolves to "estimator"
+    // whenever `optics` is off), mirrored here. Without it, a stamped
+    // closed-solid backend surviving an optics drop compiles the floor
+    // corridor's `transportShadowVisibility` call sites without their
+    // definition (it splices under `#if SURFACE_OPTICS`), and the program
+    // fails to link — the stripped-control compile failure the fixture
+    // re-mint flushed out.
+    SURFACE_OPTICS_CLOSED_SOLID: optics !== 0 ? opticsBackend : 0,
     "SURFACE_CONDENSATION || SURFACE_SCHEDULE":
       condensation !== null || schedule !== 0 ? 1 : 0,
     "SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS":
@@ -9955,6 +10005,7 @@ export function setSphereInversionSystem(
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
       1, // sphereInversion — this install's own arm
       material.defines.SURFACE_OPTICS === 1 ? 1 : 0,
+      materialOpticsBackend(material),
     );
     material.needsUpdate = true;
   }
@@ -10029,6 +10080,7 @@ export function setSurfaceBalloon(
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
       material.defines.SURFACE_SPHERE_INVERSION === 1 ? 1 : 0,
       material.defines.SURFACE_OPTICS === 1 ? 1 : 0,
+      materialOpticsBackend(material),
     );
     material.needsUpdate = true;
   }
@@ -10165,9 +10217,36 @@ export function setSurfaceGroundPlane(
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
       material.defines.SURFACE_SPHERE_INVERSION === 1 ? 1 : 0,
       material.defines.SURFACE_OPTICS === 1 ? 1 : 0,
+      materialOpticsBackend(material),
     );
     material.needsUpdate = true;
   }
+}
+
+/** The optical transport's boundary backend, as the resolvers spell it:
+ * 0 = the estimator march (absent's meaning, byte-identically), 1 = the
+ * closed-solid signed query over the session's condensation union. The
+ * value is SESSION state stamped onto the material's userData by
+ * {@link setSurfaceOpticsBackend} — main.ts's per-session routing decision
+ * — and read by every `surfaceFragmentFor` rebuild site, so a
+ * balloon/plane/lighting/tiling toggle inside a session re-assembles with
+ * the backend the session was admitted under rather than re-deciding it. */
+export function setSurfaceOpticsBackend(
+  material: THREE.ShaderMaterial,
+  backend: "estimator" | "closedSolid",
+): void {
+  (material.userData as { surfaceOpticsBackend?: 0 | 1 }).surfaceOpticsBackend =
+    backend === "closedSolid" ? 1 : 0;
+}
+
+/** {@link setSurfaceOpticsBackend}'s read side: the stamped value, or 0 —
+ * the estimator — for a material nothing stamped (every document predating
+ * the routing). */
+export function materialOpticsBackend(material: THREE.ShaderMaterial): 0 | 1 {
+  return (
+    (material.userData as { surfaceOpticsBackend?: 0 | 1 })
+      .surfaceOpticsBackend ?? 0
+  );
 }
 
 /** Install the unified per-map A/B material wire and its independent compile
@@ -10199,18 +10278,14 @@ export function setSurfaceMaterials(
         "surface-material: a fold-shaped descent refuses the optical transport (the kernel-measured frontier-spill timeout)",
       );
     }
-    // The packer's own uniformity rule, one dimension down
-    // (packSurfaceGpuOpticsMaps): an optics gate covers EVERY slot — a
-    // mixed wire (one slot dielectric, another classic finish) is the
-    // packer's thrown range error on both engines, not a silent mix.
-    const classic = materials.slots.findIndex(
-      (slot) => slot.optics === undefined,
-    );
-    if (classic >= 0) {
-      throw new RangeError(
-        `surface-material: slot ${classic} resolves no optics under a live optics gate — the opticsMaps lane pair must cover every slot uniformly`,
-      );
-    }
+    // MIXED WIRES ARE THE SUPPORTED SHAPE (the packer's own rule one
+    // dimension down, packSurfaceGpuOpticsMaps): a slot that resolves no
+    // optics packs the zero lanes, and ior 0 is the per-hit route-around —
+    // transportRays skips the hit and this tracer's shade site reads
+    // uMapOptics per hit slot with the same `> 0` test. Per-transform
+    // mixed opaque/transmissive materials ride exactly these lanes; the
+    // uniformity throw this gate used to raise made every mixed document
+    // a failed session build.
   }
   const u = material.uniforms;
   const laneA = u.uMapFinishA.value as THREE.Vector4[];
@@ -10284,6 +10359,7 @@ export function setSurfaceMaterials(
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
       material.defines.SURFACE_SPHERE_INVERSION === 1 ? 1 : 0,
       wantOptics,
+      materialOpticsBackend(material),
     );
     material.needsUpdate = true;
   }
@@ -10319,6 +10395,7 @@ export function setSurfaceLighting(
     enabled ? 1 : 0,
     material.defines.SURFACE_SPHERE_INVERSION === 1 ? 1 : 0,
     material.defines.SURFACE_OPTICS === 1 ? 1 : 0,
+    materialOpticsBackend(material),
   );
   material.needsUpdate = true;
 }

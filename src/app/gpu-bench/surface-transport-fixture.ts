@@ -1,5 +1,12 @@
 import type { Vec3 } from "../../fractal/types";
 import {
+  type FiniteSolidAnchor,
+  type FiniteSolidConstruction,
+  type FiniteSolidPose,
+  finiteSolidNextBoundary,
+  finiteSolidNextBoundaryFromAnchor,
+} from "../../fractal/finite-solid";
+import {
   DIELECTRIC_ANCHOR_ENVELOPE_REL,
   DIELECTRIC_CROSSING_EPS_REL,
   DIELECTRIC_DISTORTION_NORMAL_REL,
@@ -14,8 +21,19 @@ import {
 import {
   SURFACE_GPU_TRANSPORT_MAX_INTERFACES,
   SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS,
+  SURFACE_GPU_TRANSPORT_REASON_INVALID_INPUT,
+  SURFACE_GPU_TRANSPORT_REASON_STATE_MISMATCH,
+  SURFACE_GPU_TRANSPORT_REASON_VISIT_CAP,
   SURFACE_GPU_TRANSPORT_SHADOW_STEPS,
 } from "../../fractal/surface-de-gpu";
+
+// Re-exported for the bench legs and their tests: the DDA's reason
+// vocabulary, shared with the kernel's emitted literals.
+export {
+  SURFACE_GPU_TRANSPORT_REASON_INVALID_INPUT,
+  SURFACE_GPU_TRANSPORT_REASON_STATE_MISMATCH,
+  SURFACE_GPU_TRANSPORT_REASON_VISIT_CAP,
+};
 
 /**
  * The CPU twin of the compute transport's boundary query and trace — the
@@ -241,11 +259,34 @@ export function transportSolidBoundaryQueryCPU(
       return { kind: "refused", reason: 2, t, normal: [0, 0, 0] };
     }
     if (Math.abs(f) < eps) {
-      const dd = Math.max(f, 0);
+      // Land the crossing ON the surface: one secant step along the ray
+      // with the field's unit-normalized gradient at the query point (the
+      // kernel's closed-solid query's own rule — the band-edge advance
+      // left the hit short of the surface for oblique approaches and the
+      // grazing TIR crawl's children drifted). A touch whose zero is not
+      // ahead of the query point within the band's own scale is not a
+      // crossing: step past the band and keep marching.
+      const n0 = transportOpticalNormal(system, [px, py, pz], dir, eps);
+      const dN = dir[0] * n0[0] + dir[1] * n0[1] + dir[2] * n0[2];
+      const run = Math.abs(dN) > 1e-4 ? -f / dN : -1;
+      if (!(run >= 0 && run <= 32 * eps)) {
+        px += dir[0] * 2 * eps;
+        py += dir[1] * 2 * eps;
+        pz += dir[2] * 2 * eps;
+        t += 2 * eps;
+        continue;
+      }
+      const dd = run;
       const hx = px + dir[0] * dd;
       const hy = py + dir[1] * dd;
       const hz = pz + dir[2] * dd;
       const tc = t + dd;
+      // Same-boundary suppression, part 2, MEDIUM-AWARE (the kernel's
+      // rule): suppress only while the claimed medium continues beyond
+      // the landing — a union's corner region puts a DIFFERENT face
+      // within the anchor envelope, and the distance test alone ate an
+      // honest exit crossing there.
+      let suppress = false;
       if (
         anchorPresent &&
         Math.hypot(
@@ -255,6 +296,14 @@ export function transportSolidBoundaryQueryCPU(
         ) <=
           DIELECTRIC_ANCHOR_ENVELOPE_REL * eps
       ) {
+        const fBeyond = system.estimate([
+          hx + dir[0] * 2 * eps,
+          hy + dir[1] * 2 * eps,
+          hz + dir[2] * 2 * eps,
+        ]);
+        suppress = (inside && fBeyond < 0) || (!inside && fBeyond > 0);
+      }
+      if (suppress) {
         const skip = 2 * eps;
         px = hx + dir[0] * skip;
         py = hy + dir[1] * skip;
@@ -300,6 +349,9 @@ interface FixturePath {
   anchorPresent: boolean;
   anchorPoint: Vec3;
   bound: number;
+  /** The finite DDA's continuation state — threaded only when the trace
+   * runs the finite backend's query (inert, undefined, otherwise). */
+  finiteAnchor?: FiniteSolidAnchor | null;
 }
 
 /** A backend-supplied boundary query, used by the trace in place of
@@ -316,13 +368,88 @@ export type TransportQueryFn = (
   eps: number,
 ) => TransportBoundaryResult;
 
+// The finite-solid DDA's refusal reasons, past the shared vocabulary:
+// the DDA's own internal invariants, mapped identically by the kernel's
+// emission (surface-finite-solid-gpu.ts's literals 4/5/6).
+export const SURFACE_GPU_TRANSPORT_REASON_AMBIGUOUS_ANCHOR = 4;
+export const SURFACE_GPU_TRANSPORT_REASON_NONMONOTONE = 5;
+export const SURFACE_GPU_TRANSPORT_REASON_DEGENERATE_NORMAL = 6;
+
+/** A boundary result carrying the DDA's full anchor out — the chained
+ * queries' continuation state (the oracle's `FiniteSolidAnchor`). */
+export interface TransportFiniteBoundaryResult extends TransportBoundaryResult {
+  anchor: FiniteSolidAnchor | null;
+}
+
+/** The finite backend's query signature, as the trace twin consumes it:
+ * the anchor is the FULL DDA state (null = the non-anchored first call
+ * from a world origin), and `inside` is the caller-carried medium the
+ * DDA cross-checks. */
+export type TransportFiniteQueryFn = (
+  origin: Vec3,
+  dir: Vec3,
+  anchor: FiniteSolidAnchor | null,
+  inside: boolean,
+) => TransportFiniteBoundaryResult;
+
+/** The finite backend's boundary query, f64 — NOT a re-statement of the
+ * DDA: this adapter calls `finite-solid.ts`'s oracle directly (the
+ * qualified fixture's own arithmetic IS the twin), and maps its result
+ * onto the transport's vocabulary the way the kernel's emission maps its
+ * WGSL literals. An anchored query consumes the FULL anchor — f32
+ * reconstruction of cell identities is lossy, which is the whole point of
+ * the anchor contract. */
+export function transportFiniteBoundaryQueryCPU(
+  construction: FiniteSolidConstruction,
+  pose: FiniteSolidPose,
+  origin: Vec3,
+  dir: Vec3,
+  anchor: FiniteSolidAnchor | null,
+  inside: boolean,
+): TransportFiniteBoundaryResult {
+  const result = anchor
+    ? finiteSolidNextBoundaryFromAnchor(construction, pose, dir, {
+        inside,
+        anchor,
+      })
+    : finiteSolidNextBoundary(construction, pose, origin, dir, { inside });
+  if (result.kind === "boundary") {
+    return {
+      kind: "boundary",
+      reason: 0,
+      t: result.t,
+      normal: result.outwardNormal,
+      anchor: result.anchor,
+    };
+  }
+  if (result.kind === "miss") {
+    return { kind: "miss", reason: 0, t: 0, normal: [0, 0, 0], anchor: null };
+  }
+  const reason =
+    result.reason === "visit-cap"
+      ? SURFACE_GPU_TRANSPORT_REASON_VISIT_CAP
+      : result.reason === "state-mismatch"
+        ? SURFACE_GPU_TRANSPORT_REASON_STATE_MISMATCH
+        : result.reason === "ambiguous-anchor"
+          ? SURFACE_GPU_TRANSPORT_REASON_AMBIGUOUS_ANCHOR
+          : result.reason === "nonmonotone-crossing"
+            ? SURFACE_GPU_TRANSPORT_REASON_NONMONOTONE
+            : result.reason === "degenerate-projected-normal"
+              ? SURFACE_GPU_TRANSPORT_REASON_DEGENERATE_NORMAL
+              : SURFACE_GPU_TRANSPORT_REASON_INVALID_INPUT;
+  return { kind: "refused", reason, t: 0, normal: [0, 0, 0], anchor: null };
+}
+
 /** The kernel's `transportTrace`, f64: the primary split at the march's
  * own hit, then the oracle's work-list loop over the twin boundary query.
  * `caps` mirrors the kernel's `transportMaxPaths` option — both engines
  * must run the SAME budget, so the leg passes the value it compiled the
  * kernel with; omitted, the shipped runtime caps. `query` swaps the
- * boundary backend (the closed-solid emission's twin); the loop text is
- * otherwise the kernel's, term for term. */
+ * boundary backend (the closed-solid emission's twin); `finiteQuery`
+ * swaps it for the finite DDA's instead, threading the full anchor
+ * through the paths (the anchor out feeds each event's children exactly
+ * as the kernel's trace copies it); the loop text is otherwise the
+ * kernel's, term for term. */
 export function transportTraceCPU(
   system: TransportFixtureSystem,
   origin: Vec3,
@@ -332,6 +459,7 @@ export function transportTraceCPU(
   bgLinear: Vec3,
   caps?: { maxProcessedPaths: number; maxInterfaces: number },
   query?: TransportQueryFn,
+  finiteQuery?: TransportFiniteQueryFn,
 ): TransportTraceResult {
   const maxProcessed =
     caps?.maxProcessedPaths ?? SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS;
@@ -356,6 +484,11 @@ export function transportTraceCPU(
   };
   // --- the primary split (the march's own hit, entering from outside) ---
   const n0 = transportOpticalNormal(system, origin, dir, eps);
+  // The accepted hit may sit up to one pixel footprint OUTSIDE the
+  // surface; the child's anchored restart keeps only the 2·eps baseline
+  // (the kernel's rule — the query's own march reaches the surface and
+  // the anchor suppression absorbs the entry crossing).
+  const origin0: Vec3 = [origin[0], origin[1], origin[2]];
   const cosI0 = Math.abs(dir[0] * n0[0] + dir[1] * n0[1] + dir[2] * n0[2]);
   const f0 = dielectricFresnel(cosI0, 1, material.ior);
   const bend0 = dielectricRefract(dir, n0, 1, material.ior);
@@ -365,23 +498,23 @@ export function transportTraceCPU(
     dir[2] - 2 * (dir[0] * n0[0] + dir[1] * n0[1] + dir[2] * n0[2]) * n0[2],
   ];
   const refl0: FixturePath = {
-    origin,
+    origin: origin0,
     dir: reflDir0,
     energy: [f0, f0, f0],
     inside: false,
     interfaces: 1,
     anchorPresent: true,
-    anchorPoint: origin,
+    anchorPoint: origin0,
     bound: dielectricBranchBound([f0, f0, f0], ENVIRONMENT_BOUND),
   };
   const refr0: FixturePath = {
-    origin,
+    origin: origin0,
     dir: bend0.direction,
     energy: [1 - f0, 1 - f0, 1 - f0],
     inside: true,
     interfaces: 1,
     anchorPresent: true,
-    anchorPoint: origin,
+    anchorPoint: origin0,
     bound: dielectricBranchBound([1 - f0, 1 - f0, 1 - f0], ENVIRONMENT_BOUND),
   };
   const first0 = refl0.bound >= refr0.bound ? refl0 : refr0;
@@ -415,23 +548,38 @@ export function transportTraceCPU(
       break;
     }
     processed++;
-    const hit = query
-      ? query(
-          path.origin,
-          path.dir,
-          path.anchorPresent,
-          path.anchorPoint,
-          path.inside,
-          eps,
-        )
-      : transportBoundaryQueryCPU(
-          system,
-          path.origin,
-          path.dir,
-          path.anchorPresent,
-          path.anchorPoint,
-          eps,
-        );
+    let hitAnchor: FiniteSolidAnchor | null = null;
+    let hit: TransportBoundaryResult;
+    if (finiteQuery) {
+      const finiteHit = finiteQuery(
+        path.origin,
+        path.dir,
+        path.finiteAnchor ?? null,
+        path.inside,
+      );
+      hit = finiteHit;
+      if (finiteHit.kind === "boundary") {
+        hitAnchor = finiteHit.anchor;
+      }
+    } else if (query) {
+      hit = query(
+        path.origin,
+        path.dir,
+        path.anchorPresent,
+        path.anchorPoint,
+        path.inside,
+        eps,
+      );
+    } else {
+      hit = transportBoundaryQueryCPU(
+        system,
+        path.origin,
+        path.dir,
+        path.anchorPresent,
+        path.anchorPoint,
+        eps,
+      );
+    }
     if (hit.kind === "refused") {
       residual += path.bound;
       status = "unresolved";
@@ -440,7 +588,15 @@ export function transportTraceCPU(
       break;
     }
     if (hit.kind === "miss") {
-      if (path.inside) {
+      if (path.inside && path.interfaces !== 1) {
+        // An inside miss is unresolved, never a background hit — a path
+        // that entered through a real crossing cannot miss a closed
+        // solid, so this is an anomaly. The ONE exception is the primary
+        // refracted child (interfaces === 1): the display march's
+        // acceptance band catches near-miss grazes at silhouettes and
+        // cell edges, whose refracted child then misses the solid
+        // entirely — the ray slipped past the glass, and the honest
+        // terminal is the rear scene behind it (the kernel's rule).
         residual += path.bound;
         status = "unresolved";
         failure = 5;
@@ -459,7 +615,24 @@ export function transportTraceCPU(
     }
     const n = hit.normal;
     const dot = path.dir[0] * n[0] + path.dir[1] * n[1] + path.dir[2] * n[2];
-    const energy: Vec3 = path.inside
+    const childOrigin: Vec3 = [
+      path.origin[0] + hit.t * path.dir[0],
+      path.origin[1] + hit.t * path.dir[1],
+      path.origin[2] + hit.t * path.dir[2],
+    ];
+    // The interface's media derive from the SEGMENT GEOMETRY — which side
+    // of the surface the segment started on — not the inherited medium
+    // flag: on every honest event the two agree exactly, and on a stale
+    // one (the grazing TIR crawl's phantom band crossings, whose child
+    // used to escape the solid and miss) the geometry re-anchors the
+    // split. `path.inside` stays the claimed medium the boundary query
+    // cross-checks.
+    const incidentInGlass =
+      (path.origin[0] - childOrigin[0]) * n[0] +
+        (path.origin[1] - childOrigin[1]) * n[1] +
+        (path.origin[2] - childOrigin[2]) * n[2] <
+      0;
+    const energy: Vec3 = incidentInGlass
       ? [
           path.energy[0] *
             dielectricBeerThroughput(
@@ -481,13 +654,8 @@ export function transportTraceCPU(
             ),
         ]
       : [...path.energy];
-    const childOrigin: Vec3 = [
-      path.origin[0] + hit.t * path.dir[0],
-      path.origin[1] + hit.t * path.dir[1],
-      path.origin[2] + hit.t * path.dir[2],
-    ];
-    const fromIor = path.inside ? material.ior : 1;
-    const toIor = path.inside ? 1 : material.ior;
+    const fromIor = incidentInGlass ? material.ior : 1;
+    const toIor = incidentInGlass ? 1 : material.ior;
     const bend = dielectricRefract(path.dir, n, fromIor, toIor);
     const makeChild = (
       childEnergy: Vec3,
@@ -502,9 +670,10 @@ export function transportTraceCPU(
       anchorPresent: true,
       anchorPoint: childOrigin,
       bound: dielectricBranchBound(childEnergy, ENVIRONMENT_BOUND),
+      finiteAnchor: hitAnchor,
     });
     if (bend.tir) {
-      const child = makeChild(energy, bend.direction, path.inside);
+      const child = makeChild(energy, bend.direction, incidentInGlass);
       if (!push(child)) {
         status = "unresolved";
         failure = 3;
@@ -516,7 +685,7 @@ export function transportTraceCPU(
     const transmitted = makeChild(
       [energy[0] * (1 - f), energy[1] * (1 - f), energy[2] * (1 - f)],
       bend.direction,
-      !path.inside,
+      !incidentInGlass,
     );
     const reflected = makeChild(
       [energy[0] * f, energy[1] * f, energy[2] * f],
@@ -525,7 +694,7 @@ export function transportTraceCPU(
         path.dir[1] - 2 * dot * n[1],
         path.dir[2] - 2 * dot * n[2],
       ],
-      path.inside,
+      incidentInGlass,
     );
     const first =
       reflected.bound >= transmitted.bound ? reflected : transmitted;

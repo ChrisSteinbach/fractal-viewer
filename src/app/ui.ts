@@ -56,6 +56,12 @@ import {
 } from "../fractal/surface-finish";
 import type { ResolvedSurfaceFinish } from "../fractal/surface-finish";
 import {
+  resolveSurfaceOptics,
+  SURFACE_OPTICS_DISTORTION_CEILING,
+  SURFACE_OPTICS_SCALE_CEILING,
+  SURFACE_OPTICS_SCALE_FLOOR,
+} from "../fractal/surface-optics";
+import {
   PATTERN_DEFAULT_SCALE,
   resolveSurfacePattern,
   SURFACE_PATTERN_AXES,
@@ -73,6 +79,7 @@ import type {
 } from "../fractal/surface-pattern";
 import type {
   SurfaceFinish,
+  SurfaceOptics,
   Transform,
   Variation,
   VariationType,
@@ -110,6 +117,13 @@ import {
   surfaceLightingStarterValue,
   type SurfaceLightingStarterId,
 } from "./surface-lighting-starters";
+import {
+  SURFACE_TRANSMISSION_STARTER_PREFIX,
+  SURFACE_TRANSMISSION_STARTERS,
+  surfaceTransmissionStarterFromValue,
+  surfaceTransmissionStarterValue,
+  type SurfaceTransmissionStarterId,
+} from "./surface-transmission-starters";
 import type {
   PointsAxisProjection,
   PointsViewLayout,
@@ -238,6 +252,7 @@ type Geometry = Pick<
   | "colorSpeed"
   | "finish"
   | "surfacePattern"
+  | "optics"
 >;
 
 /** The final transform's geometry — the same, minus the fields that only mean
@@ -249,7 +264,12 @@ type Geometry = Pick<
  * one authored there. */
 type FinalGeometry = Omit<
   Geometry,
-  "weight" | "colorIndex" | "colorSpeed" | "finish" | "surfacePattern"
+  | "weight"
+  | "colorIndex"
+  | "colorSpeed"
+  | "finish"
+  | "surfacePattern"
+  | "optics"
 >;
 
 /** The current edit target: a transform index, the final transform, or none. */
@@ -275,6 +295,8 @@ export interface UiHandlers {
   onSurfaceLightingGuides?: () => void;
   /** Replace with a complete saved camera/look composition and enter Surface. */
   onSurfaceLightingStarter?: (id: SurfaceLightingStarterId) => void;
+  /** Replace with a complete transmission composition and enter Surface. */
+  onSurfaceTransmissionStarter?: (id: SurfaceTransmissionStarterId) => void;
   /**
    * The Hybrid schedule section's System B picker changed: `source` is
    * `""` (None — remove the block), `"preset:<key>"` (a preset menu entry)
@@ -774,6 +796,14 @@ function cloneSurfacePattern(
   return pattern === undefined ? undefined : { ...pattern };
 }
 
+/** Sparse clone of a transform's optional optics — {@link cloneFinish}'s
+ * twin on the third material sibling (flat object, spread is exact). */
+function cloneSurfaceOptics(
+  optics: SurfaceOptics | undefined,
+): SurfaceOptics | undefined {
+  return optics === undefined ? undefined : { ...optics };
+}
+
 /** The three w-mixing planes shared by `WExtension.rotation`/`.shear` (see
  * `types.ts`'s `Rotation4`/`Shear4`), in the 4D group's row order. One array
  * drives both the Rotation W and Shear W row-builders below since the two
@@ -1047,7 +1077,25 @@ interface FinishBundle {
   id: string;
   label: string;
   finish: ResolvedSurfaceFinish;
+  /** The bundle's optical model, when one exists — GLASS's whole point:
+   * picking it materializes `Transform.optics` (the selector IS the
+   * field), while its finish values are the classic set and materialize
+   * nothing. Every other bundle leaves this absent, and picking one
+   * CLEARS the transform's optics through the same rule that keeps no
+   * bundle storing a classic-valued finish field. */
+  optics?: SurfaceOptics;
 }
+
+/**
+ * The bundle that names the optical model: GLASS sets `Transform.optics`
+ * through the per-field write rule — its own six finish values are the
+ * classic set, so picking it materializes the optics ALONE and the
+ * document stays minimal (the transport replaces a glass slot's shaded
+ * output, so no finish number would be read). A legacy Translucent
+ * document keeps its thin-shell meaning: this bundle, not that one, is
+ * what selects the dielectric model.
+ */
+const GLASS_BUNDLE_ID = "glass";
 
 const FINISH_BUNDLES: readonly FinishBundle[] = [
   { id: "classic", label: "Classic", finish: CLASSIC_SURFACE_FINISH },
@@ -1112,6 +1160,12 @@ const FINISH_BUNDLES: readonly FinishBundle[] = [
     },
   },
   {
+    id: GLASS_BUNDLE_ID,
+    label: "Glass",
+    finish: CLASSIC_SURFACE_FINISH,
+    optics: { model: "dielectric" },
+  },
+  {
     id: "translucent",
     label: "Translucent",
     finish: {
@@ -1137,17 +1191,32 @@ const FINISH_CUSTOM_ID = "custom";
  * "Custom", because storing classic-valued fields as ABSENCE is how the
  * write rule keeps documents minimal.
  */
+/**
+ * Which bundle, if any, this finish+optics working copy is — every finish
+ * field within half its slider step of the bundle's (the same tolerance as
+ * {@link finishFieldIsClassic}, for the same round-trip reason) AND the
+ * optics model matching the bundle's ({@link opticsBundleMatches}). Both
+ * halves read RESOLVED values on purpose: a document carrying
+ * `{specular: 0}` alone resolves to Matte's six numbers exactly, and must
+ * read "Matte", not "Custom", because storing classic-valued fields as
+ * ABSENCE is how the write rule keeps documents minimal; likewise an
+ * optics block is named by its model, with the scale/distortion leaves
+ * free to drift.
+ */
 function finishBundleOf(
   finish: SurfaceFinish | undefined,
+  optics?: SurfaceOptics,
 ): FinishBundle | null {
   const resolved = resolveSurfaceFinish(finish);
   return (
-    FINISH_BUNDLES.find((bundle) =>
-      FINISH_FIELDS.every(
-        (key) =>
-          Math.abs(resolved[key] - bundle.finish[key]) <
-          FINISH_RANGES[key].step / 2,
-      ),
+    FINISH_BUNDLES.find(
+      (bundle) =>
+        opticsBundleMatches(optics, bundle.optics) &&
+        FINISH_FIELDS.every(
+          (key) =>
+            Math.abs(resolved[key] - bundle.finish[key]) <
+            FINISH_RANGES[key].step / 2,
+        ),
     ) ?? null
   );
 }
@@ -1161,9 +1230,153 @@ function finishBundleOf(
  * line describes.
  */
 function finishSummary(t: Transform): string[] {
-  if (isClassicSurfaceFinish(t.finish)) return [];
-  const bundle = finishBundleOf(t.finish);
-  return [`Finish: ${bundle ? bundle.label : "custom"}`];
+  const lines: string[] = [];
+  // The optics line first — the bundle that names the model is the
+  // material's headline, and a pure Glass transform's finish is the classic
+  // set, so the finish line below correctly says nothing about it.
+  if (t.optics) {
+    const bundle = finishBundleOf(t.finish, t.optics);
+    lines.push(`Optics: ${bundle?.optics ? bundle.label : "custom"}`);
+  }
+  if (isClassicSurfaceFinish(t.finish)) return lines;
+  const bundle = finishBundleOf(t.finish, t.optics);
+  lines.push(`Finish: ${bundle && !bundle.optics ? bundle.label : "custom"}`);
+  return lines;
+}
+
+// --------------------------------------------------------------- the optics
+
+/** The two authored optics fields, in row order — `SurfaceOptics`'s leaves
+ * under the `model` selector (the spine a bundle names). */
+type OpticsKey = "distortion" | "scale";
+
+const OPTICS_FIELDS: readonly OpticsKey[] = ["distortion", "scale"];
+
+const OPTICS_LABELS: Record<OpticsKey, string> = {
+  distortion: "Distortion",
+  scale: "Optical scale",
+};
+
+const OPTICS_TITLES: Record<OpticsKey, string> = {
+  distortion:
+    "Bends the view seen through the glass — the frosted look. 0 is straight transmission; the working value is about 0.08.",
+  scale:
+    "Tint depth against the scene's size. Higher is clearer, lower is denser; 1 is the qualified appearance. Logarithmic slider.",
+};
+
+/**
+ * Optics slider bounds. `distortion` is exactly the resolver's authored
+ * band (`surface-optics.ts`'s ceiling — the resolver clamps there too, so
+ * the slider never shows a number the transport is not using) at the same
+ * 0.01 step the finish scalars ride, which puts 0 (straight) and the
+ * distortion study's working value in easy reach. `scale` runs the
+ * resolver's whole `[0.01, 100]` band on the logarithmic position grid
+ * below — same "STEPS MATTER" rule as FINISH_RANGES: the default 1 is an
+ * exact grid point, so dragging back to it REMOVES the field.
+ */
+const OPTICS_RANGES: Record<
+  OpticsKey,
+  { min: number; max: number; step: number }
+> = {
+  distortion: {
+    min: 0,
+    max: SURFACE_OPTICS_DISTORTION_CEILING,
+    step: 0.01,
+  },
+  scale: {
+    min: SURFACE_OPTICS_SCALE_FLOOR,
+    max: SURFACE_OPTICS_SCALE_CEILING,
+    step: 0.01,
+  },
+};
+
+/** Each optics field's CLASSIC (absent-state) value — the number a drag
+ * back to removes the field for. Scale's is the qualified default 1,
+ * distortion's is the straight 0. */
+const OPTICS_CLASSIC: Record<OpticsKey, number> = {
+  distortion: 0,
+  scale: 1,
+};
+
+/**
+ * The optical-scale slider's position grid, in scale units — the pattern
+ * scale grid's construction one band over: a geometric sequence from the
+ * resolver's floor (0.01) to its ceiling (100) with the default 1 landing
+ * EXACTLY on the middle position (0.01 · 10000^(k/52) hits 1 at k = 26,
+ * since the band spans four decades and 10000^0.5 = 100). Every position is
+ * exactly representable, and a value dragged back to the default is an
+ * EXACT grid point — the finish fields' "back to classic removes the field"
+ * discipline, at logarithmic resolution. Out-of-band positions would show
+ * numbers the resolver clamps, so the grid spans exactly the band.
+ */
+const OPTICS_SCALE_GRID: readonly number[] = Array.from(
+  { length: 53 },
+  (_, k) =>
+    SURFACE_OPTICS_SCALE_FLOOR *
+    (SURFACE_OPTICS_SCALE_CEILING / SURFACE_OPTICS_SCALE_FLOOR) ** (k / 52),
+);
+
+/** The scale slider's position for a scale value — the nearest grid
+ * position, in decades, since the grid is log-spaced. Hostile
+ * out-of-domain input clamps into the grid's own span first. */
+function opticsScaleToSlider(scale: number): number {
+  if (!Number.isFinite(scale)) return 26;
+  const clamped = Math.max(
+    OPTICS_SCALE_GRID[0],
+    Math.min(OPTICS_SCALE_GRID[OPTICS_SCALE_GRID.length - 1], scale),
+  );
+  const decade = (s: number): number => Math.log10(s / OPTICS_SCALE_GRID[0]);
+  const target = decade(clamped);
+  let best = 0;
+  let bestDistance = Infinity;
+  for (let i = 0; i < OPTICS_SCALE_GRID.length; i++) {
+    const distance = Math.abs(decade(OPTICS_SCALE_GRID[i]) - target);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/** The scale value at a slider position — the grid itself. */
+function opticsScaleFromSlider(position: number): number {
+  const index = Math.max(
+    0,
+    Math.min(OPTICS_SCALE_GRID.length - 1, Math.round(position)),
+  );
+  return OPTICS_SCALE_GRID[index];
+}
+
+/** Readout text for one optics field: two decimals for both — scale's
+ * decades are coarse enough that two decimals separate adjacent grid
+ * points across the whole band. */
+function formatOpticsValue(key: OpticsKey, value: number): string {
+  return value.toFixed(2);
+}
+
+/**
+ * Does `value` sit on this optics field's CLASSIC value, to within half its
+ * slider step? The finish fields' {@link finishFieldIsClassic} tolerance
+ * rule, one material sibling over — the comparison has to tolerate
+ * SOMETHING because a slider's `value` string round-trips through
+ * `Number()` and a persisted value through the persist layer's rounding,
+ * and an exact `===` against 1 would leave a field authored at the default
+ * one ULP off, which is not "absent" on the wire.
+ */
+function opticsFieldIsClassic(key: OpticsKey, value: number): boolean {
+  return Math.abs(value - OPTICS_CLASSIC[key]) < OPTICS_RANGES[key].step / 2;
+}
+
+/** Does the transform's optics working copy carry exactly the model a
+ * bundle names? The model is the bundle's spine — the scale/distortion
+ * leaves may drift (the pattern family's own rule), and the bundle select
+ * keeps naming the bundle while they do. */
+function opticsBundleMatches(
+  optics: SurfaceOptics | undefined,
+  bundle: SurfaceOptics | undefined,
+): boolean {
+  return (optics?.model ?? undefined) === (bundle?.model ?? undefined);
 }
 
 // ------------------------------------------------------------- the pattern
@@ -1464,7 +1677,13 @@ function patternSummary(t: Transform): string[] {
  * `firstChoice` 0). Every other route shades each hit by the slot that
  * produced it, so every transform's finish reaches the frame. */
 function routeShadesHeadOnly(kind: SurfaceRouteKind | null): boolean {
-  return kind === "escape" || kind === "bulb" || kind === "escape4";
+  return (
+    kind === "escape" ||
+    kind === "bulb" ||
+    kind === "escape4" ||
+    kind === "finiteSolid" ||
+    kind === "finiteSolid4"
+  );
 }
 
 const FINISH_APPLICABILITY_NOTE_ID = "finishApplicabilityNote";
@@ -1722,6 +1941,10 @@ interface FinishControls {
    * (a disabled option, so it can be shown but never picked). */
   bundle: HTMLSelectElement;
   rows: Record<FinishKey, AxisControl>;
+  /** The two optics rows (distortion, optical scale) — dormant until the
+   * transform authors an optics model, like the pattern rows under a
+   * None family. */
+  opticsRows: Record<OpticsKey, AxisControl>;
   /** Adjacent reason for any Surface refusal affecting this map's finish. */
   note: HTMLElement;
 }
@@ -1798,6 +2021,15 @@ interface EditorState {
      * family returns to none, while `scale`/`strength` ride the finish
      * fields' per-field rule (see {@link Ui.writePatternFamily}). */
     surfacePattern: SurfacePattern | undefined;
+    /** Working copy of the transform's optional OPTICS — a CLONE of the
+     * document's object, `undefined` exactly when the transform authors no
+     * optics AND the user hasn't picked Glass (or dragged an optics row,
+     * which materializes the model). The sparse discipline as `finish`,
+     * applied per FIELD under the model spine: a leaf exists here only
+     * once its own slider moved off classic, and the object vanishes
+     * again when the last leaf returns there (see
+     * {@link Ui.writeOpticsField}). */
+    optics: SurfaceOptics | undefined;
     /** Working copy of the transform's optional POST-AFFINE (flam3's
      * `post=`, import-only this PR) — a CLONE of the document's object,
      * `undefined` exactly when the map authors none. No rows render for
@@ -1827,6 +2059,17 @@ interface EditorState {
    * `finishTouched`.
    */
   patternTouched: boolean;
+  /**
+   * The optics counterpart of {@link finishTouched}: until the user picks
+   * Glass (or drags an optics row, which materializes the model), the
+   * emitted geometry carries NO `optics` key at all, and once touched the
+   * working copy is emitted even when EMPTY — as an explicit
+   * `optics: undefined` — because dragging the last optics field back to
+   * classic (or picking a non-glass bundle) has to REMOVE the document's
+   * own key through the same merge. Reset on sync, exactly like
+   * `finishTouched`.
+   */
+  opticsTouched: boolean;
   controls: Record<Channel, AxisControl[]>;
   /** The Scale group's per-axis mirror toggles: pressed ⇔ that axis's
    * scale is negative (a reflection). */
@@ -2124,6 +2367,7 @@ export class Ui {
   private readonly redoBtn: HTMLButtonElement;
   private readonly presetSelect: HTMLSelectElement;
   private readonly surfaceLightingStarterGroup: HTMLOptGroupElement;
+  private readonly surfaceTransmissionStarterGroup: HTMLOptGroupElement;
   private readonly surfaceLightingControls: SurfaceLightingControls;
   private readonly surfaceLightingDisclosure: HTMLElement;
   private readonly surfaceRendererLightingGroup: HTMLElement;
@@ -2722,7 +2966,12 @@ export class Ui {
    * sessions. */
   private fourDSlabAvailable = true;
   private fourDSlabRefusal:
-    "swirl" | "tiling" | "condensation" | "sphereInversion" | null = null;
+    | "swirl"
+    | "tiling"
+    | "condensation"
+    | "sphereInversion"
+    | "finiteSolid"
+    | null = null;
   /**
    * The ACTIVE surface session's shape: `"escape"` for the escape-time fold
    * render and `"bulb"` for the Mandelbulb — the two FORWARD-ORBIT objects,
@@ -3002,6 +3251,18 @@ export class Ui {
       option.textContent = entry.label;
       this.surfaceLightingStarterGroup.appendChild(option);
     }
+    // The Glass transmission group: the same door, one group over, minted
+    // from SURFACE_TRANSMISSION_STARTERS so ids and labels keep one
+    // definition.
+    this.surfaceTransmissionStarterGroup = this.byId<HTMLOptGroupElement>(
+      "surfaceTransmissionStarterGroup",
+    );
+    for (const entry of SURFACE_TRANSMISSION_STARTERS) {
+      const option = doc.createElement("option");
+      option.value = surfaceTransmissionStarterValue(entry.id);
+      option.textContent = entry.label;
+      this.surfaceTransmissionStarterGroup.appendChild(option);
+    }
     this.surfaceLightingControls = new SurfaceLightingControls(
       this.byId("surfaceAuthoredLightingControls"),
       this.byId("surfaceAuthoredLightingNote"),
@@ -3237,7 +3498,12 @@ export class Ui {
         // composition can take as a source — they are whole scene documents,
         // and `resolveScheduleSourceTransforms` reads `preset:`/`saved:` keys
         // only, so a cloned `preset:starter:…` would resolve to nothing.
+        // The Glass transmission starters share the exclusion (same split,
+        // one prefix over).
         if (option.value.startsWith(SURFACE_LIGHTING_STARTER_PREFIX)) continue;
+        if (option.value.startsWith(SURFACE_TRANSMISSION_STARTER_PREFIX)) {
+          continue;
+        }
         const clone = this.doc.createElement("option");
         clone.value = `preset:${option.value}`;
         clone.textContent = option.textContent;
@@ -3888,6 +4154,13 @@ export class Ui {
         handlers.onSurfaceLightingStarter?.(starter);
         return;
       }
+      // The Glass transmission group: the same split, one composition
+      // family over.
+      const glassStarter = surfaceTransmissionStarterFromValue(value);
+      if (glassStarter) {
+        handlers.onSurfaceTransmissionStarter?.(glassStarter);
+        return;
+      }
       handlers.onPreset(value as Preset);
     });
     // The Hybrid schedule trio: the picker's value goes to the handler
@@ -4436,20 +4709,24 @@ export class Ui {
           "supports its zero-thickness slices."
         : this.fourDSlabRefusal === "sphereInversion"
           ? `Slab thickness is unavailable in a sphere-inversion scene: ${SPHERE_INVERSION_SLAB_REFUSAL}. A zero-thickness slice remains available.`
-          : this.fourDSlabRefusal === "condensation"
-            ? "Slab thickness is unavailable with a condensation shape: its " +
-              "carried solid needs its own set-distance evaluator for a " +
-              "segment. A zero-thickness slice remains available."
-            : this.fourDSlabRefusal === "tiling"
-              ? "Slab thickness is unavailable with Space tiling: folding a " +
-                "segment bends it across cell walls. A zero-thickness slice " +
-                "remains available."
-              : this.surfaceSessionKind === "escape"
-                ? "Slab thickness is unavailable in the escape-time render: its " +
-                  "orbit runs the maps FORWARD, with no branches to thread a " +
-                  "segment through, so a slab has no certificate at any fold " +
-                  "family. The IFS surface render keeps it."
-                : "";
+          : this.fourDSlabRefusal === "finiteSolid"
+            ? "Slab thickness is unavailable in a finite-solid scene: the " +
+              "exact cell walk threads one w-plane, and a segment has no " +
+              "cell walk. A zero-thickness slice remains available."
+            : this.fourDSlabRefusal === "condensation"
+              ? "Slab thickness is unavailable with a condensation shape: its " +
+                "carried solid needs its own set-distance evaluator for a " +
+                "segment. A zero-thickness slice remains available."
+              : this.fourDSlabRefusal === "tiling"
+                ? "Slab thickness is unavailable with Space tiling: folding a " +
+                  "segment bends it across cell walls. A zero-thickness slice " +
+                  "remains available."
+                : this.surfaceSessionKind === "escape"
+                  ? "Slab thickness is unavailable in the escape-time render: its " +
+                    "orbit runs the maps FORWARD, with no branches to thread a " +
+                    "segment through, so a slab has no certificate at any fold " +
+                    "family. The IFS surface render keeps it."
+                  : "";
     this.fourDSliceThicknessUnavailableNote.textContent =
       this.fourDSliceThicknessRow.title;
     this.fourDSliceThicknessUnavailableNote.classList.toggle(
@@ -4499,7 +4776,12 @@ export class Ui {
   setFourDSlabAvailable(
     available: boolean,
     reason:
-      "swirl" | "tiling" | "condensation" | "sphereInversion" | null = null,
+      | "swirl"
+      | "tiling"
+      | "condensation"
+      | "sphereInversion"
+      | "finiteSolid"
+      | null = null,
   ): void {
     if (
       this.fourDSlabAvailable === available &&
@@ -8503,6 +8785,10 @@ export class Ui {
       finish: cloneFinish(transform.finish),
       // The pattern's own clone — see {@link cloneSurfacePattern}.
       surfacePattern: cloneSurfacePattern(transform.surfacePattern),
+      // The optics' own clone — see {@link cloneSurfaceOptics}. Same raw
+      // presence discipline: the rows edit this object in place and the
+      // document's own stays untouched until the edit is emitted.
+      optics: cloneSurfaceOptics(transform.optics),
       // The per-transform POST-AFFINE (flam3's post=, import-only): cloned
       // deep and RAW-presence like the color pair, so an imported post
       // SURVIVES an editing session — every emitted edit carries it back —
@@ -8622,6 +8908,7 @@ export class Ui {
         : this.buildFinishControls(
             geometry.finish,
             geometry.surfacePattern,
+            geometry.optics,
             openGroup,
           );
     // Pattern sits directly below Finish: the other per-map property a
@@ -8646,6 +8933,7 @@ export class Ui {
       geometry,
       finishTouched: false,
       patternTouched: false,
+      opticsTouched: false,
       controls,
       mirror,
       weightControl,
@@ -9676,6 +9964,7 @@ export class Ui {
   private buildFinishControls(
     finish: SurfaceFinish | undefined,
     pattern: SurfacePattern | undefined,
+    optics: SurfaceOptics | undefined,
     openGroup: string,
   ): FinishControls {
     const group = this.createEditorGroup("Finish", openGroup);
@@ -9694,7 +9983,7 @@ export class Ui {
     this.appendPanelExplainer(
       group,
       "How Finish works",
-      "Material sets Finish and Pattern together; a bundle sets all six finish controls; Classic clears them. Metal keeps the transform tint, while Chrome stays neutral. Bright surroundings make reflections easier to see.",
+      "Material sets Finish and Pattern together; a bundle sets all six finish controls; Classic clears them. Metal keeps the transform tint, while Chrome stays neutral; bright surroundings make reflections easier to see. Glass transmits the scene behind the map; its rows tune tint and bend.",
     );
 
     // One stable adjacent applicability disclosure for every refusal class:
@@ -9812,21 +10101,117 @@ export class Ui {
       group.appendChild(row);
       rows[key] = { slider, readout, numeric };
     }
-    this.syncFinishBundleSelect(bundle, finish);
+
+    // The optics rows — the third material sibling's leaves under the
+    // model selector a bundle (Glass) sets. Resolved display like the six
+    // finish rows: the resolver's clamp is the value the transport reads,
+    // so the readout never shows a number the renderer is not using.
+    // Dormant until an optics model is authored (the pattern rows' own
+    // family gate): the transport contract authoring story is "pick Glass,
+    // then tune" — a distortion drag on a non-optics map would otherwise
+    // silently OPT IN, so the rows stay disabled and the bundle selects
+    // the model.
+    const opticsResolved = resolveSurfaceOptics(optics, 1);
+    const opticsRows = {} as Record<OpticsKey, AxisControl>;
+    for (const key of OPTICS_FIELDS) {
+      const range = OPTICS_RANGES[key];
+      const value = opticsResolved
+        ? key === "scale"
+          ? opticsResolved.radius // derived radius 1, so radius IS the scale
+          : opticsResolved.distortion
+        : OPTICS_CLASSIC[key];
+      const row = this.doc.createElement("div");
+      row.className = "editor-row finish-row optics-row";
+
+      const name = this.doc.createElement("span");
+      name.className = "axis";
+      name.textContent = OPTICS_LABELS[key];
+
+      const slider = this.doc.createElement("input");
+      slider.type = "range";
+      slider.setAttribute("aria-label", `Optics ${OPTICS_LABELS[key]}`);
+      slider.setAttribute("aria-describedby", `${hint.id} ${note.id}`);
+      slider.title = OPTICS_TITLES[key];
+
+      const readout = this.doc.createElement("span");
+      readout.className = "value";
+      readout.textContent = formatOpticsValue(key, value);
+
+      slider.addEventListener("input", () => {
+        const raw = Number(slider.value);
+        this.onOpticsInput(
+          key,
+          key === "scale" ? opticsScaleFromSlider(raw) : raw,
+        );
+      });
+
+      row.append(name, slider, readout);
+
+      const numericOptions = {
+        slider,
+        readout,
+        min: range.min,
+        max: range.max,
+        step: range.step,
+        value,
+        ariaLabel: `Optics ${OPTICS_LABELS[key]}`,
+        onNumberInput: (numeric: number) => this.onOpticsInput(key, numeric),
+      };
+      let numeric: RangeNumberControl;
+      if (key === "scale") {
+        // The logarithmic position grid: the slider carries a POSITION
+        // while the readout carries the MODEL value, the pattern scale
+        // row's shape — an authored value that is not a grid point still
+        // reads honestly, and snaps to the grid the moment the user drags.
+        slider.min = "0";
+        slider.max = String(OPTICS_SCALE_GRID.length - 1);
+        slider.step = "1";
+        slider.value = String(opticsScaleToSlider(value));
+        numeric = this.pairDynamicRange({
+          ...numericOptions,
+          adapter: {
+            rangeToNumber: opticsScaleFromSlider,
+            numberToRange: opticsScaleToSlider,
+          },
+        });
+      } else {
+        slider.min = String(range.min);
+        slider.max = String(range.max);
+        slider.step = String(range.step);
+        slider.value = String(value);
+        numeric = this.pairDynamicRange(numericOptions);
+      }
+      group.appendChild(row);
+      opticsRows[key] = { slider, readout, numeric };
+    }
+
+    // The optics restriction note — static, one honest sentence beside the
+    // rows it qualifies (the panel-ia dormant-disclosure rule): the
+    // transport's routing admission, named so an authored-but-unrouted
+    // material is never a silent no-op.
+    const opticsNote = this.doc.createElement("p");
+    opticsNote.className = "flame-note-info";
+    opticsNote.textContent =
+      "Transmission resolves on closed-solid (emitter) and finite-cell (Menger) scenes — load a Glass starter to see it; other surfaces keep the classic finish.";
+    group.appendChild(opticsNote);
+
+    this.syncFinishBundleSelect(bundle, finish, optics);
     material.value =
       materialPresetOf(finish, pattern)?.id ?? MATERIAL_CUSTOM_ID;
 
     this.transformEditor.appendChild(group);
-    return { group, material, bundle, rows, note };
+    return { group, material, bundle, rows, opticsRows, note };
   }
 
   /** Point the bundle select at whichever bundle the working copy IS, or at
-   * the disabled "Custom" entry when it is nobody's. */
+   * the disabled "Custom" entry when it is nobody's. The optics model
+   * participates in the match (see {@link finishBundleOf}). */
   private syncFinishBundleSelect(
     bundle: HTMLSelectElement,
     finish: SurfaceFinish | undefined,
+    optics?: SurfaceOptics,
   ): void {
-    bundle.value = finishBundleOf(finish)?.id ?? FINISH_CUSTOM_ID;
+    bundle.value = finishBundleOf(finish, optics)?.id ?? FINISH_CUSTOM_ID;
   }
 
   /** Point the material select at whichever starting point the current
@@ -9845,13 +10230,27 @@ export class Ui {
   private syncFinishControls(): void {
     const editor = this.editor;
     if (!editor || !editor.finishControls) return;
-    const { rows, bundle } = editor.finishControls;
+    const { rows, opticsRows, bundle } = editor.finishControls;
     const resolved = resolveSurfaceFinish(editor.geometry.finish);
     for (const key of FINISH_FIELDS) {
       rows[key].numeric.setValue(resolved[key]);
       rows[key].readout.textContent = formatFinishValue(key, resolved[key]);
     }
-    this.syncFinishBundleSelect(bundle, editor.geometry.finish);
+    const opticsResolved = resolveSurfaceOptics(editor.geometry.optics, 1);
+    for (const key of OPTICS_FIELDS) {
+      const value = opticsResolved
+        ? key === "scale"
+          ? opticsResolved.radius // derived radius 1, so radius IS the scale
+          : opticsResolved.distortion
+        : OPTICS_CLASSIC[key];
+      opticsRows[key].numeric.setValue(value);
+      opticsRows[key].readout.textContent = formatOpticsValue(key, value);
+    }
+    this.syncFinishBundleSelect(
+      bundle,
+      editor.geometry.finish,
+      editor.geometry.optics,
+    );
     this.syncMaterialSelect();
     this.applyMaterialDisclosure();
   }
@@ -9904,10 +10303,19 @@ export class Ui {
       return "";
     };
     if (editor.finishControls) {
-      const { group, material, bundle, rows, note } = editor.finishControls;
+      const { group, material, bundle, rows, opticsRows, note } =
+        editor.finishControls;
       material.disabled = refused;
       bundle.disabled = refused;
       for (const key of FINISH_FIELDS) rows[key].numeric.setDisabled(refused);
+      // The optics rows carry one gate beyond the refusal classes: the
+      // dormant-authored state (the pattern rows' hasFamily rule) — no
+      // optics model on this map means the leaves have nothing to tune,
+      // and the bundle is the visible way to opt in.
+      const opticsAuthored = editor.geometry.optics !== undefined;
+      for (const key of OPTICS_FIELDS) {
+        opticsRows[key].numeric.setDisabled(refused || !opticsAuthored);
+      }
       this.setReasonNote(note, reason("finish"));
       note.classList.toggle("hidden", !refused);
       group.classList.toggle("material-inert", refused);
@@ -9965,8 +10373,54 @@ export class Ui {
     this.syncFinishBundleSelect(
       editor.finishControls.bundle,
       editor.geometry.finish,
+      editor.geometry.optics,
     );
     this.syncMaterialSelect();
+    this.emitGeometry();
+  }
+
+  /**
+   * The ONE write into the optics working copy — {@link writeFinishField}'s
+   * twin on the third material sibling: a value on the field's classic
+   * number ({@link opticsFieldIsClassic}) DELETES the field. The model is
+   * the object's spine, never a leaf — a pure `{model: "dielectric"}` is
+   * the qualified Glass default and stays — so the object itself drops
+   * only through the bundle rule (a non-glass pick clears it), not
+   * through a leaf returning to classic. Any other value materializes the
+   * field — and the object, whose required `model` spine takes the only
+   * shipped model, which is what makes a Distortion or Optical-scale drag
+   * OPT IN visibly (the rows are dormant until an optics exists; the
+   * first write creates it with the dielectric model and the Glass
+   * bundle's own rule).
+   */
+  private writeOpticsField(key: OpticsKey, value: number): void {
+    const editor = this.editor;
+    if (!editor) return;
+    editor.opticsTouched = true;
+    if (opticsFieldIsClassic(key, value)) {
+      const optics = editor.geometry.optics;
+      if (!optics) return;
+      // Deleting the last leaf leaves the model spine — the qualified
+      // Glass default — which is real data, not absence.
+      delete optics[key];
+    } else {
+      (editor.geometry.optics ??= { model: "dielectric" })[key] = value;
+    }
+  }
+
+  /** One optics slider moved: write exactly its field, refresh its readout
+   * and the bundle select, and emit. */
+  private onOpticsInput(key: OpticsKey, value: number): void {
+    const editor = this.editor;
+    if (!editor || !editor.finishControls) return;
+    this.writeOpticsField(key, value);
+    editor.finishControls.opticsRows[key].readout.textContent =
+      formatOpticsValue(key, value);
+    this.syncFinishBundleSelect(
+      editor.finishControls.bundle,
+      editor.geometry.finish,
+      editor.geometry.optics,
+    );
     this.emitGeometry();
   }
 
@@ -9981,6 +10435,18 @@ export class Ui {
     if (!entry) return;
     for (const key of FINISH_FIELDS) {
       this.writeFinishField(key, entry.finish[key]);
+    }
+    // The optics model rides the same bundle rule one level up: Glass
+    // materializes the dielectric selector (its finish fields are the
+    // classic set, so nothing else is stored), every other bundle CLEARS
+    // the optics — a bundle fully determines the material, so picking
+    // Matte off a glass map cannot leave the glass half-live behind it.
+    if (entry.optics) {
+      editor.opticsTouched = true;
+      editor.geometry.optics = { ...entry.optics };
+    } else {
+      editor.opticsTouched = true;
+      editor.geometry.optics = undefined;
     }
     this.syncFinishControls();
     this.emitGeometryAndCommit();
@@ -11215,12 +11681,14 @@ export class Ui {
       colorSpeed: transform.colorSpeed,
       finish: cloneFinish(transform.finish),
       surfacePattern: cloneSurfacePattern(transform.surfacePattern),
+      optics: cloneSurfaceOptics(transform.optics),
     };
     // The working copy IS the document again, so the finish and pattern
     // keys go back to riding only on presence (see EditorState.finishTouched
     // / patternTouched).
     editor.finishTouched = false;
     editor.patternTouched = false;
+    editor.opticsTouched = false;
     for (const channel of CHANNEL_ORDER) {
       const spec = CHANNELS[channel];
       editor.controls[channel].forEach((control, axis) => {
@@ -11492,6 +11960,17 @@ export class Ui {
             }
           : editor.patternTouched
             ? { surfacePattern: undefined }
+            : {}),
+        // The optics' twin: the object materializes only once a bundle
+        // names the model (or an optics row drags it into being), and once
+        // touched an EMPTY working copy is emitted as an explicit
+        // `optics: undefined` so returning to classic REMOVES the
+        // document's own key through the same merge. See
+        // EditorState.opticsTouched.
+        ...(editor.geometry.optics !== undefined
+          ? { optics: cloneSurfaceOptics(editor.geometry.optics) }
+          : editor.opticsTouched
+            ? { optics: undefined }
             : {}),
       });
     }

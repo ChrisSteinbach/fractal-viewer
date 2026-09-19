@@ -2858,6 +2858,10 @@
                   600-Cell Medallions (4D)
                 </option>
               </optgroup>
+              <optgroup label="Glass">
+                <option value="glassMenger">Glass Menger</option>
+                <option value="glassMenger4">Glass Hyper-Menger (4D)</option>
+              </optgroup>
               <!-- Complete lit compositions, minted from
                    SURFACE_LIGHTING_STARTERS so their ids and labels keep one
                    definition. Their `starter:` values are not preset keys —
@@ -2865,6 +2869,14 @@
               <optgroup
                 id="surfaceLightingStarterGroup"
                 label="Lit interiors"
+              ></optgroup>
+              <!-- Complete transmission compositions, minted from
+                   SURFACE_TRANSMISSION_STARTERS the same way. Their
+                   `glass:` values are not preset keys — see
+                   surface-transmission-starters.ts. -->
+              <optgroup
+                id="surfaceTransmissionStarterGroup"
+                label="Glass transmission"
               ></optgroup>
             </select>
           </label>

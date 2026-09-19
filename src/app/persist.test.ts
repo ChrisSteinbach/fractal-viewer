@@ -8200,6 +8200,104 @@ describe("sphere-inversion codec (the scene's sphere-inversion block)", () => {
   });
 });
 
+describe("finite-solid codec (the scene's finite-solid block)", () => {
+  it("encodes a scene without the block byte-identically to one predating the field", () => {
+    const s = baseSnapshot();
+    const withUndefined = { ...s, finiteSolid: undefined };
+    expect(encodeScene(withUndefined)).toBe(encodeScene(s));
+    expect(decodeScene(encodeScene(s))!.finiteSolid).toBeUndefined();
+  });
+
+  it("round-trips an authored block exactly", () => {
+    const block = { shape: "hyperMenger", level: 2 };
+    expect(
+      decodeScene(encodeScene({ ...baseSnapshot(), finiteSolid: block }))!
+        .finiteSolid,
+    ).toEqual(block);
+  });
+
+  it("preserves a refused block verbatim through decode then encode: unknown shape, out-of-band level and a future field", () => {
+    const block = {
+      shape: "sponge",
+      level: 9,
+      warp: [1, { nested: null }],
+    } as unknown as SceneSnapshot["finiteSolid"];
+    const hash = encodeScene({ ...baseSnapshot(), finiteSolid: block });
+    const decoded = decodeScene(hash)!;
+    expect(decoded.finiteSolid).toEqual(block);
+    expect(encodeScene(decoded)).toBe(hash);
+  });
+
+  it("keeps the authored key order, so a re-encoded hash is byte-identical", () => {
+    const hash = encodeScene({
+      ...baseSnapshot(),
+      finiteSolid: { level: 2, shape: "menger" },
+    });
+    expect(encodeScene(decodeScene(hash)!)).toBe(hash);
+    expect(Object.keys(decodeScene(hash)!.finiteSolid!)).toEqual([
+      "level",
+      "shape",
+    ]);
+  });
+
+  it("drops a value that cannot be a block (array, scalar, null) to absent without rejecting the scene", () => {
+    for (const raw of [[1, 2], 5, "menger", null]) {
+      const body = encodeScene(baseSnapshot())
+        .slice(3)
+        .replace(/-/g, "+")
+        .replace(/_/g, "/");
+      const json = JSON.parse(
+        atob(body + "=".repeat((4 - (body.length % 4)) % 4)),
+      ) as Record<string, unknown>;
+      json.finiteSolid = raw;
+      const hash =
+        "v1=" +
+        btoa(JSON.stringify(json))
+          .replace(/\+/g, "-")
+          .replace(/\//g, "_")
+          .replace(/=+$/, "");
+      const decoded = decodeScene(hash);
+      expect(decoded).not.toBeNull();
+      expect(decoded!.finiteSolid).toBeUndefined();
+    }
+  });
+
+  it("carries the block through toSnapshot and fromSnapshot, and a block-less snapshot clears a base session's block", () => {
+    const block = { shape: "menger", level: 2 };
+    const state = fromSnapshot(
+      { ...baseSnapshot(), finiteSolid: block },
+      initialState(true),
+    );
+    expect(state.finiteSolid).toEqual(block);
+    expect(toSnapshot(state).finiteSolid).toEqual(block);
+    const cleared = fromSnapshot(baseSnapshot(), state);
+    expect(cleared.finiteSolid).toBeUndefined();
+  });
+
+  it("writes the maps' geometry lossless while the block is present: 1/3 must survive reload for the construction gate", () => {
+    const third = { ...baseSnapshot() };
+    third.transforms = third.transforms.map((t) => ({
+      ...t,
+      scale: [1 / 3, 1 / 3, 1 / 3] as [number, number, number],
+    }));
+    // Without the block the wire rounds to 4 decimals (the compact v1
+    // contract): 1/3 -> 0.3333, and the decoded map is NOT the exact
+    // third-contraction the finite admission requires.
+    const plain = decodeScene(encodeScene(third))!;
+    expect(plain.transforms[0].scale[0]).toBeCloseTo(0.3333, 12);
+    expect(plain.transforms[0].scale[0]).not.toBe(1 / 3);
+    // With the block the same map rides the wire losslessly — the swirl
+    // final's own lossless-geometry rule, one admission over.
+    const glass = decodeScene(
+      encodeScene({ ...third, finiteSolid: { shape: "menger", level: 2 } }),
+    )!;
+    expect(glass.transforms[0].scale[0]).toBe(1 / 3);
+    expect(encodeScene(glass)).toBe(
+      encodeScene({ ...third, finiteSolid: { shape: "menger", level: 2 } }),
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The 4D pose's optional WORLD hyperplane (FourDPose.sliceW). Written beside
 // the normalized sliceCenter, never instead of it: a reader that predates the

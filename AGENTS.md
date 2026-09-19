@@ -902,16 +902,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     classifier design, the trap-normalizer measurement history and its
     corrections — in `docs/surface-gpu-kernels.md`.
   - `surface-grid.ts` — empty-space skip grid for the 3D surface march:
-    conservative distance floors (cell centers, cutoff `cellRadius` — at/above
-    the cutoff the return is the exact full-descent value, below it 0 is the
-    only safe store — f32-FLOORED so quantization never rounds a bound up),
-    priced per-system by `surfaceGridEstimator` (`"plain"` for fold
-    systems — the estimator the fold GLSL actually marches, measured ~1.5x
-    cheaper with near-identical floors — `"refined"` for affine). The 3D march
-    samples it before paying a descent; `pickSurfaceGridResolution` sizes the
-    build itself from a measured pilot slab, downshifting a 64/48/32 ladder to
-    fit a 3s budget (floored at 32, never skipped). Module doc carries the
-    validity chain and the 3D-only refusal.
+    conservative distance floors, priced per-system by
+    `surfaceGridEstimator`, sampled by the 3D march before paying a
+    descent; `pickSurfaceGridResolution` sizes the build from a measured
+    pilot slab against a 3s budget. Module doc carries the validity chain
+    (floor semantics, the pricing classes) and the 3D-only refusal.
   - `tiling.ts` — the ONE space-tiling vocabulary and resolver. The legacy
     finite arm stays `{group, clip?}`; mirrored affine-A1 repetition is
     `{kind: "lattice", cellScale, clip?}` with required finite
@@ -973,31 +968,42 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     Finish persists/morphs/mutates like fold lengths; random-system
     never rolls it. TRANSMISSION: finite-solid 3D/4D glass; envelope
     DECIDED. `surface-dielectric.ts` is the ONE transport oracle;
-    contract:
-    `docs/surface-dielectric-transport.md`. Optics
-    (`surface-optics.ts`: per-slot `Transform.optics`) is LIVE on
-    compute affine/affine4/fold4 (fold REFUSED on its measured timeout;
-    forward unadmitted). The closed-solid
-    backend (the SIGNED condensation-union query — the sign IS the
-    inside traversal) RESOLVES in both dimensions; estimator arms
-    vacuous on IFS hits (disclosed).
-    REAR SCENE DELIVERED in physical ray order — later
-    fractal hits ARE its boundary events (misses CERTIFY
-    the interval; no rear march), then plane, then background;
-    exhaustion never relabelled; the floor corridor's
-    shadow attenuates STRAIGHT through the solid (per-channel
-    Fresnel×Beer, TIR dark). DISTORTION DELIVERED: the
-    accepted virtual-slab offset (`dielectricSlabDisplacement`,
-    the bend study's re-export) displaces exit terminals'
-    rear ORIGIN only — background unbent, front Fresnel untouched; one
-    authored word, 0 = straight byte-identically; tile leg rides .10's
-    routing. Pattern-albedo REFUSED
-    (`scripts/finish-pattern.harness.ts`).
+    contract: `docs/surface-dielectric-transport.md` (which owns the
+    backend routing, panel, starters and distortion records). Optics
+    (`surface-optics.ts`) is LIVE on compute affine/affine4/fold4; the
+    closed-solid backend (the SIGNED condensation-union query) RESOLVES
+    and is ROUTED (`surface-optics-backend.ts`) where the composition
+    admits it — one decision per session, both engines.
     Cinematic rigs (`surface-lighting.ts`): ONE both-dialect emitter,
     unresolved rays dark;
     NO PARTICIPATING MEDIUM (measured cost; a look call). Record:
     `docs/cinematic-surface-lighting.md`.
-  - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
+  - `finite-solid.ts` — the FRACTAL GLASS oracle (the owner's scope
+    correction — glass on the fractal): the study's finite level-N cell
+    decomposition and posed 4D hyper-Menger slice, co-extensive with the
+    optical solid. Exact ternary grid (≤1 middle coordinate per
+    level), admitted from the document's own maps, level 0..2 (the
+    admission's terms: the contract's section); the exact DDA is the
+    STUDY'S oracle, never a marched min-SDF (the abutting-seam mechanism —
+    the contract's finite-solid section owns the argument). The display
+    marcher's estimator is the CERTIFIED HYBRID
+    (`finiteSolidDisplayDistance`) — the plain level-1 min would SEAL
+    every tunnel mouth. THE KERNEL EMISSION LANDED (both dimensions'
+    bodies — the hybrid DE and the exact DDA with the full anchor
+    contract; the bindingless wire, the 4D pose tail and the f32 twin's
+    discipline: the contract's kernel-emission section owns it all).
+    THE ROUTING LANDED: the document's optional `finiteSolid` block
+    `{shape, level}` (verbatim-persisted, the sphere-inversion rule;
+    lossless maps on the wire while present — 1/3 dies in round4)
+    reroutes Surface to the finite kinds (`deriveSurfaceEligibility`; maps
+    must BE the shipped construction, compute-only), the
+    `glassMenger`/`glassMenger4` presets carry it, and the packers'
+    `mapCount = 1` is load-bearing (the shade entry's slot clamp reads it;
+    0 made the optics lane read out of bounds and every transport path
+    skip). RESIDUAL: depth-2 anchored restarts refuse on the driver where
+    the f32 twin walks clean — the glass renders dark; the twin's 3D rows
+    fix made the 3D bench leg genuine (near-tie cap recalibrated). The
+    contract's routing section owns the numbers. - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its
     hybrids, for exactly the systems the IFS gate refuses (one or more
     flat maps of which at least one does NOT contract, no final transform,

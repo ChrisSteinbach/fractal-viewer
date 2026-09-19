@@ -5,6 +5,11 @@ import {
 } from "../fractal/affine4";
 import { scenePartsAreNonFlat } from "../fractal/scene-dimension";
 import {
+  finiteSolidBoundingRadius,
+  resolveFiniteSolid,
+} from "../fractal/finite-solid";
+import { BALLOON_CENTRE_REFUSAL_REASON } from "./panel-applicability";
+import {
   resolveSphereInversion,
   sphereInversionGenerationSlots,
   type SphereInversionConstruction,
@@ -64,6 +69,7 @@ import {
 import {
   isForwardTarget,
   isSphereInversionTarget,
+  isFiniteSolidTarget,
   setSurfaceComputeSchedulePins,
   setSurfaceComputeTrace,
   SurfaceComputeRenderer,
@@ -73,6 +79,7 @@ import {
 } from "./surface-compute";
 import { surfaceComputeForceFrameKey } from "./surface-force-frame-key";
 import { createSurfaceLightingStarter } from "./surface-lighting-starters";
+import { createSurfaceTransmissionStarter } from "./surface-transmission-starters";
 import { setSurfaceLighting } from "./state";
 import {
   exactSurfaceRayCensus,
@@ -103,6 +110,10 @@ import {
   surfaceSlotMaterials,
   surfaceTrapIndices,
 } from "./surface-slots";
+import {
+  surfaceClosedSolidAdmitted,
+  type SurfaceOpticsBackend,
+} from "./surface-optics-backend";
 import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
 import type { SurfaceNativeCalibration } from "../fractal/surface-pattern";
 import {
@@ -168,6 +179,7 @@ import {
   PRESET_NAMES,
   PRESET_SCHEDULES,
   PRESET_SPHERE_INVERSIONS,
+  PRESET_FINITE_SOLIDS,
   PRESET_SYMMETRIES,
   PRESET_SURFACE_PALETTES,
   PRESET_SURFACE_ROOMS,
@@ -379,6 +391,7 @@ import {
   setSymmetryOrder,
   setSymmetryTwist,
   setSphereInversion,
+  setFiniteSolid,
   setTiling,
   setTransforms,
   setTransformEmitter,
@@ -625,6 +638,10 @@ interface SurfaceStateProbe {
   mode: RenderMode;
   /** Which engine owns the session — null outside surface mode. */
   engine: "compute" | "webgl" | null;
+  /** The session's decided optical boundary backend — null outside
+   * surface mode. `"finiteSolid"` marks the finite cores' DDA backend,
+   * compute-only. */
+  opticsBackend: SurfaceOpticsBackend | null;
   /** The renderer actually executing this surface session. */
   backend: { label: string | null; software: boolean } | null;
   /** Exact terminal statuses for the current completed settle pass. */
@@ -4668,7 +4685,13 @@ async function main(): Promise<void> {
   // wraps either core in descendLens's branch sweep, so the lens-over-affine
   // field class routes here too, off the fragile fold GLSL entirely). Plain
   // affine systems use WebGL's refined estimator and grid unless an authored
-  // rig needs compute's separately scheduled surface and mist visibility.
+  // rig needs compute's separately scheduled surface and mist visibility —
+  // and the same for a live OPTICS wire (checked at the call site, where
+  // the session's derived materials exist): the closed-solid backend the
+  // routing admits on condensation sessions is a compute capability, so an
+  // optics-authored plain-affine session prefers compute exactly like a
+  // lit one (the GLSL fallback keeps the lane for a hardware rasterizer,
+  // the software strip still strips it).
   function surfaceComputeEligible(de: SurfaceDE): boolean {
     return (
       surfaceComputeAvailable() &&
@@ -4827,6 +4850,21 @@ async function main(): Promise<void> {
     ui.setSoftwareRendererNote(null);
   }
 
+  /**
+   * The session's optical-transport boundary backend, decided ONCE per
+   * start() in the routing branches that can carry a live optics gate (the
+   * IFS arms and the finite arm) and consumed by BOTH engines: the compute
+   * create below and the GLSL fallback's setSurfaceMaterials. Initialized
+   * to the estimator — the absent path's meaning — because every branch
+   * that leaves it there (forward, sphere-inversion) derives a wire whose
+   * optics gate is off, so the answer is inert; a future branch that
+   * forgets to decide degrades to today's behavior, never to a backend
+   * its composition cannot follow. `"finiteSolid"` is the finite arm's
+   * COMPUTE-ONLY answer: the GLSL stamp sites narrow it back down because
+   * a finite session can never reach them (it goes compute or exits).
+   */
+  let sessionOpticsBackend: SurfaceOpticsBackend = "estimator";
+
   // The compute path's first-frame gate — the compile gate's twin, one
   // async resource over: device + pipeline instead of a GLSL link. Same
   // token discipline, same deferred canvas-guide retirement
@@ -4853,6 +4891,12 @@ async function main(): Promise<void> {
       );
       slotColors = slots.colors;
       slotTraps = slots.trapIndices;
+    } else if (isFiniteSolidTarget(target)) {
+      // The finite cores' ONE slot: the hit-info pins firstChoice 0, so
+      // the head map's color lane is the whole wire — the forward
+      // families' exact shape, one route kind over.
+      slotColors = [escapeSlotColor()];
+      slotTraps = [0];
     } else if (isForwardTarget(target)) {
       slotColors = [escapeSlotColor()];
       slotTraps = [0];
@@ -4871,8 +4915,16 @@ async function main(): Promise<void> {
       slotColors,
       slotTraps,
       // The session's unified materials — null for classic+none — keeping
-      // both codegen flags and stride-3 shadeMaps packing in lockstep.
-      { materials, lighting: state.surface.lighting !== undefined },
+      // both codegen flags and stride-3 shadeMaps packing in lockstep. The
+      // boundary backend rides the same routing answer the GLSL fallback's
+      // setSurfaceOpticsBackend carries below: closedSolid where the
+      // composition admits it (the resolving route), estimator — the
+      // disclosed vacuous state — everywhere else.
+      {
+        materials,
+        lighting: state.surface.lighting !== undefined,
+        opticsBackend: sessionOpticsBackend,
+      },
     )
       .then((renderer) => {
         if (token !== surfaceCompileToken || state.renderMode !== "surface") {
@@ -5850,6 +5902,7 @@ async function main(): Promise<void> {
         state.tiling ?? null,
         state.condensationDepthBand,
         state.sphereInversion ?? null,
+        state.finiteSolid ?? null,
       );
       if (sessionEligibility.status === "ineligible") {
         ui.flashToast(
@@ -6090,6 +6143,86 @@ async function main(): Promise<void> {
           // instead opened the oct6 pearls at a quarter of the pane.
           surfaceGrid.cancel();
         } else if (
+          sessionEligibility.kind === "finiteSolid" ||
+          sessionEligibility.kind === "finiteSolid4"
+        ) {
+          // A FINITE-SOLID block: the transform system REMAINS the subject
+          // and must BE the shipped construction (the gate's analyzer
+          // refuses edited maps), so this arm reads the gate's kind and
+          // re-resolves the block it validated. Compute-only — no fragment
+          // arm exists for the finite cores (the escape4 verdict one
+          // family over) — so the arm either hands the session to compute
+          // or exits with the disclosed toast.
+          const block = resolveFiniteSolid(state.finiteSolid!);
+          if (!block.ok) {
+            throw new Error(block.reasons.join("; "));
+          }
+          const fourD = block.value.shape === "hyperMenger";
+          surfaceSessionIs4D = fourD;
+          // The session door's balloon refusal — the finite solid fills its
+          // enclosing-ball centre, so the echo degenerates exactly as it
+          // does on every filled solid (the panel row disables beside the
+          // same reason), and the finite cores throw on the wrapper anyway.
+          if (state.balloonEcho) {
+            ui.flashToast(BALLOON_CENTRE_REFUSAL_REASON);
+            queueMicrotask(() => surfaceSession.exit());
+            return {
+              post: () => {},
+              terminate: () => teardownSurfaceCompute(),
+            };
+          }
+          const boundingRadius = finiteSolidBoundingRadius(fourD ? 4 : 3);
+          // ONE material slot: the finite cores' hit-info pins firstChoice
+          // 0, so the head map's authored finish/optics is the whole
+          // material wire — the forward families' exact shape. The optical
+          // lane is ALWAYS admitted here (the DDA backend is this
+          // family's resolver), so the wire is derived with the gate on.
+          sessionMaterials = surfaceSlotMaterials(
+            state.transforms,
+            [surfaceForwardSlot(state.transforms)],
+            undefined,
+            boundingRadius,
+            true,
+          );
+          sessionOpticsBackend =
+            sessionMaterials?.optics === true ? "finiteSolid" : "estimator";
+          ui.setSurfaceSessionKind("finiteSolid");
+          if (fourD) {
+            // Thickness is held at zero (the packer throws on any other
+            // value — a forward-cell DDA cannot thread a segment); the
+            // panel row disables with its own reason.
+            surface4SlabAvailable = false;
+            ui.setFourDSlabAvailable(false, "finiteSolid");
+          }
+          if (surfaceComputeAvailable()) {
+            computeTarget = {
+              kind: fourD ? "finite4" : "finite",
+              level: block.value.level,
+              groundPlane: state.groundPlane,
+            };
+            scene.enterSurfaceComputeFiniteSession(
+              fourD,
+              state.groundPlane,
+              boundingRadius,
+            );
+            if (fourD) {
+              scene.setSurface4View(fourDView.matrix(), liveSliceCenter(), 0);
+            }
+          } else {
+            // Reachable only through mid-session compute loss: the gate
+            // refuses ENTRY without compute. Never hand the session to a
+            // WebGL tracer — it would draw the IFS attractor instead of
+            // the level-N solid the block names.
+            ui.flashToast(
+              "Surface render stopped: finite-solid scenes need WebGPU compute, which just became unavailable.",
+            );
+            queueMicrotask(() => surfaceSession.exit());
+          }
+          // No camera refit: the construction's root box spans the same
+          // [-H, H]^dim the explorer cloud's attractor fits, so the
+          // cloud's framing already frames the solid.
+          surfaceGrid.cancel();
+        } else if (
           // The SCENE's dimension (scene-dimension.ts), which a
           // sphere-inversion block decides — the arm above takes every
           // routable block, so this reads the transforms' flatness here.
@@ -6249,11 +6382,54 @@ async function main(): Promise<void> {
             if (surfaceTiling && isResolvedLatticeTiling(surfaceTiling)) {
               fitLatticeCamera(surfaceTiling, true);
             }
-            sessionMaterials = gatedSlotMaterials(
+            // The optics admission — the 3D branch's block one dimension
+            // up, with the pose input the 4D field needs: the canonical
+            // slice admission reads WORLD w — the packer's `view4.w0` is
+            // the normalized centre times the cloud's w-support
+            // (setSurface4View's conversion), and the document's own world
+            // `sliceW` is preferred when the pose carries one (the same
+            // preference the decode gives it), so the admission reads the
+            // plane the RENDERING will slice, not the slider's fraction.
+            // Scrubbing the slice or turning a w-plane rotor afterward
+            // moves the displayed object off the composition the signed
+            // field describes; the transport degrades to its own honest
+            // refusals and the panel's optics note discloses the coupling.
+            const support4 = scene.fourDWSupport();
+            const opticsAdmitted = surfaceClosedSolidAdmitted(
+              de,
+              { balloon: state.balloonEcho, tiling: surfaceTiling !== null },
+              {
+                rotor: fourDView.matrix(),
+                w0: fourDView.sliceW ?? liveSliceCenter() * support4,
+                sliceHalfW: surface4SlabAvailable
+                  ? fourDView.sliceThickness * support4
+                  : 0,
+              },
+            );
+            const authoredWire = gatedSlotMaterials(
               ifsShadeSlots(de),
               de.patternCalibration,
               de.visibleBoundingRadius,
+              true,
             );
+            if (authoredWire?.optics && !opticsAdmitted) {
+              console.info(
+                "Surface render: glass transmits only on emitter (condensation) scenes at the canonical slice — see the Glass starters; rendering classic.",
+              );
+              sessionMaterials = gatedSlotMaterials(
+                ifsShadeSlots(de),
+                de.patternCalibration,
+                de.visibleBoundingRadius,
+                false,
+              );
+            } else {
+              sessionMaterials = authoredWire;
+            }
+            // The stamp follows the WIRE — the 3D branch's rule one
+            // dimension up (a closed-solid stamp on an optics-off material
+            // fails to link).
+            sessionOpticsBackend =
+              sessionMaterials?.optics === true ? "closedSolid" : "estimator";
             // An IFS-shaped 4D session — the balloon's live shape one
             // dimension up, so its rows stay reachable.
             ui.setSurfaceSessionKind("ifs");
@@ -6356,6 +6532,11 @@ async function main(): Promise<void> {
                 state.balloonEcho,
                 groundPlane4,
               );
+              // The GLSL 4D tracer is not this session's renderer: clear
+              // any previous GLSL session's closed-solid stamp, so the
+              // tail's materials install cannot compile a signed query
+              // over a material that carries no condensation shapes.
+              scene.setSurfaceOpticsBackend("estimator", true);
             } else if (foldShaped4) {
               // Reachable only through mid-session compute loss (device
               // loss / create failure re-enter this routing with the block
@@ -6394,6 +6575,12 @@ async function main(): Promise<void> {
                   "Surface render: optics lane disabled on the software rasterizer; rendering classic.",
                 );
               }
+              // The GLSL tracer is THIS session's renderer: stamp the
+              // admitted backend before the system install, the 3D
+              // branch's move one dimension up. The variable's control-
+              // flow type here is already estimator|closedSolid — TS
+              // proves the finite arm (compute-only) cannot reach it.
+              scene.setSurfaceOpticsBackend(sessionOpticsBackend, true);
               scene.setSurfaceSystem4(
                 de,
                 surfaceSlotColors(state.transforms, ifsShadeSlots(de)),
@@ -6660,13 +6847,61 @@ async function main(): Promise<void> {
           // exists. The affine ladder carries no frontier and is
           // measured OK, as is the 4D pair (fold4 included — its
           // frontier does not spill under the transport's nesting).
-          sessionMaterials = gatedSlotMaterials(
+          // The optics admission: authored optics rides the wire ONLY where
+          // the closed-solid backend — the app's one resolving backend — is
+          // admitted. Everywhere else (a map-bearing IFS has no signed
+          // field for the query to traverse; a fold-final, tiling or
+          // balloon composition moves or wraps the union; the 4D pose off
+          // the canonical slice erodes every member) the gate strips and
+          // the session renders classic, disclosed — the fold refusal's
+          // own pattern, one admission wider. Keeping the estimator lane
+          // live here instead would compile the transport only to paint
+          // every inside path's unresolved black. The admission subsumes
+          // the old fold check: an emitter-only system has no maps to
+          // carry fold variations, and a fold-final lens is refused
+          // outright.
+          const opticsAdmitted = surfaceClosedSolidAdmitted(de, {
+            balloon: state.balloonEcho,
+            tiling: surfaceTiling !== null,
+          });
+          const authoredWire = gatedSlotMaterials(
             ifsShadeSlots(de),
             de.patternCalibration,
             de.visibleBoundingRadius,
-            !deHasFolds(de),
+            true,
           );
-          if (surfaceComputeEligible(de)) {
+          if (authoredWire?.optics && !opticsAdmitted) {
+            console.info(
+              "Surface render: glass transmits only on emitter (condensation) scenes — see the Glass starters; rendering classic.",
+            );
+            sessionMaterials = gatedSlotMaterials(
+              ifsShadeSlots(de),
+              de.patternCalibration,
+              de.visibleBoundingRadius,
+              false,
+            );
+          } else {
+            sessionMaterials = authoredWire;
+          }
+          // The stamp follows the WIRE, not the geometry alone: a session
+          // that authored no optics (or whose wire just stripped) gets the
+          // estimator even on admitted geometry — a closed-solid stamp on
+          // an optics-off material compiles corridor call sites whose
+          // definition splices under the optics gate, and the program
+          // fails to link. The resolver forces the same way (the kernel's
+          // own rule); this is the routing-side half.
+          sessionOpticsBackend =
+            sessionMaterials?.optics === true ? "closedSolid" : "estimator";
+          scene.setSurfaceOpticsBackend("estimator", false);
+          // The optics wire prefers compute in 3D too — see
+          // surfaceComputeEligible's doc. Availability gates BOTH terms:
+          // the deliberate ?surfacegl route stays WebGL even with optics
+          // authored (the GLSL fallback's own lane is the point of that
+          // flag).
+          if (
+            surfaceComputeAvailable() &&
+            (surfaceComputeEligible(de) || sessionMaterials?.optics === true)
+          ) {
             // The WebGPU compute path: no GLSL system upload — the fold
             // variant must never compile here (its ~25s Mesa link and the
             // kernel-confirmed i915 preemption hang at entry are what this
@@ -6735,6 +6970,11 @@ async function main(): Promise<void> {
                 "Surface render: optics lane disabled on the software rasterizer; rendering classic.",
               );
             }
+            // The GLSL tracer is THIS session's renderer: stamp the
+            // admitted backend before the system install so the rebuild
+            // that carries the optics define compiles the closed-solid
+            // query over the condensation shapes it is about to stamp.
+            scene.setSurfaceOpticsBackend(sessionOpticsBackend, false);
             scene.setSurfaceSystem(
               de,
               surfaceSlotColors(state.transforms, ifsShadeSlots(de)),
@@ -7279,6 +7519,7 @@ async function main(): Promise<void> {
       state.tiling ?? null,
       state.condensationDepthBand,
       state.sphereInversion ?? null,
+      state.finiteSolid ?? null,
     );
   }
 
@@ -10218,6 +10459,12 @@ async function main(): Promise<void> {
           state,
           PRESET_SPHERE_INVERSIONS[preset]?.() ?? null,
         );
+        // The finite-solid block a preset IS (PRESET_FINITE_SOLIDS) — the
+        // sphere-inversion table's absent-means-clear rule: the glass
+        // showcases install their block, and every other preset CLEARS
+        // one, because a leftover block would reroute an unrelated system
+        // (or refuse it outright).
+        state = setFiniteSolid(state, PRESET_FINITE_SOLIDS[preset] ?? null);
         // The flame palette a preset was composed against
         // (PRESET_PALETTES) — set, never cleared: absent means "the user's
         // palette is fine", which is every preset that predates the table.
@@ -11552,6 +11799,16 @@ async function main(): Promise<void> {
         loadHints.armMode("surface");
       });
     },
+    onSurfaceTransmissionStarter: (id) => {
+      void loadSceneSnapshot(
+        createSurfaceTransmissionStarter(id),
+        true,
+        false,
+      ).then((loaded) => {
+        if (!loaded) return;
+        loadHints.armMode("surface");
+      });
+    },
     // The surface preview tier under user control. Off abandons an active
     // preview and starts the full render; On invalidates the parked view.
     onSurfacePreviewToggle: (checked) => {
@@ -12653,6 +12910,11 @@ async function main(): Promise<void> {
       return {
         mode: state.renderMode,
         engine: !inSurface ? null : compute !== null ? "compute" : "webgl",
+        // The session's decided boundary backend (the stamp the GLSL
+        // fallback's material carries and the compute spec packs) — the
+        // lane-live signal the transport gates read: a transmission
+        // fixture is live only where the routing ADMITTED the session.
+        opticsBackend: !inSurface ? null : sessionOpticsBackend,
         backend: !inSurface
           ? null
           : compute !== null
