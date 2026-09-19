@@ -5,6 +5,7 @@ import {
   transportFiniteBoundaryQueryCPU,
   transportShadowCorridorGate,
   transportShadowVisibilityCPU,
+  transportTerminalDisplacementCPU,
   transportSolidBoundaryQueryCPU,
   transportTraceCPU,
   type TransportFiniteQueryFn,
@@ -71,6 +72,102 @@ const MATERIAL: DielectricMaterial = {
 };
 
 const EPS = DIELECTRIC_CROSSING_EPS_REL * 1;
+
+describe("finite rear terminals skip origin-independent displacement", () => {
+  const material: DielectricMaterial = { ...MATERIAL, distortion: 0.08 };
+  const background: Vec3 = [0.125, 0.25, 0.5];
+  const floorY = -0.95;
+  const direction = (y: number): Vec3 => [Math.sqrt(1 - y * y), y, 0];
+  // An independently evaluated plane terminal: its floor color depends on
+  // the actual intersection, while the background is origin-independent.
+  const terminal = (origin: Vec3, dir: Vec3, floor: boolean): Vec3 => {
+    if (!floor || dir[1] >= -1e-6 || origin[1] <= floorY) return background;
+    const t = (floorY - origin[1]) / dir[1];
+    const x = origin[0] + t * dir[0];
+    const z = origin[2] + t * dir[2];
+    return [0.5 + 0.25 * Math.sin(x), 0.5 + 0.25 * Math.cos(z), 0.75];
+  };
+
+  it("keeps upward, horizontal and no-floor radiance exact with zero field calls", () => {
+    const origin: Vec3 = [0.5, 0.2, 0];
+    for (const [floor, y] of [
+      [true, 0.2],
+      [true, 0],
+      [true, -1e-6],
+      [false, -0.2],
+    ] as const) {
+      let calls = 0;
+      const system: TransportFixtureSystem = {
+        estimate: (p) => {
+          calls++;
+          return p[0];
+        },
+        stepScale: 1,
+        visibleRadius: 1,
+      };
+      const dir = direction(y);
+      const original = transportTerminalDisplacementCPU(
+        system,
+        origin,
+        dir,
+        material,
+      );
+      expect(calls).toBe(4);
+      if (y !== 0) expect(original.applied).toBe(true);
+      calls = 0;
+      const skipped = transportTerminalDisplacementCPU(
+        system,
+        origin,
+        dir,
+        material,
+        floor,
+      );
+      expect(calls).toBe(0);
+      expect(skipped.origin).toBe(origin);
+      expect(terminal(skipped.origin, dir, floor)).toEqual(
+        terminal(original.origin, dir, floor),
+      );
+    }
+  });
+
+  it("retains every downward floor displacement, including origins below its height", () => {
+    for (const y of [-0.2, -2e-6]) {
+      for (const originY of [0.2, floorY - 0.001]) {
+        let calls = 0;
+        const system: TransportFixtureSystem = {
+          estimate: (p) => {
+            calls++;
+            return p[0];
+          },
+          stepScale: 1,
+          visibleRadius: 1,
+        };
+        const origin: Vec3 = [0.5, originY, 0];
+        const dir = direction(y);
+        const original = transportTerminalDisplacementCPU(
+          system,
+          origin,
+          dir,
+          material,
+        );
+        expect(calls).toBe(4);
+        calls = 0;
+        const retained = transportTerminalDisplacementCPU(
+          system,
+          origin,
+          dir,
+          material,
+          true,
+        );
+        expect(calls).toBe(4);
+        expect(retained).toEqual(original);
+        expect(terminal(retained.origin, dir, true)).toEqual(
+          terminal(original.origin, dir, true),
+        );
+      }
+    }
+  });
+});
 
 describe("transportSolidBoundaryQueryCPU", () => {
   it("finds an outside entry crossing at the wall with an outward normal", () => {
@@ -421,3 +518,60 @@ describe("transportFiniteBoundaryQueryCPU — the DDA adapter", () => {
     expect(result.radiance.every((c) => c >= 0)).toBe(true);
   });
 });
+
+for (const dim of [3, 4] as const) {
+  it(`matches the absorbing slab's complete reflection series in ${dim}D from the camera`, () => {
+    const cube = buildFiniteSolidConstruction(
+      dim === 3 ? "menger" : "hyperMenger",
+      dim,
+      0,
+    );
+    const material: DielectricMaterial = {
+      ior: 1.45,
+      radius: 1,
+      absorption: [0.17, 0.055, 0.025],
+    };
+    const background: Vec3 = [0.25, 0.35, 0.45];
+    const result = transportTraceCPU(
+      {
+        estimate: () => {
+          throw new Error("finite transport must not use the display normal");
+        },
+        stepScale: 1,
+        visibleRadius: 1.5,
+      },
+      [-2, 0, 0],
+      [1, 0, 0],
+      DIELECTRIC_INITIAL_BRANCH_THETA,
+      material,
+      background,
+      undefined,
+      undefined,
+      (origin, direction, anchor, inside) =>
+        transportFiniteBoundaryQueryCPU(
+          cube,
+          FINITE_SOLID_IDENTITY_POSE,
+          origin,
+          direction,
+          anchor,
+          inside,
+        ),
+    );
+    expect(["complete", "residual"]).toContain(result.status);
+    expect(result.failure).toBe(0);
+    const fresnel = ((material.ior - 1) / (material.ior + 1)) ** 2;
+    for (let channel = 0; channel < 3; channel++) {
+      const beer = Math.exp(
+        (-material.absorption[channel] * 2 * FINITE_SOLID_HALF_EXTENT) /
+          material.radius,
+      );
+      // Primary reflection, then both slab faces' infinite internal series.
+      const exact =
+        background[channel] *
+        (fresnel + ((1 - fresnel) ** 2 * beer) / (1 - fresnel * beer));
+      expect(Math.abs(exact - result.radiance[channel])).toBeLessThanOrEqual(
+        result.residual + 1e-14,
+      );
+    }
+  });
+}

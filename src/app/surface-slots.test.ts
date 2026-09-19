@@ -2,7 +2,13 @@ import { derivedColorIndex } from "../fractal/chaos-game";
 import { transformColors } from "../fractal/color";
 import type { Transform } from "../fractal/types";
 import { CLASSIC_SURFACE_FINISH } from "../fractal/surface-finish";
-import { CLASSIC_SURFACE_MATERIAL } from "../fractal/surface-material-wire";
+import {
+  CLASSIC_SURFACE_MATERIAL,
+  surfaceMaterialOpticsLanes,
+} from "../fractal/surface-material-wire";
+import { FINITE_SOLID_HALF_EXTENT } from "../fractal/finite-solid";
+import { presetTransforms } from "../fractal/presets";
+import { dielectricBeerThroughput } from "../fractal/surface-dielectric";
 import {
   sphereInversionShadeSlots,
   surfaceSlotColors,
@@ -317,6 +323,37 @@ describe("surfaceSlotMaterials", () => {
       ],
     });
   });
+
+  it.each(["glassMenger", "glassMenger4"] as const)(
+    "%s retains its authored slab and the selected study's Beer normalization",
+    (preset) => {
+      const transforms = presetTransforms(preset);
+      const wire = surfaceSlotMaterials(
+        transforms,
+        [surfaceForwardSlot(transforms)],
+        undefined,
+        FINITE_SOLID_HALF_EXTENT,
+        true,
+      );
+      expect(wire?.optics).toBe(true);
+      const material = wire!.slots[0];
+      expect(surfaceMaterialOpticsLanes(material)).toEqual([
+        [1.45, 0.75, 0.17, 0.055],
+        [0.025, 0.08, 0, 0],
+      ]);
+      // Independently recorded Beer control from the selected GPU study:
+      // a .5-world-unit interior segment, normalized by H=.75 in BOTH
+      // dimensions. An enclosing-sphere normalization gives another tint.
+      const expected = [
+        0.8928529928432785, 0.9639974142710154, 0.9834714538216175,
+      ];
+      material.optics!.absorption.forEach((absorption, channel) => {
+        expect(
+          dielectricBeerThroughput(absorption, 0.5, material.optics!.radius),
+        ).toBeCloseTo(expected[channel], 12);
+      });
+    },
+  );
 
   it("admitOptics:false strips the gate for the unadmitted forward arms — an optics-only session derives the classic null wire, no radius required", () => {
     const transforms = [

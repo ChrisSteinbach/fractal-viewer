@@ -5,6 +5,7 @@ import {
 } from "../fractal/affine4";
 import { scenePartsAreNonFlat } from "../fractal/scene-dimension";
 import {
+  FINITE_SOLID_HALF_EXTENT,
   finiteSolidBoundingRadius,
   resolveFiniteSolid,
 } from "../fractal/finite-solid";
@@ -6182,11 +6183,14 @@ async function main(): Promise<void> {
           // material wire — the forward families' exact shape. The optical
           // lane is ALWAYS admitted here (the DDA backend is this
           // family's resolver), so the wire is derived with the gate on.
+          // The selected finite material measures Beer distance and slab
+          // lengths against H, not its H*sqrt(dim) enclosing sphere. Keep
+          // that geometry bound for framing, floor and fog independently.
           sessionMaterials = surfaceSlotMaterials(
             state.transforms,
             [surfaceForwardSlot(state.transforms)],
             undefined,
-            boundingRadius,
+            FINITE_SOLID_HALF_EXTENT,
             true,
           );
           sessionOpticsBackend =

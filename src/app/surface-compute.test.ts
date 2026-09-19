@@ -3031,6 +3031,42 @@ function lightingDispatchHarness(parkShade: boolean | number = false) {
 }
 
 describe("SurfaceComputeRenderer authored lighting", () => {
+  it.each([1, 2])(
+    "observes each raw completed sample before a %i-sample mean",
+    async (samples) => {
+      const { renderer, spec } = lightingDispatchHarness();
+      const observed: { index: number; red: number; missed: number }[] = [];
+      const frame = await renderer.renderFrame(spec, {
+        samples,
+        onSample: (sample, index) =>
+          observed.push({
+            index,
+            red: sample.pixels[0],
+            missed: sample.counts.miss,
+          }),
+      });
+      expect(frame).not.toBeNull();
+      expect(observed.map((sample) => sample.index)).toEqual(
+        samples === 1 ? [0] : [0, 1],
+      );
+      expect(observed[0].red).toBe(255);
+      if (samples === 2) expect(observed[1].red).toBe(0);
+      expect(
+        observed.every((sample) => sample.missed === spec.width * spec.height),
+      ).toBe(true);
+      renderer.destroy();
+    },
+  );
+
+  it("does not certify a truncated sample through the completion observer", async () => {
+    const { renderer, spec } = lightingDispatchHarness();
+    const onSample = vi.fn();
+    const frame = await renderer.renderFrame(spec, { budgetMs: -1, onSample });
+    expect(frame?.truncated).toBe(true);
+    expect(onSample).not.toHaveBeenCalled();
+    renderer.destroy();
+  });
+
   it("allocates the opt-in HDR ABI and background binding without moving mesh binding 11", async () => {
     const plain = await createPaletteResourceHarness(false);
     const lit = await createPaletteResourceHarness(false, undefined, true);
@@ -3101,13 +3137,15 @@ describe("SurfaceComputeRenderer authored lighting", () => {
   it("defers destruction while a lit dispatch is parked on submitted work", async () => {
     const { renderer, spec, dispatches, deviceDestroy, resume } =
       lightingDispatchHarness(true);
-    const frame = renderer.renderFrame(spec);
+    const onSample = vi.fn();
+    const frame = renderer.renderFrame(spec, { onSample });
     await flushMicrotasks();
     expect(dispatches).toHaveLength(1);
     renderer.destroy();
     expect(deviceDestroy).not.toHaveBeenCalled();
     resume();
     expect(await frame).toBeNull();
+    expect(onSample).not.toHaveBeenCalled();
     expect(deviceDestroy).toHaveBeenCalledTimes(1);
   });
 

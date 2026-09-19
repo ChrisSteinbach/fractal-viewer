@@ -205,16 +205,19 @@ same `baseIndex` slot list. The rules, each owned by one definition:
   is authored, will SET this field through the per-field write rule and
   never store the bundle's name.
 - **Scope.** The optical material is PER-SLOT; the optical normalization
-  radius BASE is scene-derived — the session DE's `visibleBoundingRadius`,
-  the FULL unsliced value in 4D (the balloon ball's own rule, so the tint
-  does not pulse as the slice scrubs). There is no scene-wide authored
+  radius BASE is scene-derived — the finite construction's root half extent,
+  matching the selected study, or the session DE's `visibleBoundingRadius`
+  for other families. Both are independent of the current 4D slice, so the
+  tint does not pulse as the slice scrubs. The finite enclosing sphere remains
+  a separate geometry bound. There is no scene-wide authored
   optical state. Weight-zero transforms and the final (plot-time) transform
   contribute no slot, so their authored optics resolve nowhere — the
   material's own invisibility rule, not a special case.
 - **Units and defaults.** `scale` (the only authored numeric) is the Beer
   normalization radius as a DIMENSIONLESS MULTIPLIER of the derived radius —
   world-defined, stable under zoom, raster and rotor/slice motion. Absent ⇒
-  1, exactly the qualified appearance; the resolver clamps into
+  1, matching the selected finite material's normalization; other families
+  retain their existing radius-relative material. The resolver clamps into
   `[0.01, 100]` (`SURFACE_OPTICS_SCALE_FLOOR`/`_CEILING`), where the floor
   is tint saturation inside 1% of the ball and the ceiling is clear across
   the whole ball — both indistinguishable beyond, and the clamp keeps the
@@ -264,18 +267,19 @@ reserved)` — zero-stride padded when no slot resolves optics, and thrown
   dimension-free layout is THE 4D half: one buffer, one lane order, both
   cores' backends.
 
-### Capability and routing matrix (all current cores and wrappers)
+### Capability and routing matrix (historical, before backend integration)
 
-Authored optics is DORMANT everywhere today: no kernel or fragment program
-consumes the model, so every session — whatever it authors — routes and
-renders exactly its pre-optics program, and an optics-only session compiles
+At this stage authored optics was DORMANT everywhere: no kernel or fragment
+program consumed the model, so every session — whatever it authored — routed and
+rendered exactly its pre-optics program, and an optics-only session compiled
 the classic kernels with classic shadeMaps bytes (the shadeMaps packer's
-materials argument stays keyed on finish|pattern). The gate is real state
-already (`SurfaceMaterialSlots.optics`, the slots' resolved materials, the
-force-frame key's `optics` block), so the backends that arrive next consume
-it without redefining any of it:
+materials argument stayed keyed on finish|pattern). The gate already existed
+(`SurfaceMaterialSlots.optics`, the slots' resolved materials, the
+force-frame key's `optics` block), ready for the later backends to consume
+without redefining it. The following matrix records that earlier state;
+the backend and routing sections below describe the current implementation.
 
-| Core / wrapper                                | Transport status now                                   | Reason                                                                                  |
+| Core / wrapper                                | Transport status at that stage                         | Reason                                                                                  |
 | --------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------- |
 | compute `affine`, `fold` (3D)                 | Dormant; classic bytes unchanged                       | The resumable WebGPU transport is the next epic item                                    |
 | compute `affine4`, `fold4` (4D)               | Dormant; same layout, same reason                      | The lane pair is dimension-free; the 4D backend adopts it in the same epic              |
@@ -286,8 +290,8 @@ it without redefining any of it:
 | `ground plane`, `shape trap`, condensation    | Dormant; no change                                     | Scene furniture and attribution are the backend's business, already contract vocabulary |
 | Surface applicability gates                   | Unchanged                                              | Authored optics adds NO new admission: eligibility is geometry, as before               |
 
-Every capability claim above carries both dimensions. The panel task owns
-the UI later; the recorded placement is beside Finish/Pattern in the shared
+Every planned capability above carried both dimensions. The panel UI was
+still pending; the recorded placement was beside Finish/Pattern in the shared
 Transforms editor (Scene / Look), per `docs/panel-ia.md`.
 
 ## The compute backend (shipped)
@@ -298,10 +302,10 @@ the session's wire gate is live. The decisions recorded here are the
 delegated numeric working lines — each reversible with its evidence; the
 appearance selection stays the owner's and is untouched.
 
-### The production boundary query
+### The estimator backend's boundary query
 
 The qualified fixture's boundary query is EXACT (integer cell planes). The
-production backend's is a bounded march of the COMPOSED PUBLIC estimator —
+production estimator backend's is a bounded march of the COMPOSED PUBLIC estimator —
 the same `surfaceDE` the primary hit path marches, so lens, tiling, balloon,
 ground plane and the rotor/slice lift compose exactly as they do for the
 primary hit — with these rules, each owned by one definition:
@@ -630,12 +634,15 @@ are byte-unchanged (4D off exactly 64,679 B as recorded).
   attribution needs) and the transport queue (which skips classic slots
   after the same check) — the optical work is its own submissions, never
   buried inside a shade or march dispatch, priced by its own measured
-  sizer. Runtime caps (`SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS`
-  2048 / `MAX_INTERFACES` 2048) sit BELOW the oracle's defaults: the
-  estimator boundary query costs an order of magnitude more per path than
-  the qualified DDA, and a capped sample replays rather than lying. The
-  caps are the runtime's, not the document's; never raised to make a
-  failing row green.
+  sizer. The estimator/closed-solid runtime caps
+  (`SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS` and `MAX_INTERFACES`, both 2048) remain below the oracle's defaults because their boundary queries
+  cost more per path. The exact finite DDA uses the already qualified
+  `DIELECTRIC_MAX_PROCESSED_PATHS` allowance, 16384; applying the expensive
+  estimator's lower guard to this backend truncated valid paths after the
+  geometry correction. Explicit bench caps still override either default.
+  These are work limits, independent of the unchanged per-sample optical
+  error budget. A capped sample stays unresolved; cost and completion must
+  both pass the relevant backend's measured envelope.
 - **Optics and cinematic lighting are exclusive** (codegen and packer
   throw): both entries own the hit path's output. An optics-authored
   slot's authored finish is dormant for that slot — the dielectric
@@ -1037,17 +1044,9 @@ union merges them). The display co-extension is a construction decision:
 shape (A), the session renders the level-N cells, and the optical solid is
 exactly what is displayed.
 
-Remaining for the fractal milestone (in order): the kernel emission — the
-exact DDA as the transport boundary query and the hierarchical box-union
-display DE (outside: the occupied level-1 boxes are a certified lower
-bound; inside one, its occupied children — the local true surface), as a
-new core pair in `surface-de-gpu.ts` with the GLSL shared source and the
-CPU twin under the bench's oracle discipline; the routing admission
-extension (`surface-optics-backend.ts`'s shape, which currently refuses
-`de.maps.length > 0` — the refusal stays until the co-extensive
-finite-solid document exists to admit); the trapped-billiard termination
-policy; the preset/panel path; the built-app visual acceptance against
-`scripts/out/transmission-dielectric-gpu/`.
+The following sections record the kernel emission and routing that subsequently
+landed. The later geometry audit supersedes the initial termination diagnosis;
+final built-app qualification and owner visual acceptance remain separate gates.
 
 ### The kernel emission (landed, 2026-09-19)
 
@@ -1055,7 +1054,7 @@ The kernel emission LANDED as `surface-finite-solid-gpu.ts` (one
 dimension-parameterized source both cores emit) and the `core: "finite"` /
 `"finite4"` pair in `surface-de-gpu.ts`:
 
-- **The display DE** is `finite-solid.ts`'s `finiteSolidDisplayDistance`
+- **The shading DE** is `finite-solid.ts`'s `finiteSolidDisplayDistance`
   mirrored: the CERTIFIED HYBRID — the level-1 boxes' min, each refined
   into its occupied children within `FINITE_SOLID_DISPLAY_REFINE_REL·half`
   of its own boundary. The refinement is load-bearing, not a refinement:
@@ -1065,9 +1064,11 @@ dimension-parameterized source both cores emit) and the `core: "finite"` /
   unit tests pin the marched hit against `finiteSolidIntervals` on
   tunnel-axis rays (the exact oracle says MISS there) and on sampled rays
   in both dimensions. Both terms are certified lower bounds of the
-  distance to the union, so a march step cannot skip the surface, and the
-  zero set is exactly the union's boundary.
-- **The transport boundary query** is the exact DDA
+  distance to the union, so an outside march step cannot skip the surface.
+  Interior shared faces also read zero: this field is not a membership
+  oracle. Primary rays now use the exact query below; the hybrid remains
+  for normals and shading.
+- **The primary and transport boundary query** is the exact DDA
   (`transportFiniteBoundary`), `opticsBackend: "finiteSolid"`: integer
   cells, analytic planes, NO distance epsilon, the FULL anchor contract
   (intrinsic point, tied-plane mask, plane/cell indices) carried IN and
@@ -1089,25 +1090,15 @@ grid, pad}`. The grid needs NO bitmap in-shader — the ternary rule is
   tests an f64 twin cannot bracket, so the twin re-executes the WGSL with
   every result rounded to f32 over the same inputs (the probe hits are
   f32-quantized — the input contract, the frozen f32 pose rows' lesson).
-  MEASURED (quiet RX 7900 XTX, radeonsi): both dimensions' legs agree —
-  the strict arms bit-exact (max normal delta 0), with three measured,
-  disclosed, capped realization classes: the decision flip at a hit
-  converged onto a grid plane (the ray-side classification flips between
-  the driver's FMA-contracted f32 and the twin's rounded f32, turning an
-  honest state-mismatch refusal into an honest boundary or the reverse),
-  the anchor identity's one-cell near-tie slack (the same event, the same
-  t and normal, a one-cell-shifted crossed-plane identity — each kernel
-  anchor self-consistent on its own plane), and the trace probes' pin,
-  which is TERMINATION only (no INVALID) with the per-probe gpu/cpu pairs
-  disclosed in the run notes — the event-level certification is the
-  boundary arms'. The caps are `SURFACE_TRANSPORT_FLIP_CAP`.
-
-Still open on the milestone: the routing admission extension
-(`surface-optics-backend.ts`'s shape, which currently refuses
-`de.maps.length > 0` — the refusal stays until the co-extensive
-finite-solid document exists to admit); the trapped-billiard termination
-policy; the preset/panel path; the built-app visual acceptance against
-`scripts/out/transmission-dielectric-gpu/`.
+  The first reported PASS allowed post-hoc decision flips, a one-cell anchor
+  discrepancy, and termination-only trace checks. Those checks did not certify
+  correct transport: the later driver witness found exactly the invalid anchor
+  that the one-cell allowance excused. The corrected gate compares stable
+  trace status, failure/reason, radiance and residual at the existing
+  tolerances; requires stable resolved probes; and checks anchor masks, planes
+  and cells exactly. Only the independently evaluated, pre-hoc ULP ensemble
+  can exclude an unstable probe, within its existing cap. Independent f64
+  continuation regressions additionally check the f32 query's mathematics.
 
 ## The finite routing (landed, 2026-09-19)
 
@@ -1142,20 +1133,39 @@ exactness tolerance, so a shared link would refuse the very scene it
 carries).
 
 THE GROUND PLANE composes with the finite cores: the shared plane block's
-pads emit only under `groundPlane` (224→288 in 3D, 479→576 in 4D), so the
+pads emit only under `groundPlane` (224→288 in 3D, 480→576 in 4D), so the
 plain kernels' text — and the wires the bench legs pin — stay
 byte-identical without a floor. The glass presets
 (`glassMenger`/`glassMenger4`, the dielectric study's selected object)
 install `PRESET_FINITE_SOLIDS`, author the Glass model on every map, and
-land the checker floor through `PRESET_SURFACE_ROOMS`; the 4D twin is the
-NATIVE posed hyper-Menger slice (a w-preserving yz turn over a small xw
-tilt in `PRESET_VIEWS`), not a w-preserving lift of the 3D object.
+land the checker floor through `PRESET_SURFACE_ROOMS`. Both also install
+the bright studio backdrop through `app/preset-background.ts`'s
+`PRESET_BACKGROUNDS`: a linear custom gradient from `#cdd6e1` to
+`#949aa8`, shared with the Glass starters. The stops are authored in the
+scene wire's RGB-byte precision, so the menu load and a share-link reload
+resolve exactly the same colors. This is an ordinary undoable Scene / Look
+edit, including the reset of an inherited radial shape; the generated Flame
+backdrop's dormant palette survives. As with room/palette side tables,
+unrelated presets leave the background alone. Both cameras match the selected
+study: eye `[2.1, 1.4, 3.2]`, target origin, tan(vertical FOV / 2) `0.39`.
+The 4D twin is the study's NATIVE posed hyper-Menger at world slice `0.18`,
+with world→intrinsic rotation `R_xw(0.57) · R_yw(-0.31)`. The app's packer
+transposes its view rotor, so `PRESET_VIEWS` authors the inverse as an xw
+turn of `-0.57` followed by a yw turn of `0.31`. The packed rows and world
+slice are pinned by `preset-view.test.ts`; copying the study's angle signs
+straight into the view would render a different slice.
 
-THE APP GATE (`scripts/finite-glass.verify.mjs`, real driver): both
-presets author from the app, both dimensions route
-`engine=compute` + `opticsBackend=finiteSolid`, settle, and cover ~74.6%
-of the frame with zero exhausted rays. MEASURED RESIDUAL (resolved by the
-anchor/termination fix, same day): the transport's resolved fraction was
+### Superseded initial app-gate result (historical)
+
+The following record predates the geometry audit below. Both the claim-free
+workaround and its percentage-based qualification were superseded; these
+measurements do not certify the corrected implementation.
+
+THE INITIAL APP GATE (`scripts/finite-glass.verify.mjs`, real driver): both
+presets authored from the app, both dimensions routed
+`engine=compute` + `opticsBackend=finiteSolid`, settled, and covered ~74.6%
+of the frame with zero exhausted rays. INITIAL MEASURED FAILURE (before the
+superseded workaround): the transport's resolved fraction was
 ~0.5% in both dimensions — the depth-2 anchored restarts refused
 state-mismatch ON THE DRIVER where the f32 twin walked clean. The
 dissection (twin-side chain walk validated bit-exact against the
@@ -1166,7 +1176,7 @@ walks that produced them — not the tied-corner diagonal of the
 handover's hypothesis (refuted: perturbing every real chain's child
 directions by ulps never flipped a restart's consistency, and an
 explicit FMA-emulating mirror — `fround(a*b+c)` at every contractible
-site — resolves the app camera 114/114). THE FIX, in both dimensions'
+site — resolves the app camera 114/114). THE SUPERSEDED WORKAROUND, in both dimensions'
 ONE DDA text and its f32 twin: the anchored restart consumes no anchor
 state (the copied cells drove both the start cell and the position
 clamp), classifies from the lifted world origin's own ray-side rule,
@@ -1187,18 +1197,443 @@ rows had been zeros — every 3D event refused degenerate-normal and the 3D
 leg absolved itself vacuous through the decision-flip class; the identity
 rows restored, the 3D leg's genuine near-tie count is 7 and the cap
 recalibrated 4 → 8 on that.)
-THE REMAINING ~3%: the billiard residue's classes, measured through the
-status side channel — f5 (inside-miss after a truth-walk found air)
-x3907 and f4/r5 (nonmonotone at an out-of-box anchored restart)
-x3221 at the 640×480 probe run — whose A/Bs (processed/interfaces caps
-→ 16384, the stack → 64, the acceptance budget ×8) moved nothing, so
-the trapped-billiard termination policy (the contract's standing item)
-stays the one that can retire them, measured.
+The initial residue classification was later disproven. The status side channel
+reported `f5` inside-miss ×3907 and `f4/r5` nonmonotone ×3221 at 640×480;
+raising path/interface limits to 16384, stack capacity to 64, and acceptance
+budget eightfold did not change those counts. These observations locate
+geometric failures, not trapped-path termination. The correction below
+preserves them as historical evidence and supersedes the inference.
+
+## Geometry audit: the apparent billiard residue was not a termination diagnosis
+
+The earlier handover inferred a trapped-path termination problem because larger
+path/interface/stack limits and a wider acceptance budget did not reduce the
+unresolved count. That inference is invalid: the observed failures were
+`inside-miss` and `nonmonotone-crossing`, both failed geometric continuations.
+A trapped ray still produces valid interfaces; it reaches an energy cutoff or
+an actual resource limit. Neither Russian roulette nor an energy-retirement
+rule repairs a missing boundary.
+
+Two independent CPU counterexamples exposed concrete regressions in the
+claim-free finite query, even though its shared f32 bench twin agreed with the
+shader source:
+
+- An outside ray through the level-0 cube, origin `(-2,-0.5,-0.5)` and direction
+  `(1,0,0)`, returned the exit at `t=2.75` with normal `(1,0,0)`. The independent
+  f64 oracle returned the entry at `t=1.25` with normal `(-1,0,0)`. The latest
+  restart edit had removed initial occupancy-transition handling, so clipping
+  to an occupied root-entry cell silently skipped that first interface. This
+  reproduced in 3D and 4D.
+- At level 1, a reflected inside path starts at intrinsic
+  `(-0.25, f32(0.25+1e-7), 0)` and travels along
+  `(-sqrt(0.5),-sqrt(0.5),0)`. Its birth face is the x plane, while a distinct
+  exit through the y plane lies only `1.2644054553e-7` ahead. The old envelope
+  suppression erased that real positive interval and returned a miss. The
+  corrected f32 query returns the y exit at `1.2644055403e-7`. A fourth outer
+  coordinate gives the same 4D counterexample.
+
+The corrected query restores canonical anchor continuation and checks the
+caller-carried medium. It uses the anchor's intrinsic point, snaps only masked
+coordinates to their integer planes, and takes unmasked cell ownership from
+the anchor. It suppresses no distinct positive interval. Root entry is an
+explicit boundary. Ray-side classification compares actual f32 grid planes;
+a normalized grid quotient can round onto an integer while its coordinate
+is still on the other side. Root slab identities survive rounded world-point
+reconstruction. The f32 twin also validates the displayed direction rather
+than only the first three intrinsic components, so a posed ray entirely along
+the fourth intrinsic axis remains valid.
+
+The production finite transport starts with one unsplit unit-energy camera
+ray and lets the exact DDA own the first interface and all continuations.
+At this correction stage the display march still scheduled covered pixels;
+its footprint hit and smoothed normal no longer seeded an inconsistent
+optical split. The subsequent performance correction replaces that primary
+march with the same exact DDA. The CPU fixture uses
+the same camera-ray convention. Other optical backends retain their existing
+primary treatment.
+
+Independent regression tests compare complete reflected/refracted finite
+continuations against the separate f64 oracle in 3D and a genuinely posed
+4D scene, as well as the two exact counterexamples above. These establish
+geometric correctness of the CPU formulation, not driver qualification.
+The first restored-anchor driver run still exhibited mass state mismatch.
+The event/child/stack witness described next located that remaining defect;
+final real-driver qualification must establish the corrected application
+behavior separately from the CPU tests.
+
+### Driver witness: inconsistent crossed plane, before any stack push
+
+A driver-side witness located the mass failure before pushing the reflected
+child, so the transport stack and its handoff were not the cause. One failing
+primary had incident direction `(-0.45165,-0.17200,-0.87546)`, outward normal
+`+z`, mask `4`, and post-incident cells `[1,8,0,-1]`; its emitted z plane was
+`0` and canonical z coordinate `-0.75`. For negative z travel into cell 0,
+the crossed plane must be cell 0's upper plane, `1` (`-0.583333...`). Plane 0
+belongs to the wrong end of that cell. Reflection therefore restarted inside
+the occupied cell instead of outside, and the canonical medium cross-check
+correctly refused it.
+
+The source had copied its mutable DDA index array into `oldIndex` before
+advancing, then derived the crossed planes from that copy. The driver result
+is consistent with the copy observing the advanced array. The exact compiler
+stage causing that behavior is not established. The geometric identity needs
+no snapshot: after advancing, the crossed plane is `index[a]` for positive
+travel and `index[a]+1` for negative travel. Both WGSL and its f32 twin now
+use that one post-crossing state for the emitted cell and plane identities.
+Independent tests assert the identity on every reflected/refracted test
+boundary. The old bench's one-cell anchor discrepancy allowance masked this
+physically invalid mismatch and has been removed; it is not floating-point
+slack.
+
+### Work-limit alignment after the geometric correction
+
+At the canonical 3D camera, all eight 960×640 antialias samples completed
+geometric traversal without inside-miss, nonmonotone, or state-mismatch
+failures after the plane correction. The remaining 3827–3891 unfinished
+samples per pass were exclusively `processed-paths` (`f1/r0`), under the
+production estimator's 2048 guard. This is a different, measured failure
+class from the earlier geometric failures. The finite backend now selects
+the exact-DDA oracle's existing 16384 allowance; the estimator and
+closed-solid defaults, 128-path agreement probes, six replay passes, branch
+cutoff schedule, live stack, and 1/1024 error budget are unchanged. No
+Russian roulette or special energy retirement has been introduced.
+
+### Preset persistence and qualification instruments
+
+The preset's camera and 4D view land after its Points cloud arrives. The
+original preset edit scheduled persistence before that later view application,
+leaving the address-bar hash with stale framing while Copy Link captured the
+correct live view. Applying the pending view now flushes the existing edit
+session after the camera/rotor/slice update. It creates no extra undo entry.
+The app gate compares the actual copied link with the authored hash.
+
+`finite-glass.verify.mjs` now requires every antialias sample in the final
+frame token, complete hit accounting, zero unresolved/invalid optical work,
+zero march exhaustion, and a named hardware adapter. The prior gate only
+logged optical counts; coverage included the floor and could pass a black
+fractal. Its structured report retains documents, traces, failure classes,
+renderer/raster metadata, and image hashes on failure too. The per-frame
+trace identifies sample index, sample count and frame token. The finite
+status side channel retains its status in bits 0–7 and carries final failure
+and reason in bits 8–15 and 16–23; its allocation and binding stay unchanged.
+
+The studio gradient improves the preset's readability but does **not** recreate
+the study's directional softboxes, rear colored wall and floor radiance. The
+canonical camera and native 4D slice make the geometry comparable; final
+appearance still requires the owner's review of actual application images.
+
+### Boundary-correction baseline, before exact primary rays (2026-09-19)
+
+On quiet AMD RX 7900 XTX hardware (radeonsi, Chromium 151), the strict
+`bench:surface` run passes every surface agreement leg. Finite boundary
+normals agree exactly; maximum linear-radiance disagreement is
+`1.89e-8` in 3D and `2.17e-8` in 4D. All four stable trace probes per
+dimension are compared, including one resolved 3D trace and four resolved
+4D traces under the deliberately smaller 128-path probe guard. Neither
+one-cell anchor differences nor post-result status differences are waived.
+
+The production renderer's canonical finite arms met the preview, settle and
+cancellation lines before the subsequent primary-ray optimization:
+
+| Measurement                                | 3D Menger | Native posed 4D |     Limit |
+| ------------------------------------------ | --------: | --------------: | --------: |
+| 256×144 preview                            |    700 ms |          807 ms |   1500 ms |
+| Reused preview                             |    726 ms |          831 ms |   1500 ms |
+| 512×288, four-sample settle                |   5237 ms |         6101 ms |  10000 ms |
+| Maximum observed transport batch           |  178.1 ms |        285.9 ms |    600 ms |
+| Mid-frame cancellation acknowledgement     |   16.5 ms |         32.9 ms |    600 ms |
+| Optical samples resolved across the settle |    125843 |          126396 | Every hit |
+| Unresolved / invalid / exhausted           | 0 / 0 / 0 |       0 / 0 / 0 |         0 |
+
+The preview repeats are byte-identical. Every completed AA sample is observed
+before averaging, so a successful last sample cannot conceal an earlier
+failure or expensive batch. The computed additional transport allocation is
+5.6 MiB at this raster; that allocation calculation is not a full-HD
+process-retention measurement.
+
+The separately built application passes the stricter preset gate at
+960×640 with its authored eight AA samples. The 3D samples resolve
+154680–154691 hits each, and both dimensions report zero unresolved,
+invalid, active or exhausted work in every completed sample. Observed
+first frames arrive in 1.26 s / 1.25 s, and full settles take 53.58 s /
+107.85 s. These larger eight-sample settles are not the 512×288,
+four-sample envelope rows above. Documents, exact copied links, trace
+records and clean scene images are in
+`scripts/out/finite-glass-pre-primary-dda/finite-glass-report.json`; the
+strict hardware report is `strict-surface-bench-results.json` beside it.
+
+The first benchmark completed numerically but crashed while attempting a
+3025×240474 diagnostic page screenshot. Its launcher now bounds bitmap
+allocation and falls back to a viewport capture; individual scene canvases
+remain available at full resolution. The subsequent complete benchmark exits
+successfully, including its artifact phase. Screenshot failures do not
+replace or weaken the numeric verdict.
+
+Full-HD four-AA exports exposed the remaining performance problem. Both
+dimensions completed every optical sample with zero unresolved/invalid work,
+and each 35-band PNG was byte-identical to its single-frame counterpart.
+However, click-to-download times were 66.61 s / 121.37 s in 3D and
+128.54 s / 235.25 s in 4D (single frame / 35 bands), against the unchanged
+120 s line. These are failures despite correct images. The complete baseline
+is retained under `scripts/out/finite-glass-pre-primary-dda/`.
+
+### Exact primary rays
+
+Both finite cores now use one exact DDA query for a primary ray as well as
+for optical continuation. This removes the redundant hybrid-DE sphere march;
+the hybrid remains available for normals, shadows and AO. Unprojection,
+full-image coordinates, AA jitter, active-ray guards and all parameter/binding
+layouts stay unchanged. A floor wins only when it is eligible and strictly
+nearer than the finite hit, or the query certifies a miss. An ambiguous or
+refused query stays exhausted and visibly unresolved, never background.
+
+Initial ray-side occupancy is derived from the exact cells, so an opaque
+camera inside an occupied cell sees its first exit. Optical paths retain the
+outside-camera contract; an inside-camera glass path remains unresolved
+rather than inventing a medium. The existing nonfinite emitted WGSL digests
+remain unchanged. GPU primary agreement is checked through the ordinary
+march entry and bindings against independent per-cell slab intervals,
+including posed 4D, inside origins, floor ordering, empty rays and refusals.
+
+The quiet Radeon run of the exact-primary build passes all six independent
+GPU banks (174 checks, maximum depth difference 4.66e-7). At 256×144,
+preview/repeat take 642/621 ms in 3D and 734/724 ms in 4D; the 512×288,
+four-AA settles take 4.80/5.70 s. All complete optical samples resolve with
+zero failures. The built-app gate at 960×640, eight AA samples resolves
+152933–152940 hits per sample in 3D and 150530–150552 in 4D; completed
+settles take 51.53/105.81 s. The smaller hit count is the removal of the
+previous pixel-epsilon silhouette acceptance, now checked against actual
+cell intersections.
+
+This primary optimization alone does not certify the larger raster's cost.
+Transport still consumes 93%/96% of each AA frame, and the 4D trace contains
+individual transport batches up to 1.12 s, exceeding the 600 ms checkpoint
+line. These failures remain failures even though every pixel completes.
+The eight frozen study poses also complete in the built app with zero
+unresolved, invalid or exhausted work. Exact-primary evidence is archived at
+`scripts/out/finite-glass-exact-primary-baseline/`; pose records are at
+`scripts/out/finite-glass-correction/poses/finite-glass-poses-report.json`.
+
+### Finite material normalization correction
+
+The selected study's Beer function divides interior distance by
+`solid.shape.x`, packed from the construction's `halfExtent`: `H = 0.75` in
+both dimensions. The production oracle's `DielectricMaterial` contract names
+that same half extent. The original generic material vocabulary instead
+specified `visibleBoundingRadius` while claiming it reproduced the selected
+material. Finite routing inherited that contradiction: it passed the
+enclosing sphere `H√dim`, giving normalization lengths of approximately
+1.299 in 3D and 1.5 in 4D. No finite appearance qualification established
+that material change. The selected source and scalar control are in
+[`transmission-dielectric-gpu.page.ts`](../scripts/transmission-dielectric-gpu.page.ts),
+[`packDielectricSolidFixture`](../scripts/transmission-dielectric-solid.ts)
+and [`surface-dielectric.ts`](../src/fractal/surface-dielectric.ts).
+
+Finite sessions now pass the existing `FINITE_SOLID_HALF_EXTENT` to the
+material resolver. The enclosing radius still controls geometry, floor and
+fog, and other scene families keep their previous normalization. Authored
+optical scale continues to multiply the reference. This restores the selected
+Beer coefficients per world length: the former exponent was smaller by
+`1/√3` or `1/2`. The preset's authored distortion remains `0.08`, whose slab
+length is now `0.08H = 0.06`; its normal-tap length is `0.04H = 0.03`.
+Those lengths previously grew with the enclosing sphere too. This is a
+material-units correction, with no branch, error, traversal or timing limit
+changed. Lighting and the separately authored distortion still differ from
+the original study; matching the Beer normalization does not assert final
+appearance approval.
+
+The finite renderer-envelope arms now retain the actual preset optics,
+including distortion `0.08`, and use the same half-extent reference as the
+app. Earlier finite envelope rows replaced the preset optics with the
+straight model and therefore did not measure its smoothed-normal slab work;
+those historical measurements above are retained, but do not qualify the
+corrected material. Standalone boundary/trace agreement fixtures keep their
+explicit probe material parameters. The existing slot-material tests pin both
+presets' packed optical lanes and the selected study's independent Beer
+control for a 0.5-world-unit interior segment. Actual browser and performance
+qualification must be repeated for the corrected material.
+
+Finite envelope scene parameters now also come from the preset room and the
+app's shared fresh-session defaults: checker scale `0.64`, floor emission
+`1.4`, directional light azimuth/elevation `135°/50°`, ambient `0.25`,
+environment strength `0.35`, fog density `1`, zero fog-tint strength, and
+transform color in both dimensions. The shared `lightDirection` and
+`presentationFloorSpec` resolvers supply the actual vectors and floor payload.
+Earlier finite rows instead used a non-emitting floor, no fog or environment
+tint, a different light direction and radius coloring in 4D. They do not
+qualify the corrected preset room. Both finite tier specs, including their
+resolved materials and room, are retained in each benchmark row's
+`finiteScene` evidence.
+
+The envelope intentionally measures fixed 16:9 renderer rasters, not a full
+browser session: 256×144 at one AA sample for preview, 512×288 at four samples
+for settle (the app defaults to eight). Finite preview uses the app's shared
+40-march/12-shadow/3-AO settings and `2e-4` hit floor; settle uses
+160/32/5 and `1e-5`. The exact finite DDA still draws the complete level-two
+construction in both tiers. Acceptance uses the native 288-pixel height in
+both tiers, while shading footprints use each actual raster. No adaptive
+preview governor, UI/presentation overhead, user-customized room, or export
+encoding is included. The nonfinite envelope arms retain their earlier
+fixture and quality conventions. Actual application, export and cancellation
+gates remain necessary for their larger rasters and user-facing behavior.
+
+### Frozen views and exact work removal
+
+The original canonical capture gate restored a document but allowed ambient
+motion during the brief Points interval before Surface entry. Automatic orbit
+and tumble deliberately do not rewrite the URL every frame, so equal authored
+hashes did not prove equal primary rays. The gate now records reduced-motion
+media, captures the settled live document through Copy Link, and verifies its
+physical camera, rotor, world slice, geometry, materials and background.
+Normalized `sliceCenter` is diagnostic when the document carries `sliceW`:
+resampling the point cloud can change that normalization without moving the
+world slice. The lifecycle edit arms likewise read the live copied view while
+retaining the address-bar document separately. A
+`--reduced-motion=no-preference` diagnostic can reproduce moving boot with the
+strict live-view check still active.
+
+Guarded child-box pruning of the hybrid field was tried and removed: no useful
+GPU speedup was observed. Its captures also exposed the missing motion control,
+so they cannot establish an image-identity comparison. The discarded attempt
+is recorded under `scripts/out/finite-glass-pruning-attempt/`.
+
+A separate temporary build disabled only finite optical floor shadow/AO field
+loops to isolate their cost. With frozen, verified live poses at 960×640 and
+eight AA samples, it completed in 41.47 s / 69.68 s; maximum transport batches
+were 293.0 ms / 628.4 ms. All samples completed, but lighting was deliberately
+changed and the previous enclosing-radius material unit was still in use.
+These are diagnostic rows, not an accepted appearance or a release gate.
+Artifacts and the warning are in `scripts/out/finite-glass-floor-de-profile/`.
+Full floor lighting was restored before subsequent qualification.
+
+Two exact work reductions remain. Finite terminal displacement no longer
+samples a smoothed normal when no floor is compiled or the escaped ray cannot
+point toward it. Displacement changes only origin, so these terminals always
+return the same background radiance. Every downward ray retains the previous
+calculation, including origins below the plane because displacement may cross
+its height. The CPU terminal controls pin exact RGB and field-call removal;
+nonfinite shader digests stay unchanged. The depth-two DDA also uses the
+study's exact ternary middle-digit masks, with bounds checked before shifts
+and the generic rule retained for other levels. Exhaustive 729-cell and
+6561-cell comparisons against the independent integer rule cover both
+dimensions. Neither change alters a boundary, material value or error budget.
+
+### Compact finite continuation
+
+The finite `TransportPath` now uses a 112-byte shader-private layout in both
+dimensions. WGSL gives each `vec3f` 16-byte alignment but 12-byte size, so
+`origin/inside`, `dir/interfaces` and `energy/bound` occupy three consecutive
+16-byte groups. The canonical intrinsic point, plane indices and cell indices
+start at offsets 48, 64 and 80. `anchorPresent`, `exitPresent` and the plane
+mask occupy offsets 96, 100 and 104; final alignment rounds the stride to 112.
+Only the finite backend's unused generic displayed-anchor fields are removed.
+Every canonical anchor field, branch, cut, guard and arithmetic operation is
+preserved, as are the nonfinite emitted-source digests and GPU binding layouts.
+
+The previous stride was 160 bytes. At the unchanged 24-entry stack this removes
+1,152 logical private bytes per invocation; it does not establish a physical
+driver-memory saving. The source tests calculate field offsets from WGSL type
+alignment/size rules and require all three child kinds to inherit the complete
+anchor. Anchored queries also skip coordinate classification and the root-entry
+index override: their canonical continuation already supplies every cell.
+Unanchored rays retain the previous classification arithmetic. The f32 twin
+uses the same control flow, while the independent f64 restart/path comparisons
+remain the geometric check. GPU image identity and performance are qualified
+separately from these layout and CPU checks.
+
+### Corrected application capture (2026-09-20)
+
+With the half-extent material unit, exact primary query, frozen live views and
+112-byte finite path state, the quiet RX 7900 XTX / radeonsi / Chromium 151
+application gate completes all eight samples at 960×640 in both dimensions:
+
+| Measurement                                    |     3D Menger | Native posed 4D |
+| ---------------------------------------------- | ------------: | --------------: |
+| First frame observed                           |       1.255 s |         1.254 s |
+| Full eight-sample settle                       |      41.486 s |        74.648 s |
+| Largest transport batch                        |      253.1 ms |        592.3 ms |
+| Optical hits per sample                        | 153097–153102 |   150705–150726 |
+| Unresolved / invalid / exhausted, every sample |     0 / 0 / 0 |       0 / 0 / 0 |
+
+Both settled live documents match the authored physical view. Clean scene
+PNGs are byte-identical to the preceding 160-byte path implementation with
+the same corrected material and frozen view; compaction changes storage and
+work, not the picture. The eight frozen difficult camera/rotor cases also
+complete with positive optical work and no unresolved, invalid, active or
+exhausted rays at their separate 256×144, one-sample convention.
+The reports and images are under `scripts/out/finite-glass-correction/`, with
+the comparison baseline in `scripts/out/finite-glass-material-baseline/`.
+These larger application timings do not replace the frozen 512×288,
+four-sample performance envelope, the full-HD export gate or owner review.
+
+### Full-HD checkpoint finding
+
+The same compact-path build saves complete 1920×1080 four-sample images in
+52.733 s / 100.526 s for 3D / native 4D. Forced 60000-ray bands (35 per image)
+take 93.652 s / 174.419 s and reproduce the respective default exports byte
+for byte. Every sample in every band finishes without unresolved, invalid,
+active or exhausted work.
+
+These are **not a complete performance pass**: the default 4D export records
+seven transport submissions above the unchanged 600 ms checkpoint limit,
+with a 923.8 ms maximum (3D: 321.3 ms). The forced-band maxima are 235.4 ms /
+613.1 ms. Each AA sample's longest submission is replay pass three with
+only 73–80 rays, taking 893.7–923.8 ms; it is not a wide first batch that a
+smaller dispatch ceiling would reliably cure. The export gate now records
+every submission timing and enforces
+the default full-HD checkpoint line, rather than relying on a cancellation
+probe that may land before the expensive work. The complete baseline report
+is in `scripts/out/finite-glass-path112-baseline/`.
+
+The gate's original requirement that the artificial 35-band stress export
+also finish within 120 seconds was extra scope. The selected study's
+`Decided feasibility envelope` and canonical full-HD rows require normal
+export delivery within 120 seconds, plus independent tile/window identity;
+its smaller stress schedules explicitly miss 120 seconds. The corrected
+gate preserves the default 120-second limit and exact identity, records
+forced-band timing separately and retains the 300-second watchdog. This
+scope correction was established from the study before the 4D stress timing
+completed; it does not excuse the actual default-export checkpoint failure.
+
+### Removing repeated continuation setup
+
+A validated canonical anchor reconstructs every used coordinate either on
+an indexed plane or inside an indexed cell, so its point lies in the closed
+root. Every root slab therefore contains zero, and the previous
+`max(0, enter)` start is exactly zero. Anchored queries now enter traversal
+there directly; they neither lift the unused displayed origin nor repeat
+root clipping. New primary rays keep their original clipping formulas and
+order. Validation and reconstruction also reuse each identical rounded plane
+value, with all envelope, cell-ownership and medium checks retained. For a
+single-face anchor this removes five/seven repeated plane evaluations in
+3D/4D and up to six/eight root slab divisions; native 4D additionally avoids
+four discarded origin row dots.
+
+Independent f64 cube controls cover every root-face axis and sign, including
+a fourth-axis face, inward exit, outward miss, tangent refusal and medium
+mismatch. A throwing origin accessor proves that a canonical query does not
+read world coordinates. The existing random canonical continuations and
+nonfinite shader digests remain pinned. A separate input-contract correction
+explicitly rejects nonfinite directions: infinities could previously appear
+as a plausible miss, so malformed input behavior is tightened, not claimed
+byte-identical. Zero/NaN/infinite directions and the unused 3D anchor lane
+have refusal controls. Geometry, material arithmetic, branch ordering and
+all work/error limits remain unchanged for valid rays.
+
+The GPU images remain byte-identical after this simplification, but it does
+not solve the checkpoint tail. A native 4D default full-HD four-sample
+early-capture diagnostic completes every sample and saves its PNG in
+101.077 s, with a 926.8 ms maximum transport batch (pass three, 73 rays).
+Its export-only trace ends at the actual tile-completion marker, excluding a
+new live frame started after delivery. The corrected report and raw console
+are `scripts/out/finite-glass-correction/native4d-early-export-report.json`
+and the adjacent console file. Because capture started after the provisional
+frame, this is a checkpoint diagnostic, not a normal export qualification.
 
 ## What is not yet qualified
 
-The compute kernel emission and the host buffer contracts are real state;
-the capability matrix above records exactly how far each consumer has come.
+The backend and routing sections above record the current implementation;
+the earlier capability matrix records its pre-integration state.
 The boundary query's INSIDE traversal has LANDED for the closed-solid
 backend — the envelope's closed-solid arms resolve in both dimensions with
 every delegated line met — so the first blocker is cleared. The rear-scene
@@ -1212,11 +1647,12 @@ composition admits it, the panel authors the model, and the two Glass
 starters carry it in both dimensions; the export-tile gate's
 transmission leg is byte-exact in both dimensions with the distortion
 authored. The finite routing has LANDED (2026-09-19, the section above),
-with the transport's depth-2 driver-side refusals the recorded residual.
+with the subsequent geometry correction recorded above. Final qualification
+uses complete optical samples, not a resolved-pixel percentage.
 What remains:
 the fold core's transport (the measured timeout, three recorded paths —
 the closed-solid backend is now DOUBLY motivated for the finite-construction
-path, being its own recorded scope); built-app qualification (.11 — the
+path, being its own recorded scope); built-app qualification (the
 final visual review and the measured envelope on a quiet real driver).
 The estimator arms' IFS
 vacuity is disclosed, not solved — IFS geometry has no closed solid for
@@ -1248,6 +1684,10 @@ node scripts/surface-transport-invalidation.verify.mjs --display=:0
 # The app routing's export-tile leg (byte-exact both dimensions, closed
 # solid + distortion): the transmission scenes are the two starters.
 node scripts/surface-export-tile.verify.mjs --display=:0 --scene=transmission
+
+# The finite presets' complete optical samples and actual Save-PNG identity:
+node scripts/finite-glass.verify.mjs --display=:0
+node scripts/surface-export-tile.verify.mjs --display=:0 --scene=finite
 
 # The starters' composition screenshots (real driver, real preset menu):
 node scripts/transmission-starters.probe.mjs --display=:0

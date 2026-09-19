@@ -1187,6 +1187,12 @@ export interface SurfaceComputeFrameOptions {
    * superseded job keeps the samples it finished.
    */
   samples?: number;
+  /** Read-only observation of each completed, untruncated sample before
+   * averaging. The aggregate frame retains only the last sample's census,
+   * so qualification must observe every sample's transport and batch cost.
+   * Not called for cancelled or partial samples; the caller must not mutate
+   * the frame's buffers, which retain the ordinary renderFrame lifetime. */
+  onSample?: (frame: Readonly<SurfaceComputeFrame>, index: number) => void;
 }
 
 export interface SurfaceComputeFrame {
@@ -3918,7 +3924,11 @@ export class SurfaceComputeRenderer {
     opts: SurfaceComputeFrameOptions,
   ): Promise<SurfaceComputeFrame | null> {
     const samples = Math.max(1, Math.floor(opts.samples ?? 1));
-    if (samples === 1) return this.runFrame(token, spec, opts);
+    if (samples === 1) {
+      const frame = await this.runFrame(token, spec, opts);
+      if (frame && !frame.truncated) opts.onSample?.(frame, 0);
+      return frame;
+    }
     const rays = spec.width * spec.height;
     const accum =
       this.sampleAccum?.length === rays * 3
@@ -3975,6 +3985,7 @@ export class SurfaceComputeRenderer {
         s,
       );
       if (!frame) break;
+      if (!frame.truncated) opts.onSample?.(frame, s);
       wallMs += frame.wallMs;
       gpuMs += frame.gpuMs;
       if (s > 0 && frame.truncated) break;
@@ -5792,7 +5803,7 @@ export class SurfaceComputeRenderer {
     const counts = { hit: 0, miss: 0, exhausted: 0, active: 0, plane: 0 };
     const exhaustedIndices: number[] = [];
     tr(
-      `frame start rays=${rays} marchSteps=${spec.marchSteps} budgetMs=${budgetMs} fenceMs=${(this.fenceMs ?? 0).toFixed(2)} ts=${tsInstrumentLive ? "on" : "off"} shadeCost0=${sizer.cost.interceptUs.toFixed(0)}+n*${sizer.cost.marginalUs.toFixed(1)}us rayStepEmaUs0=${rayStepEmaUs} shadeHitCap0=${sizer.cap}`,
+      `frame start sample=${sampleIndex} samples=${Math.max(1, Math.floor(opts.samples ?? 1))} token=${token} rays=${rays} marchSteps=${spec.marchSteps} budgetMs=${budgetMs} fenceMs=${(this.fenceMs ?? 0).toFixed(2)} ts=${tsInstrumentLive ? "on" : "off"} shadeCost0=${sizer.cost.interceptUs.toFixed(0)}+n*${sizer.cost.marginalUs.toFixed(1)}us rayStepEmaUs0=${rayStepEmaUs} shadeHitCap0=${sizer.cap}`,
     );
     outer: while (
       active.length > 0 ||
@@ -6091,6 +6102,7 @@ export class SurfaceComputeRenderer {
     let transportLastUnresolved = 0;
     let transportUnresolved = 0;
     let transportInvalid = 0;
+    const transportFailures = new Map<string, number>();
     const transportBatchMs: number[] = [];
     let transportPassesStarted = 0;
     if (
@@ -6199,7 +6211,8 @@ export class SurfaceComputeRenderer {
           return null;
         }
         for (let slot = 0; slot < pending.length; slot++) {
-          const s = statusCopy[slot];
+          const packedStatus = statusCopy[slot];
+          const s = packedStatus & 0xff;
           if (s === SURFACE_GPU_TRANSPORT_PENDING) {
             nextPending.push(pending[slot]);
           } else if (
@@ -6209,16 +6222,18 @@ export class SurfaceComputeRenderer {
             transportResolved++;
           } else if (s === SURFACE_GPU_TRANSPORT_UNRESOLVED) {
             transportUnresolved++;
+            const failure = (packedStatus >>> 8) & 0xff;
+            const reason = (packedStatus >>> 16) & 0xff;
+            const key = `f${failure}/r${reason}`;
+            transportFailures.set(key, (transportFailures.get(key) ?? 0) + 1);
           } else if (s === SURFACE_GPU_TRANSPORT_INVALID) {
             transportInvalid++;
           }
           // SKIPPED: a classic slot — shadeRays owns the pixel; not
           // transport work to count or re-dispatch.
         }
-        // The LAST pass's own split is the final verdict — the cumulative
-        // counts above re-count every replay retry, so a ray that resolved
-        // at pass 5 was "unresolved" at passes 0-4 and only this split says
-        // how the FRAME actually landed (the black-pixel question).
+        // Accepted and unresolved rays leave the pending queue exactly once.
+        // These cumulative terminal counts are the final frame partition.
         transportLastResolved = transportResolved;
         transportLastUnresolved = transportUnresolved;
         if (!(await maybePresent(rays - pending.length))) return null;
@@ -6239,6 +6254,12 @@ export class SurfaceComputeRenderer {
       // budget exhaustion, refused queries, and NaN paths respectively).
       tr(
         `transport done final resolved=${transportLastResolved} unresolved=${transportLastUnresolved} (cumulative resolved=${transportResolved} unresolved=${transportUnresolved} invalid=${transportInvalid}) passes=${transportPassesStarted}`,
+      );
+    }
+
+    if (transportFailures.size > 0) {
+      tr(
+        `transport failures ${[...transportFailures].map(([key, count]) => `${key}=${count}`).join(" ")}`,
       );
     }
 

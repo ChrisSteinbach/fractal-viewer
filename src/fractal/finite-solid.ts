@@ -147,8 +147,9 @@ export function resolveFiniteSolid(
 
 /** The construction's origin-centred bound: the root box's circumscribed
  * sphere in the construction's own dimension (`half·√dim`) — the whole
- * construction is visible, so this is also the marching ball and the
- * optical model's scene-derived radius. */
+ * construction is visible, so this is also the marching ball. Optical
+ * material lengths use the root half extent independently, matching the
+ * selected study's Beer normalization in both dimensions. */
 export function finiteSolidBoundingRadius(dim: 3 | 4): number {
   return FINITE_SOLID_HALF_EXTENT * Math.sqrt(dim);
 }
@@ -1333,9 +1334,9 @@ function boxSdf(
  * the min reads 0 — both boxes' own surfaces meet there — which is the
  * known min-box limitation that makes the field UNSUITABLE as a marched
  * medium oracle and is why the transport's boundary query is the DDA
- * above, never a field march (the abutting-seam measurement). The display
- * march reads this field only from outside, where a ray stops at the
- * first surface, so the shared-plane zero never reaches it.
+ * above, never a field march (the abutting-seam measurement). Primary
+ * finite rays now use that exact query too; this field remains available
+ * for shading and independent outside-march controls.
  */
 export function finiteSolidField(
   c: FiniteSolidConstruction,
@@ -1358,7 +1359,7 @@ export function finiteSolidField(
  * (outside it is the certified conservative bound; inside the OPEN cell
  * interior it is the deepest containing box's depth; the zero is exact on
  * the union's boundary, and — disclosed above — also on interior shared
- * planes, which display rays never traverse).
+ * planes, which an outside march stops before traversing).
  */
 export function finiteSolidDistance(
   c: FiniteSolidConstruction,
@@ -1381,7 +1382,7 @@ export const FINITE_SOLID_DISPLAY_REFINE_REL = 1 / 6;
  * The display marcher's bounded-work estimate: the certified hybrid of the
  * level-1 boxes and their occupied children.
  *
- * The flat field above is EXACT outside the union, but at level 2 it costs
+ * The flat field above is conservative outside the union, but at level 2 it costs
  * one box evaluation per occupied finest cell (400 in 3D, 2,304 in 4D) per
  * query — a full-frame display march cannot pay that. The naive cheap
  * replacement, the plain min over the level-1 boxes, is UNSOUND in a
@@ -1406,12 +1407,12 @@ export const FINITE_SOLID_DISPLAY_REFINE_REL = 1 / 6;
  * and the children ARE the union's part in the box. The global nearest
  * union point lives in some box i*, whose term is therefore ≤ the true
  * distance — the min cannot overstate, so a march step can never skip the
- * surface. The zero set is exactly the union's boundary: an unrefined
- * term is 0 only ON a box face, but d < tau refines, and the refined
- * term's zero set is the children's faces — the true surface within the
- * box (the tunnel mouths read positive: their rim recedes). Interior
- * shared child faces read 0 too and are documented above as unreachable
- * from outside. Inside one child the value is that child's interior
+ * surface. Boundary zeros are preserved: an unrefined term is 0 only ON
+ * a box face, but d < tau refines, and the refined term vanishes on the
+ * children's faces (the tunnel mouths read positive: their rim recedes).
+ * Interior shared child faces also read 0; the zero set therefore is NOT
+ * only the union's boundary, and this field is not a membership oracle.
+ * Inside one child the value is that child's interior
  * depth, the same convention as the flat field.
  *
  * Level 1 has no children and returns the plain min (the boxes ARE the

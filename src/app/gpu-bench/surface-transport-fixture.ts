@@ -10,6 +10,8 @@ import {
   DIELECTRIC_ANCHOR_ENVELOPE_REL,
   DIELECTRIC_CROSSING_EPS_REL,
   DIELECTRIC_DISTORTION_NORMAL_REL,
+  DIELECTRIC_MAX_PROCESSED_PATHS,
+  DIELECTRIC_MAX_INTERFACES,
   type DielectricMaterial,
   dielectricBeerThroughput,
   dielectricBranchBound,
@@ -462,9 +464,15 @@ export function transportTraceCPU(
   finiteQuery?: TransportFiniteQueryFn,
 ): TransportTraceResult {
   const maxProcessed =
-    caps?.maxProcessedPaths ?? SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS;
+    caps?.maxProcessedPaths ??
+    (finiteQuery
+      ? DIELECTRIC_MAX_PROCESSED_PATHS
+      : SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS);
   const maxInterfaces =
-    caps?.maxInterfaces ?? SURFACE_GPU_TRANSPORT_MAX_INTERFACES;
+    caps?.maxInterfaces ??
+    (finiteQuery
+      ? DIELECTRIC_MAX_INTERFACES
+      : SURFACE_GPU_TRANSPORT_MAX_INTERFACES);
   const eps = DIELECTRIC_CROSSING_EPS_REL * material.radius;
   const stack: FixturePath[] = [];
   let radiance: Vec3 = [0, 0, 0];
@@ -482,48 +490,76 @@ export function transportTraceCPU(
     stack.push(child);
     return true;
   };
-  // --- the primary split (the march's own hit, entering from outside) ---
-  const n0 = transportOpticalNormal(system, origin, dir, eps);
-  // The accepted hit may sit up to one pixel footprint OUTSIDE the
-  // surface; the child's anchored restart keeps only the 2·eps baseline
-  // (the kernel's rule — the query's own march reaches the surface and
-  // the anchor suppression absorbs the entry crossing).
-  const origin0: Vec3 = [origin[0], origin[1], origin[2]];
-  const cosI0 = Math.abs(dir[0] * n0[0] + dir[1] * n0[1] + dir[2] * n0[2]);
-  const f0 = dielectricFresnel(cosI0, 1, material.ior);
-  const bend0 = dielectricRefract(dir, n0, 1, material.ior);
-  const reflDir0: Vec3 = [
-    dir[0] - 2 * (dir[0] * n0[0] + dir[1] * n0[1] + dir[2] * n0[2]) * n0[0],
-    dir[1] - 2 * (dir[0] * n0[0] + dir[1] * n0[1] + dir[2] * n0[2]) * n0[1],
-    dir[2] - 2 * (dir[0] * n0[0] + dir[1] * n0[1] + dir[2] * n0[2]) * n0[2],
-  ];
-  const refl0: FixturePath = {
-    origin: origin0,
-    dir: reflDir0,
-    energy: [f0, f0, f0],
-    inside: false,
-    interfaces: 1,
-    anchorPresent: true,
-    anchorPoint: origin0,
-    bound: dielectricBranchBound([f0, f0, f0], ENVIRONMENT_BOUND),
-  };
-  const refr0: FixturePath = {
-    origin: origin0,
-    dir: bend0.direction,
-    energy: [1 - f0, 1 - f0, 1 - f0],
-    inside: true,
-    interfaces: 1,
-    anchorPresent: true,
-    anchorPoint: origin0,
-    bound: dielectricBranchBound([1 - f0, 1 - f0, 1 - f0], ENVIRONMENT_BOUND),
-  };
-  const first0 = refl0.bound >= refr0.bound ? refl0 : refr0;
-  const second0 = first0 === refl0 ? refr0 : refl0;
-  if (!push(first0)) {
-    return { radiance, residual, status: "unresolved", failure: 3, reason: 0 };
-  }
-  if (!push(second0)) {
-    return { radiance, residual, status: "unresolved", failure: 3, reason: 0 };
+  if (finiteQuery) {
+    // The finite path starts at the camera. Its exact boundary query owns
+    // the primary interface and both children, as it does every later one.
+    push({
+      origin: [...origin],
+      dir: [...dir],
+      energy: [1, 1, 1],
+      inside: false,
+      interfaces: 0,
+      anchorPresent: false,
+      anchorPoint: [...origin],
+      bound: dielectricBranchBound([1, 1, 1], ENVIRONMENT_BOUND),
+      finiteAnchor: null,
+    });
+  } else {
+    // --- the primary split (the march's own hit, entering from outside) ---
+    const n0 = transportOpticalNormal(system, origin, dir, eps);
+    // The accepted hit may sit up to one pixel footprint OUTSIDE the
+    // surface; the child's anchored restart keeps only the 2·eps baseline
+    // (the kernel's rule — the query's own march reaches the surface and
+    // the anchor suppression absorbs the entry crossing).
+    const origin0: Vec3 = [origin[0], origin[1], origin[2]];
+    const cosI0 = Math.abs(dir[0] * n0[0] + dir[1] * n0[1] + dir[2] * n0[2]);
+    const f0 = dielectricFresnel(cosI0, 1, material.ior);
+    const bend0 = dielectricRefract(dir, n0, 1, material.ior);
+    const reflDir0: Vec3 = [
+      dir[0] - 2 * (dir[0] * n0[0] + dir[1] * n0[1] + dir[2] * n0[2]) * n0[0],
+      dir[1] - 2 * (dir[0] * n0[0] + dir[1] * n0[1] + dir[2] * n0[2]) * n0[1],
+      dir[2] - 2 * (dir[0] * n0[0] + dir[1] * n0[1] + dir[2] * n0[2]) * n0[2],
+    ];
+    const refl0: FixturePath = {
+      origin: origin0,
+      dir: reflDir0,
+      energy: [f0, f0, f0],
+      inside: false,
+      interfaces: 1,
+      anchorPresent: true,
+      anchorPoint: origin0,
+      bound: dielectricBranchBound([f0, f0, f0], ENVIRONMENT_BOUND),
+    };
+    const refr0: FixturePath = {
+      origin: origin0,
+      dir: bend0.direction,
+      energy: [1 - f0, 1 - f0, 1 - f0],
+      inside: true,
+      interfaces: 1,
+      anchorPresent: true,
+      anchorPoint: origin0,
+      bound: dielectricBranchBound([1 - f0, 1 - f0, 1 - f0], ENVIRONMENT_BOUND),
+    };
+    const first0 = refl0.bound >= refr0.bound ? refl0 : refr0;
+    const second0 = first0 === refl0 ? refr0 : refl0;
+    if (!push(first0)) {
+      return {
+        radiance,
+        residual,
+        status: "unresolved",
+        failure: 3,
+        reason: 0,
+      };
+    }
+    if (!push(second0)) {
+      return {
+        radiance,
+        residual,
+        status: "unresolved",
+        failure: 3,
+        reason: 0,
+      };
+    }
   }
   // --- the oracle's work-list loop ---
   let status: TransportTraceStatus = "pending";
@@ -588,7 +624,7 @@ export function transportTraceCPU(
       break;
     }
     if (hit.kind === "miss") {
-      if (path.inside && path.interfaces !== 1) {
+      if (path.inside && (finiteQuery || path.interfaces !== 1)) {
         // An inside miss is unresolved, never a background hit — a path
         // that entered through a real crossing cannot miss a closed
         // solid, so this is an anomaly. The ONE exception is the primary
@@ -627,11 +663,12 @@ export function transportTraceCPU(
     // used to escape the solid and miss) the geometry re-anchors the
     // split. `path.inside` stays the claimed medium the boundary query
     // cross-checks.
-    const incidentInGlass =
-      (path.origin[0] - childOrigin[0]) * n[0] +
-        (path.origin[1] - childOrigin[1]) * n[1] +
-        (path.origin[2] - childOrigin[2]) * n[2] <
-      0;
+    const incidentInGlass = finiteQuery
+      ? path.inside
+      : (path.origin[0] - childOrigin[0]) * n[0] +
+          (path.origin[1] - childOrigin[1]) * n[1] +
+          (path.origin[2] - childOrigin[2]) * n[2] <
+        0;
     const energy: Vec3 = incidentInGlass
       ? [
           path.energy[0] *
@@ -739,9 +776,18 @@ export function transportTerminalDisplacementCPU(
   origin: Vec3,
   dir: Vec3,
   material: DielectricMaterial,
+  finiteGroundPlane?: boolean,
 ): TransportTerminalDisplacement {
   const distortion = material.distortion ?? 0;
-  if (!(distortion > 0)) {
+  // The finite app terminal is origin-independent without a floor or when
+  // its unchanged direction fails the floor's one-sided admission. Keep
+  // undefined as the general mode-3 displacement probe, including upward
+  // rays; an origin-height test would be unsound because the offset can
+  // move an origin across the plane.
+  if (
+    !(distortion > 0) ||
+    (finiteGroundPlane !== undefined && (!finiteGroundPlane || dir[1] >= -1e-6))
+  ) {
     return { origin, normal: [0, 0, 0], applied: false };
   }
   const smoothed = dielectricSmoothedNormal(

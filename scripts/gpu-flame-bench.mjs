@@ -587,18 +587,55 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** A screenshot that must never fail the run — used for the timing-based
- * mid-run progress captures, which have no page hook to synchronize on and
- * can legitimately race page state (e.g. a scenario finishing early). */
+// The growing surface report can exceed 700 million pixels. Asking Skia
+// for that full-page bitmap can terminate the browser, even after all
+// numeric results have been persisted. Bound allocation before capture.
+const SCREENSHOT_MAX_EDGE = 8192;
+const SCREENSHOT_MAX_PIXELS = 16 * 1024 * 1024;
+
+/** Diagnostic images never determine the benchmark verdict. Both progress
+ * and final page captures use the viewport when the full report is too big;
+ * the per-canvas artifacts retain the benchmark images at full resolution. */
 async function screenshotBestEffort(page, filePath) {
   try {
-    await page.screenshot({ path: filePath, fullPage: true });
+    const dimensions = await page.evaluate(() => ({
+      width: Math.max(
+        window.innerWidth,
+        document.documentElement.scrollWidth,
+        document.body?.scrollWidth ?? 0,
+      ),
+      height: Math.max(
+        window.innerHeight,
+        document.documentElement.scrollHeight,
+        document.body?.scrollHeight ?? 0,
+      ),
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      scale: Math.max(1, window.devicePixelRatio),
+    }));
+    const fits = (width, height) =>
+      width * dimensions.scale <= SCREENSHOT_MAX_EDGE &&
+      height * dimensions.scale <= SCREENSHOT_MAX_EDGE &&
+      width * height * dimensions.scale ** 2 <= SCREENSHOT_MAX_PIXELS;
+    const fullPage = fits(dimensions.width, dimensions.height);
+    if (!fullPage) {
+      console.error(
+        `[gpu-flame-bench] page screenshot ${dimensions.width}x${dimensions.height} at DPR ${dimensions.scale} exceeds the ${SCREENSHOT_MAX_PIXELS}-pixel/${SCREENSHOT_MAX_EDGE}-edge budget; using ${dimensions.viewportWidth}x${dimensions.viewportHeight} viewport for ${filePath}`,
+      );
+      if (!fits(dimensions.viewportWidth, dimensions.viewportHeight)) {
+        console.error(
+          `[gpu-flame-bench] viewport also exceeds the screenshot budget; skipping ${filePath}`,
+        );
+        return;
+      }
+    }
+    await page.screenshot({ path: filePath, fullPage, scale: "css" });
     console.error(
-      `[gpu-flame-bench] progress screenshot written to ${filePath}`,
+      `[gpu-flame-bench] ${fullPage ? "full-page" : "viewport"} screenshot written to ${filePath}`,
     );
   } catch (err) {
     console.error(
-      `[gpu-flame-bench] progress screenshot to ${filePath} failed (ignored): ${err instanceof Error ? err.message : String(err)}`,
+      `[gpu-flame-bench] screenshot to ${filePath} failed (diagnostic only): ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
@@ -876,8 +913,7 @@ async function main() {
     console.error(`[gpu-flame-bench] results written to ${resultsPath}`);
 
     const screenshotPath = path.join(outDir, "page.png");
-    await page.screenshot({ path: screenshotPath, fullPage: true });
-    console.error(`[gpu-flame-bench] screenshot written to ${screenshotPath}`);
+    await screenshotBestEffort(page, screenshotPath);
 
     // Per-canvas element screenshots (cpu/gpu/diff per scenario) — full-res
     // artifacts for eyeballing agreement, independent of page layout. The
@@ -889,30 +925,39 @@ async function main() {
     // that don't set one (the flame scenarios' cpu/gpu/diff triple, and
     // leg A's/leg B's fixed canvases) — unchanged from before this leg
     // existed, then a bare index for anything past both.
-    for (const scenario of await page.locator(".scenario").all()) {
-      const name = (await scenario.locator("h2").innerText())
-        .split("—")[0]
-        .trim();
-      const canvases = await scenario.locator("canvas").all();
-      const labels = ["cpu", "gpu", "diff"];
-      for (let i = 0; i < canvases.length; i++) {
-        const benchLabel = await canvases[i].getAttribute("data-bench-label");
-        const suffix = benchLabel ?? labels[i] ?? String(i);
-        const canvasPath = path.join(outDir, `${name}-${suffix}.png`);
-        if (args.display !== undefined && !args.headed) {
-          // These are completed 2D benchmark canvases. Serialize their native
-          // pixels without asking a minimized compositor for another frame.
-          // page.png retains the surrounding layout and CSS borders.
-          const png = await canvases[i].evaluate((canvas) =>
-            canvas.toDataURL("image/png"),
-          );
-          await writeFile(canvasPath, Buffer.from(png.split(",")[1], "base64"));
-        } else {
-          await canvases[i].screenshot({ path: canvasPath });
+    try {
+      for (const scenario of await page.locator(".scenario").all()) {
+        const name = (await scenario.locator("h2").innerText())
+          .split("—")[0]
+          .trim();
+        const canvases = await scenario.locator("canvas").all();
+        const labels = ["cpu", "gpu", "diff"];
+        for (let i = 0; i < canvases.length; i++) {
+          const benchLabel = await canvases[i].getAttribute("data-bench-label");
+          const suffix = benchLabel ?? labels[i] ?? String(i);
+          const canvasPath = path.join(outDir, `${name}-${suffix}.png`);
+          if (args.display !== undefined && !args.headed) {
+            // These are completed 2D benchmark canvases. Serialize their native
+            // pixels without asking a minimized compositor for another frame.
+            // page.png retains the surrounding layout and CSS borders.
+            const png = await canvases[i].evaluate((canvas) =>
+              canvas.toDataURL("image/png"),
+            );
+            await writeFile(
+              canvasPath,
+              Buffer.from(png.split(",")[1], "base64"),
+            );
+          } else {
+            await canvases[i].screenshot({ path: canvasPath });
+          }
         }
       }
+      console.error(`[gpu-flame-bench] per-canvas screenshots written`);
+    } catch (err) {
+      console.error(
+        `[gpu-flame-bench] per-canvas screenshots failed (diagnostic only): ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
-    console.error(`[gpu-flame-bench] per-canvas screenshots written`);
 
     console.log(JSON.stringify(results, null, 2));
 
