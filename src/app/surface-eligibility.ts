@@ -1200,5 +1200,6 @@ export function deriveSurfaceDocumentEligibility(
     document.tiling ?? null,
     document.condensationDepthBand,
     document.sphereInversion ?? null,
+    document.finiteSolid ?? null,
   );
 }

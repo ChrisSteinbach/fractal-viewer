@@ -1,6 +1,6 @@
 import { composeAffine, isIdentityAffine } from "./affine";
 import { composeAffine4, toTransform4 } from "./affine4";
-import { mengerSponge } from "./presets";
+import { hyperMengerSpongeTransforms, mengerSponge } from "./presets";
 import { SHAPE_MARCH_SAFETY } from "./shapes";
 import type { SymmetryParams, Transform, Vec3, Vec4 } from "./types";
 
@@ -292,35 +292,11 @@ function coordinateEnvelope(half: number): number {
  * keep the child when at most ONE of its four coordinates is the middle
  * third (16 with no middle axis + 4·8 with exactly one = 48 children).
  * The 4D half's ONE definition; the 3D preset's maps (`mengerSponge`) are
- * reused verbatim where the rules coincide.
+ * reused verbatim where the rules coincide. Defined in `presets.ts`
+ * beside its 3D twin (this module imports it from there), re-exported so
+ * the family's vocabulary stays one import away.
  */
-export function hyperMengerSpongeTransforms(): Transform[] {
-  const s = 1 / 3;
-  const transforms: Transform[] = [];
-  let id = 0;
-  for (let x = -1; x <= 1; x++) {
-    for (let y = -1; y <= 1; y++) {
-      for (let z = -1; z <= 1; z++) {
-        for (let w = -1; w <= 1; w++) {
-          const middles =
-            (x === 0 ? 1 : 0) +
-            (y === 0 ? 1 : 0) +
-            (z === 0 ? 1 : 0) +
-            (w === 0 ? 1 : 0);
-          if (middles >= 2) continue;
-          transforms.push({
-            id: id++,
-            position: [x * 0.5, y * 0.5, z * 0.5],
-            rotation: [0, 0, 0],
-            scale: [s, s, s],
-            w: { position: w * 0.5 },
-          });
-        }
-      }
-    }
-  }
-  return transforms;
-}
+export { hyperMengerSpongeTransforms } from "./presets";
 
 /** Terminal-cell counts per level, for budget lines and eligibility notes. */
 export function finiteSolidCellCount(dimension: 3 | 4, level: number): number {
