@@ -4,6 +4,7 @@ import {
   analyzeFiniteSolidSystem,
   buildFiniteSolidConstruction,
   finiteSolidBoundaryNormal,
+  finiteSolidBoundingRadius,
   finiteSolidCellOccupiedByRule,
   finiteSolidCells,
   finiteSolidContains,
@@ -15,6 +16,7 @@ import {
   finiteSolidNextBoundaryFromAnchor,
   finiteSolidRaySideOccupancy,
   hyperMengerSpongeTransforms,
+  resolveFiniteSolid,
 } from "./finite-solid";
 import { mengerSponge } from "./presets";
 import type { Vec3, Vec4 } from "./types";
@@ -79,6 +81,44 @@ describe("finite-solid construction", () => {
 });
 
 describe("finite-solid admission", () => {
+  it("resolves an authored block and refuses bad ones without clamping", () => {
+    expect(resolveFiniteSolid({ shape: "menger", level: 2 })).toEqual({
+      ok: true,
+      value: { shape: "menger", level: 2 },
+    });
+    expect(resolveFiniteSolid({ shape: "hyperMenger", level: 0 })).toEqual({
+      ok: true,
+      value: { shape: "hyperMenger", level: 0 },
+    });
+    // Missing fields, out-of-band levels, and unknown keys all refuse with
+    // reasons — a refusal is the block's persisted state, never a clamp.
+    for (const block of [
+      {},
+      { shape: "menger" },
+      { level: 2 },
+      { shape: "sponge", level: 2 },
+      { shape: "menger", level: 3 },
+      { shape: "menger", level: -1 },
+      { shape: "menger", level: 1.5 },
+      { shape: "menger", level: 2, warp: true },
+    ]) {
+      const r = resolveFiniteSolid(block);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.reasons.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("derives the construction's circumscribed bound in both dimensions", () => {
+    expect(finiteSolidBoundingRadius(3)).toBeCloseTo(
+      FINITE_SOLID_HALF_EXTENT * Math.sqrt(3),
+      15,
+    );
+    expect(finiteSolidBoundingRadius(4)).toBeCloseTo(
+      FINITE_SOLID_HALF_EXTENT * 2,
+      15,
+    );
+  });
+
   it("admits the shipped Menger maps at levels 0..2 and refuses deeper", () => {
     const maps = mengerSponge();
     for (const level of [0, 1, 2]) {

@@ -91,6 +91,68 @@ export interface FiniteSolid {
   level: number;
 }
 
+/** The authored finite-solid block exactly as the document carries it —
+ * {@link resolveFiniteSolid} validates it, never clamps, so a refused block
+ * stays verbatim in the document with its refusal beside it (the
+ * sphere-inversion block's own discipline). */
+export interface FiniteSolidAuthored {
+  shape?: string;
+  level?: number;
+}
+
+export type FiniteSolidResolution =
+  { ok: true; value: FiniteSolid } | { ok: false; reasons: string[] };
+
+/**
+ * Validate one authored finite-solid block: both fields required, the shape
+ * one of the shipped constructions, the level an integer in the certified
+ * band. Out-of-domain values and unknown keys REFUSE with reasons, never
+ * clamp or coerce — a clamp would render a different object than the
+ * document names, and an unknown key may be a field from a newer version
+ * that must not silently render as if absent.
+ */
+export function resolveFiniteSolid(
+  authored: FiniteSolidAuthored,
+): FiniteSolidResolution {
+  const reasons: string[] = [];
+  for (const key of Object.keys(authored)) {
+    if (key !== "shape" && key !== "level") {
+      reasons.push(`unknown finite-solid field "${key}"`);
+    }
+  }
+  let shape: FiniteSolidShape | null = null;
+  if (typeof authored.shape !== "string") {
+    reasons.push("the finite-solid block needs a shape");
+  } else if (authored.shape === "menger" || authored.shape === "hyperMenger") {
+    shape = authored.shape;
+  } else {
+    reasons.push(`unknown finite-solid shape "${authored.shape}"`);
+  }
+  const level = authored.level;
+  if (
+    typeof level !== "number" ||
+    !Number.isInteger(level) ||
+    level < 0 ||
+    level > FINITE_SOLID_MAX_LEVEL
+  ) {
+    reasons.push(
+      `the finite-solid level must be an integer in 0..${FINITE_SOLID_MAX_LEVEL}`,
+    );
+  }
+  if (reasons.length > 0 || shape === null || typeof level !== "number") {
+    return { ok: false, reasons };
+  }
+  return { ok: true, value: { shape, level } };
+}
+
+/** The construction's origin-centred bound: the root box's circumscribed
+ * sphere in the construction's own dimension (`half·√dim`) — the whole
+ * construction is visible, so this is also the marching ball and the
+ * optical model's scene-derived radius. */
+export function finiteSolidBoundingRadius(dim: 3 | 4): number {
+  return FINITE_SOLID_HALF_EXTENT * Math.sqrt(dim);
+}
+
 /** The root half extent both constructions normalize to (the study's
  * `DIELECTRIC_HALF_EXTENT`): maps at offsets ±0.5 with scale 1/3 give
  * H = H/3 + 0.5, hence H = 0.75, in both dimensions. */

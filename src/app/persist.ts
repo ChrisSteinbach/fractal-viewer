@@ -146,6 +146,7 @@ import { MAX_SHAPE_PARTS } from "../fractal/shapes";
 import type { ShapePart, ShapePose, ShapeSpec } from "../fractal/shapes";
 import { TILING_GROUPS, isLatticeTilingSpec } from "../fractal/tiling";
 import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
+import type { FiniteSolidAuthored } from "../fractal/finite-solid";
 import type { TilingGroup, TilingSpec } from "../fractal/tiling";
 import { isMeshAssetId } from "../fractal/mesh-shapes";
 import { resolveCondensationDepthBand } from "../fractal/condensation-de";
@@ -209,6 +210,13 @@ export interface SceneSnapshot {
    * and surfaces its refusal through the Surface gate instead of vanishing.
    */
   sphereInversion?: SphereInversionAuthored;
+  /**
+   * Optional finite-solid block (see {@link AppState.finiteSolid}). Same
+   * wire discipline as `sphereInversion`: written only when present, the
+   * authored JSON VERBATIM, and {@link decodeFiniteSolid} keeps any plain
+   * JSON object as-is so a refused block survives decode → encode exactly.
+   */
+  finiteSolid?: FiniteSolidAuthored;
   numPoints: number;
   pointSize: number;
   colorMode: ColorMode;
@@ -479,6 +487,9 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     ...(state.sphereInversion !== undefined
       ? { sphereInversion: state.sphereInversion }
       : {}),
+    ...(state.finiteSolid !== undefined
+      ? { finiteSolid: state.finiteSolid }
+      : {}),
     numPoints: state.numPoints,
     pointSize: state.pointSize,
     colorMode: state.colorMode,
@@ -578,6 +589,8 @@ export function fromSnapshot(
     tiling: snapshot.tiling,
     // The sphere-inversion block, for the schedule's reason exactly.
     sphereInversion: snapshot.sphereInversion,
+    // The finite-solid block, same scene-content reason.
+    finiteSolid: snapshot.finiteSolid,
     balloonEcho: snapshot.balloonEcho ?? false,
     balloonRadius: snapshot.balloonRadius ?? DEFAULT_BALLOON_RADIUS,
     balloonPaletteId: snapshot.balloonPaletteId ?? DEFAULT_BALLOON_PALETTE,
@@ -1336,6 +1349,21 @@ function decodeTiling(raw: unknown): TilingSpec | undefined {
 function decodeSphereInversion(
   raw: unknown,
 ): SphereInversionAuthored | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  return raw;
+}
+
+/**
+ * Keep one untrusted `finiteSolid` wire value as-is when it can be a block
+ * at all: a plain JSON object (not an array, not null, not a scalar), which
+ * drops to absent otherwise — a non-object names no block to preserve. The
+ * resolver (`finite-solid.ts`'s `resolveFiniteSolid`) is written for such
+ * untrusted values (wrong types refuse, never coerce), so nothing here
+ * pre-validates a field. Never throws.
+ */
+function decodeFiniteSolid(raw: unknown): FiniteSolidAuthored | undefined {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return undefined;
   }
@@ -3274,6 +3302,7 @@ export function encodeScene(s: SceneSnapshot): string {
           clip?: EncodedShapeSpec;
         };
     sphereInversion?: SphereInversionAuthored;
+    finiteSolid?: FiniteSolidAuthored;
     numPoints: number;
     pointSize: number;
     colorMode: ColorMode;
@@ -3612,6 +3641,13 @@ export function encodeScene(s: SceneSnapshot): string {
   if (s.sphereInversion !== undefined && s.sphereInversion !== null) {
     payload.sphereInversion = s.sphereInversion;
   }
+  // The finite-solid block, written only when present and VERBATIM — same
+  // reasoning as the sphere-inversion block above: no rounding, refused
+  // blocks' unknown keys ride along untouched (decodeFiniteSolid's
+  // contract).
+  if (s.finiteSolid !== undefined && s.finiteSolid !== null) {
+    payload.finiteSolid = s.finiteSolid;
+  }
   // Written only when present, like finalTransform above — never-authored
   // scenes keep their short URLs. Encoded as hex (per-stop strings for an
   // authored gradient, one concatenated ramp string for an imported one) for
@@ -3878,6 +3914,10 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     // verbatim, refused or not; see decodeSphereInversion.
     const sphereInversion = decodeSphereInversion(o.sphereInversion);
 
+    // finiteSolid: optional block — same verbatim discipline; see
+    // decodeFiniteSolid.
+    const finiteSolid = decodeFiniteSolid(o.finiteSolid);
+
     // colorMode / renderStyle: exact known-string matches only. ---------------
     const { colorMode, renderStyle } = o;
     if (typeof colorMode !== "string" || !VALID_COLOR_MODES.has(colorMode))
@@ -4089,6 +4129,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       shapeTrap,
       tiling,
       sphereInversion,
+      finiteSolid,
       numPoints,
       pointSize,
       colorMode: colorMode as ColorMode,

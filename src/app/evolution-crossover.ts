@@ -147,6 +147,7 @@ const SCENE_FIELDS = {
   // The sphere-inversion block is one authored subject, never mixed: it
   // rides whole from the primary parent, like the look fields below.
   sphereInversion: "primary",
+  finiteSolid: "primary",
   numPoints: "primary",
   pointSize: "primary",
   colorMode: "primary",
@@ -937,6 +938,7 @@ function buildSnapshot(
   copyOptionalSceneField(snapshot, tilingParent, "tiling");
 
   copyOptionalSceneField(snapshot, primary, "sphereInversion");
+  copyOptionalSceneField(snapshot, primary, "finiteSolid");
   copyOptionalSceneField(snapshot, primary, "customPalette");
   copyOptionalSceneField(snapshot, primary, "positionAxisColors");
   copyOptionalSceneField(snapshot, primary, "camera");
