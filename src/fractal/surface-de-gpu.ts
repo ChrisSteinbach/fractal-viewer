@@ -44,6 +44,16 @@ import {
 import { swirlLensShaderSource } from "./swirl-lens-shader";
 import { inversionDistanceShaderSource } from "./inversion";
 import {
+  FINITE_SOLID_HALF_EXTENT,
+  FINITE_SOLID_MAX_LEVEL,
+} from "./finite-solid";
+import {
+  SURFACE_GPU_PARAMS4_FINITE_BYTES,
+  SURFACE_GPU_PARAMS_FINITE_BYTES,
+  finiteSolidDisplaySource,
+  finiteSolidTransportSource,
+} from "./surface-finite-solid-gpu";
+import {
   SPHERE_INVERSION_GPU_POLE_FLOOR,
   SPHERE_INVERSION_GPU_SLACK,
   sphereInversionWgslSource,
@@ -1732,7 +1742,21 @@ export interface SurfaceGpuKernelOptions {
    * `mapsUniform` are inert; lens, balloon, tiling, shape trap (colour and
    * geometry), condensation, schedule, xaos, pattern, optics and the slab
    * cover THROW, each with its reason (docs/sphere-inversion-gpu.md
-   * section 3). */
+   * section 3).
+   * "finite" and "finite4" are the FINITE-SOLID cores — the study's
+   * level-N cell decomposition displayed co-extensively
+   * (`finite-solid.ts`'s construction), emitted once for both dimensions
+   * by `surface-finite-solid-gpu.ts` (`finiteSolidDisplaySource`: the
+   * certified hybrid display DE). Bindingless like "bulb"; the params
+   * tail is the 16-byte finite block ({@link packSurfaceGpuParamsFinite} /
+   * {@link packSurfaceGpuParamsFinite4}); the 4D pose IS the shared 4D
+   * tail's rotor rows + w0. `finish`, `lighting`, `statusOut`, `rays` and
+   * `evalStride` compose; `width`, `shadeDeWidth`, `sharedFrontier`,
+   * `bnbStage2`, `slabExt` and `mapsUniform` are inert; lens, balloon,
+   * tiling, shape trap, condensation, schedule, xaos, pattern, a nonzero
+   * footprint and — 4D — a nonzero slab THROW. With `optics: true` and
+   * `opticsBackend: "finiteSolid"` the shade kernel's transport walks the
+   * exact DDA (`finiteSolidTransportSource`). */
   core?:
     | "fold"
     | "affine"
@@ -1742,7 +1766,9 @@ export interface SurfaceGpuKernelOptions {
     | "bulb"
     | "escape4"
     | "sphereInv"
-    | "sphereInv4";
+    | "sphereInv4"
+    | "finite"
+    | "finite4";
   /** Emit the FOLD FINAL-transform lens wrapper (`descendLens`, the
    * pure-fold final lens's vocabulary; the 4D arm lifts it to the 4D
    * cores as `descendLens4`): the descent body (any core but
@@ -1946,8 +1972,27 @@ export interface SurfaceGpuKernelOptions {
    * describes — those sessions keep the estimator query and its
    * disclosed vacuous-optics state), and mesh-bearing emitter shapes
    * (the mesh lattice's interior band is not a certified stepping bound;
-   * the mesh's declared-resolution treatment is its own follow-up). */
-  opticsBackend?: "estimator" | "closedSolid";
+   * the mesh's declared-resolution treatment is its own follow-up).
+   * `"finiteSolid"` swaps the query for the finite-solid DDA
+   * (`finite-solid.ts`'s exact boundary query, emitted by
+   * `surface-finite-solid-gpu.ts`'s `finiteSolidTransportSource`):
+   * integer cells, analytic planes, NO distance epsilon, the FULL anchor
+   * contract (intrinsic point + tied-plane mask + plane/cell indices)
+   * carried on `TransportPath` — the qualified fixture's whole point is
+   * that f32 reconstruction of cell identities is lossy, so the anchored
+   * restart consumes the anchor, never a point. Requires the finite cores
+   * (the displayed cells ARE the optical solid — the co-extension rule)
+   * and {@link SurfaceGpuKernelOptions.finiteSolid}'s construction; the
+   * medium state is cross-checked at the anchored restart exactly as the
+   * closed-solid query's is. Shade mode only (it rides the optics gate). */
+  opticsBackend?: "estimator" | "closedSolid" | "finiteSolid";
+  /** The finite-solid construction wire (`core: "finite"` / `"finite4"`
+   * and `opticsBackend: "finiteSolid"`): the authored level 0..2 of the
+   * admitted document (`analyzeFiniteSolidSystem`'s verdict — the gate
+   * lives in the routing; codegen only validates the range). The half
+   * extent is the module's constant and the grid size derives from the
+   * level; both ride the params tail so the kernel reads one wire. */
+  finiteSolid?: { level: number } | null;
   /** The escape family's SHAPE-TRAP color channel (`types.ts`'s ShapeTrap;
    * the formula is `escape-de.ts`'s, defined once): bake this spec's SDF
    * into the kernel (`shapeSdfSource`, the create-time-geometry decision —
@@ -3576,6 +3621,147 @@ export function packSphereInversion4GpuParams(
   return buf;
 }
 
+function validateFiniteSolidLevel(level: number): void {
+  if (!Number.isInteger(level) || level < 0 || level > FINITE_SOLID_MAX_LEVEL) {
+    throw new RangeError(
+      `surface-de-gpu: finite-solid level ${level} is outside the certified band 0..${FINITE_SOLID_MAX_LEVEL}`,
+    );
+  }
+}
+
+/** The finite core's frozen base block — the shared 0..207 layout with
+ * every descent field inert: the bound is the construction's origin-centred
+ * ball, symmetry order 1 (the admission refuses the kaleidoscope), no
+ * maps, no final, full steps (the display DE carries its own safety
+ * factor). Shared by both dimensions' packers. */
+function writeFiniteFrozen(
+  view: DataView,
+  run: SurfaceGpuRunParams,
+  boundingRadius: number,
+): void {
+  writeVec3(view, 0, [0, 0, 0]);
+  view.setFloat32(12, boundingRadius, true);
+  view.setFloat32(16, boundingRadius * 2, true);
+  view.setFloat32(20, 1, true);
+  view.setFloat32(24, boundingRadius, true);
+  view.setFloat32(28, 1, true);
+  view.setFloat32(32, 1, true);
+  view.setFloat32(36, 0, true);
+  view.setUint32(40, 1, true);
+  view.setUint32(44, 0, true);
+  view.setUint32(48, 0, true);
+  view.setUint32(52, 0, true);
+  view.setUint32(56, run.itemCount, true);
+  view.setUint32(60, run.stepsThisPass ?? 0, true);
+  view.setFloat32(64, run.cutoff ?? 0, true);
+  view.setUint32(72, run.marchSteps ?? 0, true);
+  const pose = run.pose;
+  view.setFloat32(76, pose?.pixelEps ?? 0, true);
+  view.setFloat32(
+    80,
+    boundingRadius * (run.hitFloor ?? SURFACE_GPU_HIT_FLOOR),
+    true,
+  );
+  view.setUint32(84, pose?.rasterWidth ?? 0, true);
+  view.setUint32(88, pose?.rasterHeight ?? 0, true);
+  view.setFloat32(92, run.focusDepth ?? 0, true);
+  writeVec3(view, 96, [1, 0, 0]);
+  writeVec3(view, 112, [0, 1, 0]);
+  writeVec3(view, 128, [0, 0, 1]);
+  writeVec3(view, 144, pose?.ro ?? [0, 0, 0]);
+  view.setFloat32(156, 1, true);
+  writeVec3(view, 160, pose?.right ?? [1, 0, 0]);
+  view.setFloat32(172, pose?.tanHalf ?? 0, true);
+  writeVec3(view, 176, pose?.up ?? [0, 1, 0]);
+  view.setFloat32(188, pose?.aspect ?? 1, true);
+  writeVec3(view, 192, pose?.fwd ?? [0, 0, 1]);
+  view.setFloat32(204, run.fogDensity ?? 1, true);
+}
+
+/** The finite-solid params tail at `base`: the authored construction —
+ * half extent, level, grid size — the 16 bytes both dimensions' structs
+ * declare. */
+function writeFiniteHeader(view: DataView, base: number, level: number): void {
+  validateFiniteSolidLevel(level);
+  view.setFloat32(base, FINITE_SOLID_HALF_EXTENT, true);
+  view.setUint32(base + 4, level, true);
+  view.setUint32(base + 8, 3 ** level, true);
+}
+
+/**
+ * Pack the params uniform for `core: "finite"`: the frozen base block
+ * ({@link writeFiniteFrozen}) plus the 16-byte finite tail at 208
+ * ({@link SURFACE_GPU_PARAMS_FINITE_BYTES}). Bindingless — the hosts skip
+ * buffer 1. `boundingRadius` is the construction's origin-centred bound
+ * (the root box's circumscribed sphere); it packs BOTH the bounding and
+ * the visible radius, since the whole construction is visible.
+ */
+export function packSurfaceGpuParamsFinite(
+  run: SurfaceGpuRunParams,
+  level: number,
+  boundingRadius: number,
+): ArrayBuffer {
+  validateFiniteSolidLevel(level);
+  if ((run.footprint ?? 0) > 0) {
+    throw new Error(
+      "surface-de-gpu: the finite cores take no cone footprint (the box-union DE has no footprint argument; hosts pass 0)",
+    );
+  }
+  const buf = new ArrayBuffer(SURFACE_GPU_PARAMS_FINITE_BYTES);
+  const view = new DataView(buf);
+  writeFiniteFrozen(view, run, boundingRadius);
+  writeFiniteHeader(view, 208, level);
+  return buf;
+}
+
+/**
+ * Pack the params uniform for `core: "finite4"`: the frozen base block,
+ * the shared 4D tail with the pose rows LIVE (the transpose packing every
+ * 4D packer performs — the rows ARE `FiniteSolidPose`'s world→intrinsic
+ * rows), stepBack4/final4 identity, `w0` live, and the 16-byte finite
+ * tail at 464 ({@link SURFACE_GPU_PARAMS4_FINITE_BYTES}). THROWS on a
+ * nonzero slab: the DDA has no segment form (the escape4 refusal).
+ */
+export function packSurfaceGpuParamsFinite4(
+  view4: SurfaceGpu4View,
+  run: SurfaceGpuRunParams,
+  level: number,
+  boundingRadius: number,
+): ArrayBuffer {
+  validateFiniteSolidLevel(level);
+  if ((run.footprint ?? 0) > 0) {
+    throw new Error(
+      "surface-de-gpu: the finite cores take no cone footprint (the box-union DE has no footprint argument; hosts pass 0)",
+    );
+  }
+  if (view4.sliceHalfW !== 0) {
+    throw new Error(
+      "surface-de-gpu: the finite4 core takes no slab — a forward-cell DDA cannot thread a segment; hold sliceHalfW at 0",
+    );
+  }
+  const buf = new ArrayBuffer(SURFACE_GPU_PARAMS4_FINITE_BYTES);
+  const view = new DataView(buf);
+  writeFiniteFrozen(view, run, boundingRadius);
+  const rot = view4.rotor;
+  for (let i = 0; i < 4; i++) {
+    const at = 208 + i * 16;
+    view.setFloat32(at, rot[i], true);
+    view.setFloat32(at + 4, rot[4 + i], true);
+    view.setFloat32(at + 8, rot[8 + i], true);
+    view.setFloat32(at + 12, rot[12 + i], true);
+  }
+  for (let i = 0; i < 4; i++) {
+    view.setFloat32(272 + i * 16, 1, true);
+    view.setFloat32(336 + i * 16, 1, true);
+  }
+  view.setFloat32(416, view4.w0, true);
+  view.setFloat32(424, 1, true);
+  view.setFloat32(428, boundingRadius, true);
+  view.setFloat32(452, 1 / boundingRadius, true);
+  writeFiniteHeader(view, 464, level);
+  return buf;
+}
+
 /** Pack the per-map storage array (layout contract above). */
 export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
   const schedule = surfaceScheduleWireInfo(de);
@@ -4519,7 +4705,8 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
     core === "affine4" ||
     core === "fold4" ||
     core === "escape4" ||
-    core === "sphereInv4";
+    core === "sphereInv4" ||
+    core === "finite4";
   // The FORWARD cores (escape, bulb and escape4): a forward orbit
   // rather than a descent, so none of the
   // descent helpers and no frontier. The shared header/entry
@@ -4565,6 +4752,62 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
       [
         !!opts.slabCover,
         "a slab cover (the CPU estimator refuses a thick slice)",
+      ],
+    ];
+    for (const [refused, what] of refusals) {
+      if (refused) {
+        throw new Error(`surface-de-gpu: the ${core} core refuses ${what}`);
+      }
+    }
+  }
+  // The FINITE-SOLID cores: neither a descent nor a forward orbit — the
+  // display DE is the certified box-union hybrid and the transport (when
+  // optics take it) is the exact DDA. Bindingless like "bulb"; the
+  // construction rides the params tail.
+  const finiteCore = core === "finite" || core === "finite4";
+  if (finiteCore) {
+    const level = opts.finiteSolid?.level;
+    if (
+      level === undefined ||
+      !Number.isInteger(level) ||
+      level < 0 ||
+      level > FINITE_SOLID_MAX_LEVEL
+    ) {
+      throw new RangeError(
+        `surface-de-gpu: the ${core} core needs an authored level 0..${FINITE_SOLID_MAX_LEVEL}`,
+      );
+    }
+    const refusals: [boolean, string][] = [
+      [
+        !!opts.lens,
+        "a final-transform lens (the admission composes only an untouched identity lens)",
+      ],
+      [
+        !!opts.balloon,
+        "balloon (an inverted cell decomposition is unmeasured for the echo's clearance and far-cap rules)",
+      ],
+      [
+        (opts.tiling ?? null) !== null,
+        "space tiling (the mirrored cells are not the document's construction)",
+      ],
+      [
+        (opts.shapeTrap ?? null) !== null ||
+          opts.shapeTrapGeometry?.geometry === true,
+        "a shape trap (the escape family's forward-orbit channel)",
+      ],
+      [
+        (opts.condensation?.emitters.length ?? 0) > 0 ||
+          (opts.schedule?.scheduleMapCount ?? 0) > 0 ||
+          (opts.chaos?.activeStateCount ?? 0) > 0,
+        "condensation, a hybrid schedule or xaos (the admission requires the bare third-contraction maps)",
+      ],
+      [
+        !!opts.pattern,
+        "pattern (not in the first cut: the cells carry no source4 convention)",
+      ],
+      [
+        !!opts.slabCover,
+        "a slab cover (the DDA has no segment form and the display DE has no cover)",
       ],
     ];
     for (const [refused, what] of refusals) {
@@ -4702,7 +4945,8 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // packEscapeGpuMaps} / {@link packEscape4GpuMaps}), because a list is
   // exactly what that binding is for. Bulb is the one bindingless core
   // left: its single map still rides the params variant block.
-  const mapsBinding = !forward || core === "escape" || core === "escape4";
+  const mapsBinding =
+    (!forward && !finiteCore) || core === "escape" || core === "escape4";
   // Does any body in this kernel enumerate the fold's INVERSE
   // branches, and so need `foldRadiiOf`? The fold cores do, and so does the
   // lens wrapper around ANY descent core (a fold FINAL is still a fold).
@@ -4889,7 +5133,27 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   const opticsBackend =
     optics && opts.opticsBackend === "closedSolid"
       ? "closedSolid"
-      : "estimator";
+      : optics && opts.opticsBackend === "finiteSolid"
+        ? "finiteSolid"
+        : "estimator";
+  if (opticsBackend === "finiteSolid") {
+    if (core !== "finite" && core !== "finite4") {
+      throw new Error(
+        "surface-de-gpu: the finite-solid transport backend needs the finite cores — the displayed cells ARE the optical solid",
+      );
+    }
+    const level = opts.finiteSolid?.level;
+    if (
+      level === undefined ||
+      !Number.isInteger(level) ||
+      level < 0 ||
+      level > FINITE_SOLID_MAX_LEVEL
+    ) {
+      throw new RangeError(
+        `surface-de-gpu: the finite-solid backend needs an authored level 0..${FINITE_SOLID_MAX_LEVEL}`,
+      );
+    }
+  }
   if (opticsBackend === "closedSolid") {
     if (!condensationShapes) {
       throw new Error(
@@ -5256,7 +5520,8 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
   // them and the inertness is structural, not just documented. The
   // escape4 core is 4D and takes no slab at all (a forward orbit cannot
   // thread a segment), so it sits with the 3D cores here.
-  const slabExt = core4 && !forward && !siCore ? (opts.slabExt ?? true) : true;
+  const slabExt =
+    core4 && !forward && !siCore && !finiteCore ? (opts.slabExt ?? true) : true;
   // The nonlinear slab cover (option doc). Structurally inert outside the
   // 4D descent cores, exactly like slabExt — but a 4D request must be
   // coherent: the cover IS the slab answer, so it requires slabExt on and
@@ -5264,7 +5529,9 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
   // refuses slabs at pack, so generating the composition would emit a
   // kernel no packer can legally feed — loud beats silent.
   const slabCover =
-    core4 && !forward && !siCore ? (opts.slabCover ?? false) : false;
+    core4 && !forward && !siCore && !finiteCore
+      ? (opts.slabCover ?? false)
+      : false;
   if (slabCover && !slabExt) {
     throw new Error(
       "surface-de-gpu: slabCover requires slabExt — the cover is the slab " +
@@ -5303,7 +5570,9 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
   // The maps-load probe (option doc). Same structural inertness
   // as slabExt — only the 4D descent cores ever consult it.
   const mapsUniform =
-    core4 && !forward && !siCore ? (opts.mapsUniform ?? false) : false;
+    core4 && !forward && !siCore && !finiteCore
+      ? (opts.mapsUniform ?? false)
+      : false;
   if (!Number.isInteger(width) || width < 1) {
     throw new Error(`surface-de-gpu: bad frontier width ${width}`);
   }
@@ -8068,19 +8337,28 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
     : "";
   const rawCoreHitInfoText = siCore
     ? siHitInfoText
-    : core === "affine"
-      ? affineHitInfoText
-      : core === "escape"
-        ? escapeHitInfoText
-        : core === "escape4"
-          ? escape4HitInfoText
-          : core === "bulb"
-            ? bulbHitInfoText
-            : core === "affine4"
-              ? affine4HitInfoText(bodySlabExt, core4ExternalLift)
-              : core === "fold4"
-                ? fold4HitInfoText(bodySlabExt, core4ExternalLift)
-                : foldHitInfoText;
+    : finiteCore
+      ? `// The finite core's hit-info: one material slot (the session packs
+// the Glass material there), neutral trap/rings/sheets — the cell
+// decomposition carries no forward orbit for the trap accumulator and
+// no fold for the ring/sheet sources.
+fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0);
+  return info;
+}`
+      : core === "affine"
+        ? affineHitInfoText
+        : core === "escape"
+          ? escapeHitInfoText
+          : core === "escape4"
+            ? escape4HitInfoText
+            : core === "bulb"
+              ? bulbHitInfoText
+              : core === "affine4"
+                ? affine4HitInfoText(bodySlabExt, core4ExternalLift)
+                : core === "fold4"
+                  ? fold4HitInfoText(bodySlabExt, core4ExternalLift)
+                  : foldHitInfoText;
   const coreHitInfoText = scheduleCoreSource(rawCoreHitInfoText, true);
   const lensedHitInfoText = lens
     ? `${coreHitInfoText.replace(
@@ -8600,6 +8878,11 @@ ${surfacePatternShadeSourceWgsl()}`
   // dispatch picks the boundary query: the estimator march (absent's
   // meaning, text unchanged) or the closed-solid signed query.
   const solidQuery = opticsBackend === "closedSolid";
+  // The finite-solid backend: the exact DDA over the construction. The
+  // codegen gate above pinned it to the finite cores, so the display
+  // source (and its finiteLift the DDA reads) is always in the same
+  // kernel.
+  const finiteQuery = opticsBackend === "finiteSolid";
   // The closed-solid field's emission, per dimension. In 3D it is the
   // condensation term at the root (the signed certified bound the primary
   // march reads). In 4D the term's hypot form is a distance to the shape
@@ -8818,6 +9101,15 @@ fn transportSolidField(p: vec3f) -> f32 {
   return clamp(trans, vec3f(0.0), vec3f(1.0));
 }
 `;
+  // The primary split's anchored-restart flag, per backend: the estimator
+  // and closed-solid queries skip 2·eps past the world anchor point, so
+  // their primary children restart ANCHORED. The finite DDA's anchor is
+  // the full anchor contract, which the display march does not produce —
+  // its first query is the NON-ANCHORED world-origin call (the ray-side
+  // rule classifies the start cell from the hit point and the direction),
+  // so its flag stays clear until the first DDA event hands a real anchor
+  // down.
+  const primaryAnchorPresent = finiteQuery ? "0u" : "1u";
   const solidShadowEarly = optics
     ? `// ---- dielectric optical transport (docs/surface-dielectric-transport.md)
 // ---- surface-dielectric.ts's emitted WGSL optics body, verbatim — the
@@ -8828,6 +9120,15 @@ fn transportSolidField(p: vec3f) -> f32 {
 ${dielectricOpticsSource("wgsl")}${
         solidQuery
           ? `\n${transportSolidFieldWgsl}\n${solidShadowVisibilityWgsl}`
+          : ""
+      }${
+        finiteQuery
+          ? `
+
+// ---- the finite-solid DDA (surface-finite-solid-gpu.ts's
+// finiteSolidTransportSource): the exact boundary query the transport
+// walks, with the full anchor contract in and out.
+${finiteSolidTransportSource(core4 ? 4 : 3)}`
           : ""
       }`
     : "";
@@ -8854,7 +9155,21 @@ struct TransportPath {
   // the optical distortion displaces (its origin at a terminal IS that
   // exit point: the ray origin moves only at events). Every other child
   // resets the flag, so a mirror view at a later entry never displaces.
-  exitPresent: u32,
+  exitPresent: u32,${
+    finiteQuery
+      ? `
+  // The finite-solid DDA's full anchor: the snapped intrinsic point, the
+  // tied-plane mask, the tied planes and the post-incident cell indices
+  // (the DDA emits its own mask alongside the shared anchorPresent flag).
+  // Shader-private continuation state, grown per backend — f32
+  // reconstruction of cell identities is lossy, which is why the anchored
+  // restart consumes the anchor and never a point.
+  finiteIntrinsic: vec4f,
+  finiteMask: u32,
+  finitePlanes: vec4i,
+  finiteCells: vec4i,`
+      : ""
+  }
 }
 
 struct TransportBoundary {
@@ -8862,7 +9177,16 @@ struct TransportBoundary {
   kind: u32,
   reason: u32,
   t: f32,
-  normal: vec3f,
+  normal: vec3f,${
+    finiteQuery
+      ? `
+  // The DDA's anchor out, copied into every child of the event.
+  anchorIntrinsic: vec4f,
+  anchorMask: u32,
+  anchorPlanes: vec4i,
+  anchorCells: vec4i,`
+      : ""
+  }
 }
 
 struct TransportTrace {
@@ -9266,10 +9590,18 @@ fn transportTrace(
   refl0.energy = vec3f(f0);
   refl0.inside = 0u;
   refl0.interfaces = 1u;
-  refl0.anchorPresent = 1u;
+  refl0.anchorPresent = ${primaryAnchorPresent};
   refl0.anchorPoint = origin;
   refl0.anchorPad2 = 0u;
-  refl0.exitPresent = 0u;
+  refl0.exitPresent = 0u;${
+    finiteQuery
+      ? `
+  refl0.finiteIntrinsic = vec4f(0.0);
+  refl0.finiteMask = 0u;
+  refl0.finitePlanes = vec4i(-1);
+  refl0.finiteCells = vec4i(-1);`
+      : ""
+  }
   refl0.bound = transportChildBound(refl0.energy);
   var refr0: TransportPath;
   refr0.origin = origin;
@@ -9277,10 +9609,18 @@ fn transportTrace(
   refr0.energy = vec3f(1.0 - f0);
   refr0.inside = 1u;
   refr0.interfaces = 1u;
-  refr0.anchorPresent = 1u;
+  refr0.anchorPresent = ${primaryAnchorPresent};
   refr0.anchorPoint = origin;
   refr0.anchorPad2 = 0u;
-  refr0.exitPresent = 0u;
+  refr0.exitPresent = 0u;${
+    finiteQuery
+      ? `
+  refr0.finiteIntrinsic = vec4f(0.0);
+  refr0.finiteMask = 0u;
+  refr0.finitePlanes = vec4i(-1);
+  refr0.finiteCells = vec4i(-1);`
+      : ""
+  }
   refr0.bound = transportChildBound(refr0.energy);
   // Push the stronger child first (the oracle's order) so the weaker
   // actual-throughput child is processed first — with the oracle's cut
@@ -9337,9 +9677,22 @@ fn transportTrace(
       break;
     }
     processed = processed + 1u;
-    let hit = transportNextBoundary(path.origin, path.dir, path.anchorPresent, path.anchorPoint, ${
-      solidQuery ? "path.inside, eps, li" : "eps, li"
-    });
+    let hit = ${
+      finiteQuery
+        ? `transportFiniteBoundary(
+        path.origin,
+        path.dir,
+        path.anchorPresent,
+        path.finiteIntrinsic,
+        path.finiteMask,
+        path.finitePlanes,
+        path.finiteCells,
+        path.inside,
+      )`
+        : `transportNextBoundary(path.origin, path.dir, path.anchorPresent, path.anchorPoint, ${
+            solidQuery ? "path.inside, eps, li" : "eps, li"
+          })`
+    };
     if (hit.kind == 3u) {
       residual = residual + path.bound;
       out.status = TRANSPORT_STATUS_UNRESOLVED;
@@ -9439,7 +9792,15 @@ fn transportTrace(
       child.anchorPresent = 1u;
       child.anchorPoint = childOrigin;
       child.anchorPad2 = 0u;
-      child.exitPresent = 0u;
+      child.exitPresent = 0u;${
+        finiteQuery
+          ? `
+      child.finiteIntrinsic = hit.anchorIntrinsic;
+      child.finiteMask = hit.anchorMask;
+      child.finitePlanes = hit.anchorPlanes;
+      child.finiteCells = hit.anchorCells;`
+          : ""
+      }
       child.bound = transportChildBound(energy);
       if (transportPushCut(child, theta)) {
         residual = residual + child.bound;
@@ -9466,7 +9827,15 @@ fn transportTrace(
       // Only the transmitted child of an EXIT crossing reads the rear
       // scene through the glass; every other child resets the flag, so a
       // mirror view at a later entry never displaces.
-      trans.exitPresent = select(0u, 1u, incidentInGlass);
+      trans.exitPresent = select(0u, 1u, incidentInGlass);${
+        finiteQuery
+          ? `
+      trans.finiteIntrinsic = hit.anchorIntrinsic;
+      trans.finiteMask = hit.anchorMask;
+      trans.finitePlanes = hit.anchorPlanes;
+      trans.finiteCells = hit.anchorCells;`
+          : ""
+      }
       trans.bound = transportChildBound(trans.energy);
       var refl: TransportPath;
       refl.origin = childOrigin;
@@ -9477,7 +9846,15 @@ fn transportTrace(
       refl.anchorPresent = 1u;
       refl.anchorPoint = childOrigin;
       refl.anchorPad2 = 0u;
-      refl.exitPresent = 0u;
+      refl.exitPresent = 0u;${
+        finiteQuery
+          ? `
+      refl.finiteIntrinsic = hit.anchorIntrinsic;
+      refl.finiteMask = hit.anchorMask;
+      refl.finitePlanes = hit.anchorPlanes;
+      refl.finiteCells = hit.anchorCells;`
+          : ""
+      }
       refl.bound = transportChildBound(refl.energy);
       // Push the stronger child first, so the weaker actual-throughput
       // child is processed first; Fresnel is not assumed below 0.5.
@@ -10588,15 +10965,25 @@ struct Params {
   padE4: array<vec4f, 6>,`
       : ""
   }`
-        : // The lens4 block, APPENDED past the 4D tail
-          // (464..575). Declared under the lens, and under anything
-          // appended past it, so the shared
-          // block keeps one offset. A smaller struct reading a larger
-          // buffer is valid WebGPU, so keeping it struct-conditional
-          // otherwise is what keeps every plain 4D kernel's text
-          // byte-identical.
-          lens || tail4Block
+        : core === "finite4"
           ? /* wgsl */ `
+  // 464..479, the FINITE-SOLID block (surface-finite-solid-gpu.ts): the
+  // authored construction — the half extent, the level 0..2 and the grid
+  // size 3^level the integer arithmetic reads. The 4D pose rides the
+  // shared tail's rotor rows and w0 above; the DDA lifts through them.
+  finiteHalf: f32,
+  finiteLevel: u32,
+  finiteGrid: u32,
+  finitePad: f32,`
+          : // The lens4 block, APPENDED past the 4D tail
+            // (464..575). Declared under the lens, and under anything
+            // appended past it, so the shared
+            // block keeps one offset. A smaller struct reading a larger
+            // buffer is valid WebGPU, so keeping it struct-conditional
+            // otherwise is what keeps every plain 4D kernel's text
+            // byte-identical.
+            lens || tail4Block
+            ? /* wgsl */ `
   lens4MR0: vec4f,
   lens4MR1: vec4f,
   lens4MR2: vec4f,
@@ -10607,7 +10994,7 @@ struct Params {
   // radii are dimension-free (SurfaceFoldRadii is SHARED by the two
   // oracles), so this is the same quartet at the 4D block's own offset.
   lens4Fold: vec4f,`
-          : ""
+            : ""
   }${balloon ? balloonStructFields : ""}${
     groundPlane || shapeTrap ? planeStructFields : ""
   }${shapeTrap ? trapStructFields : ""}${
@@ -10653,14 +11040,24 @@ struct Params {
   padF: vec4f,${groundPlane || shapeTrap ? planeStructFields : ""}${
     shapeTrap ? trapStructFields : ""
   }`
-            : lens ||
-                balloon ||
-                groundPlane ||
-                condensationShapes ||
-                schedule ||
-                chaos ||
-                tiling
+            : core === "finite"
               ? /* wgsl */ `
+  // 208..223, the FINITE-SOLID block (surface-finite-solid-gpu.ts): the
+  // authored construction — the half extent, the level 0..2 and the grid
+  // size 3^level the integer arithmetic reads. The 3D pose is the
+  // identity (FINITE_SOLID_IDENTITY_POSE), so no rows ride here.
+  finiteHalf: f32,
+  finiteLevel: u32,
+  finiteGrid: u32,
+  finitePad: f32,`
+              : lens ||
+                  balloon ||
+                  groundPlane ||
+                  condensationShapes ||
+                  schedule ||
+                  chaos ||
+                  tiling
+                ? /* wgsl */ `
   lensM0: vec3f,
   lensT0: f32,
   lensM1: vec3f,
@@ -10678,7 +11075,7 @@ struct Params {
   }${condensationShapes ? condensationStructFields : ""}${
     schedule ? scheduleStructFields : ""
   }${chaos ? chaosStructFields : ""}`
-              : ""
+                : ""
   }
 ${
   tiling
@@ -10779,7 +11176,7 @@ struct GpuMap {
   }
 ${io}
 ${frontierBlock}${
-    forward || siCore
+    forward || siCore || finiteCore
       ? ""
       : core4
         ? /* wgsl */ `
@@ -13712,34 +14109,38 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
     ? `// The sphere-inversion seed-orbit estimator (surface-sphere-inversion-gpu.ts),
 // ${core === "sphereInv4" ? "native 4D behind the view lift" : "3D"}.
 ${siDescentText}`
-    : core === "affine"
-      ? `// descend's refine=true path (surface-de.ts) — the estimator the
+    : finiteCore
+      ? `// The finite-solid display DE (surface-finite-solid-gpu.ts's
+// finiteSolidDisplaySource) — ${core4 ? "the posed 4D construction behind the shared view lift" : "the 3D construction"}.
+${finiteSolidDisplaySource(core4 ? 4 : 3)}`
+      : core === "affine"
+        ? `// descend's refine=true path (surface-de.ts) — the estimator the
 // AFFINE GLSL marches, in that mirror's f32 formulation. Fixed width 4.
 ${affineDescentText}`
-      : core === "escape"
-        ? `// estimateEscapeDistance (escape-de.ts) — the forward-orbit
+        : core === "escape"
+          ? `// estimateEscapeDistance (escape-de.ts) — the forward-orbit
 // escape-time estimator, the SURFACE_ESCAPE GLSL arm's twin.
 ${escapeDescentText}`
-        : core === "escape4"
-          ? `// estimateEscapeDistance4 (escape-de-4d.ts) behind the 4D cores'
+          : core === "escape4"
+            ? `// estimateEscapeDistance4 (escape-de-4d.ts) behind the 4D cores'
 // view lift — the forward escape-time orbit one dimension up. No
 // fragment mirror: an escape-shaped 4D session is compute-only, the
 // standing verdict for fold-shaped ones.
 ${escape4DescentText}`
-          : core === "bulb"
-            ? `// estimateBulbDistance (bulb-de.ts) — the forward triplex-power
+            : core === "bulb"
+              ? `// estimateBulbDistance (bulb-de.ts) — the forward triplex-power
 // orbit's Mandelbulb estimator, the SURFACE_BULB GLSL arm's twin.
 ${bulbDescentText}`
-            : core === "affine4"
-              ? `// estimateDistance4Refined (surface-de-4d.ts) behind the view lift —
+              : core === "affine4"
+                ? `// estimateDistance4Refined (surface-de-4d.ts) behind the view lift —
 // the estimator the 4D GLSL tracer marches (surface-material-4d.ts), in
 // that mirror's f32 formulation. Fixed width 4.
 ${affine4DescentText(bodySlabExt, core4ExternalLift)}`
-              : core === "fold4"
-                ? `// descendFold4's refine=false path (surface-de-4d.ts) behind the same
+                : core === "fold4"
+                  ? `// descendFold4's refine=false path (surface-de-4d.ts) behind the same
 // view lift — the 4D fold-branch frontier, f32.
 ${fold4DescentFnText(width, bodySlabExt, core4ExternalLift)}${probe4DeFns}`
-                : `// descendFold's refine=false path (surface-de.ts), the estimator the
+                  : `// descendFold's refine=false path (surface-de.ts), the estimator the
 // fold GLSL marches, in that mirror's f32 formulation.
 ${descentFnText(W, privateDecls)}${probeDeFns}`;
   const descentBlock = scheduleCoreSource(rawDescentBlock, false);
