@@ -12,6 +12,8 @@ import {
   sierpinskiTetrahedron,
 } from "../fractal/presets";
 import type { Preset } from "../fractal/presets";
+import { hyperMengerSpongeTransforms } from "../fractal/finite-solid";
+import { mengerSponge } from "../fractal/presets";
 import { shapeSdfSource } from "../fractal/shapes";
 import type { ShapeSpec } from "../fractal/shapes";
 import type { TilingSpec } from "../fractal/tiling";
@@ -1762,5 +1764,243 @@ describe("the sphere-inversion route", () => {
     for (const mode of ["points", "flame", "solid", "surface"] as const) {
       expect(sphereInversionRenderModeRefusal(undefined, mode)).toBeNull();
     }
+  });
+});
+
+describe("the finite-solid route", () => {
+  const mengerMaps = mengerSponge();
+  const hyperMaps = hyperMengerSpongeTransforms();
+
+  it("routes the shipped Menger maps to the finiteSolid kind with a disclosure", () => {
+    const result = deriveSurfaceEligibility(
+      mengerMaps,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      null,
+      null,
+      undefined,
+      null,
+      { shape: "menger", level: 2 },
+    );
+    expect(result.status).toBe("degraded");
+    expect(result.kind).toBe("finiteSolid");
+    expect(result.note).toContain("level-2");
+    expect(result.note).toContain("Menger");
+  });
+
+  it("routes the hyper-Menger's 48 maps to the native 4D kind", () => {
+    const result = deriveSurfaceEligibility(
+      hyperMaps,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      null,
+      null,
+      undefined,
+      null,
+      { shape: "hyperMenger", level: 2 },
+    );
+    expect(result.status).toBe("degraded");
+    expect(result.kind).toBe("finiteSolid4");
+  });
+
+  it("refuses every level of the certified band 0..2 entry and refuses deeper", () => {
+    for (const level of [0, 1, 2]) {
+      const result = deriveSurfaceEligibility(
+        mengerMaps,
+        null,
+        NO_SYMMETRY,
+        { computeAvailable: true },
+        null,
+        null,
+        null,
+        undefined,
+        null,
+        { shape: "menger", level },
+      );
+      expect(result.kind, `level ${level}`).toBe("finiteSolid");
+    }
+    const deep = deriveSurfaceEligibility(
+      mengerMaps,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      null,
+      null,
+      undefined,
+      null,
+      { shape: "menger", level: 3 },
+    );
+    expect(deep.status).toBe("ineligible");
+    expect(deep.note).toContain("0..2");
+  });
+
+  it("refuses a shape/dimension mismatch instead of rendering either object", () => {
+    const flat = deriveSurfaceEligibility(
+      mengerMaps,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      null,
+      null,
+      undefined,
+      null,
+      { shape: "hyperMenger", level: 2 },
+    );
+    expect(flat.status).toBe("ineligible");
+    expect(flat.note).toContain("native 4D");
+    const deep = deriveSurfaceEligibility(
+      hyperMaps,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      null,
+      null,
+      undefined,
+      null,
+      { shape: "menger", level: 2 },
+    );
+    expect(deep.status).toBe("ineligible");
+    expect(deep.note).toContain("reaches into 4D");
+  });
+
+  it("refuses edited maps with the analyzer's reasons", () => {
+    const edited = mengerMaps.map((t, i) =>
+      i === 0
+        ? {
+            ...t,
+            position: [t.position[0] + 0.01, t.position[1], t.position[2]] as [
+              number,
+              number,
+              number,
+            ],
+          }
+        : t,
+    );
+    const result = deriveSurfaceEligibility(
+      edited,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      null,
+      null,
+      undefined,
+      null,
+      { shape: "menger", level: 2 },
+    );
+    expect(result.status).toBe("ineligible");
+    expect(result.note).toContain("not a construction offset");
+  });
+
+  it("refuses a refused block verbatim-style, naming the field", () => {
+    const result = deriveSurfaceEligibility(
+      mengerMaps,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      null,
+      null,
+      undefined,
+      null,
+      { shape: "sponge", level: 2, warp: 1 } as unknown as Parameters<
+        typeof deriveSurfaceEligibility
+      >[9],
+    );
+    expect(result.status).toBe("ineligible");
+    expect(result.note).toContain("sponge");
+    expect(result.note).toContain("warp");
+  });
+
+  it("refuses tiling, a shape trap and a schedule with their own reasons", () => {
+    const trap = deriveSurfaceEligibility(
+      mengerMaps,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      {
+        shape: {
+          parts: [
+            { primitive: { kind: "sphere", radius: 0.2 }, combine: "union" },
+          ],
+        },
+      },
+      null,
+      undefined,
+      null,
+      { shape: "menger", level: 2 },
+    );
+    expect(trap.status).toBe("ineligible");
+    expect(trap.note).toContain("shape trap");
+    const tiled = deriveSurfaceEligibility(
+      mengerMaps,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      null,
+      { group: "a3" },
+      undefined,
+      null,
+      { shape: "menger", level: 2 },
+    );
+    expect(tiled.status).toBe("ineligible");
+    expect(tiled.note).toContain("Space tiling");
+    const scheduled = deriveSurfaceEligibility(
+      mengerMaps,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      {
+        transforms: [
+          {
+            id: 100,
+            position: [0.1, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+          },
+        ],
+        depth: 2,
+      },
+      null,
+      null,
+      undefined,
+      null,
+      { shape: "menger", level: 2 },
+    );
+    expect(scheduled.status).toBe("ineligible");
+    expect(scheduled.note).toContain("hybrid schedule");
+  });
+
+  it("refuses entry without compute, never handing the solid to a WebGL tracer", () => {
+    const result = deriveSurfaceEligibility(
+      mengerMaps,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: false },
+      null,
+      null,
+      null,
+      undefined,
+      null,
+      { shape: "menger", level: 2 },
+    );
+    expect(result.status).toBe("ineligible");
+    expect(result.note).toContain("WebGPU compute");
+  });
+
+  it("routes the construction as a plain IFS when the block is absent", () => {
+    const result = deriveSurfaceEligibility(mengerMaps, null, NO_SYMMETRY, {
+      computeAvailable: true,
+    });
+    expect(result.kind).toBe("ifs");
   });
 });
