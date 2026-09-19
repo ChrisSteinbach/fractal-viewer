@@ -111,6 +111,7 @@ import {
   DIELECTRIC_ENVIRONMENT_BOUND,
   DIELECTRIC_ERROR_BUDGET,
   DIELECTRIC_INITIAL_BRANCH_THETA,
+  DIELECTRIC_MAX_PROCESSED_PATHS,
   DIELECTRIC_MAX_STACK,
   DIELECTRIC_QUERY_MAX_STEPS,
   DIELECTRIC_REPLAY_PASSES,
@@ -4785,8 +4786,8 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
     }
   }
   // The FINITE-SOLID cores: neither a descent nor a forward orbit — the
-  // display DE is the certified box-union hybrid and the transport (when
-  // optics take it) is the exact DDA. Bindingless like "bulb"; the
+  // primary and optical boundaries use the exact DDA; shading probes use
+  // the certified box-union hybrid DE. Bindingless like "bulb"; the
   // construction rides the params tail.
   const finiteCore = core === "finite" || core === "finite4";
   if (finiteCore) {
@@ -5215,8 +5216,14 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
       );
     }
   }
+  // The exact finite DDA uses its qualified oracle allowance. The lower
+  // estimator guard prices an expensive distance-march boundary query;
+  // applying it to the DDA truncated otherwise valid finite optical paths.
   const transportMaxPaths =
-    opts.transportMaxPaths ?? SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS;
+    opts.transportMaxPaths ??
+    (opticsBackend === "finiteSolid"
+      ? DIELECTRIC_MAX_PROCESSED_PATHS
+      : SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS);
   if (!Number.isInteger(transportMaxPaths) || transportMaxPaths < 1) {
     throw new RangeError(
       "surface-de-gpu: transportMaxPaths must be a positive integer",
@@ -9125,65 +9132,6 @@ fn transportSolidField(p: vec3f) -> f32 {
   return clamp(trans, vec3f(0.0), vec3f(1.0));
 }
 `;
-  // The primary split's anchored-restart flag, per backend: the estimator
-  // and closed-solid queries skip 2·eps past the world anchor point, so
-  // their primary children restart ANCHORED. The finite DDA's anchor is
-  // the full anchor contract, which the display march does not produce —
-  // its first query is the NON-ANCHORED world-origin call (the ray-side
-  // rule classifies the start cell from the hit point and the direction),
-  // so its flag stays clear until the first DDA event hands a real anchor
-  // down.
-  const primaryAnchorPresent = finiteQuery ? "0u" : "1u";
-  // The finite backend's primary anchor block, spliced ahead of the
-  // primary split's children (TS-side note per the template rule; the
-  // emitted lines carry no explanation). The display hit sits within a
-  // pixel footprint of the surface — outside the grid planes the DDA
-  // classifies from — so the UNANCHORED inside child's ray-side rule
-  // reads an empty start cell against an inside claim and refuses
-  // state-mismatch (the measured app defect: every refracted primary
-  // unresolved, the solid rendered black). One unanchored OUTSIDE query
-  // from just before the hit walks to the true entry event; the
-  // refracted child then STARTS at that event — bent by the event's own
-  // exact face normal, so the anchor and the bend describe the SAME face
-  // — and anchored at the event's contract state. The reflection child
-  // keeps the unanchored hit start (its outside classification agrees
-  // with an empty start cell), and the Fresnel split keeps the smoothed
-  // optical normal for the look. A refused pre-query — a graze whose
-  // pre-point lands inside another lobe — falls back to the unanchored
-  // children, no worse than before.
-  const finitePrimaryAnchor = finiteQuery
-    ? `
-  var bend0F = bend0;
-  let preOrigin = origin - dir * (4.0 * eps);
-  let preHit = transportFiniteBoundary(
-    preOrigin,
-    dir,
-    0u,
-    vec4f(0.0),
-    0u,
-    vec4i(-1),
-    vec4i(-1),
-    0u,
-  );
-  if (preHit.kind == 1u) {
-    bend0F = dielectricRefract(dir[0], dir[1], dir[2], preHit.normal[0], preHit.normal[1], preHit.normal[2], 1.0, ior);
-  }
-  var refrOrigin = origin;
-  var refrAnchorPresent = 0u;
-  var refrIntrinsic = vec4f(0.0);
-  var refrMask = 0u;
-  var refrPlanes = vec4i(-1);
-  var refrCells = vec4i(-1);
-  if (preHit.kind == 1u && dot(dir, preHit.normal) < 0.0) {
-    refrOrigin = preOrigin + dir * preHit.t;
-    refrAnchorPresent = 1u;
-    refrIntrinsic = preHit.anchorIntrinsic;
-    refrMask = preHit.anchorMask;
-    refrPlanes = preHit.anchorPlanes;
-    refrCells = preHit.anchorCells;
-  }
-`
-    : "";
   const solidShadowEarly = optics
     ? `// ---- dielectric optical transport (docs/surface-dielectric-transport.md)
 // ---- surface-dielectric.ts's emitted WGSL optics body, verbatim — the
@@ -9212,7 +9160,25 @@ ${finiteSolidTransportSource(core4 ? 4 : 3)}`
 // ---- the shared WGSL optics body is spliced AHEAD of the shade entry
 // (the closed-solid floor corridor's straight shadow visibility reads
 // it); the transport machinery below reuses those definitions.
-struct TransportPath {
+struct TransportPath {${
+        finiteQuery
+          ? `
+  // Shader-private stride: three vec3/scalar pairs occupy 0..47; the
+  // canonical anchor vectors occupy 48..95; flags at 96/100/104 round
+  // to 112 bytes at alignment 16. The generic displayed anchor is unused.
+  origin: vec3f,
+  inside: u32,
+  dir: vec3f,
+  interfaces: u32,
+  energy: vec3f,
+  bound: f32,
+  finiteIntrinsic: vec4f,
+  finitePlanes: vec4i,
+  finiteCells: vec4i,
+  anchorPresent: u32,
+  exitPresent: u32,
+  finiteMask: u32,`
+          : `
   origin: vec3f,
   dir: vec3f,
   energy: vec3f,
@@ -9229,21 +9195,8 @@ struct TransportPath {
   // the optical distortion displaces (its origin at a terminal IS that
   // exit point: the ray origin moves only at events). Every other child
   // resets the flag, so a mirror view at a later entry never displaces.
-  exitPresent: u32,${
-    finiteQuery
-      ? `
-  // The finite-solid DDA's full anchor: the snapped intrinsic point, the
-  // tied-plane mask, the tied planes and the post-incident cell indices
-  // (the DDA emits its own mask alongside the shared anchorPresent flag).
-  // Shader-private continuation state, grown per backend — f32
-  // reconstruction of cell identities is lossy, which is why the anchored
-  // restart consumes the anchor and never a point.
-  finiteIntrinsic: vec4f,
-  finiteMask: u32,
-  finitePlanes: vec4i,
-  finiteCells: vec4i,`
-      : ""
-  }
+  exitPresent: u32,`
+      }
 }
 
 struct TransportBoundary {
@@ -9641,7 +9594,28 @@ fn transportTrace(
   var radiance = vec3f(0.0);
   var residual = 0.0;
   let eps = TRANSPORT_CROSSING_EPS_REL * radius;
-  // --- the primary split (the march's own hit, entering from outside) ---
+${
+  finiteQuery
+    ? `  // The exact query owns the first interface as well as every continuation.
+  // Start at the camera with unit throughput; the display march only schedules
+  // covered pixels and never supplies an optical boundary or normal.
+  var primary: TransportPath;
+  primary.origin = origin;
+  primary.dir = dir;
+  primary.energy = vec3f(1.0);
+  primary.inside = 0u;
+  primary.interfaces = 0u;
+  primary.bound = transportChildBound(primary.energy);
+  primary.anchorPresent = 0u;
+  primary.exitPresent = 0u;
+  primary.finiteIntrinsic = vec4f(0.0);
+  primary.finiteMask = 0u;
+  primary.finitePlanes = vec4i(-1);
+  primary.finiteCells = vec4i(-1);
+  stack[0] = primary;
+  sp = 1u;
+`
+    : `  // --- the primary split (the march's own hit, entering from outside) ---
   // The accepted hit may sit up to one pixel footprint OUTSIDE the
   // surface; the child's anchored restart keeps the 2·eps baseline and
   // the query's own march reaches the surface — the anchor suppression
@@ -9657,44 +9631,28 @@ fn transportTrace(
   let cosI0 = abs(dot(dir, n0));
   let f0 = dielectricFresnel(cosI0, 1.0, ior);
   let bend0 = dielectricRefract(dir[0], dir[1], dir[2], n0[0], n0[1], n0[2], 1.0, ior);
-  let reflDir0 = dir - 2.0 * dot(dir, n0) * n0;${finitePrimaryAnchor}
+  let reflDir0 = dir - 2.0 * dot(dir, n0) * n0;
   var refl0: TransportPath;
   refl0.origin = origin;
   refl0.dir = reflDir0;
   refl0.energy = vec3f(f0);
   refl0.inside = 0u;
   refl0.interfaces = 1u;
-  refl0.anchorPresent = ${primaryAnchorPresent};
+  refl0.anchorPresent = 1u;
   refl0.anchorPoint = origin;
   refl0.anchorPad2 = 0u;
-  refl0.exitPresent = 0u;${
-    finiteQuery
-      ? `
-  refl0.finiteIntrinsic = vec4f(0.0);
-  refl0.finiteMask = 0u;
-  refl0.finitePlanes = vec4i(-1);
-  refl0.finiteCells = vec4i(-1);`
-      : ""
-  }
+  refl0.exitPresent = 0u;
   refl0.bound = transportChildBound(refl0.energy);
   var refr0: TransportPath;
-  refr0.origin = ${finiteQuery ? "refrOrigin" : "origin"};
-  refr0.dir = ${finiteQuery ? "bend0F.xyz" : "bend0.xyz"};
+  refr0.origin = origin;
+  refr0.dir = bend0.xyz;
   refr0.energy = vec3f(1.0 - f0);
   refr0.inside = 1u;
   refr0.interfaces = 1u;
-  refr0.anchorPresent = ${finiteQuery ? "refrAnchorPresent" : primaryAnchorPresent};
+  refr0.anchorPresent = 1u;
   refr0.anchorPoint = origin;
   refr0.anchorPad2 = 0u;
-  refr0.exitPresent = 0u;${
-    finiteQuery
-      ? `
-  refr0.finiteIntrinsic = refrIntrinsic;
-  refr0.finiteMask = refrMask;
-  refr0.finitePlanes = refrPlanes;
-  refr0.finiteCells = refrCells;`
-      : ""
-  }
+  refr0.exitPresent = 0u;
   refr0.bound = transportChildBound(refr0.energy);
   // Push the stronger child first (the oracle's order) so the weaker
   // actual-throughput child is processed first — with the oracle's cut
@@ -9726,7 +9684,8 @@ fn transportTrace(
       sp = sp + 1u;
     }
   }
-  // --- the oracle's work-list loop ---
+`
+}  // --- the oracle's work-list loop ---
   loop {
     if (sp == 0u) {
       out.status = select(TRANSPORT_STATUS_COMPLETE, TRANSPORT_STATUS_RESIDUAL, residual > 0.0);
@@ -9775,7 +9734,7 @@ fn transportTrace(
       break;
     }
     if (hit.kind == 2u) {
-      if (path.inside == 1u && path.interfaces != 1u) {
+      if (path.inside == 1u${finiteQuery ? "" : " && path.interfaces != 1u"}) {
         // An inside miss is unresolved, never a background hit — a path
         // that entered through a real crossing cannot miss a closed
         // solid, so this is an anomaly the frame discloses.
@@ -9795,8 +9754,21 @@ fn transportTrace(
       // displacement. Every fallback is the deterministic straight
       // terminal: zero distortion, a vanishing smoothed normal, a
       // degenerate tangent (the emitted fn's applied flag).
-      var rearOrigin = path.origin;
-      if (path.exitPresent == 1u && distortion > 0.0) {
+      var rearOrigin = path.origin;${
+        finiteQuery
+          ? `
+      // Only a downward floor terminal can depend on this origin. Its
+      // direction is unchanged by displacement, so other terminals need
+      // no field taps. Do not gate on height: displacement can cross it.`
+          : ""
+      }
+      if (${
+        finiteQuery && !groundPlane
+          ? "false"
+          : `path.exitPresent == 1u && distortion > 0.0${
+              finiteQuery ? " && path.dir.y < -1.0e-6" : ""
+            }`
+      }) {
         let nS = transportSmoothedNormal(
           path.origin,
           ${DIELECTRIC_DISTORTION_NORMAL_REL} * radius,
@@ -9841,7 +9813,7 @@ fn transportTrace(
     let n = hit.normal;
     let dotDN = dot(path.dir, n);
     let childOrigin = path.origin + path.dir * hit.t;
-    let incidentInGlass = dot(path.origin - childOrigin, n) < 0.0;
+    let incidentInGlass = ${finiteQuery ? "path.inside == 1u" : "dot(path.origin - childOrigin, n) < 0.0"};
     var energy = path.energy;
     if (incidentInGlass) {
       energy = vec3f(
@@ -9863,9 +9835,13 @@ fn transportTrace(
       child.energy = energy;
       child.inside = select(0u, 1u, incidentInGlass);
       child.interfaces = path.interfaces + 1u;
-      child.anchorPresent = 1u;
+      child.anchorPresent = 1u;${
+        finiteQuery
+          ? ""
+          : `
       child.anchorPoint = childOrigin;
-      child.anchorPad2 = 0u;
+      child.anchorPad2 = 0u;`
+      }
       child.exitPresent = 0u;${
         finiteQuery
           ? `
@@ -9895,9 +9871,13 @@ fn transportTrace(
       trans.energy = energy * (1.0 - f);
       trans.inside = select(1u, 0u, incidentInGlass);
       trans.interfaces = path.interfaces + 1u;
-      trans.anchorPresent = 1u;
+      trans.anchorPresent = 1u;${
+        finiteQuery
+          ? ""
+          : `
       trans.anchorPoint = childOrigin;
-      trans.anchorPad2 = 0u;
+      trans.anchorPad2 = 0u;`
+      }
       // Only the transmitted child of an EXIT crossing reads the rear
       // scene through the glass; every other child resets the flag, so a
       // mirror view at a later entry never displaces.
@@ -9917,9 +9897,13 @@ fn transportTrace(
       refl.energy = energy * f;
       refl.inside = select(0u, 1u, incidentInGlass);
       refl.interfaces = path.interfaces + 1u;
-      refl.anchorPresent = 1u;
+      refl.anchorPresent = 1u;${
+        finiteQuery
+          ? ""
+          : `
       refl.anchorPoint = childOrigin;
-      refl.anchorPad2 = 0u;
+      refl.anchorPad2 = 0u;`
+      }
       refl.exitPresent = 0u;${
         finiteQuery
           ? `
@@ -10029,7 +10013,7 @@ fn transportRays(
   let distortion = lane1[1];
   let replayPass = u32(shade.transport[0]);
   let theta = dielectricReplayTheta(f32(replayPass), TRANSPORT_INITIAL_THETA);
-  let traced = transportTrace(pos, rd, theta, ior, radius, absorb, bg, li, distortion);
+  let traced = transportTrace(${finiteQuery ? "ro" : "pos"}, rd, theta, ior, radius, absorb, bg, li, distortion);
   if (traced.status == TRANSPORT_STATUS_INVALID) {
     // Never retried, never presented as background: black, disclosed by
     // the frame's invalid count.
@@ -10072,7 +10056,7 @@ fn transportRays(
       f32(TRANSPORT_STATUS_UNRESOLVED), f32(traced.failure), f32(traced.reason), f32(replayPass));
     colorOut[ray] = pack4x8unorm(vec4f(0.0, 0.0, 0.0, 1.0));
     layerOut[ray] = packSurfaceLayer(1.0, 0.0, surfaceCoc(dot(pos - ro, params.fwd)));
-    transportStatusOut[slotI] = TRANSPORT_STATUS_UNRESOLVED;
+    transportStatusOut[slotI] = TRANSPORT_STATUS_UNRESOLVED${finiteQuery ? " | (traced.failure << 8u) | (traced.reason << 16u)" : ""};
     return;
   }
   // Still pending: keep the pending identity; the next pass re-traces
@@ -10083,6 +10067,89 @@ fn transportRays(
 }
 `
     : "";
+
+  // Keep every non-finite march emission unchanged. The finite primary
+  // shares the exact geometry queried by optical continuation; the hybrid
+  // display DE remains available for normals, shadow and AO probes.
+  const marchBody = finiteCore
+    ? `  // The finite construction has exact analytic boundaries. One DDA query
+  // classifies the primary ray without a distance tolerance or march dither.
+  // Ray-side occupancy admits cameras inside an opaque cell as well as
+  // outside cameras and cameras in the construction's empty tunnels.
+  let primaryOrigin = finiteLift(ro);
+  let primaryDir = finiteLiftDir(rd);
+  var primaryCells = array<i32, 4>(-1, -1, -1, -1);
+  for (var axis = 0; axis < ${core4 ? 4 : 3}; axis++) {
+    primaryCells[axis] = finiteRaySideIndex(primaryOrigin[axis], primaryDir[axis]);
+  }
+  let primaryInside = select(0u, 1u, finiteOccupied(primaryCells));
+  let primary = transportFiniteBoundary(
+    ro, rd, 0u, vec4f(0.0), 0u, vec4i(-1), vec4i(-1), primaryInside,
+  );
+  st.x = primary.t;
+  st.z = 1.0;
+  st.w = 0.0;
+  if (primary.kind == 1u) {
+    st.y = ${SURFACE_GPU_RAY_HIT}.0;
+  } else if (primary.kind == 2u) {
+    st.y = ${SURFACE_GPU_RAY_MISS}.0;
+  } else {
+    // A refused query has no certified nearest boundary. Preserve it as
+    // exhausted work, including its reason, even if a floor lies ahead.
+    st.y = ${SURFACE_GPU_RAY_EXHAUSTED}.0;
+    st.w = f32(primary.reason);
+  }${
+    groundPlane
+      ? `
+  if (primary.kind != 3u && groundPlaneStatus(ro, rd) == ${SURFACE_GPU_RAY_PLANE}.0) {
+    let planeT = (params.groundY - ro.y) / rd.y;
+    if (primary.kind == 2u || planeT < primary.t) {
+      st.x = planeT;
+      st.y = ${SURFACE_GPU_RAY_PLANE}.0;
+    }
+  }`
+      : ""
+  }
+  states[ray] = st;${statusStore("  ")}`
+    : `${marchGate}
+${
+  lens
+    ? `  // Cancel only the swirl certificate's extra hit tolerance. Physical
+  // pixel slopes remain unchanged for material footprints and shading.
+  let lensEpsScale = select(1.0, 1.0 / params.${core4 ? "lens4Fold" : "lensFold"}.y,
+    params.${core4 ? "lens4Params" : "lensParams"}.x == ${SURFACE_LENS_SWIRL}.0);
+`
+    : ""
+}  var steps = u32(st.z);
+  for (var sIt = 0u; sIt < params.stepsThisPass; sIt++) {
+    if (t > tFar) {
+      st.y = ${marchMissStatus};
+      break;
+    }
+    if (steps >= params.marchSteps) {
+      st.y = ${SURFACE_GPU_RAY_EXHAUSTED}.0;
+      break;
+    }
+    let eps = max(params.pixelEps * t, params.hitFloorEps)${lens ? " * lensEpsScale" : ""};
+${
+  marchSample
+    ? `    let sample = surfaceDEMarch(ro + rd * t, eps, li);
+    let d = sample.y;`
+    : "    let d = surfaceDE(ro + rd * t, eps, li);"
+}
+    // Persist the last evaluation for diagnostics, INCLUDING the terminal
+    // HIT sample. Shade never reads this lane.
+    st.w = d;
+    steps++;
+    if (d < eps) {
+      st.y = ${SURFACE_GPU_RAY_HIT}.0;
+      break;
+    }
+    t += ${marchSample ? "sample.x" : "d"} * params.stepScale;
+  }
+  st.x = t;
+  st.z = f32(steps);
+  states[ray] = st;${statusStore("  ")}`;
 
   let entry =
     mode === "eval"
@@ -10137,45 +10204,7 @@ fn marchRays(
   let px = ray % params.rasterWidth;
   let py = ray / params.rasterWidth;
 ${marchRd}
-${marchGate}
-${
-  lens
-    ? `  // Cancel only the swirl certificate's extra hit tolerance. Physical
-  // pixel slopes remain unchanged for material footprints and shading.
-  let lensEpsScale = select(1.0, 1.0 / params.${core4 ? "lens4Fold" : "lensFold"}.y,
-    params.${core4 ? "lens4Params" : "lensParams"}.x == ${SURFACE_LENS_SWIRL}.0);
-`
-    : ""
-}  var steps = u32(st.z);
-  for (var sIt = 0u; sIt < params.stepsThisPass; sIt++) {
-    if (t > tFar) {
-      st.y = ${marchMissStatus};
-      break;
-    }
-    if (steps >= params.marchSteps) {
-      st.y = ${SURFACE_GPU_RAY_EXHAUSTED}.0;
-      break;
-    }
-    let eps = max(params.pixelEps * t, params.hitFloorEps)${lens ? " * lensEpsScale" : ""};
-${
-  marchSample
-    ? `    let sample = surfaceDEMarch(ro + rd * t, eps, li);
-    let d = sample.y;`
-    : "    let d = surfaceDE(ro + rd * t, eps, li);"
-}
-    // Persist the last evaluation for diagnostics, INCLUDING the terminal
-    // HIT sample. Shade never reads this lane.
-    st.w = d;
-    steps++;
-    if (d < eps) {
-      st.y = ${SURFACE_GPU_RAY_HIT}.0;
-      break;
-    }
-    t += ${marchSample ? "sample.x" : "d"} * params.stepScale;
-  }
-  st.x = t;
-  st.z = f32(steps);
-  states[ray] = st;${statusStore("  ")}
+${marchBody}
 }`
         : `
 struct SurfaceHitInfo {
@@ -10473,7 +10502,18 @@ ${
   }
 `
     : ""
-}  if (st.y != ${SURFACE_GPU_RAY_HIT}.0) {
+}${
+            finiteCore
+              ? `  if (st.y == ${SURFACE_GPU_RAY_EXHAUSTED}.0) {
+    // A refused exact primary is unresolved geometry, never backdrop.
+    // The host's exhausted census carries the failure through AA/export.
+    colorOut[ray] = pack4x8unorm(vec4f(0.0, 0.0, 0.0, 1.0));
+    layerOut[ray] = packSurfaceLayer(1.0, 0.0, 1.0);
+    return;
+  }
+`
+              : ""
+          }  if (st.y != ${SURFACE_GPU_RAY_HIT}.0) {
     colorOut[ray] = pack4x8unorm(vec4f(bg, 1.0));
     layerOut[ray] = packSurfaceLayer(0.0, 0.0, 1.0);
     return;
@@ -15097,6 +15137,6 @@ ${tilingProbeWrapText}`
   return /* wgsl */ `${headerText}${tilingFoldText}${latticeCarrierText}${tilingClipText}${scheduleHelperText}${chaosHelperText}
 
 ${meshSdfHelperText}${trapGeometryHelperText}${condensationHelperText}${tiledBodyBlock}${marchSample ? `\n${balloon ? inversionDistanceShaderSource("wgsl") : ""}\n${sampleLensText}\n${sampleOuterText}` : ""}
-${entry}
+${finiteCore && mode === "march" ? `${finiteSolidTransportSource(core4 ? 4 : 3)}\n` : ""}${entry}
 ${opticsBlock}`;
 }

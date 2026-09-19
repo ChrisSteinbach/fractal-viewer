@@ -31,6 +31,21 @@
 import * as THREE from "three";
 import { SOFTWARE_RENDERER_RE } from "../render-backend";
 import { normalizeRotorPair, rotorMatrix } from "../rotor4";
+import { presetCameraPose, presetRotorPair } from "../preset-view";
+import { createGlassStudioBackground } from "../preset-background";
+import { hexToRgb01 } from "../constants";
+import { lightDirection } from "../voxel-material";
+import {
+  SURFACE_FULL_AO_TAPS,
+  SURFACE_FULL_HIT_FLOOR,
+  SURFACE_FULL_MARCH_STEPS,
+  SURFACE_FULL_SHADOW_STEPS,
+  SURFACE_PREVIEW_AO_TAPS,
+  SURFACE_PREVIEW_HIT_FLOOR,
+  SURFACE_PREVIEW_MARCH_STEPS,
+  SURFACE_PREVIEW_SHADOW_STEPS,
+} from "../surface-material";
+import { presentationFloorSpec } from "../../fractal/presentation-floor";
 import {
   SURFACE_CHAOS_ROW_3D,
   SURFACE_CHAOS_ROW_4D,
@@ -46,6 +61,7 @@ import {
   surfaceScheduleMarchAcceptance,
 } from "./schedule";
 import { applyScenarioShard } from "./shard";
+import { finiteEnvelopeEvidenceFailures } from "./surface-transport-envelope";
 import { buildSurfaceTilingSymmetryAbiSpecs } from "./tiling-symmetry";
 import {
   rotationMatrix4,
@@ -133,6 +149,8 @@ import {
   mandelboxKifs,
   pentatope,
   PRESET_SCHEDULES,
+  PRESET_SURFACE_ROOMS,
+  PRESET_VIEWS,
   presetTransforms,
   sierpinskiTetrahedron,
   swirlFlame,
@@ -218,7 +236,6 @@ import {
   SURFACE_GPU_TRANSPORT_COMPLETE,
   SURFACE_GPU_TRANSPORT_INVALID,
   SURFACE_GPU_TRANSPORT_PENDING,
-  SURFACE_GPU_TRANSPORT_REASON_STATE_MISMATCH,
   SURFACE_GPU_TRANSPORT_RESIDUAL,
   SURFACE_GPU_TRANSPORT_UNRESOLVED,
   SURFACE_GPU_UNIFORM_MAP_SLOTS,
@@ -260,11 +277,14 @@ import {
   FINITE_SOLID_IDENTITY_POSE,
   buildFiniteSolidConstruction,
   finiteSolidDisplayDistance,
+  finiteSolidBoundingRadius,
+  finiteSolidIntervals,
+  finiteSolidPose,
   type FiniteSolidAnchor,
+  type FiniteSolidPose,
 } from "../../fractal/finite-solid";
 import { finiteSolidDdaF32 } from "../../fractal/surface-finite-solid-gpu";
 import {
-  SURFACE_GPU_TRANSPORT_REASON_DEGENERATE_NORMAL,
   transportBoundaryQueryCPU,
   transportShadowVisibilityCPU,
   transportSolidBoundaryQueryCPU,
@@ -295,6 +315,15 @@ import {
   DEFAULT_FLAME_EXPOSURE,
   DEFAULT_FLAME_GAMMA,
   DEFAULT_FLAME_VIBRANCY,
+  DEFAULT_FOG_DENSITY,
+  DEFAULT_FOG_TINT,
+  DEFAULT_FOG_TINT_STRENGTH,
+  DEFAULT_SOLID_AMBIENT,
+  DEFAULT_SOLID_LIGHT_AZIMUTH,
+  DEFAULT_SOLID_LIGHT_ELEVATION,
+  DEFAULT_SURFACE_COLOR_SPEED,
+  DEFAULT_SURFACE_ENV_LIGHT,
+  SURFACE_COLOR_SOURCES,
 } from "../state";
 import {
   createGpuFlameBackend,
@@ -326,6 +355,7 @@ import type {
   SurfaceComputeTarget,
 } from "../surface-compute";
 import {
+  surfaceForwardSlot,
   surfaceSlotColors,
   surfaceSlotMaterials,
   surfaceTrapIndices,
@@ -4228,12 +4258,18 @@ interface SurfaceTransportAgreementRow {
    * parallel slab's lateral offset, the accepted bounded distortion
    * model). */
   maxDisplacementDelta?: number;
-  /** Forward cores only: probes the ULP ensemble excluded as chaos
-   * flips — disclosed, never absorbed, capped. */
+  /** Forward and finite cores: probes excluded by the pre-hoc ULP
+   * ensemble — disclosed, never absorbed, capped. */
   flipsExcluded?: number;
+  /** Finite rows must compare at least one stable resolved trace. */
+  stableTraceProbes?: number;
+  resolvedTraceProbes?: number;
 }
 
 interface SurfaceDeResults {
+  /** Exact finite camera-boundary status/depth versus independent f64
+   * occupied-cell interval unions, through the real marchRays entry. */
+  finitePrimaryAgreement?: SurfaceFinitePrimaryRow[];
   /** The sphere-inversion cores' legs (`sphere-inversion-legs.ts`):
    * compile matrix, eval agreement, march agreement, production frames and
    * eval timing. Any gate failure fails the section. */
@@ -8180,14 +8216,9 @@ const SURFACE_TRANSPORT_LEG_MAX_PATHS = 128;
 /** Max excluded (chaos-flip) probes per forward leg before the leg fails:
  * the escape eval legs' own absolution-cap discipline — a fixture whose
  * every probe flips certifies nothing. */
-// The decision-flip / anchor-identity absolution cap, per leg. Recalibrated
-// 4 -> 8 when the 3D finite leg became GENUINE: the f32 twin's 3D rows were
-// zeros (every 3D event refused degenerate-normal, the leg absolved itself
-// vacuous through the flip class), and with the identity rows restored the
-// leg's real near-tie count is 7 — every divergence within the one-cell
-// slack, each kernel anchor self-consistent on its own plane, kind/t/normal
-// agreeing. The class is the disclosed anchor-identity one, not a new one;
-// the cap now reflects a leg that actually certifies.
+// The existing pre-hoc ULP exclusion cap remains frozen. Anchor identity is
+// always exact: a one-cell plane shift changes the crossed boundary and
+// must never be excused by this cap.
 const SURFACE_TRANSPORT_FLIP_CAP = 8;
 /** Is this leg's core a FORWARD orbit? Forward estimators are heuristics
  * over chaotic orbits, so a probe can flip realization under one f32 ULP
@@ -8330,7 +8361,7 @@ function surfaceTransportProbes(
 
 /** Is a TRACE probe chaos-stable at f32 scale? The CPU twin re-traces the
  * probe from its origin and from six ULP neighbors: stable iff all seven
- * agree on status, residual (5e-3) and radiance (3e-3). Only forward
+ * agree on status, residual (5e-3) and radiance (3e-3). Forward and finite
  * legs consult this — a stable probe hard-gates, an unstable one is
  * excluded and counted (the escape legs' pre-hoc ensemble shape). The
  * finite backend's twin (the leg's own closure) replaces the estimator
@@ -9339,7 +9370,13 @@ async function runSurfaceTransportAgreementLegs(
       }
       boundaryCounts.push(boundaryQueries.length - boundaryStart);
       traceQueries.push({
-        origin: probe.hitPos,
+        // Finite transport, including its primary interface, starts outside.
+        // The other backends retain their display-hit primary split.
+        origin: finite
+          ? (probe.hitPos.map((v, a) =>
+              Math.fround(v - 2 * visR * probe.dir[a]),
+            ) as Vec3)
+          : probe.hitPos,
         dir: probe.dir,
         anchorPoint: [0, 0, 0],
         eps: 0,
@@ -9802,15 +9839,10 @@ async function runSurfaceTransportAgreementLegs(
     // compared against a differently-realized GPU chain.
     const discreteQuery = forward || leg.backend === "finiteSolid";
     let flipped = 0;
-    // The finite traces' unresolved disclosure fires once per leg.
-    let traceUnresolvedDisclosed = false;
-    // The finite decision-flip absolution: counted, disclosed once, and
-    // capped at the ensemble's own flip cap.
-    let decisionFlips = 0;
-    let decisionFlipDisclosed = false;
-    // The anchor identities' near-tie divergences: counted, disclosed
-    // once, capped per leg.
-    let anchorDivergences = 0;
+    // A finite leg must compare real traces and resolve at least one of
+    // them; excluding every probe cannot certify optical agreement.
+    let stableFiniteTraces = 0;
+    let resolvedFiniteTraces = 0;
 
     const fail = (probe: number, kind: string, detail: string): never => {
       throw new Error(
@@ -9834,7 +9866,7 @@ async function runSurfaceTransportAgreementLegs(
           : undefined;
       const cpuTrace = transportTraceCPU(
         leg.fixture,
-        probe.hitPos,
+        traceQueries[pi].origin,
         probe.dir,
         DIELECTRIC_INITIAL_BRANCH_THETA,
         {
@@ -9855,7 +9887,7 @@ async function runSurfaceTransportAgreementLegs(
         !discreteQuery ||
         surfaceTransportTraceProbeStable(
           leg.fixture,
-          probe.hitPos,
+          traceQueries[pi].origin,
           probe.dir,
           legCaps,
           finiteQuery,
@@ -9863,94 +9895,74 @@ async function runSurfaceTransportAgreementLegs(
       if (!traceStable) flipped++;
       const traceBase = pi * resultFloats;
       const gpuStatus = traceOut[traceBase];
-      // The finite backend's twin is the F32 WALK (finiteSolidDdaF32):
-      // the DDA is discrete, its cell sequence decided by exact tie tests
-      // an f64 twin cannot bracket, so the leg pins the kernel against the
-      // twin that re-executes its own f32 arithmetic. The walks agree up
-      // to driver FMA contraction — the decisions (status, failure,
-      // reason) and the event geometry pin exactly like the continuous
-      // backends', but WHERE inside a long interior chain an f32
-      // realization aborts is contraction-sensitive, so an UNRESOLVED
-      // finite trace pins the decisions and discloses the pre-abort
-      // accounting instead of pinning it (measured: both sides abort
-      // state-mismatch, the residuals 26x apart). Resolved traces keep
-      // the full radiance/residual pins.
-      // The finite backend's twin is the F32 WALK (finiteSolidDdaF32):
-      // the DDA is discrete, so the leg pins the kernel against the twin
-      // that re-executes its own f32 arithmetic. The MEASURED reality on
-      // a real driver shapes what the TRACE comparison can pin: the
-      // sponge's surface is full of corners and tunnel mouths, the
-      // camera-marched hits converge ONTO them, and the driver's
-      // FMA-contracted f32 orders near-tie crossings differently than
-      // any TS twin — so a long interior chain's final status, its
-      // pre-abort accounting, and even individual boundary decisions at
-      // plane-converged starts are realization-dependent (the boundary
-      // arms absolve exactly that flip class, capped, below). What the
-      // trace probes pin is structural: the trace TERMINATES and never
-      // goes INVALID — a kernel whose chain blows up fails here — and
-      // every probe's gpu/cpu pair is disclosed into the notes as the
-      // measured record. The EVENT-level certification is the boundary
-      // probes'.
+      // Finite probes use the same status, radiance and residual agreement
+      // as every other backend. The pre-hoc ULP ensemble above is the only
+      // trace exclusion: terminating without INVALID is not agreement.
       const gpuRadiance = [0, 1, 2].map((c) => traceOut[traceBase + 4 + c]);
       const finiteTrace = leg.backend === "finiteSolid";
-      if (finiteTrace) {
-        if (gpuStatus === SURFACE_GPU_TRANSPORT_INVALID) {
-          fail(pi, "trace", `status — gpu INVALID (cpu "${cpuTrace.status}")`);
+      if (
+        !Number.isFinite(gpuStatus) ||
+        !gpuRadiance.every(Number.isFinite) ||
+        !Number.isFinite(traceOut[traceBase + 3]) ||
+        gpuStatus === SURFACE_GPU_TRANSPORT_INVALID
+      ) {
+        fail(
+          pi,
+          "trace",
+          `invalid/non-finite GPU result (cpu "${cpuTrace.status}")`,
+        );
+      }
+      if (
+        traceStable &&
+        gpuStatus !== TRANSPORT_TRACE_STATUS_CODES[cpuTrace.status]
+      ) {
+        fail(
+          pi,
+          "trace",
+          `status — gpu ${String(gpuStatus)} vs cpu "${cpuTrace.status}"`,
+        );
+      }
+      if (finiteTrace && traceStable) {
+        stableFiniteTraces++;
+        if (cpuTrace.status === "complete" || cpuTrace.status === "residual") {
+          resolvedFiniteTraces++;
         }
-        if (!traceUnresolvedDisclosed) {
-          traceUnresolvedDisclosed = true;
-          note(
-            `transport finite (${leg.systemName}): trace probes pin termination only ` +
-              "(the event-level certification is the boundary arms) — measured pairs: " +
-              `p${String(pi)} gpu status ${String(gpuStatus)} f${String(traceOut[traceBase + 1])} r${String(traceOut[traceBase + 2])} ` +
-              `res ${String(traceOut[traceBase + 3])} rad ${String(gpuRadiance[0])} | ` +
-              `cpu ${cpuTrace.status} f${String(cpuTrace.failure)} r${String(cpuTrace.reason)} ` +
-              `res ${String(cpuTrace.residual)} rad ${String(cpuTrace.radiance[0])}`,
-          );
-        } else {
-          note(
-            `transport finite (${leg.systemName}): p${String(pi)} gpu status ${String(gpuStatus)} ` +
-              `f${String(traceOut[traceBase + 1])} r${String(traceOut[traceBase + 2])} res ${String(traceOut[traceBase + 3])} | ` +
-              `cpu ${cpuTrace.status} f${String(cpuTrace.failure)} r${String(cpuTrace.reason)} res ${String(cpuTrace.residual)}`,
-          );
-        }
-      } else {
         if (
-          traceStable &&
-          gpuStatus !== TRANSPORT_TRACE_STATUS_CODES[cpuTrace.status]
+          traceOut[traceBase + 1] !== cpuTrace.failure ||
+          traceOut[traceBase + 2] !== cpuTrace.reason
         ) {
           fail(
             pi,
             "trace",
-            `status — gpu ${String(gpuStatus)} vs cpu "${cpuTrace.status}"`,
+            `failure/reason — gpu ${String(traceOut[traceBase + 1])}/${String(traceOut[traceBase + 2])} vs cpu ${String(cpuTrace.failure)}/${String(cpuTrace.reason)}`,
           );
         }
-        for (let c = 0; c < 3; c++) {
-          const gpu = gpuRadiance[c];
-          const cpu = cpuTrace.radiance[c];
-          const delta = Math.abs(gpu - cpu);
-          if (!traceStable) continue;
-          maxRadianceDelta = Math.max(maxRadianceDelta, delta);
-          if (!(delta <= 3e-3 || delta <= 1e-2 * Math.abs(cpu))) {
-            fail(
-              pi,
-              "trace",
-              `radiance[${String(c)}] — gpu ${String(gpu)} vs cpu ${String(cpu)}`,
-            );
-          }
+      }
+      for (let c = 0; c < 3; c++) {
+        const gpu = gpuRadiance[c];
+        const cpu = cpuTrace.radiance[c];
+        const delta = Math.abs(gpu - cpu);
+        if (!traceStable) continue;
+        maxRadianceDelta = Math.max(maxRadianceDelta, delta);
+        if (!(delta <= 3e-3 || delta <= 1e-2 * Math.abs(cpu))) {
+          fail(
+            pi,
+            "trace",
+            `radiance[${String(c)}] — gpu ${String(gpu)} vs cpu ${String(cpu)}`,
+          );
         }
-        const residualDelta = Math.abs(
-          traceOut[traceBase + 3] - cpuTrace.residual,
-        );
-        if (traceStable) {
-          maxResidualDelta = Math.max(maxResidualDelta, residualDelta);
-          if (residualDelta > 5e-3) {
-            fail(
-              pi,
-              "trace",
-              `residual — gpu ${String(traceOut[traceBase + 3])} vs cpu ${String(cpuTrace.residual)}`,
-            );
-          }
+      }
+      const residualDelta = Math.abs(
+        traceOut[traceBase + 3] - cpuTrace.residual,
+      );
+      if (traceStable) {
+        maxResidualDelta = Math.max(maxResidualDelta, residualDelta);
+        if (!(residualDelta <= 5e-3)) {
+          fail(
+            pi,
+            "trace",
+            `residual — gpu ${String(traceOut[traceBase + 3])} vs cpu ${String(cpuTrace.residual)}`,
+          );
         }
       }
       // An unstable TRACE skips only its own comparisons: the boundary
@@ -10003,6 +10015,26 @@ async function runSurfaceTransportAgreementLegs(
             query.eps,
           );
         }
+        const base = (boundaryBase + b) * resultFloats;
+        const gpuKind = boundaryOut[base];
+        const gpuT = boundaryOut[base + 2];
+        const gpuNormal = [0, 1, 2].map((c) => boundaryOut[base + 4 + c]);
+        // Every backend returns finite t and normal lanes, including the
+        // zero-filled finite miss/refusal sentinel. A pre-hoc geometry
+        // exclusion never excuses corrupt GPU output; check before it can
+        // skip comparisons (NaN would otherwise pass `delta > tolerance`).
+        if (
+          ![gpuKind, boundaryOut[base + 1], gpuT, ...gpuNormal].every(
+            Number.isFinite,
+          )
+        ) {
+          fail(
+            pi,
+            armName,
+            `non-finite GPU boundary result — kind ${String(gpuKind)} reason ${String(boundaryOut[base + 1])} t ${String(gpuT)} normal ${gpuNormal.map(String).join(",")}`,
+          );
+          continue;
+        }
         const boundaryStable =
           !discreteQuery ||
           surfaceTransportBoundaryProbeStable(
@@ -10019,8 +10051,6 @@ async function runSurfaceTransportAgreementLegs(
           );
         if (!boundaryStable) flipped++;
         if (!boundaryStable) continue;
-        const base = (boundaryBase + b) * resultFloats;
-        const gpuKind = boundaryOut[base];
         // Both arms pin the GPU/CPU AGREEMENT (kind, reason, t, normal).
         // The camera-marched probes' unanchored arm does usually report a
         // boundary (it starts 1% of the radius past a real hit and
@@ -10041,48 +10071,13 @@ async function runSurfaceTransportAgreementLegs(
         // (c)'s re-entry usually reports the next interior wall — and
         // the agreement + anchor-out comparisons are the pins.
         if (gpuKind !== TRANSPORT_BOUNDARY_KIND_CODES[cpuHit.kind]) {
-          // The finite backend's post-hoc decision-flip absolution (the
-          // escape legs' ensemble shape, one backend over): the ray-side
-          // cell classification at a hit that converges ONTO a grid plane
-          // can flip between the driver's FMA-contracted f32 and the
-          // twin's rounded f32, and the flipped start cell turns an
-          // honest state-mismatch refusal into an honest boundary (or
-          // the reverse). That specific flip class — a state-mismatch
-          // refusal versus a decision on the other side, nothing else —
-          // is counted, disclosed, and capped; any other kind divergence
-          // stays a hard fail.
-          const flipClass =
-            leg.backend === "finiteSolid" &&
-            ((cpuHit.kind === "refused" &&
-              (cpuHit.reason === SURFACE_GPU_TRANSPORT_REASON_STATE_MISMATCH ||
-                cpuHit.reason ===
-                  SURFACE_GPU_TRANSPORT_REASON_DEGENERATE_NORMAL) &&
-              gpuKind !== 3) ||
-              (gpuKind === 3 &&
-                (boundaryOut[base + 1] ===
-                  SURFACE_GPU_TRANSPORT_REASON_STATE_MISMATCH ||
-                  boundaryOut[base + 1] ===
-                    SURFACE_GPU_TRANSPORT_REASON_DEGENERATE_NORMAL) &&
-                cpuHit.kind !== "refused"));
-          if (!flipClass) {
-            fail(
-              pi,
-              armName,
-              `kind — gpu ${String(gpuKind)} vs cpu "${cpuHit.kind}"`,
-            );
-          }
-          decisionFlips += 1;
-          if (!decisionFlipDisclosed) {
-            decisionFlipDisclosed = true;
-            note(
-              `transport finite (${leg.systemName}): ${String(decisionFlips)} decision flip(s) absolved — ` +
-                "the ray-side classification at a hit converged onto a grid plane flips " +
-                "between the driver's FMA-contracted f32 and the twin's rounded f32 " +
-                `(probe ${String(pi)} ${armName}: gpu kind ${String(gpuKind)} vs cpu "${cpuHit.kind}")`,
-            );
-          }
-          continue;
+          fail(
+            pi,
+            armName,
+            `kind — gpu ${String(gpuKind)} vs cpu "${cpuHit.kind}"`,
+          );
         }
+
         const gpuReason = boundaryOut[base + 1];
         if (gpuReason !== cpuHit.reason) {
           fail(
@@ -10091,7 +10086,6 @@ async function runSurfaceTransportAgreementLegs(
             `reason — gpu ${String(gpuReason)} vs cpu ${String(cpuHit.reason)}`,
           );
         }
-        const gpuT = boundaryOut[base + 2];
         // The anchored query must clear its own anchor — the estimator
         // and closed-solid backends' pin: their anchored march carries
         // the 2·eps skip baseline, so even their misses report
@@ -10137,7 +10131,7 @@ async function runSurfaceTransportAgreementLegs(
           );
         }
         for (let c = 0; c < 3; c++) {
-          const delta = Math.abs(boundaryOut[base + 4 + c] - cpuHit.normal[c]);
+          const delta = Math.abs(gpuNormal[c] - cpuHit.normal[c]);
           maxNormalDelta = Math.max(maxNormalDelta, delta);
           if (delta > 3e-2) {
             fail(
@@ -10161,19 +10155,6 @@ async function runSurfaceTransportAgreementLegs(
         if (finite) {
           const envTol =
             DIELECTRIC_ANCHOR_ENVELOPE_REL * DIELECTRIC_CROSSING_EPS_REL * visR;
-          // The anchor identities' near-tie divergence class (measured:
-          // both engines report the SAME event — kind, t, normal agree —
-          // with a one-cell-shifted crossed-plane identity): counted,
-          // bounded to the one-cell slack, self-consistent on the
-          // kernel's own plane, capped per leg. Identity matches keep
-          // the full strictness.
-          const grid = 3 ** 2;
-          const gridPlane = (i: number): number =>
-            i === 0
-              ? -FINITE_SOLID_HALF_EXTENT
-              : i === grid
-                ? FINITE_SOLID_HALF_EXTENT
-                : (FINITE_SOLID_HALF_EXTENT * (2 * i - grid)) / grid;
           if (cpuAnchor) {
             const gpuMask = boundaryOut[base + 12];
             if (gpuMask !== cpuAnchor.planeMask) {
@@ -10190,41 +10171,26 @@ async function runSurfaceTransportAgreementLegs(
               const intrinsicDelta = Math.abs(
                 gpuIntrinsic - cpuAnchor.intrinsicPoint[c],
               );
-              if (
-                gpuPlane === cpuAnchor.planeIndices[c] &&
-                gpuCell === cpuAnchor.cellIndices[c]
-              ) {
-                if (!(intrinsicDelta <= envTol)) {
-                  fail(
-                    pi,
-                    armName,
-                    `anchor intrinsic[${String(c)}] — gpu ${String(gpuIntrinsic)} vs cpu ${String(cpuAnchor.intrinsicPoint[c])} (delta ${String(intrinsicDelta)} > ${String(envTol)})`,
-                  );
-                }
-              } else {
-                anchorDivergences += 1;
-                if (Math.abs(gpuPlane - cpuAnchor.planeIndices[c]) > 1) {
-                  fail(
-                    pi,
-                    armName,
-                    `anchor planes[${String(c)}] — gpu ${String(gpuPlane)} vs cpu ${String(cpuAnchor.planeIndices[c])} (beyond the one-cell near-tie slack)`,
-                  );
-                }
-                if (Math.abs(gpuCell - cpuAnchor.cellIndices[c]) > 1) {
-                  fail(
-                    pi,
-                    armName,
-                    `anchor cells[${String(c)}] — gpu ${String(gpuCell)} vs cpu ${String(cpuAnchor.cellIndices[c])} (beyond the one-cell near-tie slack)`,
-                  );
-                }
-                const selfDelta = Math.abs(gpuIntrinsic - gridPlane(gpuPlane));
-                if (!(selfDelta <= envTol)) {
-                  fail(
-                    pi,
-                    armName,
-                    `anchor self-consistency[${String(c)}] — gpu intrinsic ${String(gpuIntrinsic)} vs its own plane ${String(gpuPlane)} (delta ${String(selfDelta)} > ${String(envTol)})`,
-                  );
-                }
+              if (gpuPlane !== cpuAnchor.planeIndices[c]) {
+                fail(
+                  pi,
+                  armName,
+                  `anchor planes[${String(c)}] — gpu ${String(gpuPlane)} vs cpu ${String(cpuAnchor.planeIndices[c])}`,
+                );
+              }
+              if (gpuCell !== cpuAnchor.cellIndices[c]) {
+                fail(
+                  pi,
+                  armName,
+                  `anchor cells[${String(c)}] — gpu ${String(gpuCell)} vs cpu ${String(cpuAnchor.cellIndices[c])}`,
+                );
+              }
+              if (!(intrinsicDelta <= envTol)) {
+                fail(
+                  pi,
+                  armName,
+                  `anchor intrinsic[${String(c)}] — gpu ${String(gpuIntrinsic)} vs cpu ${String(cpuAnchor.intrinsicPoint[c])} (delta ${String(intrinsicDelta)} > ${String(envTol)})`,
+                );
               }
             }
           } else {
@@ -10266,25 +10232,16 @@ async function runSurfaceTransportAgreementLegs(
         }
       }
     });
-    if (finite && anchorDivergences > SURFACE_TRANSPORT_FLIP_CAP) {
-      throw new Error(
-        `transport ${leg.core} (${leg.systemName}): ${String(anchorDivergences)} ` +
-          "anchor identity axes diverged past the near-tie cap — the " +
-          "fixture certifies nothing",
-      );
-    }
-    if (finite && anchorDivergences > 0) {
+    if (leg.backend === "finiteSolid") {
+      if (stableFiniteTraces === 0 || resolvedFiniteTraces === 0) {
+        fail(
+          -1,
+          "trace coverage",
+          `stable=${String(stableFiniteTraces)} resolved=${String(resolvedFiniteTraces)} — a resolving leg needs a stable resolved oracle comparison`,
+        );
+      }
       note(
-        `transport finite (${leg.systemName}): ${String(anchorDivergences)} anchor identity ` +
-          "axis divergences within the one-cell near-tie slack (the events' " +
-          "kind/t/normal agreed; each kernel anchor is self-consistent on its own plane)",
-      );
-    }
-    if (finite && decisionFlips > SURFACE_TRANSPORT_FLIP_CAP) {
-      throw new Error(
-        `transport ${leg.core} (${leg.systemName}): ${String(decisionFlips)} ` +
-          "decision flips past the absolution cap — the fixture certifies " +
-          "nothing",
+        `transport finite (${leg.systemName}): ${String(stableFiniteTraces)} stable traces compared; ${String(resolvedFiniteTraces)} resolved`,
       );
     }
     if (discreteQuery && flipped > SURFACE_TRANSPORT_FLIP_CAP) {
@@ -10448,7 +10405,13 @@ async function runSurfaceTransportAgreementLegs(
       maxNormalDelta,
       ...(leg.backend === "closedSolid" ? { maxShadowDelta } : {}),
       ...(leg.backend === "closedSolid" ? { maxDisplacementDelta } : {}),
-      ...(forward ? { flipsExcluded: flipped } : {}),
+      ...(discreteQuery ? { flipsExcluded: flipped } : {}),
+      ...(leg.backend === "finiteSolid"
+        ? {
+            stableTraceProbes: stableFiniteTraces,
+            resolvedTraceProbes: resolvedFiniteTraces,
+          }
+        : {}),
     });
     await new Promise<void>((resolve) => setTimeout(resolve));
   }
@@ -10456,6 +10419,462 @@ async function runSurfaceTransportAgreementLegs(
 }
 
 // ---------------------------------------------------------------------------
+interface SurfaceFinitePrimaryRow {
+  core: "finite" | "finite4";
+  level: number;
+  rays: "pose" | "unproject";
+  optics: false;
+  compileMs: number;
+  queries: number;
+  failures: number;
+  maxDepthDelta: number;
+  checks: Array<{
+    label: string;
+    expectedStatus: number;
+    gpuStatus: number;
+    expectedT: number | null;
+    gpuT: number;
+    depthDelta: number;
+    tolerance: number;
+    pass: boolean;
+  }>;
+}
+
+/** Pin the production primary entry independently of its DDA. The oracle
+ * intersects every occupied cell with f64 slabs and unions those intervals;
+ * it shares only the construction and packed pose, never the GPU traversal.
+ * All status decisions are exact: no post-hoc silhouette/decision waiver.
+ * Depth allows 32 f32 relative rounding units for ray unprojection, four-term
+ * intrinsic dot products and plane division; it is independent of pixel eps.
+ *
+ * March's optics flag is intentionally false: optics is shade-only, so this
+ * is the SAME camera kernel used by opaque and glass finite scenes, with no
+ * optical bindings. The transport/renderer legs separately prove glass use.
+ */
+async function runSurfaceFinitePrimaryAgreement(
+  device: GPUDevice,
+): Promise<SurfaceFinitePrimaryRow[]> {
+  const rows: SurfaceFinitePrimaryRow[] = [];
+  const disabledFloor: SurfaceGpuGroundPlane = {
+    y: -1,
+    fadeStart: 0,
+    fadeEnd: 0,
+    ballCenter: [0, 0, 0],
+    ballRadius: 1,
+    albedo: [1, 1, 1],
+  };
+  const point = (v: Vec3): Vec3 => v.map(Math.fround) as Vec3;
+  const oneRayPose = (ro: Vec3, rd: Vec3): SurfaceGpuPose => ({
+    ro: point(ro),
+    fwd: point(rd),
+    right: [1, 0, 0],
+    up: [0, 1, 0],
+    tanHalf: 0,
+    aspect: 1,
+    rasterWidth: 1,
+    rasterHeight: 1,
+    pixelEps: 0.001,
+  });
+  for (const dim of [3, 4] as const) {
+    const core = dim === 3 ? "finite" : "finite4";
+    const view = PRESET_VIEWS[dim === 3 ? "glassMenger" : "glassMenger4"];
+    if (!view || (dim === 4 && !view.fourD))
+      throw new Error("finite primary: canonical authored view is missing");
+    const view4: SurfaceGpu4View | null = view.fourD
+      ? {
+          rotor: rotorMatrix(presetRotorPair(view.fourD)),
+          w0: view.fourD.w0,
+          sliceHalfW: 0,
+        }
+      : null;
+    const radius = finiteSolidBoundingRadius(dim);
+    for (const arm of [
+      { level: 2, rays: "unproject" },
+      { level: 2, rays: "pose" },
+      { level: 0, rays: "pose" },
+    ] as const) {
+      const construction = buildFiniteSolidConstruction(
+        dim === 3 ? "menger" : "hyperMenger",
+        dim,
+        arm.level,
+      );
+      const pack = (
+        pose: SurfaceGpuPose,
+        floor: SurfaceGpuGroundPlane,
+      ): ArrayBuffer => {
+        const run = {
+          itemCount: pose.rasterWidth * pose.rasterHeight + 1,
+          stepsThisPass: 1,
+          marchSteps: 160,
+          pose,
+        };
+        return view4
+          ? packSurfaceGpuParamsFinite4(view4, run, arm.level, radius, floor)
+          : packSurfaceGpuParamsFinite(run, arm.level, radius, floor);
+      };
+      const initialParams = pack(
+        oneRayPose([0, 0, 2], [0, 0, -1]),
+        disabledFloor,
+      );
+      const packed = new DataView(initialParams);
+      const oraclePose: FiniteSolidPose = view4
+        ? finiteSolidPose(
+            Array.from({ length: 16 }, (_, i) =>
+              packed.getFloat32(208 + i * 4, true),
+            ),
+            packed.getFloat32(416, true),
+          )
+        : FINITE_SOLID_IDENTITY_POSE;
+      const oracle = (ro: Vec3, rd: Vec3, floor: SurfaceGpuGroundPlane) => {
+        if (!rd.every(Number.isFinite) || !(Math.hypot(...rd) > 0))
+          return { status: SURFACE_GPU_RAY_EXHAUSTED, t: null };
+        const intervals = finiteSolidIntervals(
+          construction,
+          oraclePose,
+          ro,
+          rd,
+        );
+        const first = intervals[0];
+        // An occupied camera sees the EXIT. A tunnel/outside camera sees
+        // the first ENTRY. These fixtures avoid exact boundary origins.
+        const finiteT = first
+          ? first.enter === 0
+            ? first.exit
+            : first.enter
+          : Infinity;
+        const floorY = Math.fround(floor.y);
+        const fadeEnd = Math.fround(floor.fadeEnd);
+        if (ro[1] > floorY && rd[1] < -1e-6) {
+          const t = (floorY - ro[1]) / rd[1];
+          const dx = ro[0] + rd[0] * t - Math.fround(floor.ballCenter[0]);
+          const dz = ro[2] + rd[2] * t - Math.fround(floor.ballCenter[2]);
+          if (dx * dx + dz * dz < fadeEnd * fadeEnd && t < finiteT)
+            return { status: SURFACE_GPU_RAY_PLANE, t };
+        }
+        return first
+          ? { status: SURFACE_GPU_RAY_HIT, t: finiteT }
+          : { status: SURFACE_GPU_RAY_MISS, t: null };
+      };
+      type Probe = {
+        label: string;
+        pose: SurfaceGpuPose;
+        floor: SurfaceGpuGroundPlane;
+        inv?: Float32Array;
+      };
+      const probes: Probe[] = [];
+      if (arm.rays === "unproject") {
+        const pose = {
+          ...oneRayPose([0, 0, 2], [0, 0, -1]),
+          rasterWidth: 8,
+          rasterHeight: 6,
+        };
+        probes.push({
+          label: "camera-raster",
+          pose,
+          floor: disabledFloor,
+          // Camera (0,0,2) toward -z, tanHalf=.5, near=1, far=2.
+          // These dyadic inverse-projection entries avoid a tiny near
+          // plane amplifying FMA differences in far-point cancellation.
+          // The ordinary march-unproject legs already pin that wider ray
+          // arithmetic envelope; this gate isolates exact primary depth.
+          inv: new Float32Array([
+            0.5, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, -0.5, -0.25, 0, 0, 0.5, 0.75,
+          ]),
+        });
+      } else {
+        const coords = [-0.625, -0.375, -0.125, 0.125, 0.375, 0.625];
+        const vertical = coords
+          .flatMap((x) => coords.map((z) => oneRayPose([x, 2, z], [0, -1, 0])))
+          .find(
+            (pose) =>
+              oracle(pose.ro, pose.fwd, disabledFloor).status ===
+              SURFACE_GPU_RAY_HIT,
+          );
+        if (!vertical)
+          throw new Error(
+            `finite primary ${core}: no independent vertical hit fixture`,
+          );
+        const hitT = oracle(vertical.ro, vertical.fwd, disabledFloor).t!;
+        const floorAt = (y: number): SurfaceGpuGroundPlane => ({
+          ...disabledFloor,
+          y,
+          fadeEnd: 10,
+        });
+        probes.push(
+          { label: "outside-entry", pose: vertical, floor: disabledFloor },
+          {
+            label: "miss",
+            pose: oneRayPose([2, 2, 2], [0, 0, -1]),
+            floor: disabledFloor,
+          },
+          {
+            label: "floor-nearer",
+            pose: vertical,
+            floor: floorAt(2 - hitT / 2),
+          },
+          {
+            label: "floor-farther",
+            pose: vertical,
+            floor: floorAt(2 - hitT - 1),
+          },
+          {
+            label: "floor-above-camera-ineligible",
+            pose: vertical,
+            floor: floorAt(3),
+          },
+          {
+            label: "miss-floor-eligible",
+            pose: oneRayPose([2, 2, 2], [0, -1, 0]),
+            floor: floorAt(0),
+          },
+          {
+            label: "miss-floor-outside-fade",
+            pose: oneRayPose([2, 2, 2], [0, -1, 0]),
+            floor: { ...floorAt(0), fadeEnd: 0.1 },
+          },
+          {
+            label: "zero-direction-refusal",
+            pose: oneRayPose([0, 0, 2], [0, 0, 0]),
+            floor: floorAt(0),
+          },
+        );
+        // The canonical posed 4D query leaves z unmixed. Hold intrinsic x
+        // just outside the root while moving along z: this MUST miss, even
+        // though the old distance/pixel-epsilon march could accept it.
+        const qx = oraclePose.rows[0];
+        if (Math.abs(qx[2]) > 1e-12 || qx[0] === 0)
+          throw new Error(
+            "finite primary silhouette fixture requires the canonical z-preserving pose",
+          );
+        const edgeX =
+          (FINITE_SOLID_HALF_EXTENT + 2 ** -16 - qx[3] * oraclePose.slice) /
+          qx[0];
+        const silhouette = oneRayPose([edgeX, 0, 2], [0, 0, -1]);
+        if (
+          oracle(silhouette.ro, silhouette.fwd, disabledFloor).status !==
+          SURFACE_GPU_RAY_MISS
+        )
+          throw new Error(
+            "finite primary silhouette fixture unexpectedly intersects the solid",
+          );
+        probes.push({
+          label: "silhouette-near-miss",
+          pose: silhouette,
+          floor: disabledFloor,
+        });
+        if (arm.level === 0) {
+          const inside = oneRayPose([0, 0, 0], [0, 0, 1]);
+          const first = finiteSolidIntervals(
+            construction,
+            oraclePose,
+            inside.ro,
+            inside.fwd,
+          )[0];
+          if (!first || first.enter !== 0 || first.exit <= 0)
+            throw new Error(
+              "finite primary occupied-origin fixture is not interior",
+            );
+          probes.push({
+            label: "occupied-camera-first-exit",
+            pose: inside,
+            floor: disabledFloor,
+          });
+        }
+      }
+      const layout = surfaceUnprojectBindGroupLayout(device);
+      const { pipeline, compileMs } = await buildSurfacePipeline(
+        device,
+        device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+        surfaceDeKernelWgsl({
+          mode: "march",
+          core,
+          finiteSolid: { level: arm.level },
+          rays: arm.rays,
+          optics: false,
+          groundPlane: true,
+          width: 4,
+          workgroupSize: 64,
+          sharedFrontier: false,
+          bnbStage2: false,
+        }),
+        "marchRays",
+        `finite primary ${core} level=${String(arm.level)} ${arm.rays}`,
+      );
+      const capacity = 49;
+      const buffers: GPUBuffer[] = [];
+      const allocate = async (label: string, size: number, usage: number) => {
+        const buffer = await createSurfaceBuffer(
+          device,
+          `finite primary ${label}`,
+          size,
+          usage,
+        );
+        buffers.push(buffer);
+        return buffer;
+      };
+      const row: SurfaceFinitePrimaryRow = {
+        core,
+        level: arm.level,
+        rays: arm.rays,
+        optics: false,
+        compileMs,
+        queries: 0,
+        failures: 0,
+        maxDepthDelta: 0,
+        checks: [],
+      };
+      try {
+        const params = await allocate(
+          "params",
+          initialParams.byteLength,
+          GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        );
+        const maps = await allocate("unused maps", 16, GPUBufferUsage.STORAGE);
+        const active = await allocate(
+          "active",
+          capacity * 4,
+          GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        );
+        const states = await allocate(
+          "states",
+          capacity * 16,
+          GPUBufferUsage.STORAGE |
+            GPUBufferUsage.COPY_DST |
+            GPUBufferUsage.COPY_SRC,
+        );
+        const staging = await allocate(
+          "staging",
+          capacity * 16,
+          GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+        );
+        const shade = await allocate(
+          "shade",
+          SURFACE_GPU_SHADE_BYTES,
+          GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        );
+        const bindGroup = device.createBindGroup({
+          layout,
+          entries: [params, maps, active, states, shade].map(
+            (buffer, binding) => ({ binding, resource: { buffer } }),
+          ),
+        });
+        for (const probe of probes) {
+          const count = probe.pose.rasterWidth * probe.pose.rasterHeight;
+          const init = new Float32Array((count + 1) * 4);
+          for (let i = 0; i < count; i++) init[i * 4] = -1;
+          // Explicitly enqueue a terminal state: the primary query must
+          // preserve it exactly, even though its index is beyond the raster.
+          init.set([17, SURFACE_GPU_RAY_MISS, 4, 9], count * 4);
+          device.queue.writeBuffer(params, 0, pack(probe.pose, probe.floor));
+          device.queue.writeBuffer(
+            active,
+            0,
+            Uint32Array.from({ length: count + 1 }, (_, i) => i),
+          );
+          device.queue.writeBuffer(states, 0, init);
+          if (probe.inv)
+            device.queue.writeBuffer(
+              shade,
+              0,
+              packSurfaceGpuShade({
+                invProjView: probe.inv,
+                lightDir: [0, 1, 0],
+                ambient: 0,
+                bgTop: [0, 0, 0],
+                bgBottom: [0, 0, 0],
+                colorSpeed: 0.5,
+                tracePixelEps: 0.001,
+                colorSource: 0,
+                shadowSteps: 0,
+                aoTaps: 0,
+                dither: false,
+                bgOffset: [0, 0],
+                bgExtent: [probe.pose.rasterWidth, probe.pose.rasterHeight],
+                bgCenter: [0.5, 0.5],
+                bgScale: [1, 1],
+                bgShape: 0,
+              }),
+            );
+          const encoder = device.createCommandEncoder();
+          const pass = encoder.beginComputePass();
+          pass.setPipeline(pipeline);
+          pass.setBindGroup(0, bindGroup);
+          pass.dispatchWorkgroups(Math.ceil((count + 1) / 64));
+          pass.end();
+          encoder.copyBufferToBuffer(states, 0, staging, 0, init.byteLength);
+          device.queue.submit([encoder.finish()]);
+          await staging.mapAsync(GPUMapMode.READ);
+          const output = new Float32Array(
+            staging.getMappedRange().slice(0, init.byteLength),
+          );
+          staging.unmap();
+          for (let i = 0; i <= count; i++) {
+            const sentinel = i === count;
+            const rd = probe.inv
+              ? surfaceUnprojectRay(
+                  probe.inv,
+                  i % probe.pose.rasterWidth,
+                  Math.floor(i / probe.pose.rasterWidth),
+                  probe.pose.rasterWidth,
+                  probe.pose.rasterHeight,
+                )
+              : probe.pose.fwd;
+            const expected = sentinel
+              ? { status: SURFACE_GPU_RAY_MISS, t: 17 }
+              : oracle(point(probe.pose.ro), rd, probe.floor);
+            const actual = Array.from(output.slice(i * 4, i * 4 + 4));
+            const tolerance =
+              expected.t === null
+                ? 0
+                : 32 * 2 ** -23 * Math.max(1, Math.abs(expected.t));
+            const depthDelta =
+              expected.t === null ? 0 : Math.abs(actual[0] - expected.t);
+            const ok =
+              actual.every(Number.isFinite) &&
+              actual[1] === expected.status &&
+              depthDelta <= tolerance &&
+              (sentinel
+                ? actual.every(
+                    (value, channel) => value === init[count * 4 + channel],
+                  )
+                : actual[2] === 1);
+            row.checks.push({
+              label: `${probe.label}/${sentinel ? "terminal-state-guard" : String(i)}`,
+              expectedStatus: expected.status,
+              gpuStatus: actual[1],
+              expectedT: expected.t,
+              gpuT: actual[0],
+              depthDelta,
+              tolerance,
+              pass: ok,
+            });
+            row.queries++;
+            row.maxDepthDelta = Math.max(row.maxDepthDelta, depthDelta);
+            if (!ok) row.failures++;
+          }
+        }
+        if (
+          arm.rays === "unproject" &&
+          ![SURFACE_GPU_RAY_HIT, SURFACE_GPU_RAY_MISS].every((status) =>
+            row.checks.some(
+              (check) =>
+                check.expectedStatus === status &&
+                !check.label.endsWith("terminal-state-guard"),
+            ),
+          )
+        )
+          throw new Error(
+            `finite primary ${core}: camera raster lacks hit/miss coverage`,
+          );
+        rows.push(row);
+      } finally {
+        for (const buffer of buffers) buffer.destroy();
+      }
+    }
+  }
+  return rows;
+}
+
 // Optical-transport renderer envelope (production renderer, preview/settle)
 // ---------------------------------------------------------------------------
 
@@ -10494,6 +10913,13 @@ const SURFACE_TRANSPORT_ENVELOPE_SETTLE_HEIGHT = 288;
  * tallies plus the per-submission record the checkpoint line is judged
  * on. `maxBatchMs` is max(frame.transport.batchMs) — one dispatch's fence
  * round-trip, i.e. one cancellation checkpoint. */
+interface SurfaceTransportEnvelopeSample {
+  index: number;
+  counts: SurfaceComputeFrame["counts"];
+  transport: NonNullable<SurfaceComputeFrame["transport"]>;
+  maxBatchMs: number;
+}
+
 interface SurfaceTransportEnvelopeFrame {
   width: number;
   height: number;
@@ -10503,20 +10929,30 @@ interface SurfaceTransportEnvelopeFrame {
   counts: SurfaceComputeFrame["counts"];
   transport: NonNullable<SurfaceComputeFrame["transport"]>;
   maxBatchMs: number;
+  /** Exact per-sample evidence before runSamples returns its last census. */
+  sampleEvidence: SurfaceTransportEnvelopeSample[];
 }
 
 /** One envelope arm's full record: an admitted core (affine 3D / affine4
  * 4D), an optics-authored fixture document driven through the PRODUCTION
  * `SurfaceComputeRenderer` at the delegated rasters. */
 interface SurfaceTransportEnvelopeRow {
-  core: "affine" | "affine4";
+  core: "affine" | "affine4" | "finite" | "finite4";
   system: string;
   /** The boundary backend the arm drove: `"estimator"` on the IFS
    * fixtures (the vacuous-optics rows), `"closedSolid"` on the
    * emitter-only union fixtures — the arms whose transport samples must
    * RESOLVE (the row-failure gate below). */
-  backend: "estimator" | "closedSolid";
+  backend: "estimator" | "closedSolid" | "finiteSolid";
   adapterLabel: string | undefined;
+  /** Actual finite preset material/room with fresh-app lighting defaults;
+   * both tier specs are retained to disclose the benchmark convention. */
+  finiteScene?: {
+    preset: "glassMenger" | "glassMenger4";
+    previewSpec: SurfaceComputeFrameSpec;
+    settleSpec: SurfaceComputeFrameSpec;
+    conventions: string[];
+  };
   preview: SurfaceTransportEnvelopeFrame;
   /** The preview rendered twice — production-realistic reuse (the app
    * re-previews a parked pose continuously, and the steady raster reuses
@@ -10524,7 +10960,11 @@ interface SurfaceTransportEnvelopeRow {
    * retained-state certification rode. `byteIdentical` is null when
    * either frame truncated (a truncation point is wall-clock, not
    * arithmetic) — the check is defined only on completed frames. */
-  previewRepeat: { wallMs: number; byteIdentical: boolean | null };
+  previewRepeat: {
+    wallMs: number;
+    byteIdentical: boolean | null;
+    sampleEvidence: SurfaceTransportEnvelopeSample[];
+  };
   settle: SurfaceTransportEnvelopeFrame & { samples: number };
   /** Mid-flight cancel through the public API — the user-visible
    * cancellation checkpoint: time from `renderer.cancel()` to the frame
@@ -10570,7 +11010,11 @@ function surfaceTransportEnvelopeRowFailures(
         (row.preview.truncated ? " (truncated)" : ""),
     );
   }
-  const checkpoint = Math.max(row.preview.maxBatchMs, row.settle.maxBatchMs);
+  const checkpoint = Math.max(
+    row.preview.maxBatchMs,
+    row.settle.maxBatchMs,
+    ...row.previewRepeat.sampleEvidence.map((sample) => sample.maxBatchMs),
+  );
   if (checkpoint > SURFACE_TRANSPORT_ENVELOPE_CHECKPOINT_LINE_MS) {
     failures.push(
       `max transport submission ${checkpoint.toFixed(1)}ms > ${SURFACE_TRANSPORT_ENVELOPE_CHECKPOINT_LINE_MS}ms checkpoint line`,
@@ -10615,13 +11059,40 @@ function surfaceTransportEnvelopeRowFailures(
       "closed-solid settle resolved no transport sample (the inside traversal did not reach the lane)",
     );
   }
+  if (row.backend === "finiteSolid") {
+    if (row.previewRepeat.wallMs > SURFACE_TRANSPORT_ENVELOPE_PREVIEW_LINE_MS)
+      failures.push(
+        `preview-repeat wall ${row.previewRepeat.wallMs.toFixed(0)}ms > ${SURFACE_TRANSPORT_ENVELOPE_PREVIEW_LINE_MS}ms line`,
+      );
+    failures.push(
+      ...finiteEnvelopeEvidenceFailures(row, {
+        previewWidth: SURFACE_TRANSPORT_ENVELOPE_PREVIEW_WIDTH,
+        previewHeight: SURFACE_TRANSPORT_ENVELOPE_PREVIEW_HEIGHT,
+        settleWidth: SURFACE_TRANSPORT_ENVELOPE_SETTLE_WIDTH,
+        settleHeight: SURFACE_TRANSPORT_ENVELOPE_SETTLE_HEIGHT,
+        settleSamples: SURFACE_TRANSPORT_ENVELOPE_SETTLE_SAMPLES,
+      }),
+    );
+  }
   return failures;
 }
 
 function surfaceTransportEnvelopeNote(
   row: SurfaceTransportEnvelopeRow,
 ): string {
-  const checkpoint = Math.max(row.preview.maxBatchMs, row.settle.maxBatchMs);
+  const checkpoint = Math.max(
+    row.preview.maxBatchMs,
+    row.settle.maxBatchMs,
+    ...row.previewRepeat.sampleEvidence.map((sample) => sample.maxBatchMs),
+  );
+  const sampleTotals = row.settle.sampleEvidence.reduce(
+    (totals, sample) => ({
+      resolved: totals.resolved + sample.transport.resolved,
+      unresolved: totals.unresolved + sample.transport.unresolved,
+      invalid: totals.invalid + sample.transport.invalid,
+    }),
+    { resolved: 0, unresolved: 0, invalid: 0 },
+  );
   // The vacuous disclosure: a frame whose transport lane ran but resolved
   // NOTHING while hits existed is a timing row, not an optical
   // qualification — the boundary query's inside-traversal gap (the
@@ -10638,6 +11109,7 @@ function surfaceTransportEnvelopeNote(
     `(batch max ${row.settle.maxBatchMs.toFixed(1)}ms, passes ${String(row.settle.transport.passes)}, ` +
     `resolved ${String(row.settle.transport.resolved)} unresolved ${String(row.settle.transport.unresolved)} ` +
     `invalid ${String(row.settle.transport.invalid)}), ` +
+    `all settle samples ${JSON.stringify(sampleTotals)}, ` +
     `cancel ${row.cancelProbe.cancelledToNull ? `${row.cancelProbe.latencyMs.toFixed(1)}ms` : "not landed"} ` +
     `after ${String(row.cancelProbe.delayMs)}ms (attempt ${String(row.cancelProbe.attempts)}), ` +
     `retained ${(row.retainedBytes / (1024 * 1024)).toFixed(1)}MiB, ` +
@@ -10662,7 +11134,7 @@ function surfaceTransportEnvelopeNote(
  *   preview 256×144, 1 sample, the app preview's own budget
  *   settle  512×288, 4 samples (the qualified convention), unbudgeted
  *
- * against the decided envelope's lines (see the constants above). Four
+ * against the decided envelope's lines (see the constants above). Six
  * arms: the two estimator arms (one per admitted descent core —
  * `affineTetra` (affine, 3D) and `aff4Tetra` (affine4, 4D at its
  * identity-rotor canonical pose), the same fixture systems the agreement
@@ -10670,9 +11142,11 @@ function surfaceTransportEnvelopeNote(
  * emitter-only union the closed-solid backend serves, driven with
  * `opticsBackend: "closedSolid"`). The estimator arms stay the standing
  * TIMING gate with their vacuous-optics disclosure; the closed-solid
- * arms must RESOLVE — the row-failure gate reads the settle's resolved
- * count, which is the acceptance line the boundary backend exists to
- * meet. The fold core's transport stays refused on its own measured
+ * arms must resolve. The finite pair adds the actual Glass Menger preset
+ * and native posed hyper-Menger, including their canonical views and room.
+ * Those arms require complete accounting for EVERY preview/settle sample;
+ * their observer also catches a costly earlier sample hidden by the final
+ * sample's census. The fold core's transport stays refused on its own measured
  * record (the capability matrix); the forward families are unadmitted.
  * Skipped on software adapters by the caller — the lines are real-driver
  * measurements, and SwiftShader timing certifies nothing (the agreement
@@ -10705,10 +11179,12 @@ async function runSurfaceTransportEnvelopeLeg(
 ): Promise<SurfaceTransportEnvelopeRow[]> {
   const rows: SurfaceTransportEnvelopeRow[] = [];
   const arms: {
-    core: "affine" | "affine4";
-    backend: "estimator" | "closedSolid";
+    core: "affine" | "affine4" | "finite" | "finite4";
+    backend: "estimator" | "closedSolid" | "finiteSolid";
     sys: SurfaceSystemState | Surface4SystemState;
     view4: SurfaceGpu4View | null;
+    camera?: ReturnType<typeof presetCameraPose> & { fov: number };
+    preset?: "glassMenger" | "glassMenger4";
   }[] = [];
   const affine3d = descent.find((s) => s.name === "affineTetra");
   const aff4 = affine4.find((s) => s.name === "aff4Tetra");
@@ -10821,6 +11297,55 @@ async function runSurfaceTransportEnvelopeLeg(
     });
   }
 
+  // The finite pair uses the actual Glass presets' construction and
+  // authored canonical camera/rotor/slice. The IFS DE below supplies only
+  // shared metadata; the renderer target is the exact finite core.
+  for (const preset of ["glassMenger", "glassMenger4"] as const) {
+    const transforms = presetTransforms(preset);
+    const view = PRESET_VIEWS[preset];
+    if (!view)
+      throw new Error(`transport envelope: ${preset} has no authored view`);
+    if (view.fourD) {
+      const view4: SurfaceGpu4View = {
+        rotor: rotorMatrix(presetRotorPair(view.fourD)),
+        w0: view.fourD.w0,
+        sliceHalfW: 0,
+      };
+      arms.push({
+        core: "finite4",
+        backend: "finiteSolid",
+        preset,
+        camera: { ...presetCameraPose(view), fov: view.camera.fov },
+        view4,
+        sys: {
+          name: preset,
+          de: buildSurfaceDE4(transforms, null, { order: 1, plane: "xy" }),
+          view4,
+          transforms,
+          queries: [],
+          cpu: [],
+          stable: [],
+        },
+      });
+    } else {
+      arms.push({
+        core: "finite",
+        backend: "finiteSolid",
+        preset,
+        camera: { ...presetCameraPose(view), fov: view.camera.fov },
+        view4: null,
+        sys: {
+          name: preset,
+          core: "affine",
+          de: buildSurfaceDE(transforms, null, { order: 1, plane: "xy" }),
+          transforms,
+          queries: [],
+          cpu: [],
+        },
+      });
+    }
+  }
+
   const heapNow = (): number | undefined =>
     (performance as { memory?: { usedJSHeapSize?: number } }).memory
       ?.usedJSHeapSize;
@@ -10828,29 +11353,48 @@ async function runSurfaceTransportEnvelopeLeg(
   for (const arm of arms) {
     const { core, backend, sys, view4 } = arm;
     const de = sys.de;
+    const finite = backend === "finiteSolid";
+    const room = arm.preset ? PRESET_SURFACE_ROOMS[arm.preset] : undefined;
+    if (finite && !room)
+      throw new Error(`transport envelope ${core}: authored room is missing`);
+    const finiteLight = lightDirection(
+      DEFAULT_SOLID_LIGHT_AZIMUTH,
+      DEFAULT_SOLID_LIGHT_ELEVATION,
+    );
+    const bounds = finite
+      ? {
+          boundingRadius: finiteSolidBoundingRadius(view4 ? 4 : 3),
+          visibleBoundingRadius: finiteSolidBoundingRadius(view4 ? 4 : 3),
+        }
+      : de;
+    const studio = createGlassStudioBackground().custom!;
     // The optics-authored DOCUMENT: every slotted transform dielectric —
     // the whole solid glass, the appearance's own shape and the lane's
     // worst case. The closed-solid arms author the restrained slab too
     // (the qualified panels' working value): the envelope then prices the
     // distortion's smoothed-normal taps in the production path, and its
     // rows record the displaced-terminal lane at the delegated rasters.
-    // The fixture's transforms are copied so the shared objects the other
-    // legs read are untouched.
-    const transforms = sys.transforms.map((transform): Transform => ({
-      ...transform,
-      optics:
-        backend === "closedSolid"
-          ? {
-              model: "dielectric",
-              distortion: SURFACE_TRANSPORT_DISTORTION_PROBE,
-            }
-          : { model: "dielectric" },
-    }));
+    // Finite arms retain the actual preset optics, including its .08 slab;
+    // stripping distortion would price a cheaper material than the app.
+    // Other fixture transforms are copied so shared objects stay untouched.
+    const transforms = finite
+      ? sys.transforms
+      : sys.transforms.map((transform): Transform => ({
+          ...transform,
+          optics:
+            backend === "closedSolid"
+              ? {
+                  model: "dielectric",
+                  distortion: SURFACE_TRANSPORT_DISTORTION_PROBE,
+                }
+              : { model: "dielectric" },
+        }));
     // The DE's SHADE slot list — the recursive maps PLUS the condensation
     // emitters at their shade indices (the app's ifsShadeSlots rule,
     // mirrored): the closed-solid arms' emitter-only de has an EMPTY maps
     // array, so the wire's slot list must come from the emitters.
     const shadeSlots = (): Array<{ baseIndex: number }> => {
+      if (finite) return [surfaceForwardSlot(transforms)];
       const slots: Array<{ baseIndex: number } | undefined> = de.maps.map(
         (map) => map,
       );
@@ -10868,7 +11412,9 @@ async function runSurfaceTransportEnvelopeLeg(
       transforms,
       shadeSlots(),
       undefined,
-      de.visibleBoundingRadius,
+      // The finite material's selected normalization is its root half
+      // extent. The enclosing sphere above remains the geometric bound.
+      finite ? FINITE_SOLID_HALF_EXTENT : bounds.visibleBoundingRadius,
       true,
     );
     if (!materials || !materials.optics) {
@@ -10887,47 +11433,106 @@ async function runSurfaceTransportEnvelopeLeg(
     activity.setState("gpu", `Surface transport envelope — ${core}`);
     status(`transport envelope ${core}: creating SurfaceComputeRenderer…`);
     const renderer = await SurfaceComputeRenderer.create(
-      view4
-        ? { kind: "ifs4", de: de as SurfaceDE4 }
-        : { kind: "ifs", de: de as SurfaceDE },
+      finite
+        ? {
+            kind: view4 ? "finite4" : "finite",
+            level: 2,
+            groundPlane: room!.groundPlane,
+          }
+        : view4
+          ? { kind: "ifs4", de: de as SurfaceDE4 }
+          : { kind: "ifs", de: de as SurfaceDE },
       colors,
       trapIndices,
       {
         materials,
-        ...(backend === "closedSolid" ? { opticsBackend: "closedSolid" } : {}),
+        ...(backend !== "estimator" ? { opticsBackend: backend } : {}),
       },
     );
     try {
       const specFor = (
         width: number,
         height: number,
+        tier: "preview" | "full" = "full",
       ): SurfaceComputeFrameSpec => {
-        const pose = buildSurfacePose(de, width, height);
+        const finitePreview = finite && tier === "preview";
+        const pose = buildSurfacePose(
+          bounds,
+          width,
+          height,
+          SURFACE_POSE_DIST_FACTOR,
+          arm.camera,
+        );
         return {
           width,
           height,
-          invProjView: surfaceInvProjView(de, pose),
+          invProjView: surfaceInvProjView(bounds, pose),
           camPos: pose.ro,
           camForward: pose.fwd,
           focusDepth: surfaceCameraDepth(
             pose,
-            view4 ? [0, 0, 0] : balloonBall(de as SurfaceDE).center,
+            finite || view4 ? [0, 0, 0] : balloonBall(de as SurfaceDE).center,
           ),
-          acceptPixelEps: SURFACE_PIXEL_EPS,
-          tracePixelEps:
-            (2 * Math.tan((SURFACE_POSE_FOV_DEG * Math.PI) / 360)) / height,
-          maxDepth: de.maxDepth,
-          marchSteps: SURFACE_MARCH_STEPS,
-          shadowSteps: SURFACE_FRAME_SHADOW_STEPS,
-          aoTaps: SURFACE_FRAME_AO_TAPS,
-          hitFloor: SURFACE_GPU_HIT_FLOOR,
-          lightDir: surfaceNormalize([0.5, 0.8, 0.3]),
-          ambient: 0.25,
-          // Harness convention: black backdrop (the frame legs').
-          bgTop: [0, 0, 0],
-          bgBottom: [0, 0, 0],
-          colorSource: view4 ? 3 : 0,
-          colorSpeed: 0.5,
+          // Fixed native 512x288 target: a preview reduces sampling, not
+          // geometric acceptance. Finite primary DDA has no hit epsilon.
+          acceptPixelEps: finite
+            ? (2 * pose.tanHalf) / SURFACE_TRANSPORT_ENVELOPE_SETTLE_HEIGHT
+            : SURFACE_PIXEL_EPS,
+          tracePixelEps: (2 * pose.tanHalf) / height,
+          maxDepth: finite ? 2 : de.maxDepth,
+          marchSteps: finite
+            ? finitePreview
+              ? SURFACE_PREVIEW_MARCH_STEPS
+              : SURFACE_FULL_MARCH_STEPS
+            : SURFACE_MARCH_STEPS,
+          shadowSteps: finite
+            ? finitePreview
+              ? SURFACE_PREVIEW_SHADOW_STEPS
+              : SURFACE_FULL_SHADOW_STEPS
+            : SURFACE_FRAME_SHADOW_STEPS,
+          aoTaps: finite
+            ? finitePreview
+              ? SURFACE_PREVIEW_AO_TAPS
+              : SURFACE_FULL_AO_TAPS
+            : SURFACE_FRAME_AO_TAPS,
+          hitFloor: finite
+            ? finitePreview
+              ? SURFACE_PREVIEW_HIT_FLOOR
+              : SURFACE_FULL_HIT_FLOOR
+            : SURFACE_GPU_HIT_FLOOR,
+          lightDir: finite
+            ? [finiteLight.x, finiteLight.y, finiteLight.z]
+            : surfaceNormalize([0.5, 0.8, 0.3]),
+          ambient: finite ? DEFAULT_SOLID_AMBIENT : 0.25,
+          // Finite arms carry the preset's bright studio backdrop and
+          // checker floor; existing arms retain their original backdrop.
+          bgTop: finite ? [...studio.top] : [0, 0, 0],
+          bgBottom: finite ? [...studio.bottom] : [0, 0, 0],
+          ...(finite
+            ? {
+                groundPlane:
+                  presentationFloorSpec(
+                    room!.groundPlane
+                      ? { center: [0, 0, 0], radius: bounds.boundingRadius }
+                      : null,
+                    {
+                      pattern: room!.floorPattern,
+                      tileScale: room!.floorTileScale,
+                      emission: room!.floorEmission,
+                    },
+                  ) ?? undefined,
+                envLight: DEFAULT_SURFACE_ENV_LIGHT,
+                fogDensity: DEFAULT_FOG_DENSITY,
+                fogTint: hexToRgb01(DEFAULT_FOG_TINT),
+                fogTintStrength: DEFAULT_FOG_TINT_STRENGTH,
+              }
+            : {}),
+          colorSource: finite
+            ? SURFACE_COLOR_SOURCES.indexOf("transform")
+            : view4
+              ? 3
+              : 0,
+          colorSpeed: finite ? DEFAULT_SURFACE_COLOR_SPEED : 0.5,
           lut: null,
           lutVersion: 0,
           dither: true,
@@ -10935,7 +11540,20 @@ async function runSurfaceTransportEnvelopeLeg(
           ...(view4 ? { view4 } : {}),
         };
       };
+      const previewSpec = specFor(
+        SURFACE_TRANSPORT_ENVELOPE_PREVIEW_WIDTH,
+        SURFACE_TRANSPORT_ENVELOPE_PREVIEW_HEIGHT,
+        "preview",
+      );
+      const settleSpec = specFor(
+        SURFACE_TRANSPORT_ENVELOPE_SETTLE_WIDTH,
+        SURFACE_TRANSPORT_ENVELOPE_SETTLE_HEIGHT,
+      );
 
+      const observedSamples = new WeakMap<
+        SurfaceComputeFrame,
+        SurfaceTransportEnvelopeSample[]
+      >();
       const runFrame = async (
         label: string,
         spec: SurfaceComputeFrameSpec,
@@ -10951,8 +11569,24 @@ async function runSurfaceTransportEnvelopeLeg(
         status(
           `transport envelope ${core}: rendering ${label} ${String(spec.width)}x${String(spec.height)}…`,
         );
+        const sampleEvidence: SurfaceTransportEnvelopeSample[] = [];
         const frame = await renderer.renderFrame(spec, {
           ...opts,
+          onSample: (sample, index) => {
+            if (!sample.transport)
+              throw new Error(
+                `transport envelope ${core}: completed sample omitted transport`,
+              );
+            sampleEvidence.push({
+              index,
+              counts: { ...sample.counts },
+              transport: {
+                ...sample.transport,
+                batchMs: [...sample.transport.batchMs],
+              },
+              maxBatchMs: Math.max(0, ...sample.transport.batchMs),
+            });
+          },
           onProgress: (pixels) => {
             drawSurfaceComputeFrame(canvas, pixels, spec.width, spec.height);
           },
@@ -10968,6 +11602,7 @@ async function runSurfaceTransportEnvelopeLeg(
             `transport envelope ${core}: ${label} carried no transport tally — the optics gate did not reach the lane`,
           );
         }
+        observedSamples.set(frame, sampleEvidence);
         return frame;
       };
 
@@ -10988,44 +11623,36 @@ async function runSurfaceTransportEnvelopeLeg(
           truncated: frame.truncated,
           counts: frame.counts,
           transport,
-          maxBatchMs: Math.max(0, ...transport.batchMs),
+          maxBatchMs: Math.max(
+            0,
+            ...transport.batchMs,
+            ...(observedSamples.get(frame) ?? []).map(
+              (sample) => sample.maxBatchMs,
+            ),
+          ),
+          sampleEvidence: observedSamples.get(frame) ?? [],
         };
       };
 
       const heapBefore = heapNow();
       // 1. The preview: the app's shape (1 sample) at the app's budget.
-      const preview = await runFrame(
-        "preview",
-        specFor(
-          SURFACE_TRANSPORT_ENVELOPE_PREVIEW_WIDTH,
-          SURFACE_TRANSPORT_ENVELOPE_PREVIEW_HEIGHT,
-        ),
-        { budgetMs: SURFACE_TRANSPORT_ENVELOPE_PREVIEW_BUDGET_MS },
-      );
+      const preview = await runFrame("preview", previewSpec, {
+        budgetMs: SURFACE_TRANSPORT_ENVELOPE_PREVIEW_BUDGET_MS,
+      });
       // 2. The preview repeat: determinism on completed frames, the
       // production-realistic reuse shape (steady raster, reused buffers).
-      const repeat = await runFrame(
-        "preview-repeat",
-        specFor(
-          SURFACE_TRANSPORT_ENVELOPE_PREVIEW_WIDTH,
-          SURFACE_TRANSPORT_ENVELOPE_PREVIEW_HEIGHT,
-        ),
-        { budgetMs: SURFACE_TRANSPORT_ENVELOPE_PREVIEW_BUDGET_MS },
-      );
+      const repeat = await runFrame("preview-repeat", previewSpec, {
+        budgetMs: SURFACE_TRANSPORT_ENVELOPE_PREVIEW_BUDGET_MS,
+      });
       const byteIdentical =
         preview.truncated || repeat.truncated
           ? null
           : surfaceTransportBytesEqual(preview.pixels, repeat.pixels);
       // 3. The settle: the qualified 4-SPP convention, unbudgeted — the
       // app settle's own shape (the schedule is bounded by construction).
-      const settle = await runFrame(
-        "settle",
-        specFor(
-          SURFACE_TRANSPORT_ENVELOPE_SETTLE_WIDTH,
-          SURFACE_TRANSPORT_ENVELOPE_SETTLE_HEIGHT,
-        ),
-        { samples: SURFACE_TRANSPORT_ENVELOPE_SETTLE_SAMPLES },
-      );
+      const settle = await runFrame("settle", settleSpec, {
+        samples: SURFACE_TRANSPORT_ENVELOPE_SETTLE_SAMPLES,
+      });
       // 4. The cancel probe: a 1-sample settle-size frame cancelled
       // mid-flight; latency from cancel() to the null resolution is the
       // user-visible checkpoint. Retried at halved delays when the frame
@@ -11039,13 +11666,7 @@ async function runSurfaceTransportEnvelopeLeg(
       const probeBase = Math.max(150, Math.round(preview.wallMs * 2));
       for (let attempt = 0; attempt < 3; attempt++) {
         const delayMs = Math.round(probeBase / 2 ** attempt);
-        const done = renderer.renderFrame(
-          specFor(
-            SURFACE_TRANSPORT_ENVELOPE_SETTLE_WIDTH,
-            SURFACE_TRANSPORT_ENVELOPE_SETTLE_HEIGHT,
-          ),
-          {},
-        );
+        const done = renderer.renderFrame(settleSpec, {});
         await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
         const t0 = performance.now();
         renderer.cancel();
@@ -11066,8 +11687,27 @@ async function runSurfaceTransportEnvelopeLeg(
         system: sys.name,
         backend,
         adapterLabel: renderer.adapterLabel,
+        ...(arm.preset
+          ? {
+              finiteScene: {
+                preset: arm.preset,
+                previewSpec,
+                settleSpec,
+                conventions: [
+                  "Actual preset optics, room and saved view with fresh-app lighting/fog defaults",
+                  "Fixed 16:9 rasters: 256x144 preview at 1 sample; 512x288 settle at 4 samples (app default 8)",
+                  "Native acceptance height 288; app preview/full shadow and AO quality; finite construction level remains 2",
+                  "Renderer work only: no UI, presentation, adaptive preview governor or export encoding",
+                ],
+              },
+            }
+          : {}),
         preview: toRowFrame(preview),
-        previewRepeat: { wallMs: repeat.wallMs, byteIdentical },
+        previewRepeat: {
+          wallMs: repeat.wallMs,
+          byteIdentical,
+          sampleEvidence: observedSamples.get(repeat) ?? [],
+        },
         settle: {
           ...toRowFrame(settle),
           samples: SURFACE_TRANSPORT_ENVELOPE_SETTLE_SAMPLES,
@@ -22324,6 +22964,34 @@ async function runSurfaceDeSection(
 
     await canaryCheck("the shade A/B leg");
 
+    // The exact finite primary must agree before optical transport can
+    // establish anything about the geometry that receives those samples.
+    let finitePrimaryGateFail = false;
+    try {
+      activity.setState("gpu", "Finite primary boundary agreement");
+      status("finite primary: independent camera-boundary agreement…");
+      const rows = await runSurfaceFinitePrimaryAgreement(device);
+      results.finitePrimaryAgreement = rows;
+      if (rows.length !== 6) finitePrimaryGateFail = true;
+      for (const row of rows) {
+        results.notes.push(
+          `finite primary ${row.core} level=${String(row.level)} ${row.rays} optics=false: ${String(row.queries)} checks, ${String(row.failures)} failures, max depth delta=${row.maxDepthDelta.toExponential(3)}`,
+        );
+        if (row.failures > 0) {
+          finitePrimaryGateFail = true;
+          for (const check of row.checks.filter((check) => !check.pass))
+            results.notes.push(
+              `finite primary ${row.core} ${check.label}: ${JSON.stringify(check)}`,
+            );
+        }
+      }
+    } catch (error) {
+      finitePrimaryGateFail = true;
+      results.notes.push(`finite primary agreement: ${describeError(error)}`);
+    }
+    render();
+    await canaryCheck("the finite primary agreement legs");
+
     // ----- Optical-transport agreement legs (per core) — GATING -----
     // The emitted optics body (mode "shade" + optics) pinned per kernel
     // core against surface-transport-fixture.ts's CPU twin — the boundary
@@ -22465,6 +23133,7 @@ async function runSurfaceDeSection(
       latticeTilingAbiFailed ||
       latticeFrameFailed ||
       transportGateFail ||
+      finitePrimaryGateFail ||
       transportEnvelopeGateFail ||
       sphereInversionFailed
     ) {
@@ -22509,11 +23178,13 @@ async function runSurfaceDeSection(
                                             ? "lattice carrier frame failure — see notes"
                                             : transportGateFail
                                               ? "transport agreement failure — see notes"
-                                              : transportEnvelopeGateFail
-                                                ? "transport envelope failure — see transportEnvelope/notes"
-                                                : sphereInversionFailed
-                                                  ? "sphere-inversion compile/eval/march/frame failure — see sphereInversion and notes"
-                                                  : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
+                                              : finitePrimaryGateFail
+                                                ? "finite primary status/depth agreement failure — see finitePrimaryAgreement/notes"
+                                                : transportEnvelopeGateFail
+                                                  ? "transport envelope failure — see transportEnvelope/notes"
+                                                  : sphereInversionFailed
+                                                    ? "sphere-inversion compile/eval/march/frame failure — see sphereInversion and notes"
+                                                    : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
     } else if (gatingRows.length === 0 && !unprojRan) {
       // Informational-only rows (all widths ≠ SURFACE_FOLD_BEAM_WIDTH) and
       // no march-unproject gate verify nothing against a like-for-like

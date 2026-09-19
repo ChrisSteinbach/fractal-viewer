@@ -30,15 +30,19 @@
  * form — the packer throws on a nonzero slab, the escape4 refusal).
  *
  * AGREEMENT DISCIPLINE: the bench's transport legs pin both emissions
- * against the f64 oracle through `surface-transport-fixture.ts`'s finite
- * adapter, tolerance-based like every f32/f64 pair. The DDA's exact-tie
+ * against the f32 twin below, with independent geometry tests against
+ * the f64 oracle. The DDA's exact-tie
  * crossings (an f64-equal crossing time on two axes) may split by ulps in
  * f32 into two sequential face events; the legs disclose that class the
  * way the escape legs disclose their ULP ensemble, and the optics effect
  * at a split corner is two refractions within one crossing scale.
  */
 
-import type { FiniteSolidAnchor } from "./finite-solid";
+import {
+  FINITE_SOLID_DISPLAY_REFINE_REL,
+  type FiniteSolidAnchor,
+} from "./finite-solid";
+import { SHAPE_MARCH_SAFETY } from "./shapes";
 import type { Vec3, Vec4 } from "./types";
 
 /** The finite-solid params tail: 16 bytes appended past the shared base
@@ -51,6 +55,13 @@ export const SURFACE_GPU_PARAMS4_FINITE_BYTES = 480;
  * extent; emitted as a literal so the WGSL reads the same number. */
 const FINITE_ENVELOPE_REL = 2 * 2 ** -23;
 
+// The middle ternary digit at each level of the nine-cell grid: coarse
+// indices 3/4/5, fine indices 1/4/7. Shared by WGSL and its integer twin;
+// the independent f64 oracle retains its generic ternary rule. The study
+// qualification is recorded in docs/surface-dielectric-study.md.
+const FINITE_D2_COARSE_MIDDLE_MASK = 0x38;
+const FINITE_D2_FINE_MIDDLE_MASK = 0x92;
+
 // The WGSL float-literal form `surface-de-gpu.ts`'s own wgslFloatLit emits
 // (the plain shortest string, `.0`-suffixed when integral) — the same
 // convention, restated locally because the dependency runs one way.
@@ -59,8 +70,8 @@ const floatLit = (x: number): string => {
   return /[.e]/.test(s) ? s : `${s}.0`;
 };
 const finiteEnvelopeLiteral = floatLit(FINITE_ENVELOPE_REL);
-const finiteRefineLiteral = floatLit(1 / 6);
-const finiteSafetyLiteral = floatLit(0.9);
+const finiteRefineLiteral = floatLit(FINITE_SOLID_DISPLAY_REFINE_REL);
+const finiteSafetyLiteral = floatLit(SHAPE_MARCH_SAFETY);
 
 /**
  * The display half: the box-SDF helper, the certified hybrid DE and the
@@ -142,8 +153,8 @@ fn finiteBoxSdf(c: array<f32, 4>, h: f32, q: array<f32, 4>) -> f32 {
 `;
   // The nested 3^dim index loops, emitted per dimension. The level-1
   // grid center is (i − 1)·width1 and a child's is (3·i + o − 4)·width2 —
-  // both exact in f32 (no multiply-add cancellation, the grid-plane
-  // form's own property one multiplication over).
+  // centred around zero to avoid subtracting the half extent after
+  // scaling a positive grid coordinate. Non-binary widths still round.
   const loopNest = (vars: string[], body: string, indent: string): string => {
     if (vars.length === 0) {
       return body
@@ -166,15 +177,15 @@ ${indent}if (middles > 1) { continue; }`;
         ? `, ${"0.0, ".repeat(4 - exprs.length - 1)}0.0`
         : ""
     });`.replace(", )", ")");
-  const de = `// The display marcher's certified hybrid (finite-solid.ts's
+  const de = `// The shading field's certified hybrid (finite-solid.ts's
 // finiteSolidDisplayDistance): the level-1 boxes' min, each refined into
 // its occupied children within tau of its own boundary. The refinement is
 // what keeps the axis tunnels' mouth patches from reading zero — the
 // plain level-1 min would seal every tunnel at its mouth plane — and the
 // min stays a certified lower bound of the distance to the union, so a
-// march step can never skip the surface. The zero set is exactly the
-// union's boundary (interior shared child faces are unreachable from
-// outside, the flat field's own documented convention). Level 1 returns
+// outside march step can never skip the surface. The field also vanishes
+// on interior shared child faces, so it is not a membership oracle.
+// Primary and optical rays use the exact DDA below. Level 1 returns
 // the plain min (the boxes ARE the union), level 0 the root box.
 fn finiteDisplayDE(q: array<f32, 4>) -> f32 {
   let half = params.finiteHalf;
@@ -314,6 +325,18 @@ fn finiteOccupied(idx: array<i32, 4>) -> bool {
     if (idx[a] < 0 || idx[a] >= g) {
       return false;
     }
+  }
+  // At depth two the two ternary digits are exact nine-bit lookups.
+  // Bounds precede shifts so outside cells cannot alias a valid bit.
+  if (params.finiteLevel == 2u) {
+    var coarseMiddles = 0u;
+    var fineMiddles = 0u;
+    for (var a = 0; a < ${dim}; a++) {
+      let bit = u32(idx[a]);
+      coarseMiddles += (${FINITE_D2_COARSE_MIDDLE_MASK}u >> bit) & 1u;
+      fineMiddles += (${FINITE_D2_FINE_MIDDLE_MASK}u >> bit) & 1u;
+    }
+    return coarseMiddles <= 1u && fineMiddles <= 1u;
   }
   var div = g / 3;
   let level = i32(params.finiteLevel);
@@ -488,22 +511,24 @@ fn finiteEvent(
 
 fn finiteRaySideIndex(value: f32, d: f32) -> i32 {
   let half = params.finiteHalf;
-  let width = (2.0 * half) / f32(params.finiteGrid);
-  let u = (value + half) / width;
   let g = i32(params.finiteGrid);
-  if (u <= 0.0) {
-    return select(0, -1, d < 0.0);
+  if (value < -half || (value == -half && d < 0.0)) {
+    return -1;
   }
-  if (u >= f32(g)) {
-    return select(g - 1, g, d > 0.0);
+  if (value > half || (value == half && d > 0.0)) {
+    return g;
   }
-  let lower = i32(floor(u));
-  if (u == floor(u) && d < 0.0) {
-    return lower - 1;
+  // Compare the actual f32 planes: the normalized grid coordinate can
+  // round to an integer while the point still lies on the other side.
+  for (var planeIndex = 1; planeIndex < g; planeIndex++) {
+    let plane = finiteGridPlane(planeIndex);
+    if (value < plane || (value == plane && d < 0.0)) {
+      return planeIndex - 1;
+    }
   }
   // A ray coincident with a grid plane uses its upper half-open cell —
   // deterministic one-sided ownership, not closed membership.
-  return lower;
+  return g - 1;
 }
 
 // The exact DDA boundary query (the oracle's finiteSolidNextBoundary /
@@ -532,104 +557,144 @@ fn transportFiniteBoundary(
   result.anchorMask = 0u;
   result.anchorPlanes = vec4i(-1);
   result.anchorCells = vec4i(-1);
-  if (!(dot(dir, dir) > 0.0)) {
+  if (!all(abs(dir) <= vec3f(3.402823466e38)) || !(dot(dir, dir) > 0.0)) {
     result.reason = 2u;
     return result;
   }
   let half = params.finiteHalf;
   let g = i32(params.finiteGrid);
-  let width = (2.0 * half) / f32(g);
   let maxVisits = ${dim} * (g - 1) + 1;
-  var q = finiteLift(origin);
+  var q = array<f32, 4>(0.0, 0.0, 0.0, 0.0);
   var qd = finiteLiftDir(dir);
-  // THE ANCHORED RESTART CONSUMES NO ANCHOR STATE. The copied cells
-  // contradicted the walks that produced them on the real driver (the
-  // measured inside-miss and nonmonotone masses), and the cell clamp
-  // they drive reconstructs the position INTO the contradicted cell —
-  // so the restart classifies from the lifted world origin directly.
-  // The f32 round-trip leaves the position up to an ulp off the face it
-  // was born on; the ray-side rule's on-plane tie (below) picks the
-  // direction's side deterministically, which is the same-face
-  // suppression the cell identity used to provide, and the boundary
-  // identity's loss is the disclosed one-cell near-tie slack.
-  // clipRoot: the per-axis slabs of the root box.
+  if (anchorPresent == 1u) {
+    // Validate the complete canonical continuation before trusting it.
+    // Reuse each identical rounded plane for validation and reconstruction;
+    // the displayed world origin is deliberately not read on this path.
+    let envelope = half * ${finiteEnvelopeLiteral};
+    if (anchorMask == 0u || (anchorMask & ~${(1 << dim) - 1}u) != 0u ||
+        !all(abs(anchorIntrinsic) <= vec4f(3.402823466e38))) {
+      result.reason = 2u;
+      return result;
+    }
+    for (var a = 0; a < 4; a++) {
+      let point = anchorIntrinsic[a];
+      let planeIndex = anchorPlanesIn[a];
+      let cell = anchorCellsIn[a];
+      if ((anchorMask & (1u << u32(a))) != 0u) {
+        if (planeIndex < 0 || planeIndex > g ||
+            (cell != planeIndex - 1 && cell != planeIndex)) {
+          result.reason = 2u;
+          return result;
+        }
+        let plane = finiteGridPlane(planeIndex);
+        if (abs(point - plane) > envelope) {
+          result.reason = 2u;
+          return result;
+        }
+        q[a] = plane;
+      } else {
+        if (planeIndex != -1) {
+          result.reason = 2u;
+          return result;
+        }
+        if (a >= ${dim}) {
+          if (cell != -1) {
+            result.reason = 2u;
+            return result;
+          }
+          continue;
+        }
+        if (cell < 0 || cell >= g) {
+          result.reason = 2u;
+          return result;
+        }
+        let lower = finiteGridPlane(cell);
+        let upper = finiteGridPlane(cell + 1);
+        if (point < lower - envelope || point > upper + envelope) {
+          result.reason = 2u;
+          return result;
+        }
+        q[a] = point;
+        if (q[a] < lower) {
+          q[a] = lower;
+        } else if (q[a] > upper) {
+          q[a] = upper;
+        }
+      }
+    }
+  }
   var enter = -1.0e30;
-  var exitT = 1.0e30;
   var enterAxes: array<i32, 4> = array<i32, 4>(0, 0, 0, 0);
   var enterAxisCount = 0;
-  for (var a = 0; a < ${dim}; a++) {
-    if (qd[a] == 0.0) {
-      if (q[a] < -half || q[a] > half) {
+  var start = 0.0;
+  // A validated anchor reconstructs inside the closed root: every slab
+  // contains zero, so enter <= 0 <= exit and max(0, enter) is exactly zero.
+  // Only a new world ray needs the lift and original root clipping below.
+  if (anchorPresent != 1u) {
+    q = finiteLift(origin);
+    var exitT = 1.0e30;
+    for (var a = 0; a < ${dim}; a++) {
+      if (qd[a] == 0.0) {
+        if (q[a] < -half || q[a] > half) {
+          result.kind = 2u;
+          result.reason = 0u;
+          return result;
+        }
+        continue;
+      }
+      let ta = (-half - q[a]) / qd[a];
+      let tb = (half - q[a]) / qd[a];
+      let near = min(ta, tb);
+      let far = max(ta, tb);
+      if (near > enter) {
+        enter = near;
+        enterAxes[0] = a;
+        enterAxisCount = 1;
+      } else if (near == enter) {
+        enterAxes[enterAxisCount] = a;
+        enterAxisCount = enterAxisCount + 1;
+      }
+      exitT = min(exitT, far);
+      if (exitT < enter) {
         result.kind = 2u;
         result.reason = 0u;
         return result;
       }
-      continue;
     }
-    let ta = (-half - q[a]) / qd[a];
-    let tb = (half - q[a]) / qd[a];
-    let near = min(ta, tb);
-    let far = max(ta, tb);
-    if (near > enter) {
-      enter = near;
-      enterAxes[0] = a;
-      enterAxisCount = 1;
-    } else if (near == enter) {
-      enterAxes[enterAxisCount] = a;
-      enterAxisCount = enterAxisCount + 1;
-    }
-    exitT = min(exitT, far);
-    if (exitT < enter) {
+    start = max(0.0, enter);
+    if (exitT < start || (anchorPresent == 0u && exitT == start)) {
       result.kind = 2u;
       result.reason = 0u;
       return result;
     }
   }
-  var start = max(0.0, enter);
-  if (exitT < start || (anchorPresent == 0u && exitT == start)) {
-    result.kind = 2u;
-    result.reason = 0u;
-    return result;
-  }
   var index: array<i32, 4> = array<i32, 4>(0, 0, 0, 0);
-  for (var a = 0; a < ${dim}; a++) {
-    index[a] = finiteRaySideIndex(q[a] + start * qd[a], qd[a]);
-  }
-  // THE WALK IS CLAIM-FREE. The caller's carried medium no longer
-  // gates the start: the walk begins in the ray-side cell of its own
-  // position and fires its events at the occupancy transitions it
-  // actually crosses — the field's truth — while the transport's
-  // medium claims keep coming from the split's segment geometry. This
-  // is the measured resolution of the driver failure mass: the
-  // anchored restarts' copied cell state contradicted the walks that
-  // produced them (the state-mismatch, inside-miss and nonmonotone
-  // masses), where the position's own classification and both the f64
-  // oracle chain and the FMA-bracketed twin are honest.
-  //
-  // THE BIRTH-FACE SUPPRESSION rides the position, not an exact tie:
-  // the f32 round-trip leaves the restart up to an ulp off the face it
-  // was born on, so any first crossing within the declared envelope of
-  // the restart is that face again (or a clamp artifact), not a new
-  // boundary — advance the start cell across it without an event, and
-  // repeat while any axis still hugs one.
-  let envelope = half * ${finiteEnvelopeLiteral};
-  var suppressed = true;
-  while (suppressed) {
-    suppressed = false;
+  // Canonical continuation supplies every cell below; only a new ray
+  // needs coordinate classification and the root-entry identity override.
+  if (anchorPresent == 0u) {
     for (var a = 0; a < ${dim}; a++) {
+      index[a] = finiteRaySideIndex(q[a] + start * qd[a], qd[a]);
+    }
+    if (start == enter) {
+      // Slab entry identities survive the rounded multiply-add at qStart.
+      for (var ai = 0; ai < enterAxisCount; ai++) {
+        let a = enterAxes[ai];
+        index[a] = select(g - 1, 0, qd[a] > 0.0);
+      }
+    }
+  }
+  if (anchorPresent == 1u) {
+    for (var a = 0; a < ${dim}; a++) {
+      index[a] = anchorCellsIn[a];
+      if ((anchorMask & (1u << u32(a))) == 0u) {
+        continue;
+      }
       if (qd[a] == 0.0) {
-        continue;
+        result.kind = 3u;
+        result.reason = 4u;
+        return result;
       }
-      let planeIndex = select(index[a], index[a] + 1, qd[a] > 0.0);
-      if (planeIndex < 0 || planeIndex > g) {
-        continue;
-      }
-      let plane = finiteGridPlane(planeIndex);
-      let gap = abs((plane - q[a]) / qd[a]);
-      if (gap * abs(qd[a]) < envelope) {
-        index[a] = index[a] + select(-1, 1, qd[a] > 0.0);
-        suppressed = true;
-      }
+      index[a] = select(anchorPlanesIn[a] - 1, anchorPlanesIn[a], qd[a] > 0.0);
     }
   }
   var visits = 0;
@@ -640,6 +705,48 @@ fn transportFiniteBoundary(
   }
   if (inGridStart) {
     visits = visits + 1;
+  }
+  let mediumInside = inside == 1u;
+  if (sideInside != mediumInside) {
+    if (anchorPresent == 1u) {
+      result.reason = 3u;
+      return result;
+    }
+    var axes: array<i32, 4> = array<i32, 4>(0, 0, 0, 0);
+    var axisCount = 0;
+    if (start == enter) {
+      axes = enterAxes;
+      axisCount = enterAxisCount;
+    } else {
+      for (var a = 0; a < ${dim}; a++) {
+        let at = q[a] + start * qd[a];
+        let planeIndex = select(index[a] + 1, index[a], qd[a] > 0.0);
+        if (at == finiteGridPlane(planeIndex) && qd[a] != 0.0) {
+          axes[axisCount] = a;
+          axisCount = axisCount + 1;
+        }
+      }
+    }
+    if (axisCount == 0) {
+      result.reason = 3u;
+      return result;
+    }
+    var planeIndices: array<i32, 4> = array<i32, 4>(-1, -1, -1, -1);
+    for (var ai = 0; ai < axisCount; ai++) {
+      let a = axes[ai];
+      planeIndices[a] = select(index[a] + 1, index[a], qd[a] > 0.0);
+    }
+    return finiteEvent(
+      q,
+      qd,
+      dir,
+      start,
+      sideInside,
+      axes,
+      axisCount,
+      planeIndices,
+      index,
+    );
   }
   loop {
     var nextT = 1.0e30;
@@ -672,7 +779,6 @@ fn transportFiniteBoundary(
         axisCount = axisCount + 1;
       }
     }
-    var oldIndex: array<i32, 4> = index;
     for (var ai = 0; ai < axisCount; ai++) {
       let a = axes[ai];
       index[a] = index[a] + select(-1, 1, qd[a] > 0.0);
@@ -694,7 +800,11 @@ fn transportFiniteBoundary(
       var planeIndices: array<i32, 4> = array<i32, 4>(-1, -1, -1, -1);
       for (var ai = 0; ai < axisCount; ai++) {
         let a = axes[ai];
-        planeIndices[a] = select(oldIndex[a], oldIndex[a] + 1, qd[a] > 0.0);
+        // The crossed plane borders the post-crossing cell: its lower
+        // side for positive travel, its upper side for negative travel.
+        // Derive both identities from this one state instead of copying
+        // a mutable array before advancing it.
+        planeIndices[a] = select(index[a] + 1, index[a], qd[a] > 0.0);
       }
       let event = finiteEvent(
         q,
@@ -710,6 +820,11 @@ fn transportFiniteBoundary(
       if (event.kind == 3u) {
         return event;
       }
+      if (sideInside != mediumInside) {
+        result.kind = 3u;
+        result.reason = 3u;
+        return result;
+      }
       return event;
     }
     sideInside = nextInside;
@@ -723,6 +838,38 @@ fn transportFiniteBoundary(
 `;
 }
 
+/** Integer occupancy predicate used by the f32 DDA twin. The depth-two
+ * masks mirror the GPU hot path; other levels keep the generic rule. */
+export function finiteSolidCellOccupiedF32(
+  dim: 3 | 4,
+  level: number,
+  idx: readonly number[],
+): boolean {
+  const grid = 3 ** level;
+  for (let a = 0; a < dim; a++) {
+    if (!Number.isInteger(idx[a]) || idx[a] < 0 || idx[a] >= grid) return false;
+  }
+  if (level === 2) {
+    let coarseMiddles = 0;
+    let fineMiddles = 0;
+    for (let a = 0; a < dim; a++) {
+      coarseMiddles += (FINITE_D2_COARSE_MIDDLE_MASK >>> idx[a]) & 1;
+      fineMiddles += (FINITE_D2_FINE_MIDDLE_MASK >>> idx[a]) & 1;
+    }
+    return coarseMiddles <= 1 && fineMiddles <= 1;
+  }
+  let div = Math.floor(grid / 3);
+  for (let l = 0; l < level; l++) {
+    let middles = 0;
+    for (let a = 0; a < dim; a++) {
+      if (Math.floor(Math.floor(idx[a] / div) % 3) === 1) middles++;
+    }
+    if (middles > 1) return false;
+    div = Math.floor(div / 3);
+  }
+  return true;
+}
+
 /**
  * The WGSL DDA re-executed in TypeScript with every arithmetic result
  * rounded to f32 (`sphereInversionF32`'s discipline one family over) —
@@ -731,15 +878,15 @@ fn transportFiniteBoundary(
  * exists because the DDA's cell sequence is decided by exact tie tests
  * and integer-adjacent classifications, which an f64 twin does not
  * bracket: the kernel's f32 crossing times can order two near-equal
- * axes differently than f64, and the walks then genuinely diverge. The
- * DDA uses only IEEE-exact operations (add, sub, mul, div, min, max,
- * abs, floor, round, sqrt on small ints) in matching order, so the twin
- * and a conforming driver agree to driver FMA contraction alone — the
- * leg pins kind/reason/t/indices bit-exactly and the normal to a tight
- * tolerance. Inputs are f32-quantized here (the control wire's own
- * contract): the caller may pass f64, the twin rounds first. The
- * `inside` argument is part of the caller's shape and no longer read —
- * the walk is claim-free (the twin of the WGSL DDA's).
+ * axes differently than f64, and the walks then genuinely diverge. WGSL
+ * permits differences from this per-operation rounding, including fused
+ * arithmetic and division/square-root accuracy. The agreement leg checks
+ * decisions and canonical identities independently from numeric tolerances;
+ * a different cell at the same crossing is not rounding slack.
+ * Inputs are f32-quantized here (the control wire's own contract): the
+ * caller may pass f64, the twin rounds first. The carried
+ * `inside` is checked against the canonical start cell. A disagreement
+ * refuses instead of silently changing the medium or discarding a face.
  *
  * `poseRows` is the 4D world→intrinsic pose (row-major, one Vec4 per
  * row) and `w0` the slice; 3D passes null (the identity pose, the
@@ -756,15 +903,18 @@ export interface FiniteSolidDdaF32Result {
 export function finiteSolidDdaF32(
   dim: 3 | 4,
   level: number,
-  half: number,
-  poseRows: readonly Vec4[] | null,
+  halfIn: number,
+  poseRowsIn: readonly Vec4[] | null,
   w0: number,
   origin: Vec3,
-  dir: Vec3,
+  dirIn: Vec3,
   anchor: FiniteSolidAnchor | null,
-  _inside: boolean,
+  inside: boolean,
 ): FiniteSolidDdaF32Result {
   const f = Math.fround;
+  const half = f(halfIn);
+  const dir = dirIn.map(f) as Vec3;
+  const poseRows = poseRowsIn?.map((row) => row.map(f) as Vec4) ?? null;
   const grid = 3 ** level;
   const envelope = f(half * FINITE_ENVELOPE_REL);
   const finiteGridPlane = (i: number): number => {
@@ -772,21 +922,8 @@ export function finiteSolidDdaF32(
     if (i === grid) return f(half);
     return f(f(f(half * f(2 * i - grid))) / grid);
   };
-  const finiteOccupied = (idx: number[]): boolean => {
-    for (let a = 0; a < dim; a++) {
-      if (idx[a] < 0 || idx[a] >= grid) return false;
-    }
-    let div = Math.floor(grid / 3);
-    for (let l = 0; l < level; l++) {
-      let middles = 0;
-      for (let a = 0; a < dim; a++) {
-        if (Math.floor(Math.floor(idx[a] / div) % 3) === 1) middles++;
-      }
-      if (middles > 1) return false;
-      div = Math.floor(div / 3);
-    }
-    return true;
-  };
+  const finiteOccupied = (idx: number[]): boolean =>
+    finiteSolidCellOccupiedF32(dim, level, idx);
   const rowXyz = (axis: number): Vec3 => {
     // 3D (poseRows null) IS the identity pose — the WGSL 3D rowsFn emits
     // the identity rows, so the twin must too. Returning zeros here made
@@ -806,28 +943,31 @@ export function finiteSolidDdaF32(
   const q: number[] = [0, 0, 0, 0];
   const qd: number[] = [0, 0, 0, 0];
   if (poseRows) {
-    const pv = [f(origin[0]), f(origin[1]), f(origin[2]), f(w0)];
+    const pv = anchor ? [] : [f(origin[0]), f(origin[1]), f(origin[2]), f(w0)];
     for (let a = 0; a < 4; a++) {
       const row = poseRows[a];
-      q[a] = f(
-        f(f(f(row[0] * pv[0]) + f(row[1] * pv[1])) + f(row[2] * pv[2])) +
-          f(row[3] * pv[3]),
-      );
+      if (!anchor) {
+        q[a] = f(
+          f(f(f(row[0] * pv[0]) + f(row[1] * pv[1])) + f(row[2] * pv[2])) +
+            f(row[3] * pv[3]),
+        );
+      }
       qd[a] = f(
         f(f(row[0] * dir[0]) + f(row[1] * dir[1])) + f(row[2] * dir[2]),
       );
     }
   } else {
-    q[0] = f(origin[0]);
-    q[1] = f(origin[1]);
-    q[2] = f(origin[2]);
-    q[3] = 0;
+    if (!anchor) {
+      q[0] = f(origin[0]);
+      q[1] = f(origin[1]);
+      q[2] = f(origin[2]);
+      q[3] = 0;
+    }
     qd[0] = f(dir[0]);
     qd[1] = f(dir[1]);
     qd[2] = f(dir[2]);
     qd[3] = 0;
   }
-  const width = f(f(2 * half) / grid);
   const maxVisits = dim * (grid - 1) + 1;
   const miss = (): FiniteSolidDdaF32Result => ({
     kind: 2,
@@ -843,68 +983,116 @@ export function finiteSolidDdaF32(
     normal: [0, 0, 0],
     anchor: null,
   });
-  if (!(f(f(qd[0] * qd[0]) + f(f(qd[1] * qd[1]) + f(qd[2] * qd[2]))) > 0)) {
+  if (
+    !dir.every(Number.isFinite) ||
+    !(f(f(dir[0] * dir[0]) + f(f(dir[1] * dir[1]) + f(dir[2] * dir[2]))) > 0)
+  ) {
     return refused(2);
   }
-  // The anchored restart consumes no anchor state — the twin of the
-  // WGSL restart's (see there): the copied cells contradicted the walks
-  // that produced them on the real driver, so the restart classifies
-  // from the lifted world origin directly.
-  let enter = f(-1e30);
-  let exitT = f(1e30);
-  let enterAxes: number[] = [];
-  for (let a = 0; a < dim; a++) {
-    if (qd[a] === 0) {
-      if (q[a] < f(-half) || q[a] > f(half)) return miss();
-      continue;
+  if (anchor) {
+    if (
+      !Number.isInteger(anchor.planeMask) ||
+      anchor.planeMask <= 0 ||
+      (anchor.planeMask & ~((1 << dim) - 1)) !== 0 ||
+      anchor.intrinsicPoint.length !== 4 ||
+      anchor.planeIndices.length !== 4 ||
+      anchor.cellIndices.length !== 4
+    ) {
+      return refused(2);
     }
-    const ta = f(f(f(-half) - q[a]) / qd[a]);
-    const tb = f(f(half - q[a]) / qd[a]);
-    const near = f(Math.min(ta, tb));
-    const far = f(Math.max(ta, tb));
-    if (near > enter) {
-      enter = near;
-      enterAxes = [a];
-    } else if (near === enter) {
-      enterAxes.push(a);
+    for (let a = 0; a < 4; a++) {
+      const point = f(anchor.intrinsicPoint[a]);
+      const plane = anchor.planeIndices[a];
+      const cell = anchor.cellIndices[a];
+      if (
+        !Number.isFinite(point) ||
+        !Number.isInteger(plane) ||
+        !Number.isInteger(cell)
+      ) {
+        return refused(2);
+      }
+      if ((anchor.planeMask & (1 << a)) !== 0) {
+        if (
+          plane < 0 ||
+          plane > grid ||
+          (cell !== plane - 1 && cell !== plane)
+        ) {
+          return refused(2);
+        }
+        const planeValue = finiteGridPlane(plane);
+        if (Math.abs(f(point - planeValue)) > envelope) return refused(2);
+        q[a] = planeValue;
+      } else {
+        if (plane !== -1) return refused(2);
+        if (a >= dim) {
+          if (cell !== -1) return refused(2);
+          continue;
+        }
+        if (cell < 0 || cell >= grid) return refused(2);
+        const lower = finiteGridPlane(cell);
+        const upper = finiteGridPlane(cell + 1);
+        if (point < f(lower - envelope) || point > f(upper + envelope)) {
+          return refused(2);
+        }
+        q[a] = point;
+        if (q[a] < lower) q[a] = lower;
+        else if (q[a] > upper) q[a] = upper;
+      }
     }
-    exitT = f(Math.min(exitT, far));
-    if (exitT < enter) return miss();
   }
-  const start = f(Math.max(0, enter));
-  if (exitT < start || (!anchor && exitT === start)) return miss();
+  let enter = f(-1e30);
+  let enterAxes: number[] = [];
+  let start = 0;
+  if (!anchor) {
+    let exitT = f(1e30);
+    for (let a = 0; a < dim; a++) {
+      if (qd[a] === 0) {
+        if (q[a] < f(-half) || q[a] > f(half)) return miss();
+        continue;
+      }
+      const ta = f(f(f(-half) - q[a]) / qd[a]);
+      const tb = f(f(half - q[a]) / qd[a]);
+      const near = f(Math.min(ta, tb));
+      const far = f(Math.max(ta, tb));
+      if (near > enter) {
+        enter = near;
+        enterAxes = [a];
+      } else if (near === enter) {
+        enterAxes.push(a);
+      }
+      exitT = f(Math.min(exitT, far));
+      if (exitT < enter) return miss();
+    }
+    start = f(Math.max(0, enter));
+    if (exitT < start || (!anchor && exitT === start)) return miss();
+  }
   const raySideIndex = (value: number, d: number): number => {
-    const u = f(f(value + half) / width);
-    if (u <= 0) return d < 0 ? -1 : 0;
-    if (u >= grid) return d > 0 ? grid : grid - 1;
-    const lower = Math.floor(u);
-    if (u === lower && d < 0) return lower - 1;
-    return lower;
+    if (value < f(-half) || (value === f(-half) && d < 0)) return -1;
+    if (value > f(half) || (value === f(half) && d > 0)) return grid;
+    for (let planeIndex = 1; planeIndex < grid; planeIndex++) {
+      const plane = finiteGridPlane(planeIndex);
+      if (value < plane || (value === plane && d < 0)) {
+        return planeIndex - 1;
+      }
+    }
+    return grid - 1;
   };
   const index: number[] = [0, 0, 0, 0];
-  for (let a = 0; a < dim; a++) {
-    index[a] = raySideIndex(f(q[a] + f(start * qd[a])), qd[a]);
-  }
-  // THE ANCHORED RESTART READS ITS START CELL FROM THE POSITION — the
-  // twin of the WGSL restart's (see there).
-  //
-  // THE WALK IS CLAIM-FREE — the ray-side start cell, the events at the
-  // occupancy transitions actually crossed, and the position-based
-  // birth-face suppression (the ulp-off restart hugs its birth face;
-  // any first crossing within the declared envelope is that face
-  // again, not a new boundary).
-  let suppressed = true;
-  while (suppressed) {
-    suppressed = false;
+  if (!anchor) {
     for (let a = 0; a < dim; a++) {
-      if (qd[a] === 0) continue;
-      const planeIndex = qd[a] > 0 ? index[a] + 1 : index[a];
-      if (planeIndex < 0 || planeIndex > grid) continue;
-      const plane = finiteGridPlane(planeIndex);
-      if (f(Math.abs(f(plane - q[a]) / qd[a]) * Math.abs(qd[a])) < envelope) {
-        index[a] += qd[a] > 0 ? 1 : -1;
-        suppressed = true;
-      }
+      index[a] = raySideIndex(f(q[a] + f(start * qd[a])), qd[a]);
+    }
+    if (start === enter) {
+      for (const a of enterAxes) index[a] = qd[a] > 0 ? 0 : grid - 1;
+    }
+  }
+  if (anchor) {
+    for (let a = 0; a < dim; a++) {
+      index[a] = anchor.cellIndices[a];
+      if ((anchor.planeMask & (1 << a)) === 0) continue;
+      if (qd[a] === 0) return refused(4);
+      index[a] =
+        qd[a] > 0 ? anchor.planeIndices[a] : anchor.planeIndices[a] - 1;
     }
   }
   let visits = 0;
@@ -914,6 +1102,7 @@ export function finiteSolidDdaF32(
     inGridStart = inGridStart && index[a] >= 0 && index[a] < grid;
   }
   if (inGridStart) visits++;
+  const mediumInside = inside;
   const boundaryNormal = (
     planeMask: number,
     entering: boolean,
@@ -1054,7 +1243,26 @@ export function finiteSolidDdaF32(
       },
     };
   };
-
+  if (sideInside !== mediumInside) {
+    if (anchor) return refused(3);
+    let axes: number[];
+    if (start === enter) {
+      axes = enterAxes;
+    } else {
+      axes = [];
+      for (let a = 0; a < dim; a++) {
+        const at = f(q[a] + f(start * qd[a]));
+        const planeIndex = qd[a] > 0 ? index[a] : index[a] + 1;
+        if (at === finiteGridPlane(planeIndex) && qd[a] !== 0) axes.push(a);
+      }
+    }
+    if (axes.length === 0) return refused(3);
+    const planeIndices = [-1, -1, -1, -1];
+    for (const a of axes) {
+      planeIndices[a] = qd[a] > 0 ? index[a] : index[a] + 1;
+    }
+    return event(start, sideInside, axes, planeIndices, index);
+  }
   for (;;) {
     let nextT = 1e30;
     const crossingT = [1e30, 1e30, 1e30, 1e30];
@@ -1071,7 +1279,6 @@ export function finiteSolidDdaF32(
     for (let a = 0; a < dim; a++) {
       if (crossingT[a] === nextT) axes.push(a);
     }
-    const oldIndex = [...index];
     for (const a of axes) index[a] += qd[a] > 0 ? 1 : -1;
     let inRoot = true;
     for (let a = 0; a < dim; a++) {
@@ -1085,10 +1292,11 @@ export function finiteSolidDdaF32(
     if (nextInside !== sideInside) {
       const planeIndices = [-1, -1, -1, -1];
       for (const a of axes) {
-        planeIndices[a] = qd[a] > 0 ? oldIndex[a] + 1 : oldIndex[a];
+        planeIndices[a] = qd[a] > 0 ? index[a] : index[a] + 1;
       }
       const result = event(nextT, nextInside, axes, planeIndices, index);
       if (result.kind === 3) return result;
+      if (sideInside !== mediumInside) return refused(3);
       return result;
     }
     sideInside = nextInside;

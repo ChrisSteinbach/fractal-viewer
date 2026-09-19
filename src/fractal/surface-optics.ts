@@ -25,16 +25,20 @@ import type { Vec3 } from "./types";
  * transform's part of the attractor can be glass while another stays metal,
  * and the transport contract's boundary events already carry the backend's
  * `materialSlot` attribution to read it per hit. The optical normalization
- * radius BASE is SCENE-DERIVED, never authored: the session DE's
- * `visibleBoundingRadius` — the FULL unsliced radius in 4D, so the tint does
- * not pulse as the slice scrubs (the balloon ball's own rule). There is no
- * scene-wide authored optical state in this vocabulary.
+ * radius BASE is SCENE-DERIVED, never authored: the finite construction's
+ * root half extent, matching the selected material; otherwise the session
+ * DE's `visibleBoundingRadius`. Both are independent of the current 4D
+ * slice, so tint does not pulse as the slice scrubs. The finite enclosing
+ * sphere remains a separate geometry bound. There is no scene-wide authored
+ * optical state in this vocabulary.
  *
  * UNITS AND DEFAULTS. `scale` is the optical scale: a dimensionless
  * MULTIPLIER on the derived radius, not an absolute length, so it is
  * world-defined and stable under zoom, raster and rotor/slice motion. Absent
- * ⇒ 1 — exactly the qualified appearance (`DIELECTRIC_IOR`,
- * `DIELECTRIC_ABSORPTION`, the solid's own half extent). The resolver clamps
+ * ⇒ 1 — the selected finite material's optical normalization
+ * (`DIELECTRIC_IOR`, `DIELECTRIC_ABSORPTION`, the solid's own half extent).
+ * Other scene families retain their existing radius-relative material.
+ * The resolver clamps
  * into {@link SURFACE_OPTICS_SCALE_FLOOR}..{@link SURFACE_OPTICS_SCALE_CEILING}:
  * below the floor the Beer tint saturates within 1% of the ball and reads
  * opaque; above the ceiling it is clear across the whole ball — both beyond

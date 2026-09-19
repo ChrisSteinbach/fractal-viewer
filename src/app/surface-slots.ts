@@ -177,8 +177,9 @@ export function sphereInversionShadeSlots(
  * consumes it (the capability matrix in
  * `docs/surface-dielectric-transport.md`).
  *
- * `opticsRadius` is the session's derived optical radius — the DE's
- * `visibleBoundingRadius`, the FULL unsliced value in 4D — required the
+ * `opticsRadius` is the session's derived optical radius — the finite
+ * construction's root half extent, or the DE's `visibleBoundingRadius`
+ * for other families, independent of the current 4D slice — required the
  * moment some slotted transform authors an admitted model and unused
  * otherwise; passing none for an optics-authored session is a caller bug and
  * throws, exactly like a missing pattern calibration.
