@@ -1331,6 +1331,130 @@ export function finiteSolidDistance(
 }
 
 /**
+ * How close (as a fraction of the half extent) to a level-1 box's boundary
+ * the display marcher's hierarchical estimate descends into that box's
+ * children. Any value above the march's acceptance scale certifies the
+ * same zero set; this one keeps the typical call at one refinement
+ * (~2·3^dim box evaluations) and the worst corner case bounded.
+ */
+export const FINITE_SOLID_DISPLAY_REFINE_REL = 1 / 6;
+
+/**
+ * The display marcher's bounded-work estimate: the certified hybrid of the
+ * level-1 boxes and their occupied children.
+ *
+ * The flat field above is EXACT outside the union, but at level 2 it costs
+ * one box evaluation per occupied finest cell (400 in 3D, 2,304 in 4D) per
+ * query — a full-frame display march cannot pay that. The naive cheap
+ * replacement, the plain min over the level-1 boxes, is UNSOUND in a
+ * specific, load-bearing way: a level-1 box's own faces are its zero set,
+ * and the axis tunnels of the construction PIERCE those faces at their
+ * centre patches (a face's centre child is empty on both sides of every
+ * wall — the rule's symmetry), so the plain min reads 0 at the tunnel
+ * mouths and the display march would SEAL every tunnel at its mouth plane.
+ * The same seal would patch the void network's wall openings one level
+ * in.
+ *
+ * The hybrid fixes exactly that while keeping a certified lower bound:
+ *
+ *   DE(q) = min over occupied level-1 boxes i of
+ *             dist(q, box_i) < tau ? min over box_i's occupied children
+ *                                  : dist(q, box_i)
+ *
+ * with `tau = FINITE_SOLID_DISPLAY_REFINE_REL · half`. Both terms are
+ * lower bounds of the distance to the union: a box CONTAINS its part of
+ * the union's surface (a point of the union inside the box is reached
+ * through the box's boundary, so dist(q, box) ≤ dist(q, union-point)),
+ * and the children ARE the union's part in the box. The global nearest
+ * union point lives in some box i*, whose term is therefore ≤ the true
+ * distance — the min cannot overstate, so a march step can never skip the
+ * surface. The zero set is exactly the union's boundary: an unrefined
+ * term is 0 only ON a box face, but d < tau refines, and the refined
+ * term's zero set is the children's faces — the true surface within the
+ * box (the tunnel mouths read positive: their rim recedes). Interior
+ * shared child faces read 0 too and are documented above as unreachable
+ * from outside. Inside one child the value is that child's interior
+ * depth, the same convention as the flat field.
+ *
+ * Level 1 has no children and returns the plain min (the boxes ARE the
+ * union); level 0 the root box. Pinned by `finite-solid.test.ts` against
+ * the flat field on the boundary and — the load-bearing leg — against
+ * `finiteSolidIntervals` on tunnel-axis rays, which the sealed estimator
+ * would fail.
+ */
+export function finiteSolidDisplayDistance(
+  c: FiniteSolidConstruction,
+  pose: FiniteSolidPose,
+  p: Vec3,
+): number {
+  const q = finiteSolidIntrinsicPoint(pose, p);
+  const dimension = c.dimension;
+  const half = c.half;
+  if (c.level === 0) {
+    const d = boxSdf(new Array<number>(dimension).fill(0), half, q, dimension);
+    return d > 0 ? d * SHAPE_MARCH_SAFETY : d;
+  }
+  const width1 = (2 * half) / 3;
+  const half1 = width1 / 2;
+  const tau = half * FINITE_SOLID_DISPLAY_REFINE_REL;
+  const width2 = (2 * half) / 9;
+  const half2 = width2 / 2;
+  const index1 = new Array<number>(dimension).fill(0);
+  const offset = new Array<number>(dimension).fill(0);
+  let result = Infinity;
+  // One pass over the 3^dimension level-1 grid; occupied cells evaluate
+  // their own box, and — within tau of it — their occupied children.
+  const visit = (axis: number): void => {
+    if (axis === dimension) {
+      let middles = 0;
+      for (let a = 0; a < dimension; a++) {
+        if (index1[a] === 1) middles++;
+      }
+      if (middles > 1) return;
+      const center1 = new Array<number>(dimension);
+      for (let a = 0; a < dimension; a++) {
+        center1[a] = (index1[a] - 1) * width1;
+      }
+      const d1 = boxSdf(center1, half1, q, dimension);
+      let term = d1;
+      if (c.level > 1 && d1 < tau) {
+        let best2 = Infinity;
+        const child = (childAxis: number): void => {
+          if (childAxis === dimension) {
+            let childMiddles = 0;
+            for (let a = 0; a < dimension; a++) {
+              if (offset[a] === 1) childMiddles++;
+            }
+            if (childMiddles > 1) return;
+            const center2 = new Array<number>(dimension);
+            for (let a = 0; a < dimension; a++) {
+              center2[a] = (3 * index1[a] + offset[a] - 4) * width2;
+            }
+            const d2 = boxSdf(center2, half2, q, dimension);
+            if (d2 < best2) best2 = d2;
+            return;
+          }
+          for (let i = 0; i < 3; i++) {
+            offset[childAxis] = i;
+            child(childAxis + 1);
+          }
+        };
+        child(0);
+        term = best2;
+      }
+      if (term < result) result = term;
+      return;
+    }
+    for (let i = 0; i < 3; i++) {
+      index1[axis] = i;
+      visit(axis + 1);
+    }
+  };
+  visit(0);
+  return result > 0 ? result * SHAPE_MARCH_SAFETY : result;
+}
+
+/**
  * Ray ⟂ solid = the UNION of per-cell slab intervals, exact, with
  * deliberately NO optical epsilon: a positive gap, however thin, remains a
  * real gap (`scripts/transmission-proxy.ts`'s `boxUnionIntervals`, the

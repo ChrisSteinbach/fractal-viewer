@@ -7,6 +7,7 @@ import {
   finiteSolidCellOccupiedByRule,
   finiteSolidCells,
   finiteSolidContains,
+  finiteSolidDisplayDistance,
   finiteSolidDistance,
   finiteSolidGridPlane,
   finiteSolidIntervals,
@@ -365,5 +366,191 @@ describe("finite-solid 4D pose", () => {
     expect(n![0]).toBeCloseTo(0, 15);
     expect(n![1]).toBeCloseTo(-1, 15);
     expect(n![2]).toBeCloseTo(0, 15);
+  });
+});
+
+describe("finite-solid display distance (the certified hybrid)", () => {
+  const marchDisplay = (
+    c: ReturnType<typeof buildFiniteSolidConstruction>,
+    pose: { rows: [Vec4, Vec4, Vec4, Vec4]; slice: number },
+    origin: Vec3,
+    rawDir: Vec3,
+    tMax: number,
+  ): number | null => {
+    const len = Math.hypot(rawDir[0], rawDir[1], rawDir[2]);
+    const dir: Vec3 = [rawDir[0] / len, rawDir[1] / len, rawDir[2] / len];
+    let t = 0;
+    for (let i = 0; i < 4096; i++) {
+      const d = finiteSolidDisplayDistance(c, pose, [
+        origin[0] + dir[0] * t,
+        origin[1] + dir[1] * t,
+        origin[2] + dir[2] * t,
+      ]);
+      if (d < 1e-5) return t;
+      t += d * 0.9;
+      if (t > tMax) return null;
+    }
+    return null;
+  };
+
+  it("level 1 equals the flat field's certified bound", () => {
+    const c = buildFiniteSolidConstruction("menger", 3, 1);
+    const pose = FINITE_SOLID_IDENTITY_POSE;
+    for (const p of [
+      [2, 0.1, 0.1],
+      [0.6, 0.6, 0.6],
+      [0.4, 0.1, 0.1],
+      [1.5, -0.7, 0],
+    ] as Vec3[]) {
+      expect(finiteSolidDisplayDistance(c, pose, p)).toBeCloseTo(
+        finiteSolidDistance(c, pose, p),
+        12,
+      );
+    }
+  });
+
+  it("level 0 is the root box", () => {
+    const c = buildFiniteSolidConstruction("menger", 3, 0);
+    expect(
+      finiteSolidDisplayDistance(c, FINITE_SOLID_IDENTITY_POSE, [5, 0, 0]),
+    ).toBeCloseTo((5 - 0.75) * 0.9, 12);
+  });
+
+  it("reads zero on the union's boundary, both dimensions, both levels", () => {
+    for (const [shape, dimension, level] of [
+      ["menger", 3, 1],
+      ["menger", 3, 2],
+      ["hyperMenger", 4, 1],
+      ["hyperMenger", 4, 2],
+    ] as const) {
+      const c = buildFiniteSolidConstruction(shape, dimension, level);
+      const pose = FINITE_SOLID_IDENTITY_POSE;
+      for (const cell of finiteSolidCells(c)) {
+        // Step to each box face along its first axis and back off by an
+        // exact face offset: the point sits ON the union's surface only
+        // if no other cell contains it, which the flat field confirms.
+        const onFace: Vec3 =
+          dimension === 3
+            ? [
+                cell.center[0] + cell.half + 1e-9,
+                cell.center[1],
+                cell.center[2],
+              ]
+            : [
+                cell.center[0] + cell.half + 1e-9,
+                cell.center[1],
+                cell.center[2],
+              ];
+        const flat = finiteSolidDistance(c, pose, onFace);
+        if (Math.abs(flat) < 1e-6) {
+          expect(
+            Math.abs(finiteSolidDisplayDistance(c, pose, onFace)),
+          ).toBeLessThan(1e-5);
+        }
+      }
+    }
+  });
+
+  it("never overstates the flat field's certified bound by more than the refine margin", () => {
+    // Both are lower bounds of the true distance; the hybrid may exceed
+    // the flat one only inside the refine band's honest recesses. The
+    // march-safety scaling keeps both comparable; pin the hybrid within
+    // one level-1 cell width of the flat value at sampled outside points.
+    const c = buildFiniteSolidConstruction("menger", 3, 2);
+    const pose = FINITE_SOLID_IDENTITY_POSE;
+    for (const p of [
+      [2, 0.1, 0.1],
+      [1.2, 0.55, -0.3],
+      [0.26, 0.55, 0.55],
+      [0.55, 0.55, 0.55],
+    ] as Vec3[]) {
+      const flat = finiteSolidDistance(c, pose, p);
+      const hybrid = finiteSolidDisplayDistance(c, pose, p);
+      expect(hybrid).toBeLessThanOrEqual(flat / 0.9 + 1e-9);
+    }
+  });
+
+  it("marches tunnel-axis rays through the level-2 construction without sealing the mouths", () => {
+    // The axis tunnel through the middle thirds is EMPTY: the exact
+    // interval union has no crossing for a ray down its axis, and the
+    // display march must agree. The naive level-1 min reads 0 at the
+    // tunnel mouth and fails exactly here.
+    for (const [shape, dimension] of [
+      ["menger", 3],
+      ["hyperMenger", 4],
+    ] as const) {
+      const c = buildFiniteSolidConstruction(shape, dimension, 2);
+      const pose = FINITE_SOLID_IDENTITY_POSE;
+      expect(finiteSolidIntervals(c, pose, [2, 0, 0], [-1, 0, 0])).toHaveLength(
+        0,
+      );
+      expect(marchDisplay(c, pose, [2, 0, 0], [-1, 0, 0], 6)).toBeNull();
+    }
+  });
+
+  it("marched hits agree with the exact interval union on sampled rays, both dimensions", () => {
+    for (const [shape, dimension] of [
+      ["menger", 3],
+      ["hyperMenger", 4],
+    ] as const) {
+      const c = buildFiniteSolidConstruction(shape, dimension, 2);
+      const pose = FINITE_SOLID_IDENTITY_POSE;
+      const rays: Array<[Vec3, Vec3]> = [
+        [
+          [2, 0.6, 0.6],
+          [-1, 0, 0],
+        ],
+        [
+          [2, 0.1, 0.1],
+          [-1, 0, 0],
+        ],
+        [
+          [0, 2, 0.55],
+          [0, -1, 0],
+        ],
+        [
+          [1.5, 1.5, 1.5],
+          [-1, -1, -1],
+        ],
+        [
+          [1.2, 0.26, 0.62],
+          [-1, -0.3, 0.2],
+        ],
+      ];
+      for (const [origin, dir] of rays) {
+        const intervals = finiteSolidIntervals(c, pose, origin, dir);
+        const hit = marchDisplay(c, pose, origin, dir, 8);
+        if (intervals.length === 0) {
+          expect(hit).toBeNull();
+        } else {
+          expect(hit).not.toBeNull();
+          const len = Math.hypot(dir[0], dir[1], dir[2]);
+          expect(hit as number).toBeGreaterThan(
+            intervals[0].enter * len - 2e-3,
+          );
+          expect(hit as number).toBeLessThan(intervals[0].enter * len + 2e-3);
+        }
+      }
+    }
+  });
+
+  it("keeps the certified bound under a posed 4D slice", () => {
+    // An exact xw/yw double rotation (unit rows), the slice at w = 0.
+    const s = Math.sqrt(0.5);
+    const pose = {
+      rows: [
+        [1, 0, 0, 0],
+        [0, s, 0, -s],
+        [0, 0, 1, 0],
+        [0, s, 0, s],
+      ] as [Vec4, Vec4, Vec4, Vec4],
+      slice: 0,
+    };
+    const c = buildFiniteSolidConstruction("hyperMenger", 4, 2);
+    // The intrinsic +x axis maps to the world direction (0, s, 0): a ray
+    // down the rotated tunnel axis must stay a miss, exactly as in the
+    // identity pose.
+    expect(finiteSolidIntervals(c, pose, [2, 0, 0], [0, 1, 0])).toHaveLength(0);
+    expect(marchDisplay(c, pose, [2, 0, 0], [0, 1, 0], 8)).toBeNull();
   });
 });
