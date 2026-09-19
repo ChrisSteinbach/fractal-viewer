@@ -1,9 +1,13 @@
 import {
+  SURFACE_GPU_TRANSPORT_REASON_INVALID_INPUT,
+  SURFACE_GPU_TRANSPORT_REASON_STATE_MISMATCH,
   transportBoundaryQueryCPU,
+  transportFiniteBoundaryQueryCPU,
   transportShadowCorridorGate,
   transportShadowVisibilityCPU,
   transportSolidBoundaryQueryCPU,
   transportTraceCPU,
+  type TransportFiniteQueryFn,
   type TransportFixtureSystem,
 } from "./surface-transport-fixture";
 import {
@@ -16,6 +20,12 @@ import {
   shapeSdf,
   type ShapeSpec,
 } from "../../fractal/shapes";
+import {
+  FINITE_SOLID_HALF_EXTENT,
+  FINITE_SOLID_IDENTITY_POSE,
+  buildFiniteSolidConstruction,
+  finiteSolidDisplayDistance,
+} from "../../fractal/finite-solid";
 import type { Vec3 } from "../../fractal/types";
 
 /**
@@ -302,5 +312,112 @@ describe("transportShadowVisibilityCPU — the corridor's straight visibility", 
     expect(
       transportShadowCorridorGate([0, -1.3, 0], [0, 1, 0], ballC, ballR),
     ).toBe(true);
+  });
+});
+
+describe("transportFiniteBoundaryQueryCPU — the DDA adapter", () => {
+  const construction = buildFiniteSolidConstruction("menger", 3, 1);
+  const pose = FINITE_SOLID_IDENTITY_POSE;
+
+  it("maps the oracle's boundary onto the transport vocabulary with the anchor out", () => {
+    // The level-1 Menger's root face at x = +0.75: a ray from outside
+    // heading -x enters at t = 1.25 (the same control the unit oracle
+    // pins), entering, and hands back the full anchor.
+    const hit = transportFiniteBoundaryQueryCPU(
+      construction,
+      pose,
+      [2, 0.6, 0.6],
+      [-1, 0, 0],
+      null,
+      false,
+    );
+    expect(hit.kind).toBe("boundary");
+    expect(hit.reason).toBe(0);
+    expect(hit.t).toBe(1.25);
+    expect(hit.anchor).not.toBeNull();
+    expect(hit.anchor!.planeMask).toBe(1);
+    // The root face plane at level 1's G = 3 grid is plane index 3.
+    expect(hit.anchor!.planeIndices[0]).toBe(3);
+  });
+
+  it("maps every oracle refusal onto its transport reason code", () => {
+    // state-mismatch: an anchored query whose post-incident cell contradicts
+    // the claimed medium — the entry anchor claimed as inside=0 is exactly
+    // that contradiction (the anchor's post-incident cell is the interior).
+    const entry = transportFiniteBoundaryQueryCPU(
+      construction,
+      pose,
+      [2, 0.6, 0.6],
+      [-1, 0, 0],
+      null,
+      false,
+    );
+    expect(entry.kind).toBe("boundary");
+    const mismatch = transportFiniteBoundaryQueryCPU(
+      construction,
+      pose,
+      [0, 0, 0],
+      [-1, 0, 0],
+      entry.anchor,
+      false,
+    );
+    expect(mismatch.kind).toBe("refused");
+    expect(mismatch.reason).toBe(SURFACE_GPU_TRANSPORT_REASON_STATE_MISMATCH);
+    // invalid-input: a zero direction.
+    const invalid = transportFiniteBoundaryQueryCPU(
+      construction,
+      pose,
+      [2, 0, 0],
+      [0, 0, 0],
+      null,
+      false,
+    );
+    expect(invalid.kind).toBe("refused");
+    expect(invalid.reason).toBe(SURFACE_GPU_TRANSPORT_REASON_INVALID_INPUT);
+  });
+
+  it("threads the anchor through transportTraceCPU's finite backend", () => {
+    // The DDA's chained sweep: the trace's refracted child restarts from
+    // the primary's anchor and walks to the exit — the trace twin must
+    // complete (not refuse state-mismatch), which only happens when the
+    // anchor is actually threaded. The system's estimate is the certified
+    // hybrid display DE.
+    const system: TransportFixtureSystem = {
+      estimate: (p) => finiteSolidDisplayDistance(construction, pose, p),
+      stepScale: 1,
+      visibleRadius: FINITE_SOLID_HALF_EXTENT * Math.sqrt(3),
+    };
+    const finiteQuery = (
+      origin: Vec3,
+      dir: Vec3,
+      anchor: Parameters<TransportFiniteQueryFn>[2],
+      inside: boolean,
+    ) =>
+      transportFiniteBoundaryQueryCPU(
+        construction,
+        pose,
+        origin,
+        dir,
+        anchor,
+        inside,
+      );
+    const result = transportTraceCPU(
+      system,
+      [2, 0.6, 0.6],
+      [-1, 0, 0],
+      DIELECTRIC_INITIAL_BRANCH_THETA,
+      MATERIAL,
+      [0.25, 0.35, 0.45],
+      undefined,
+      undefined,
+      finiteQuery,
+    );
+    // Complete or residual (sub-theta children are the replay's normal
+    // residual, never a refusal) — and crucially failure 0: a state-
+    // mismatch refusal (failure 4, reason 3) would mean the anchor was
+    // NOT threaded through the paths.
+    expect(["complete", "residual"]).toContain(result.status);
+    expect(result.failure).toBe(0);
+    expect(result.radiance.every((c) => c >= 0)).toBe(true);
   });
 });
