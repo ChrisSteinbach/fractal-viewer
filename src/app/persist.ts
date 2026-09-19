@@ -3261,7 +3261,11 @@ function encodePaletteWire(
 /**
  * Produce a compact, URL-safe `v1=<base64url>` string for `s`. Floats are
  * rounded to 4 decimal places, except geometry in a scene with a pure swirl
- * final (its radius admission must survive reload) and the `camera`/`fourD`
+ * final (its radius admission must survive reload) or a finite-solid block
+ * (the construction's maps must survive reload: the shipped third-
+ * contraction scale is 1/3, which a 4-decimal wire turns into 0.3333 —
+ * outside the analyzer's exactness tolerance, so a shared link would refuse
+ * the very scene it carries) and the `camera`/`fourD`
  * view framing, which is written at full precision so a reloaded frame
  * reproduces the sender's. Transform ids are omitted
  * and reassigned from the array index on decode.
@@ -3270,12 +3274,18 @@ export function encodeScene(s: SceneSnapshot): string {
   // A swirl lens's admitted radius depends on the final affine AND on the
   // raw ball derived from base maps, fold lengths, emitters and scheduled B.
   // Decimal rounding can push a valid endpoint over the cap after reload.
-  // Keep those existing numeric fields lossless only while this final is
-  // active; classic scenes and cosmetic fields retain the compact v1 wire.
+  // A finite-solid block's admission depends on the maps BEING the shipped
+  // construction by value. Keep those existing numeric fields lossless only
+  // while the respective block is active; classic scenes and cosmetic
+  // fields retain the compact v1 wire. A refused finite block stays
+  // lossless too: it is already ineligible, and rounding cannot make it
+  // more honest.
   const geometryNumber =
     s.finalTransform && pureSwirlFinal(s.finalTransform)
       ? (value: number): number => value
-      : round4;
+      : s.finiteSolid
+        ? (value: number): number => value
+        : round4;
   const payload: {
     transforms: EncodedTransform[];
     finalTransform?: EncodedTransform;

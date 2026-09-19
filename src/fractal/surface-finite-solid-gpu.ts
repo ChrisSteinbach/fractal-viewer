@@ -809,7 +809,17 @@ export function finiteSolidDdaF32(
     return true;
   };
   const rowXyz = (axis: number): Vec3 => {
-    const row = poseRows ? poseRows[axis] : [0, 0, 0, 0];
+    // 3D (poseRows null) IS the identity pose — the WGSL 3D rowsFn emits
+    // the identity rows, so the twin must too. Returning zeros here made
+    // every 3D event's normal degenerate (reason 6) and vacuously
+    // absolved the bench's 3D finite leg through the decision-flip class.
+    const row = poseRows
+      ? poseRows[axis]
+      : axis === 0
+        ? [1, 0, 0, 0]
+        : axis === 1
+          ? [0, 1, 0, 0]
+          : [0, 0, 1, 0];
     return [f(row[0]), f(row[1]), f(row[2])];
   };
   // The lift: 3D exact; 4D the row dots (FMA-sensitive on a real driver —

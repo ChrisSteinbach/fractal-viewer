@@ -8273,6 +8273,29 @@ describe("finite-solid codec (the scene's finite-solid block)", () => {
     const cleared = fromSnapshot(baseSnapshot(), state);
     expect(cleared.finiteSolid).toBeUndefined();
   });
+
+  it("writes the maps' geometry lossless while the block is present: 1/3 must survive reload for the construction gate", () => {
+    const third = { ...baseSnapshot() };
+    third.transforms = third.transforms.map((t) => ({
+      ...t,
+      scale: [1 / 3, 1 / 3, 1 / 3] as [number, number, number],
+    }));
+    // Without the block the wire rounds to 4 decimals (the compact v1
+    // contract): 1/3 -> 0.3333, and the decoded map is NOT the exact
+    // third-contraction the finite admission requires.
+    const plain = decodeScene(encodeScene(third))!;
+    expect(plain.transforms[0].scale[0]).toBeCloseTo(0.3333, 12);
+    expect(plain.transforms[0].scale[0]).not.toBe(1 / 3);
+    // With the block the same map rides the wire losslessly — the swirl
+    // final's own lossless-geometry rule, one admission over.
+    const glass = decodeScene(
+      encodeScene({ ...third, finiteSolid: { shape: "menger", level: 2 } }),
+    )!;
+    expect(glass.transforms[0].scale[0]).toBe(1 / 3);
+    expect(encodeScene(glass)).toBe(
+      encodeScene({ ...third, finiteSolid: { shape: "menger", level: 2 } }),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

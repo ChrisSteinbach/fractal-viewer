@@ -8180,7 +8180,15 @@ const SURFACE_TRANSPORT_LEG_MAX_PATHS = 128;
 /** Max excluded (chaos-flip) probes per forward leg before the leg fails:
  * the escape eval legs' own absolution-cap discipline — a fixture whose
  * every probe flips certifies nothing. */
-const SURFACE_TRANSPORT_FLIP_CAP = 4;
+// The decision-flip / anchor-identity absolution cap, per leg. Recalibrated
+// 4 -> 8 when the 3D finite leg became GENUINE: the f32 twin's 3D rows were
+// zeros (every 3D event refused degenerate-normal, the leg absolved itself
+// vacuous through the flip class), and with the identity rows restored the
+// leg's real near-tie count is 7 — every divergence within the one-cell
+// slack, each kernel anchor self-consistent on its own plane, kind/t/normal
+// agreeing. The class is the disclosed anchor-identity one, not a new one;
+// the cap now reflects a leg that actually certifies.
+const SURFACE_TRANSPORT_FLIP_CAP = 8;
 /** Is this leg's core a FORWARD orbit? Forward estimators are heuristics
  * over chaotic orbits, so a probe can flip realization under one f32 ULP
  * — the escape legs' measured verdict, and the reason their agreement
@@ -8824,6 +8832,11 @@ async function runSurfaceTransportAgreementLegs(
           fourD ? 4 : 3,
           level,
           FINITE_SOLID_HALF_EXTENT,
+          // The identity rows for BOTH dimensions: 3D IS the identity pose
+          // (the WGSL 3D rowsFn emits the identity), and `null` made the
+          // twin's rowXyz return zero rows — every 3D event refused
+          // degenerate-normal and the leg absolved itself vacuous through
+          // the decision-flip class.
           fourD
             ? [
                 [1, 0, 0, 0],
@@ -8831,7 +8844,12 @@ async function runSurfaceTransportAgreementLegs(
                 [0, 0, 1, 0],
                 [0, 0, 0, 1],
               ]
-            : null,
+            : [
+                [1, 0, 0, 0],
+                [0, 1, 0, 0],
+                [0, 0, 1, 0],
+                [0, 0, 0, 1],
+              ],
           0,
           origin,
           dir,
