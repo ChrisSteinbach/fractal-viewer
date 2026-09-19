@@ -1109,6 +1109,70 @@ finite-solid document exists to admit); the trapped-billiard termination
 policy; the preset/panel path; the built-app visual acceptance against
 `scripts/out/transmission-dielectric-gpu/`.
 
+## The finite routing (landed, 2026-09-19)
+
+The finite-solid family's app routing LANDED: the document's optional
+`finiteSolid` block `{shape, level}` (`finite-solid.ts`'s authored form,
+stored verbatim and refused — never clamped — by `resolveFiniteSolid`)
+reroutes Surface to the `finiteSolid`/`finiteSolid4` kinds. The block does
+NOT replace the transform system (the sphere-inversion block's move): the
+transforms REMAIN the subject and must BE the shipped construction
+(`analyzeFiniteSolidSystem` refuses edited maps by values and signs), the
+shape names the dimension (a mismatch refuses), tiling/shape-trap/schedule
+refuse with their own reasons, and the route is COMPUTE-ONLY (no fragment
+arm; the gate refuses without WebGPU rather than handing the solid to a
+tracer that would draw the attractor). The gate discloses the routing on
+the degraded channel: the level-N cell decomposition is the solid the
+transport walks, not the transform system's IFS attractor.
+
+THE WIRE: the session target (`FiniteSolidComputeTarget`, the
+sphere-inversion precedent) carries ONLY the authored level — the cores
+are bindingless and construction-carrying — and the packers take the
+construction's origin-centred bound (the marching ball, `half·√dim`). The
+packers' `mapCount = 1` is LOAD-BEARING: the shared shade entry's slot
+clamp reads `params.mapCount`, and 0 degenerated the clamp to `[-1, 0]`,
+so the opticsMaps lane read went out of bounds, read zero, and every
+transport path skipped as a "classic slot" — the measured dark-glass
+defect the bench's control entry cannot see (it passes ior as a probe
+parameter and never walks the shade entry). The block persists verbatim,
+and the maps' geometry rides the wire LOSSLESSLY while it is present
+(the swirl-final precedent — the shipped third-contraction scale is 1/3,
+which a 4-decimal wire turns into 0.3333, outside the analyzer's
+exactness tolerance, so a shared link would refuse the very scene it
+carries).
+
+THE GROUND PLANE composes with the finite cores: the shared plane block's
+pads emit only under `groundPlane` (224→288 in 3D, 479→576 in 4D), so the
+plain kernels' text — and the wires the bench legs pin — stay
+byte-identical without a floor. The glass presets
+(`glassMenger`/`glassMenger4`, the dielectric study's selected object)
+install `PRESET_FINITE_SOLIDS`, author the Glass model on every map, and
+land the checker floor through `PRESET_SURFACE_ROOMS`; the 4D twin is the
+NATIVE posed hyper-Menger slice (a w-preserving yz turn over a small xw
+tilt in `PRESET_VIEWS`), not a w-preserving lift of the 3D object.
+
+THE APP GATE (`scripts/finite-glass.verify.mjs`, real driver): both
+presets author from the app, both dimensions route
+`engine=compute` + `opticsBackend=finiteSolid`, settle, and cover ~74.6%
+of the frame with zero exhausted rays. MEASURED RESIDUAL: the transport's
+resolved fraction is ~0.5% in both dimensions — the depth-2 anchored
+restarts refuse state-mismatch ON THE DRIVER where the f32 twin walks
+clean (812/812 hit rays complete in the twin over the app's own camera;
+the same chains refuse en masse on the GPU — a realization divergence,
+not an algorithm one: the bench's trace probes show the two engines
+failing DIFFERENTLY on the same rays, p1/p2 the twin's processed cap vs
+the GPU's refusal, p3 the twin resolving where the GPU refuses). The
+bench's boundary agreement is REAL in both dimensions (the f32 twin's 3D
+rows were zeros — every 3D event refused degenerate-normal and the 3D leg
+absolved itself vacuous through the decision-flip class; the identity
+rows restored, the 3D leg's genuine near-tie count is 7, every divergence
+within the one-cell slack and self-consistent — the cap recalibrated
+4 → 8 on that). The glass milestone's remaining work is the transport's
+anchor/termination policy — the primary anchor fix (one unanchored
+outside query locates the entry event; the refracted child starts there,
+bent by the event's exact normal) dropped the depth-1 refusals from ~all
+to a residue and is the shape the production fix follows.
+
 ## What is not yet qualified
 
 The compute kernel emission and the host buffer contracts are real state;
@@ -1125,7 +1189,9 @@ below): the app selects the closed-solid backend wherever the
 composition admits it, the panel authors the model, and the two Glass
 starters carry it in both dimensions; the export-tile gate's
 transmission leg is byte-exact in both dimensions with the distortion
-authored. What remains:
+authored. The finite routing has LANDED (2026-09-19, the section above),
+with the transport's depth-2 driver-side refusals the recorded residual.
+What remains:
 the fold core's transport (the measured timeout, three recorded paths —
 the closed-solid backend is now DOUBLY motivated for the finite-construction
 path, being its own recorded scope); built-app qualification (.11 — the

@@ -988,13 +988,22 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     the contract's finite-solid section owns the argument). The display
     marcher's estimator is the CERTIFIED HYBRID
     (`finiteSolidDisplayDistance`) — the plain level-1 min would SEAL
-    every tunnel mouth. THE KERNEL EMISSION LANDED:
-    `surface-finite-solid-gpu.ts` emits both dimensions' bodies (hybrid DE
-    - exact DDA with the FULL anchor contract), the bindingless cores
-      `finite`/`finite4` pack a 16-byte tail at 208/464 (the 4D pose IS the
-      shared tail's rotor rows + w0; the slab throws); the bench legs pin
-      the kernel against `finiteSolidDdaF32`'s f32 twin (a discrete walk).
-  - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
+    every tunnel mouth. THE KERNEL EMISSION LANDED (both dimensions'
+    bodies — the hybrid DE and the exact DDA with the full anchor
+    contract; the bindingless wire, the 4D pose tail and the f32 twin's
+    discipline: the contract's kernel-emission section owns it all).
+    THE ROUTING LANDED: the document's optional `finiteSolid` block
+    `{shape, level}` (verbatim-persisted, the sphere-inversion rule;
+    lossless maps on the wire while present — 1/3 dies in round4)
+    reroutes Surface to the finite kinds (`deriveSurfaceEligibility`; maps
+    must BE the shipped construction, compute-only), the
+    `glassMenger`/`glassMenger4` presets carry it, and the packers'
+    `mapCount = 1` is load-bearing (the shade entry's slot clamp reads it;
+    0 made the optics lane read out of bounds and every transport path
+    skip). RESIDUAL: depth-2 anchored restarts refuse on the driver where
+    the f32 twin walks clean — the glass renders dark; the twin's 3D rows
+    fix made the 3D bench leg genuine (near-tie cap recalibrated). The
+    contract's routing section owns the numbers. - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its
     hybrids, for exactly the systems the IFS gate refuses (one or more
     flat maps of which at least one does NOT contract, no final transform,
