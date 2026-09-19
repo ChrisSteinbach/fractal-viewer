@@ -15,6 +15,10 @@ import {
   finiteSolidTransportSource,
 } from "./surface-finite-solid-gpu";
 import {
+  SURFACE_GPU_PARAMS4_PLANE_BYTES,
+  SURFACE_GPU_PARAMS_PLANE_BYTES,
+} from "./surface-de-gpu";
+import {
   packSurfaceGpuParamsFinite,
   packSurfaceGpuParamsFinite4,
   surfaceDeKernelWgsl,
@@ -260,5 +264,65 @@ describe("the finite packers", () => {
     expect(() =>
       packSurfaceGpuParamsFinite({ itemCount: 1, footprint: 0.1 }, 1, 1),
     ).toThrow(/footprint/);
+  });
+
+  it("packs the ground plane at the frozen shared offsets only when authored", () => {
+    const gp = {
+      y: -0.95,
+      fadeStart: 0.5,
+      fadeEnd: 4,
+      ballRadius: 1.3,
+      ballCenter: [0, 0, 0] as [number, number, number],
+      albedo: [0.5, 0.5, 0.5] as [number, number, number],
+    };
+    const buf = packSurfaceGpuParamsFinite({ itemCount: 1 }, 2, 1.3, gp);
+    expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS_PLANE_BYTES);
+    const view = new DataView(buf);
+    expect(view.getFloat32(288, true)).toBeCloseTo(-0.95, 7);
+    expect(view.getFloat32(292, true)).toBeCloseTo(0.5, 7);
+    expect(view.getFloat32(296, true)).toBeCloseTo(4, 7);
+    // The finite block itself is untouched past the pad.
+    expect(view.getFloat32(208, true)).toBe(FINITE_SOLID_HALF_EXTENT);
+    const buf4 = packSurfaceGpuParamsFinite4(
+      {
+        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        w0: 0,
+        sliceHalfW: 0,
+      },
+      { itemCount: 1 },
+      2,
+      1.5,
+      gp,
+    );
+    expect(buf4.byteLength).toBe(SURFACE_GPU_PARAMS4_PLANE_BYTES);
+    const view4 = new DataView(buf4);
+    expect(view4.getFloat32(576, true)).toBeCloseTo(-0.95, 7);
+    expect(view4.getFloat32(580, true)).toBeCloseTo(0.5, 7);
+    expect(view4.getFloat32(464, true)).toBe(FINITE_SOLID_HALF_EXTENT);
+  });
+
+  it("emits the plane pad and fields only under a floor, keeping the plain kernel byte-identical", () => {
+    const plain = surfaceDeKernelWgsl(baseOpts("finite"));
+    const floored = surfaceDeKernelWgsl(
+      baseOpts("finite", { groundPlane: true }),
+    );
+    expect(plain).not.toContain("groundY");
+    expect(plain).not.toContain("padFinA");
+    expect(floored).toContain("padFinA");
+    expect(floored).toContain("groundY");
+    // The pad bridges exactly the finite block's end (224) to the shared
+    // plane block (288): 64 bytes = four vec4 lanes.
+    expect(floored.match(/padFin[ABCD]: vec4f/g)).toHaveLength(4);
+    expect(floored.indexOf("padFinA")).toBeLessThan(floored.indexOf("groundY"));
+    const plain4 = surfaceDeKernelWgsl(baseOpts("finite4"));
+    const floored4 = surfaceDeKernelWgsl(
+      baseOpts("finite4", { groundPlane: true }),
+    );
+    expect(plain4).not.toContain("padFin4");
+    expect(floored4).toContain("padFin4");
+    expect(floored4).toContain("groundY");
+    // And the 4D shade path still names the radius-source helpers the
+    // finite display source carries (theRotor helpers stay present).
+    expect(floored4).toContain("rotorInvApply4");
   });
 });
