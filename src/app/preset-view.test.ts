@@ -1,4 +1,7 @@
-import type { PresetFourDView } from "../fractal/presets";
+import { rotationMatrix4 } from "../fractal/affine4";
+import { finiteSolidBoundingRadius } from "../fractal/finite-solid";
+import { PRESET_VIEWS, type PresetFourDView } from "../fractal/presets";
+import { packSurfaceGpuParamsFinite4 } from "../fractal/surface-de-gpu";
 import type { Bounds4 } from "../fractal/types";
 import { MIN_RADIUS, sphericalToCartesian } from "./orbit";
 import {
@@ -14,6 +17,22 @@ import {
 } from "./rotor4";
 
 describe("presetCameraPose", () => {
+  it.each(["glassMenger", "glassMenger4"] as const)(
+    "%s opens at the accepted dielectric study camera",
+    (preset) => {
+      const pose = presetCameraPose(PRESET_VIEWS[preset]!);
+      const offset = sphericalToCartesian(pose);
+      const eye = pose.target.map(
+        (component, axis) => component + offset[axis],
+      );
+      [2.1, 1.4, 3.2].forEach((component, axis) => {
+        expect(eye[axis]).toBeCloseTo(component, 12);
+      });
+      expect(pose.target).toEqual([0, 0, 0]);
+      expect(Math.tan((pose.fov! * Math.PI) / 360)).toBeCloseTo(0.39, 12);
+    },
+  );
+
   it("places the camera exactly at the authored eye when it is far enough from the target", () => {
     const pose = presetCameraPose({
       camera: { eye: [0.4, 1.6, 0.5], target: [0, 0, 0], fov: 62 },
@@ -118,6 +137,30 @@ describe("presetFourDPose world slice", () => {
     maxZ: h[2],
     minW: -h[3],
     maxW: h[3],
+  });
+
+  it("packs the glass hyper-Menger's accepted world-to-intrinsic pose and nonzero slice", () => {
+    const pose = presetFourDPose(
+      PRESET_VIEWS.glassMenger4!.fourD!,
+      bounds([0.75, 0.75, 0.75, 0.75]),
+    );
+    const packed = new DataView(
+      packSurfaceGpuParamsFinite4(
+        { rotor: rotorMatrix(pose.pair), w0: pose.sliceW!, sliceHalfW: 0 },
+        { itemCount: 1 },
+        2,
+        finiteSolidBoundingRadius(4),
+      ),
+    );
+    // The study applies this matrix directly; the app's packer transposes
+    // its view rotor. Copying the study's angles into the view would invert
+    // the wrong matrix and produce a different slice.
+    const studyRows = rotationMatrix4({ xw: 0.57, yw: -0.31 });
+    for (let i = 0; i < 16; i++) {
+      expect(packed.getFloat32(208 + 4 * i, true)).toBeCloseTo(studyRows[i], 7);
+    }
+    expect(pose.sliceW).toBe(0.18);
+    expect(packed.getFloat32(416, true)).toBe(Math.fround(0.18));
   });
 
   it("carries the authored world w0 through untouched", () => {

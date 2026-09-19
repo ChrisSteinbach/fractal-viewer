@@ -190,6 +190,7 @@ import {
   presetTransforms,
 } from "../fractal/presets";
 import type { Preset } from "../fractal/presets";
+import { applyPresetBackground } from "./preset-background";
 import { chaosRowIsNonTrivial } from "../fractal/chaos-game";
 import {
   buildPaletteLUT,
@@ -3290,6 +3291,10 @@ async function main(): Promise<void> {
     if (view.fourD && viewIs4D && fourDResult) {
       applyFourDPose(presetFourDPose(view.fourD, fourDResult.bounds));
     }
+    // The replace edit's debounce may have saved before its cloud arrived.
+    // Persist the landed framing now so reload and Copy Link carry the same
+    // camera and world slice; flushing adds no second undo checkpoint.
+    editSession.flush();
   }
 
   // Grabbing the camera mid-glide should feel like a normal orbit, not a
@@ -10483,6 +10488,9 @@ async function main(): Promise<void> {
             },
           };
         }
+        const previousBackground = state.background;
+        state = applyPresetBackground(state, preset);
+        if (state.background !== previousBackground) applyBackgroundNow();
       }, "always");
       // The tumbling scaffold (Show guides toggles it with the grid/axes) —
       // the polytope presets carry one (see PRESET_SCAFFOLDS); every other
