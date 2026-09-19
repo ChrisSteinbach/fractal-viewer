@@ -2928,9 +2928,10 @@ export const PRESET_SURFACE_PALETTES: Partial<
   mandelboxPeace: "ember",
 };
 
-/** Surface-room state carried by the one preset composed around it. Absent
+/** Surface-room state carried by the presets composed around it. Absent
  * leaves the user's room controls alone, matching lighting/palette settings;
- * this entry authors the floor explicitly when Metal Studio is chosen. */
+ * each entry authors its floor explicitly. The glass backdrop is installed
+ * independently through app/preset-background.ts's PRESET_BACKGROUNDS. */
 export const PRESET_SURFACE_ROOMS: Partial<
   Record<
     Preset,
@@ -3132,26 +3133,31 @@ export const PRESET_VIEWS: Partial<Record<Preset, PresetView>> = {
     // round a central rosette) than the double rotation at the kiss slice.
     fourD: { rotation: [["xw", 0.3]], w0: 0.1 },
   },
-  // The glass Menger, framed like the starters' discovery shots: high
-  // enough for the checker floor behind and below, close enough that the
-  // tunnel mouths read through the front cells.
+  // Both glass constructions use the dielectric study's accepted camera:
+  // eye/target in world units, tan(vertical FOV / 2) = 0.39.
   glassMenger: {
-    camera: { eye: [1.5, 0.5, 2.5], target: [0, -0.15, 0], fov: 62 },
+    camera: {
+      eye: [2.1, 1.4, 3.2],
+      target: [0, 0, 0],
+      fov: (360 * Math.atan(0.39)) / Math.PI,
+    },
   },
-  // The glass hyper-Menger's POSED slice: a w-preserving yz turn (a rigid
-  // 3D-looking rotation of the sliced object) over a small xw tilt — the
-  // tilt is what makes the pose NATIVE 4D (the slice cuts the posed 4D
-  // grid at an angle) while keeping the silhouette legible, and the
-  // centre slice w0 = 0 is where the level-2 cells are densest. The
-  // camera rides the same starter framing one dimension up.
+  // The accepted native 4D slice's world→intrinsic matrix is
+  // R_xw(0.57) · R_yw(-0.31). The app transposes its view rotor when
+  // packing that query, so these ordered view rotations author the INVERSE,
+  // R_yw(0.31) · R_xw(-0.57). The nonzero w0 is a world hyperplane.
   glassMenger4: {
-    camera: { eye: [1.9, 0.85, 2.9], target: [0, 0, 0], fov: 62 },
+    camera: {
+      eye: [2.1, 1.4, 3.2],
+      target: [0, 0, 0],
+      fov: (360 * Math.atan(0.39)) / Math.PI,
+    },
     fourD: {
       rotation: [
-        ["yz", 0.42],
-        ["xw", 0.18],
+        ["xw", -0.57],
+        ["yw", 0.31],
       ],
-      w0: 0,
+      w0: 0.18,
     },
   },
 };

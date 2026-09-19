@@ -6,6 +6,7 @@ import { initialState } from "./state";
 import type { Transform, Vec3 } from "../fractal/types";
 import type { CameraPose } from "./orbit";
 import { sphericalFromCartesian } from "./orbit";
+import { createGlassStudioBackground } from "./preset-background";
 
 /**
  * The transmission material's starter compositions — the glass bundle's
@@ -90,31 +91,11 @@ function camera(eye: Vec3, target: Vec3, zoom: number): CameraPose {
   };
 }
 
-const encoded = (linear: Vec3): Vec3 => [
-  Math.pow(linear[0], 1 / 2.2),
-  Math.pow(linear[1], 1 / 2.2),
-  Math.pow(linear[2], 1 / 2.2),
-];
-
-/** The shared backdrop: a bright studio gradient — the Fresnel rims and
- * the refracted interior read against it, and a dark stop would render
- * every grazing reflection black. The checker floor provides the
- * high-contrast rear structure; the gradient keeps the upper half of a
- * transmission path from reading empty. */
-const BACKDROP = {
-  mode: "custom",
-  shape: "linear",
-  custom: {
-    top: encoded([0.62, 0.68, 0.76]),
-    bottom: encoded([0.3, 0.33, 0.4]),
-  },
-} as const;
-
 function baseState(): ReturnType<typeof initialState> {
   const state = initialState(true);
   state.showGuides = false;
   state.fogDensity = 0;
-  state.background = { ...BACKDROP };
+  state.background = createGlassStudioBackground();
   state.groundPlane = true;
   // The checker floor is the bright rear structure the transmission and
   // its restrained distortion are for — a solid floor gives a refraction
