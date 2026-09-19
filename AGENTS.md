@@ -979,21 +979,21 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     NO PARTICIPATING MEDIUM (measured cost; a look call). Record:
     `docs/cinematic-surface-lighting.md`.
   - `finite-solid.ts` — the FRACTAL GLASS oracle (the owner's scope
-    correction: glass on the fractal, emitters were scaffolding): the
-    study's selected object — the finite level-N cell decomposition and
-    its posed 4D hyper-Menger slice — as the transport's co-extensive
-    optical solid. Exact ternary grid (≤1 middle coordinate per level;
-    20/48 children), admitted FROM THE DOCUMENT's maps through the shared
-    affine twins (values AND signs), no kaleidoscope, no warping final,
-    level 0..2. Its exact DDA boundary query is the STUDY'S oracle —
-    never a marched min-SDF, whose interior-shared-plane zero is the
-    abutting-seam phantom-crossing mechanism; the signed field is
-    display/mirror-only. Pinned BIT-FOR-BIT against the qualified fixture
-    (`scripts/finite-solid.harness.ts`) in 3D and posed 4D. Remaining:
-    the kernel emission (DDA as transport query + hierarchical box-union
-    display DE), routing admission, trapped-billiard policy, preset/panel
-    path, built-app visual acceptance. Record: the transport contract's
-    finite-solid section.
+    correction — glass on the fractal): the study's finite level-N cell
+    decomposition and posed 4D hyper-Menger slice, co-extensive with the
+    optical solid. Exact ternary grid (≤1 middle coordinate per
+    level), admitted from the document's own maps, level 0..2 (the
+    admission's terms: the contract's section); the exact DDA is the
+    STUDY'S oracle, never a marched min-SDF (the abutting-seam mechanism —
+    the contract's finite-solid section owns the argument). The display
+    marcher's estimator is the CERTIFIED HYBRID
+    (`finiteSolidDisplayDistance`) — the plain level-1 min would SEAL
+    every tunnel mouth. THE KERNEL EMISSION LANDED:
+    `surface-finite-solid-gpu.ts` emits both dimensions' bodies (hybrid DE
+    - exact DDA with the FULL anchor contract), the bindingless cores
+      `finite`/`finite4` pack a 16-byte tail at 208/464 (the 4D pose IS the
+      shared tail's rotor rows + w0; the slab throws); the bench legs pin
+      the kernel against `finiteSolidDdaF32`'s f32 twin (a discrete walk).
   - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its
     hybrids, for exactly the systems the IFS gate refuses (one or more
