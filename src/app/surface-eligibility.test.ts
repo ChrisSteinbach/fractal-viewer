@@ -1,5 +1,6 @@
 import {
   PRESET_FINALS,
+  PRESET_FINITE_SOLIDS,
   PRESET_NAMES,
   PRESET_RENDER_HINTS,
   PRESET_SCHEDULES,
@@ -259,6 +260,7 @@ function presetDocument(preset: Preset): SurfaceEligibilityDocument {
     shapeTrap: PRESET_TRAPS[preset]?.() ?? null,
     tiling: PRESET_TILINGS[preset] ?? null,
     sphereInversion: PRESET_SPHERE_INVERSIONS[preset]?.() ?? null,
+    finiteSolid: PRESET_FINITE_SOLIDS[preset] ?? null,
   };
 }
 
@@ -279,6 +281,7 @@ function derivePreset(
     document.tiling ?? null,
     document.condensationDepthBand,
     document.sphereInversion ?? null,
+    document.finiteSolid ?? null,
   );
 }
 
@@ -295,6 +298,8 @@ function expectNeutralParity(
     document.shapeTrap ?? null,
     document.tiling ?? null,
     document.condensationDepthBand,
+    document.sphereInversion ?? null,
+    document.finiteSolid ?? null,
   );
   expect(neutral).toEqual(legacyComplete);
   return neutral;
@@ -382,6 +387,15 @@ describe("deriveSurfaceEligibility over the shipped presets", () => {
     expect(
       derivePreset("pentatope", { computeAvailable: false }).status,
     ).not.toBe("ineligible");
+  });
+
+  it("routes the glass showcases to their finite kinds, both dimensions", () => {
+    const flat = derivePreset("glassMenger");
+    expect(flat.status).toBe("degraded");
+    expect(flat.kind).toBe("finiteSolid");
+    const deep = derivePreset("glassMenger4");
+    expect(deep.status).toBe("degraded");
+    expect(deep.kind).toBe("finiteSolid4");
   });
 });
 

@@ -179,6 +179,7 @@ import {
   PRESET_NAMES,
   PRESET_SCHEDULES,
   PRESET_SPHERE_INVERSIONS,
+  PRESET_FINITE_SOLIDS,
   PRESET_SYMMETRIES,
   PRESET_SURFACE_PALETTES,
   PRESET_SURFACE_ROOMS,
@@ -390,6 +391,7 @@ import {
   setSymmetryOrder,
   setSymmetryTwist,
   setSphereInversion,
+  setFiniteSolid,
   setTiling,
   setTransforms,
   setTransformEmitter,
@@ -10456,6 +10458,12 @@ async function main(): Promise<void> {
           state,
           PRESET_SPHERE_INVERSIONS[preset]?.() ?? null,
         );
+        // The finite-solid block a preset IS (PRESET_FINITE_SOLIDS) — the
+        // sphere-inversion table's absent-means-clear rule: the glass
+        // showcases install their block, and every other preset CLEARS
+        // one, because a leftover block would reroute an unrelated system
+        // (or refuse it outright).
+        state = setFiniteSolid(state, PRESET_FINITE_SOLIDS[preset] ?? null);
         // The flame palette a preset was composed against
         // (PRESET_PALETTES) — set, never cleared: absent means "the user's
         // palette is fine", which is every preset that predates the table.
