@@ -64,6 +64,7 @@ import {
 import {
   isForwardTarget,
   isSphereInversionTarget,
+  isFiniteSolidTarget,
   setSurfaceComputeSchedulePins,
   setSurfaceComputeTrace,
   SurfaceComputeRenderer,
@@ -4880,6 +4881,12 @@ async function main(): Promise<void> {
       );
       slotColors = slots.colors;
       slotTraps = slots.trapIndices;
+    } else if (isFiniteSolidTarget(target)) {
+      // The finite cores' ONE slot: the hit-info pins firstChoice 0, so
+      // the head map's color lane is the whole wire — the forward
+      // families' exact shape, one route kind over.
+      slotColors = [escapeSlotColor()];
+      slotTraps = [0];
     } else if (isForwardTarget(target)) {
       slotColors = [escapeSlotColor()];
       slotTraps = [0];
