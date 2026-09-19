@@ -384,6 +384,7 @@ const SCENE_FIELDS = {
   fogTint: true,
   fogTintStrength: true,
   groundPlane: true,
+  finiteSolid: true,
 } satisfies Fields<SceneSnapshot>;
 
 function object(
@@ -881,6 +882,18 @@ function sphereInversionBlock(value: unknown, path: string): void {
   jsonValue(value, path, 0);
 }
 
+/**
+ * The finite-solid block's verbatim twin: same contract, same reasoning —
+ * `resolveFiniteSolid` refuses rather than throws, so the crossover carries
+ * the block through untouched.
+ */
+function finiteSolidBlock(value: unknown, path: string): void {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError(`${path} must be an object`);
+  }
+  jsonValue(value, path, 0);
+}
+
 function jsonValue(value: unknown, path: string, depth: number): void {
   if (depth > 32) throw new RangeError(`${path} nests too deeply`);
   if (
@@ -1348,6 +1361,9 @@ export function assertValidEvolutionSceneSnapshot(
   if (scene.tiling !== undefined) tiling(scene.tiling, "snapshot.tiling");
   if (scene.sphereInversion !== undefined) {
     sphereInversionBlock(scene.sphereInversion, "snapshot.sphereInversion");
+  }
+  if (scene.finiteSolid !== undefined) {
+    finiteSolidBlock(scene.finiteSolid, "snapshot.finiteSolid");
   }
 
   param(
