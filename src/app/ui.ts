@@ -1677,7 +1677,13 @@ function patternSummary(t: Transform): string[] {
  * `firstChoice` 0). Every other route shades each hit by the slot that
  * produced it, so every transform's finish reaches the frame. */
 function routeShadesHeadOnly(kind: SurfaceRouteKind | null): boolean {
-  return kind === "escape" || kind === "bulb" || kind === "escape4";
+  return (
+    kind === "escape" ||
+    kind === "bulb" ||
+    kind === "escape4" ||
+    kind === "finiteSolid" ||
+    kind === "finiteSolid4"
+  );
 }
 
 const FINISH_APPLICABILITY_NOTE_ID = "finishApplicabilityNote";
@@ -2960,7 +2966,12 @@ export class Ui {
    * sessions. */
   private fourDSlabAvailable = true;
   private fourDSlabRefusal:
-    "swirl" | "tiling" | "condensation" | "sphereInversion" | null = null;
+    | "swirl"
+    | "tiling"
+    | "condensation"
+    | "sphereInversion"
+    | "finiteSolid"
+    | null = null;
   /**
    * The ACTIVE surface session's shape: `"escape"` for the escape-time fold
    * render and `"bulb"` for the Mandelbulb — the two FORWARD-ORBIT objects,
@@ -4698,20 +4709,24 @@ export class Ui {
           "supports its zero-thickness slices."
         : this.fourDSlabRefusal === "sphereInversion"
           ? `Slab thickness is unavailable in a sphere-inversion scene: ${SPHERE_INVERSION_SLAB_REFUSAL}. A zero-thickness slice remains available.`
-          : this.fourDSlabRefusal === "condensation"
-            ? "Slab thickness is unavailable with a condensation shape: its " +
-              "carried solid needs its own set-distance evaluator for a " +
-              "segment. A zero-thickness slice remains available."
-            : this.fourDSlabRefusal === "tiling"
-              ? "Slab thickness is unavailable with Space tiling: folding a " +
-                "segment bends it across cell walls. A zero-thickness slice " +
-                "remains available."
-              : this.surfaceSessionKind === "escape"
-                ? "Slab thickness is unavailable in the escape-time render: its " +
-                  "orbit runs the maps FORWARD, with no branches to thread a " +
-                  "segment through, so a slab has no certificate at any fold " +
-                  "family. The IFS surface render keeps it."
-                : "";
+          : this.fourDSlabRefusal === "finiteSolid"
+            ? "Slab thickness is unavailable in a finite-solid scene: the " +
+              "exact cell walk threads one w-plane, and a segment has no " +
+              "cell walk. A zero-thickness slice remains available."
+            : this.fourDSlabRefusal === "condensation"
+              ? "Slab thickness is unavailable with a condensation shape: its " +
+                "carried solid needs its own set-distance evaluator for a " +
+                "segment. A zero-thickness slice remains available."
+              : this.fourDSlabRefusal === "tiling"
+                ? "Slab thickness is unavailable with Space tiling: folding a " +
+                  "segment bends it across cell walls. A zero-thickness slice " +
+                  "remains available."
+                : this.surfaceSessionKind === "escape"
+                  ? "Slab thickness is unavailable in the escape-time render: its " +
+                    "orbit runs the maps FORWARD, with no branches to thread a " +
+                    "segment through, so a slab has no certificate at any fold " +
+                    "family. The IFS surface render keeps it."
+                  : "";
     this.fourDSliceThicknessUnavailableNote.textContent =
       this.fourDSliceThicknessRow.title;
     this.fourDSliceThicknessUnavailableNote.classList.toggle(
@@ -4761,7 +4776,12 @@ export class Ui {
   setFourDSlabAvailable(
     available: boolean,
     reason:
-      "swirl" | "tiling" | "condensation" | "sphereInversion" | null = null,
+      | "swirl"
+      | "tiling"
+      | "condensation"
+      | "sphereInversion"
+      | "finiteSolid"
+      | null = null,
   ): void {
     if (
       this.fourDSlabAvailable === available &&
@@ -10172,7 +10192,7 @@ export class Ui {
     const opticsNote = this.doc.createElement("p");
     opticsNote.className = "flame-note-info";
     opticsNote.textContent =
-      "Transmission resolves on closed-solid (emitter) scenes — load a Glass starter to see it; other surfaces keep the classic finish.";
+      "Transmission resolves on closed-solid (emitter) and finite-cell (Menger) scenes — load a Glass starter to see it; other surfaces keep the classic finish.";
     group.appendChild(opticsNote);
 
     this.syncFinishBundleSelect(bundle, finish, optics);

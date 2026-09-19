@@ -47,8 +47,12 @@ import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 
 /** The optical transport's boundary backend — `surface-dielectric-transport.md`'s
  * `opticsBackend` vocabulary, the same string both engines' create/codegen
- * options take. */
-export type SurfaceOpticsBackend = "estimator" | "closedSolid";
+ * options take. `"finiteSolid"` is COMPUTE-ONLY (the finite cores have no
+ * fragment mirror, the escape4 verdict one family over): the GLSL material
+ * stamp must never receive it — the finite session exits with a toast on a
+ * compute loss rather than falling back to a WebGL tracer that would draw
+ * the attractor. */
+export type SurfaceOpticsBackend = "estimator" | "closedSolid" | "finiteSolid";
 
 /** A 4D session's pose at entry — `SurfaceGpu4View`'s own three fields, the
  * values the app packs into every frame's params (the rotor row-major 4x4,
