@@ -542,21 +542,16 @@ fn transportFiniteBoundary(
   let maxVisits = ${dim} * (g - 1) + 1;
   var q = finiteLift(origin);
   var qd = finiteLiftDir(dir);
-  if (anchorPresent == 1u) {
-    for (var a = 0; a < ${dim}; a++) {
-      if ((anchorMask & (1u << u32(a))) != 0u) {
-        q[a] = finiteGridPlane(anchorPlanesIn[a]);
-      } else {
-        let lower = finiteGridPlane(anchorCellsIn[a]);
-        let upper = finiteGridPlane(anchorCellsIn[a] + 1);
-        if (q[a] < lower) {
-          q[a] = lower;
-        } else if (q[a] > upper) {
-          q[a] = upper;
-        }
-      }
-    }
-  }
+  // THE ANCHORED RESTART CONSUMES NO ANCHOR STATE. The copied cells
+  // contradicted the walks that produced them on the real driver (the
+  // measured inside-miss and nonmonotone masses), and the cell clamp
+  // they drive reconstructs the position INTO the contradicted cell —
+  // so the restart classifies from the lifted world origin directly.
+  // The f32 round-trip leaves the position up to an ulp off the face it
+  // was born on; the ray-side rule's on-plane tie (below) picks the
+  // direction's side deterministically, which is the same-face
+  // suppression the cell identity used to provide, and the boundary
+  // identity's loss is the disclosed one-cell near-tie slack.
   // clipRoot: the per-axis slabs of the root box.
   var enter = -1.0e30;
   var exitT = 1.0e30;
@@ -566,6 +561,7 @@ fn transportFiniteBoundary(
     if (qd[a] == 0.0) {
       if (q[a] < -half || q[a] > half) {
         result.kind = 2u;
+        result.reason = 0u;
         return result;
       }
       continue;
@@ -585,30 +581,55 @@ fn transportFiniteBoundary(
     exitT = min(exitT, far);
     if (exitT < enter) {
       result.kind = 2u;
+      result.reason = 0u;
       return result;
     }
   }
   var start = max(0.0, enter);
   if (exitT < start || (anchorPresent == 0u && exitT == start)) {
     result.kind = 2u;
+    result.reason = 0u;
     return result;
   }
   var index: array<i32, 4> = array<i32, 4>(0, 0, 0, 0);
   for (var a = 0; a < ${dim}; a++) {
     index[a] = finiteRaySideIndex(q[a] + start * qd[a], qd[a]);
   }
-  if (anchorPresent == 1u) {
+  // THE WALK IS CLAIM-FREE. The caller's carried medium no longer
+  // gates the start: the walk begins in the ray-side cell of its own
+  // position and fires its events at the occupancy transitions it
+  // actually crosses — the field's truth — while the transport's
+  // medium claims keep coming from the split's segment geometry. This
+  // is the measured resolution of the driver failure mass: the
+  // anchored restarts' copied cell state contradicted the walks that
+  // produced them (the state-mismatch, inside-miss and nonmonotone
+  // masses), where the position's own classification and both the f64
+  // oracle chain and the FMA-bracketed twin are honest.
+  //
+  // THE BIRTH-FACE SUPPRESSION rides the position, not an exact tie:
+  // the f32 round-trip leaves the restart up to an ulp off the face it
+  // was born on, so any first crossing within the declared envelope of
+  // the restart is that face again (or a clamp artifact), not a new
+  // boundary — advance the start cell across it without an event, and
+  // repeat while any axis still hugs one.
+  let envelope = half * ${finiteEnvelopeLiteral};
+  var suppressed = true;
+  while (suppressed) {
+    suppressed = false;
     for (var a = 0; a < ${dim}; a++) {
-      index[a] = anchorCellsIn[a];
-      if ((anchorMask & (1u << u32(a))) == 0u) {
+      if (qd[a] == 0.0) {
         continue;
       }
-      if (qd[a] == 0.0) {
-        result.kind = 3u;
-        result.reason = 4u;
-        return result;
+      let planeIndex = select(index[a], index[a] + 1, qd[a] > 0.0);
+      if (planeIndex < 0 || planeIndex > g) {
+        continue;
       }
-      index[a] = select(anchorPlanesIn[a] - 1, anchorPlanesIn[a], qd[a] > 0.0);
+      let plane = finiteGridPlane(planeIndex);
+      let gap = abs((plane - q[a]) / qd[a]);
+      if (gap * abs(qd[a]) < envelope) {
+        index[a] = index[a] + select(-1, 1, qd[a] > 0.0);
+        suppressed = true;
+      }
     }
   }
   var visits = 0;
@@ -619,47 +640,6 @@ fn transportFiniteBoundary(
   }
   if (inGridStart) {
     visits = visits + 1;
-  }
-  let mediumInside = inside == 1u;
-  if (sideInside != mediumInside) {
-    if (anchorPresent == 1u) {
-      result.reason = 3u;
-      return result;
-    }
-    var axes: array<i32, 4> = array<i32, 4>(0, 0, 0, 0);
-    var axisCount = 0;
-    if (start == enter) {
-      axes = enterAxes;
-      axisCount = enterAxisCount;
-    } else {
-      for (var a = 0; a < ${dim}; a++) {
-        let u = (q[a] + start * qd[a] + half) / width;
-        if (u == round(u) && qd[a] != 0.0) {
-          axes[axisCount] = a;
-          axisCount = axisCount + 1;
-        }
-      }
-    }
-    if (axisCount == 0) {
-      result.reason = 3u;
-      return result;
-    }
-    var planeIndices: array<i32, 4> = array<i32, 4>(-1, -1, -1, -1);
-    for (var ai = 0; ai < axisCount; ai++) {
-      let a = axes[ai];
-      planeIndices[a] = i32(round((q[a] + start * qd[a] + half) / width));
-    }
-    return finiteEvent(
-      q,
-      qd,
-      dir,
-      start,
-      sideInside,
-      axes,
-      axisCount,
-      planeIndices,
-      index,
-    );
   }
   loop {
     var nextT = 1.0e30;
@@ -676,6 +656,7 @@ fn transportFiniteBoundary(
     }
     if (nextT >= 1.0e30) {
       result.kind = 2u;
+      result.reason = 0u;
       return result;
     }
     if (nextT < start) {
@@ -729,16 +710,12 @@ fn transportFiniteBoundary(
       if (event.kind == 3u) {
         return event;
       }
-      if (sideInside != mediumInside) {
-        result.kind = 3u;
-        result.reason = 3u;
-        return result;
-      }
       return event;
     }
     sideInside = nextInside;
     if (!inRoot) {
       result.kind = 2u;
+      result.reason = 0u;
       return result;
     }
   }
@@ -760,7 +737,9 @@ fn transportFiniteBoundary(
  * and a conforming driver agree to driver FMA contraction alone — the
  * leg pins kind/reason/t/indices bit-exactly and the normal to a tight
  * tolerance. Inputs are f32-quantized here (the control wire's own
- * contract): the caller may pass f64, the twin rounds first.
+ * contract): the caller may pass f64, the twin rounds first. The
+ * `inside` argument is part of the caller's shape and no longer read —
+ * the walk is claim-free (the twin of the WGSL DDA's).
  *
  * `poseRows` is the 4D world→intrinsic pose (row-major, one Vec4 per
  * row) and `w0` the slice; 3D passes null (the identity pose, the
@@ -783,7 +762,7 @@ export function finiteSolidDdaF32(
   origin: Vec3,
   dir: Vec3,
   anchor: FiniteSolidAnchor | null,
-  inside: boolean,
+  _inside: boolean,
 ): FiniteSolidDdaF32Result {
   const f = Math.fround;
   const grid = 3 ** level;
@@ -867,18 +846,10 @@ export function finiteSolidDdaF32(
   if (!(f(f(qd[0] * qd[0]) + f(f(qd[1] * qd[1]) + f(qd[2] * qd[2]))) > 0)) {
     return refused(2);
   }
-  if (anchor) {
-    for (let a = 0; a < dim; a++) {
-      if ((anchor.planeMask & (1 << a)) !== 0) {
-        q[a] = finiteGridPlane(anchor.planeIndices[a]);
-      } else {
-        const lower = finiteGridPlane(anchor.cellIndices[a]);
-        const upper = finiteGridPlane(anchor.cellIndices[a] + 1);
-        if (q[a] < lower) q[a] = lower;
-        else if (q[a] > upper) q[a] = upper;
-      }
-    }
-  }
+  // The anchored restart consumes no anchor state — the twin of the
+  // WGSL restart's (see there): the copied cells contradicted the walks
+  // that produced them on the real driver, so the restart classifies
+  // from the lifted world origin directly.
   let enter = f(-1e30);
   let exitT = f(1e30);
   let enterAxes: number[] = [];
@@ -914,13 +885,26 @@ export function finiteSolidDdaF32(
   for (let a = 0; a < dim; a++) {
     index[a] = raySideIndex(f(q[a] + f(start * qd[a])), qd[a]);
   }
-  if (anchor) {
+  // THE ANCHORED RESTART READS ITS START CELL FROM THE POSITION — the
+  // twin of the WGSL restart's (see there).
+  //
+  // THE WALK IS CLAIM-FREE — the ray-side start cell, the events at the
+  // occupancy transitions actually crossed, and the position-based
+  // birth-face suppression (the ulp-off restart hugs its birth face;
+  // any first crossing within the declared envelope is that face
+  // again, not a new boundary).
+  let suppressed = true;
+  while (suppressed) {
+    suppressed = false;
     for (let a = 0; a < dim; a++) {
-      index[a] = anchor.cellIndices[a];
-      if ((anchor.planeMask & (1 << a)) === 0) continue;
-      if (qd[a] === 0) return refused(4);
-      index[a] =
-        qd[a] > 0 ? anchor.planeIndices[a] : anchor.planeIndices[a] - 1;
+      if (qd[a] === 0) continue;
+      const planeIndex = qd[a] > 0 ? index[a] + 1 : index[a];
+      if (planeIndex < 0 || planeIndex > grid) continue;
+      const plane = finiteGridPlane(planeIndex);
+      if (f(Math.abs(f(plane - q[a]) / qd[a]) * Math.abs(qd[a])) < envelope) {
+        index[a] += qd[a] > 0 ? 1 : -1;
+        suppressed = true;
+      }
     }
   }
   let visits = 0;
@@ -930,7 +914,6 @@ export function finiteSolidDdaF32(
     inGridStart = inGridStart && index[a] >= 0 && index[a] < grid;
   }
   if (inGridStart) visits++;
-  const mediumInside = inside;
   const boundaryNormal = (
     planeMask: number,
     entering: boolean,
@@ -1071,27 +1054,7 @@ export function finiteSolidDdaF32(
       },
     };
   };
-  if (sideInside !== mediumInside) {
-    if (anchor) return refused(3);
-    let axes: number[];
-    if (start === enter) {
-      axes = enterAxes;
-    } else {
-      axes = [];
-      for (let a = 0; a < dim; a++) {
-        const u = f(f(f(q[a] + f(start * qd[a])) + half) / width);
-        if (u === Math.round(u) && qd[a] !== 0) axes.push(a);
-      }
-    }
-    if (axes.length === 0) return refused(3);
-    const planeIndices = [-1, -1, -1, -1];
-    for (const a of axes) {
-      planeIndices[a] = Math.round(
-        f(f(f(q[a] + f(start * qd[a])) + half) / width),
-      );
-    }
-    return event(start, sideInside, axes, planeIndices, index);
-  }
+
   for (;;) {
     let nextT = 1e30;
     const crossingT = [1e30, 1e30, 1e30, 1e30];
@@ -1126,7 +1089,6 @@ export function finiteSolidDdaF32(
       }
       const result = event(nextT, nextInside, axes, planeIndices, index);
       if (result.kind === 3) return result;
-      if (sideInside !== mediumInside) return refused(3);
       return result;
     }
     sideInside = nextInside;
