@@ -979,31 +979,22 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     NO PARTICIPATING MEDIUM (measured cost; a look call). Record:
     `docs/cinematic-surface-lighting.md`.
   - `finite-solid.ts` — the FRACTAL GLASS oracle (the owner's scope
-    correction — glass on the fractal): the study's finite level-N cell
-    decomposition and posed 4D hyper-Menger slice, co-extensive with the
-    optical solid. Exact ternary grid (≤1 middle coordinate per
-    level), admitted from the document's own maps, level 0..2 (the
-    admission's terms: the contract's section); the exact DDA is the
-    STUDY'S oracle, never a marched min-SDF (the abutting-seam mechanism —
-    the contract's finite-solid section owns the argument). The display
-    marcher's estimator is the CERTIFIED HYBRID
-    (`finiteSolidDisplayDistance`) — the plain level-1 min would SEAL
-    every tunnel mouth. THE KERNEL EMISSION LANDED (both dimensions'
-    bodies — the hybrid DE and the exact DDA with the full anchor
-    contract; the bindingless wire, the 4D pose tail and the f32 twin's
-    discipline: the contract's kernel-emission section owns it all).
-    THE ROUTING LANDED: the document's optional `finiteSolid` block
-    `{shape, level}` (verbatim-persisted, the sphere-inversion rule;
-    lossless maps on the wire while present — 1/3 dies in round4)
-    reroutes Surface to the finite kinds (`deriveSurfaceEligibility`; maps
-    must BE the shipped construction, compute-only), the
-    `glassMenger`/`glassMenger4` presets carry it, and the packers'
-    `mapCount = 1` is load-bearing (the shade entry's slot clamp reads it;
-    0 made the optics lane read out of bounds and every transport path
-    skip). RESIDUAL: depth-2 anchored restarts refuse on the driver where
-    the f32 twin walks clean — the glass renders dark; the twin's 3D rows
-    fix made the 3D bench leg genuine (near-tie cap recalibrated). The
-    contract's routing section owns the numbers. - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
+    correction — glass on the fractal): the study's finite level-N
+    decomposition and its posed hyper-Menger slice, co-extensive with the
+    optical solid; exact ternary grid (≤1 middle coordinate per level),
+    admitted from the document's own maps; the exact DDA is the
+    STUDY'S oracle, never a marched min-SDF. The display marcher's
+    estimator is the CERTIFIED HYBRID (the plain level-1 min would seal
+    every tunnel mouth). KERNEL EMISSION, ROUTING and the GLASS RESOLUTION landed
+    (2026-09-19): the document's optional
+    `finiteSolid` block (verbatim-persisted, the sphere-inversion rule)
+    reroutes Surface to the compute-only finite kinds, the glass
+    presets carry it, and the
+    anchored restart consumes no anchor state — it classifies from the
+    world origin's ray side, walks claim-free, suppresses the birth face; the miss sites reset
+    reason. the gate reads
+    97.0%/99.6% resolved in 3D/4D and the glass renders; the ~3% billiard
+    residue stays open (the contract's sections own the rest). - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its
     hybrids, for exactly the systems the IFS gate refuses (one or more
     flat maps of which at least one does NOT contract, no final transform,

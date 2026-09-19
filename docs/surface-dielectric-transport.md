@@ -1154,24 +1154,46 @@ tilt in `PRESET_VIEWS`), not a w-preserving lift of the 3D object.
 THE APP GATE (`scripts/finite-glass.verify.mjs`, real driver): both
 presets author from the app, both dimensions route
 `engine=compute` + `opticsBackend=finiteSolid`, settle, and cover ~74.6%
-of the frame with zero exhausted rays. MEASURED RESIDUAL: the transport's
-resolved fraction is ~0.5% in both dimensions — the depth-2 anchored
-restarts refuse state-mismatch ON THE DRIVER where the f32 twin walks
-clean (812/812 hit rays complete in the twin over the app's own camera;
-the same chains refuse en masse on the GPU — a realization divergence,
-not an algorithm one: the bench's trace probes show the two engines
-failing DIFFERENTLY on the same rays, p1/p2 the twin's processed cap vs
-the GPU's refusal, p3 the twin resolving where the GPU refuses). The
-bench's boundary agreement is REAL in both dimensions (the f32 twin's 3D
-rows were zeros — every 3D event refused degenerate-normal and the 3D leg
-absolved itself vacuous through the decision-flip class; the identity
-rows restored, the 3D leg's genuine near-tie count is 7, every divergence
-within the one-cell slack and self-consistent — the cap recalibrated
-4 → 8 on that). The glass milestone's remaining work is the transport's
-anchor/termination policy — the primary anchor fix (one unanchored
-outside query locates the entry event; the refracted child starts there,
-bent by the event's exact normal) dropped the depth-1 refusals from ~all
-to a residue and is the shape the production fix follows.
+of the frame with zero exhausted rays. MEASURED RESIDUAL (resolved by the
+anchor/termination fix, same day): the transport's resolved fraction was
+~0.5% in both dimensions — the depth-2 anchored restarts refused
+state-mismatch ON THE DRIVER where the f32 twin walked clean. The
+dissection (twin-side chain walk validated bit-exact against the
+fixture's trace; a driver-side diagnostic probe, reverted): the refusing
+restarts were single-face anchors with honest normals and substantial
+child-direction components, whose copied cell state contradicted the
+walks that produced them — not the tied-corner diagonal of the
+handover's hypothesis (refuted: perturbing every real chain's child
+directions by ulps never flipped a restart's consistency, and an
+explicit FMA-emulating mirror — `fround(a*b+c)` at every contractible
+site — resolves the app camera 114/114). THE FIX, in both dimensions'
+ONE DDA text and its f32 twin: the anchored restart consumes no anchor
+state (the copied cells drove both the start cell and the position
+clamp), classifies from the lifted world origin's own ray-side rule,
+walks CLAIM-FREE (events fire at the occupancy transitions actually
+crossed; the transport's medium claims stay segment-geometry-derived),
+and suppresses the birth face by envelope — any first crossing within
+the declared envelope of the ulp-off restart is that face again, not a
+new boundary. Also fixed and unmasked by the fix: the DDA's miss sites
+returned carrying the init's stale reason 1 (the twin's miss is reason 0) — masked while every anchored query refused state-mismatch, it
+failed the bench's boundary leg the moment anchored queries started
+missing; all miss sites now reset to reason 0. MEASURED (RX 7900 XTX,
+the app gate): 3D resolved 137 720 / unresolved 4 292 (97.0%), 4D
+resolved 116 352 / unresolved 516 (99.6%) — the glass Menger and its
+native posed 4D counterpart render as glass over the checker floor;
+`npm run bench:surface` PASS, both finite legs boundaryAgree/traceAgree. (The bench's boundary
+agreement became real in both dimensions this session: the f32 twin's 3D
+rows had been zeros — every 3D event refused degenerate-normal and the 3D
+leg absolved itself vacuous through the decision-flip class; the identity
+rows restored, the 3D leg's genuine near-tie count is 7 and the cap
+recalibrated 4 → 8 on that.)
+THE REMAINING ~3%: the billiard residue's classes, measured through the
+status side channel — f5 (inside-miss after a truth-walk found air)
+x3907 and f4/r5 (nonmonotone at an out-of-box anchored restart)
+x3221 at the 640×480 probe run — whose A/Bs (processed/interfaces caps
+→ 16384, the stack → 64, the acceptance budget ×8) moved nothing, so
+the trapped-billiard termination policy (the contract's standing item)
+stays the one that can retire them, measured.
 
 ## What is not yet qualified
 
