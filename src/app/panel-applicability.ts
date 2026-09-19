@@ -7,7 +7,8 @@ export type PanelDimension = "flat" | "nonFlat";
 /** Which object an active Surface session is actually marching. Keep this
  * separate from SurfaceRouteKind: active-session applicability and predicted
  * next-entry routing are different facts. */
-export type SurfaceSessionKind = "ifs" | "escape" | "bulb" | "sphereInversion";
+export type SurfaceSessionKind =
+  "ifs" | "escape" | "bulb" | "sphereInversion" | "finiteSolid";
 
 export interface PanelContext {
   renderMode: RenderMode;
