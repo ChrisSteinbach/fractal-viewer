@@ -1049,6 +1049,66 @@ finite-solid document exists to admit); the trapped-billiard termination
 policy; the preset/panel path; the built-app visual acceptance against
 `scripts/out/transmission-dielectric-gpu/`.
 
+### The kernel emission (landed, 2026-09-19)
+
+The kernel emission LANDED as `surface-finite-solid-gpu.ts` (one
+dimension-parameterized source both cores emit) and the `core: "finite"` /
+`"finite4"` pair in `surface-de-gpu.ts`:
+
+- **The display DE** is `finite-solid.ts`'s `finiteSolidDisplayDistance`
+  mirrored: the CERTIFIED HYBRID — the level-1 boxes' min, each refined
+  into its occupied children within `FINITE_SOLID_DISPLAY_REFINE_REL·half`
+  of its own boundary. The refinement is load-bearing, not a refinement:
+  the plain level-1 min reads ZERO at the axis tunnels' mouth patches
+  (every wall's centre child is empty on both sides — the rule's symmetry)
+  and the display march would SEAL every tunnel at its mouth plane; the
+  unit tests pin the marched hit against `finiteSolidIntervals` on
+  tunnel-axis rays (the exact oracle says MISS there) and on sampled rays
+  in both dimensions. Both terms are certified lower bounds of the
+  distance to the union, so a march step cannot skip the surface, and the
+  zero set is exactly the union's boundary.
+- **The transport boundary query** is the exact DDA
+  (`transportFiniteBoundary`), `opticsBackend: "finiteSolid"`: integer
+  cells, analytic planes, NO distance epsilon, the FULL anchor contract
+  (intrinsic point, tied-plane mask, plane/cell indices) carried IN and
+  OUT on `TransportPath` — the anchored restart consumes the anchor,
+  never a point. The medium claim is cross-checked at the anchored
+  restart exactly as the closed-solid query's is. Refusal reasons map
+  onto the transport's vocabulary (visit-cap/invalid/state-mismatch)
+  plus the DDA's own (ambiguous-anchor, nonmonotone-crossing,
+  degenerate-projected-normal).
+- **The wire** is a 16-byte tail at 208 (`SURFACE_GPU_PARAMS_FINITE_BYTES` 224) or 464 (`SURFACE_GPU_PARAMS4_FINITE_BYTES` 480): `{half, level,
+grid, pad}`. The grid needs NO bitmap in-shader — the ternary rule is
+  pure integer arithmetic. The 4D pose IS the shared 4D tail's rotor rows
+  - `w0` (the descent prologue's own convention); 3D is the identity
+    pose. The cores are bindingless like bulb; the slab throws (the escape4
+    refusal).
+- **The agreement legs** pin the kernel against `finiteSolidDdaF32` (the
+  module's own f32 TS twin — `sphereInversionF32`'s discipline one family
+  over): the walk is DISCRETE, its cell sequence decided by exact tie
+  tests an f64 twin cannot bracket, so the twin re-executes the WGSL with
+  every result rounded to f32 over the same inputs (the probe hits are
+  f32-quantized — the input contract, the frozen f32 pose rows' lesson).
+  MEASURED (quiet RX 7900 XTX, radeonsi): both dimensions' legs agree —
+  the strict arms bit-exact (max normal delta 0), with three measured,
+  disclosed, capped realization classes: the decision flip at a hit
+  converged onto a grid plane (the ray-side classification flips between
+  the driver's FMA-contracted f32 and the twin's rounded f32, turning an
+  honest state-mismatch refusal into an honest boundary or the reverse),
+  the anchor identity's one-cell near-tie slack (the same event, the same
+  t and normal, a one-cell-shifted crossed-plane identity — each kernel
+  anchor self-consistent on its own plane), and the trace probes' pin,
+  which is TERMINATION only (no INVALID) with the per-probe gpu/cpu pairs
+  disclosed in the run notes — the event-level certification is the
+  boundary arms'. The caps are `SURFACE_TRANSPORT_FLIP_CAP`.
+
+Still open on the milestone: the routing admission extension
+(`surface-optics-backend.ts`'s shape, which currently refuses
+`de.maps.length > 0` — the refusal stays until the co-extensive
+finite-solid document exists to admit); the trapped-billiard termination
+policy; the preset/panel path; the built-app visual acceptance against
+`scripts/out/transmission-dielectric-gpu/`.
+
 ## What is not yet qualified
 
 The compute kernel emission and the host buffer contracts are real state;
