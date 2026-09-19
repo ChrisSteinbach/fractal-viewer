@@ -3694,12 +3694,15 @@ function writeFiniteHeader(view: DataView, base: number, level: number): void {
  * ({@link SURFACE_GPU_PARAMS_FINITE_BYTES}). Bindingless — the hosts skip
  * buffer 1. `boundingRadius` is the construction's origin-centred bound
  * (the root box's circumscribed sphere); it packs BOTH the bounding and
- * the visible radius, since the whole construction is visible.
+ * the visible radius, since the whole construction is visible. The optional
+ * ground plane packs at the frozen 288 (the buffer growing to the plane
+ * size); absent keeps the 224-byte wire the bench legs pin.
  */
 export function packSurfaceGpuParamsFinite(
   run: SurfaceGpuRunParams,
   level: number,
   boundingRadius: number,
+  groundPlane: SurfaceGpuGroundPlane | null = null,
 ): ArrayBuffer {
   validateFiniteSolidLevel(level);
   if ((run.footprint ?? 0) > 0) {
@@ -3707,10 +3710,15 @@ export function packSurfaceGpuParamsFinite(
       "surface-de-gpu: the finite cores take no cone footprint (the box-union DE has no footprint argument; hosts pass 0)",
     );
   }
-  const buf = new ArrayBuffer(SURFACE_GPU_PARAMS_FINITE_BYTES);
+  const buf = new ArrayBuffer(
+    groundPlane
+      ? SURFACE_GPU_PARAMS_PLANE_BYTES
+      : SURFACE_GPU_PARAMS_FINITE_BYTES,
+  );
   const view = new DataView(buf);
   writeFiniteFrozen(view, run, boundingRadius);
   writeFiniteHeader(view, 208, level);
+  if (groundPlane) writeGroundPlane(view, groundPlane);
   return buf;
 }
 
@@ -3719,14 +3727,17 @@ export function packSurfaceGpuParamsFinite(
  * the shared 4D tail with the pose rows LIVE (the transpose packing every
  * 4D packer performs — the rows ARE `FiniteSolidPose`'s world→intrinsic
  * rows), stepBack4/final4 identity, `w0` live, and the 16-byte finite
- * tail at 464 ({@link SURFACE_GPU_PARAMS4_FINITE_BYTES}). THROWS on a
- * nonzero slab: the DDA has no segment form (the escape4 refusal).
+ * tail at 464 ({@link SURFACE_GPU_PARAMS4_FINITE_BYTES}). The optional
+ * ground plane packs at the frozen 576 (the buffer growing to the 4D
+ * plane size); absent keeps the 480-byte wire the bench legs pin. THROWS
+ * on a nonzero slab: the DDA has no segment form (the escape4 refusal).
  */
 export function packSurfaceGpuParamsFinite4(
   view4: SurfaceGpu4View,
   run: SurfaceGpuRunParams,
   level: number,
   boundingRadius: number,
+  groundPlane: SurfaceGpuGroundPlane | null = null,
 ): ArrayBuffer {
   validateFiniteSolidLevel(level);
   if ((run.footprint ?? 0) > 0) {
@@ -3739,7 +3750,11 @@ export function packSurfaceGpuParamsFinite4(
       "surface-de-gpu: the finite4 core takes no slab — a forward-cell DDA cannot thread a segment; hold sliceHalfW at 0",
     );
   }
-  const buf = new ArrayBuffer(SURFACE_GPU_PARAMS4_FINITE_BYTES);
+  const buf = new ArrayBuffer(
+    groundPlane
+      ? SURFACE_GPU_PARAMS4_PLANE_BYTES
+      : SURFACE_GPU_PARAMS4_FINITE_BYTES,
+  );
   const view = new DataView(buf);
   writeFiniteFrozen(view, run, boundingRadius);
   const rot = view4.rotor;
@@ -3759,6 +3774,7 @@ export function packSurfaceGpuParamsFinite4(
   view.setFloat32(428, boundingRadius, true);
   view.setFloat32(452, 1 / boundingRadius, true);
   writeFiniteHeader(view, 464, level);
+  if (groundPlane) writeGroundPlane4(view, groundPlane);
   return buf;
 }
 
@@ -10804,6 +10820,23 @@ ${
   padG0: f32,
   groundAlbedo: vec3f,
   padG1: f32,`;
+  // The finite cores' pad from the finite block's end (223 / 479) to the
+  // shared plane block's frozen offset (288 / 576), emitted ONLY when a
+  // floor is authored so the plain kernel's struct — and the params wire
+  // the bench legs pin — stay byte-identical without one.
+  const padFin3Fields = /* wgsl */ `
+  // 224..287, PAD — the escape/bulb variant block's region, so the shared
+  // plane block lands at 288 for every 3D core.
+  padFinA: vec4f,
+  padFinB: vec4f,
+  padFinC: vec4f,
+  padFinD: vec4f,`;
+  const padFin4Fields = /* wgsl */ `
+  // 480..575, PAD — the lens4 block's remaining region, so the shared
+  // plane block lands at 576 for every 4D core (the escape4 padE4 form,
+  // emitted only when a floor is authored so the plain kernel's text is
+  // byte-identical).
+  padFin4: array<vec4f, 6>,`;
   // The balloon block, at that same shared offset — extracted
   // beside the plane's when the 4D cores grew a second splice
   // site, for the reason the plane's was extracted first.
@@ -10974,7 +11007,7 @@ struct Params {
   finiteHalf: f32,
   finiteLevel: u32,
   finiteGrid: u32,
-  finitePad: f32,`
+  finitePad: f32,${groundPlane ? padFin4Fields : ""}`
           : // The lens4 block, APPENDED past the 4D tail
             // (464..575). Declared under the lens, and under anything
             // appended past it, so the shared
@@ -11049,7 +11082,7 @@ struct Params {
   finiteHalf: f32,
   finiteLevel: u32,
   finiteGrid: u32,
-  finitePad: f32,`
+  finitePad: f32,${groundPlane ? `${padFin3Fields}${planeStructFields}` : ""}`
               : lens ||
                   balloon ||
                   groundPlane ||
