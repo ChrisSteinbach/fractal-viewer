@@ -5902,6 +5902,7 @@ async function main(): Promise<void> {
         state.tiling ?? null,
         state.condensationDepthBand,
         state.sphereInversion ?? null,
+        state.finiteSolid ?? null,
       );
       if (sessionEligibility.status === "ineligible") {
         ui.flashToast(

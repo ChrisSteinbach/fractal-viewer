@@ -3649,7 +3649,15 @@ function writeFiniteFrozen(
   view.setFloat32(36, 0, true);
   view.setUint32(40, 1, true);
   view.setUint32(44, 0, true);
-  view.setUint32(48, 0, true);
+  // mapCount = 1, the bulb packer's bindingless precedent: the shared
+  // shade entry's slot clamp reads params.mapCount for every
+  // non-condensation core, and the finite cores' ONE shade slot (the
+  // hit-info's firstChoice 0) must clamp to itself — a 0 here degenerates
+  // the clamp to [-1, 0], the opticsMaps lane read goes out of bounds,
+  // reads zero, and every transport path skips as a "classic slot" (the
+  // app-level dark-glass defect the bench's control entry cannot see: it
+  // passes ior as a probe parameter and never walks the shade entry).
+  view.setUint32(48, 1, true);
   view.setUint32(52, 0, true);
   view.setUint32(56, run.itemCount, true);
   view.setUint32(60, run.stepsThisPass ?? 0, true);
@@ -9126,6 +9134,56 @@ fn transportSolidField(p: vec3f) -> f32 {
   // so its flag stays clear until the first DDA event hands a real anchor
   // down.
   const primaryAnchorPresent = finiteQuery ? "0u" : "1u";
+  // The finite backend's primary anchor block, spliced ahead of the
+  // primary split's children (TS-side note per the template rule; the
+  // emitted lines carry no explanation). The display hit sits within a
+  // pixel footprint of the surface — outside the grid planes the DDA
+  // classifies from — so the UNANCHORED inside child's ray-side rule
+  // reads an empty start cell against an inside claim and refuses
+  // state-mismatch (the measured app defect: every refracted primary
+  // unresolved, the solid rendered black). One unanchored OUTSIDE query
+  // from just before the hit walks to the true entry event; the
+  // refracted child then STARTS at that event — bent by the event's own
+  // exact face normal, so the anchor and the bend describe the SAME face
+  // — and anchored at the event's contract state. The reflection child
+  // keeps the unanchored hit start (its outside classification agrees
+  // with an empty start cell), and the Fresnel split keeps the smoothed
+  // optical normal for the look. A refused pre-query — a graze whose
+  // pre-point lands inside another lobe — falls back to the unanchored
+  // children, no worse than before.
+  const finitePrimaryAnchor = finiteQuery
+    ? `
+  var bend0F = bend0;
+  let preOrigin = origin - dir * (4.0 * eps);
+  let preHit = transportFiniteBoundary(
+    preOrigin,
+    dir,
+    0u,
+    vec4f(0.0),
+    0u,
+    vec4i(-1),
+    vec4i(-1),
+    0u,
+  );
+  if (preHit.kind == 1u) {
+    bend0F = dielectricRefract(dir[0], dir[1], dir[2], preHit.normal[0], preHit.normal[1], preHit.normal[2], 1.0, ior);
+  }
+  var refrOrigin = origin;
+  var refrAnchorPresent = 0u;
+  var refrIntrinsic = vec4f(0.0);
+  var refrMask = 0u;
+  var refrPlanes = vec4i(-1);
+  var refrCells = vec4i(-1);
+  if (preHit.kind == 1u && dot(dir, preHit.normal) < 0.0) {
+    refrOrigin = preOrigin + dir * preHit.t;
+    refrAnchorPresent = 1u;
+    refrIntrinsic = preHit.anchorIntrinsic;
+    refrMask = preHit.anchorMask;
+    refrPlanes = preHit.anchorPlanes;
+    refrCells = preHit.anchorCells;
+  }
+`
+    : "";
   const solidShadowEarly = optics
     ? `// ---- dielectric optical transport (docs/surface-dielectric-transport.md)
 // ---- surface-dielectric.ts's emitted WGSL optics body, verbatim — the
@@ -9599,7 +9657,7 @@ fn transportTrace(
   let cosI0 = abs(dot(dir, n0));
   let f0 = dielectricFresnel(cosI0, 1.0, ior);
   let bend0 = dielectricRefract(dir[0], dir[1], dir[2], n0[0], n0[1], n0[2], 1.0, ior);
-  let reflDir0 = dir - 2.0 * dot(dir, n0) * n0;
+  let reflDir0 = dir - 2.0 * dot(dir, n0) * n0;${finitePrimaryAnchor}
   var refl0: TransportPath;
   refl0.origin = origin;
   refl0.dir = reflDir0;
@@ -9620,21 +9678,21 @@ fn transportTrace(
   }
   refl0.bound = transportChildBound(refl0.energy);
   var refr0: TransportPath;
-  refr0.origin = origin;
-  refr0.dir = bend0.xyz;
+  refr0.origin = ${finiteQuery ? "refrOrigin" : "origin"};
+  refr0.dir = ${finiteQuery ? "bend0F.xyz" : "bend0.xyz"};
   refr0.energy = vec3f(1.0 - f0);
   refr0.inside = 1u;
   refr0.interfaces = 1u;
-  refr0.anchorPresent = ${primaryAnchorPresent};
+  refr0.anchorPresent = ${finiteQuery ? "refrAnchorPresent" : primaryAnchorPresent};
   refr0.anchorPoint = origin;
   refr0.anchorPad2 = 0u;
   refr0.exitPresent = 0u;${
     finiteQuery
       ? `
-  refr0.finiteIntrinsic = vec4f(0.0);
-  refr0.finiteMask = 0u;
-  refr0.finitePlanes = vec4i(-1);
-  refr0.finiteCells = vec4i(-1);`
+  refr0.finiteIntrinsic = refrIntrinsic;
+  refr0.finiteMask = refrMask;
+  refr0.finitePlanes = refrPlanes;
+  refr0.finiteCells = refrCells;`
       : ""
   }
   refr0.bound = transportChildBound(refr0.energy);

@@ -96,9 +96,17 @@ describe("the finite cores' kernel emission", () => {
     expect(src).toContain("child.finiteIntrinsic = hit.anchorIntrinsic;");
     expect(src).toContain("trans.finiteIntrinsic = hit.anchorIntrinsic;");
     expect(src).toContain("refl.finiteIntrinsic = hit.anchorIntrinsic;");
-    // The primary split's children start unanchored.
+    // The primary split's reflection child starts unanchored; the
+    // refracted child seeds from the PRE-QUERY's located entry event (the
+    // unanchored inside start refused state-mismatch on every eps-off
+    // display hit — the measured app defect).
     expect(src).toContain("refl0.finiteMask = 0u;");
-    expect(src).toContain("refr0.finiteMask = 0u;");
+    expect(src).toContain("refr0.finiteIntrinsic = refrIntrinsic;");
+    expect(src).toContain("refr0.anchorPresent = refrAnchorPresent;");
+    expect(src).toContain("refrOrigin = preOrigin + dir * preHit.t;");
+    // The pre-query is the unanchored OUTSIDE call from just before the
+    // display hit.
+    expect(src).toContain("preOrigin = origin - dir * (4.0 * eps);");
     // Bindingless: no maps declaration.
     expect(src).not.toContain("var<storage, read> maps");
     // The finite params tail.
@@ -206,14 +214,17 @@ describe("the finite packers", () => {
     expect(view.getFloat32(208, true)).toBe(FINITE_SOLID_HALF_EXTENT);
     expect(view.getUint32(212, true)).toBe(2);
     expect(view.getUint32(216, true)).toBe(9);
-    // The frozen base: origin bound, order 1, no maps.
+    // The frozen base: origin bound, order 1, ONE shade slot (the bulb
+    // packer's bindingless mapCount precedent — the shared shade entry's
+    // slot clamp reads this, and 0 would degenerate the clamp).
     expect(view.getFloat32(0, true)).toBe(0);
     expect(view.getFloat32(12, true)).toBeCloseTo(
       FINITE_SOLID_HALF_EXTENT * Math.sqrt(3),
       6,
     );
     expect(view.getUint32(40, true)).toBe(1);
-    expect(view.getUint32(48, true)).toBe(0);
+    expect(view.getUint32(48, true)).toBe(1);
+    expect(view.getUint32(52, true)).toBe(0);
   });
 
   it("packs the 4D tail with the live pose rows and the construction at 464", () => {
