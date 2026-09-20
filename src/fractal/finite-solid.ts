@@ -38,7 +38,7 @@ import type { SymmetryParams, Transform, Vec3, Vec4 } from "./types";
  *   Gram-Schmidt in ascending intrinsic-axis order, rank-zero refusal).
  *   This is `scripts/transmission-dielectric-solid.ts`'s arithmetic — the
  *   STUDY'S oracle, not a marched min-SDF. The distinction is load-bearing
- *   (the abutting-seam measurement, fr-jd5c.22): an interval query never
+ *   (the abutting-seam measurement): an interval query never
  *   marches a field, so the ~0 the min-combined union field reads at
  *   shared interior planes cannot produce phantom crossings.
  * - **The signed field** (`finiteSolidField`): min over occupied cells of
