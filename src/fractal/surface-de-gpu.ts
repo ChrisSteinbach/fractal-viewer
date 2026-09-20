@@ -48,6 +48,12 @@ import {
   FINITE_SOLID_MAX_LEVEL,
 } from "./finite-solid";
 import {
+  FINITE_TRANSPORT_BUFFER_HEADER_BYTES,
+  FINITE_TRANSPORT_RUNNING,
+  FINITE_TRANSPORT_WORK_HEADER_BYTES,
+  resolveFiniteTransportChunkPaths,
+} from "./finite-transport-work";
+import {
   SURFACE_GPU_PARAMS4_FINITE_BYTES,
   SURFACE_GPU_PARAMS_FINITE_BYTES,
   finiteSolidDisplaySource,
@@ -1944,6 +1950,16 @@ export interface SurfaceGpuKernelOptions {
    * interfaces — the oracle couples them) emit from this one number.
    * Absent emits the shipped cap byte-identically. */
   transportMaxPaths?: number;
+  /** Finite optics shade only: pause after this many additional processed
+   * paths, retaining the same LIFO trace and replay threshold in binding 1.
+   * This is a scheduling quantum, not a work limit. Direct codegen defaults
+   * to uninterrupted execution (undefined/0); the host explicitly supplies
+   * its resolved production default. No other core or entry is changed. */
+  finiteTransportChunkPaths?: number;
+  /** Finite DDA only: retain each axis's crossing time until its cell
+   * changes, with the same division and tie order. Default true; false
+   * preserves the original uncached query for diagnostic comparisons. */
+  finiteCacheCrossings?: boolean;
   /** The optical transport's boundary backend. `"estimator"` — absent's
    * meaning, byte-identical — marches the composed PUBLIC estimator: the
    * query the renderer-envelope leg measured, sound from OUTSIDE only
@@ -5229,6 +5245,11 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
       "surface-de-gpu: transportMaxPaths must be a positive integer",
     );
   }
+  const finiteTransportChunkPaths =
+    opticsBackend === "finiteSolid"
+      ? resolveFiniteTransportChunkPaths(opts.finiteTransportChunkPaths ?? 0)
+      : 0;
+  const finiteTransportChunk = finiteTransportChunkPaths > 0;
   const material = finish || pattern;
   // The hit-info constructor's pattern member: WGSL value constructors
   // are all-or-none, so under the pattern gate every core's full-member
@@ -9150,9 +9171,70 @@ ${dielectricOpticsSource("wgsl")}${
 // ---- the finite-solid DDA (surface-finite-solid-gpu.ts's
 // finiteSolidTransportSource): the exact boundary query the transport
 // walks, with the full anchor contract in and out.
-${finiteSolidTransportSource(core4 ? 4 : 3)}`
+${finiteSolidTransportSource(core4 ? 4 : 3, opts.finiteCacheCrossings)}`
           : ""
       }`
+    : "";
+  const finiteTransportWorkSource = finiteTransportChunk
+    ? `
+
+// Same-trace scheduling storage: ${FINITE_TRANSPORT_BUFFER_HEADER_BYTES}-byte batch
+// header, then ${FINITE_TRANSPORT_WORK_HEADER_BYTES}-byte slot headers and the
+// unchanged finite paths. Only live stack entries are read or written.
+struct FiniteTransportWork {
+  radiance: vec3f,
+  residual: f32,
+  sp: u32,
+  processed: u32,
+  done: u32,
+  pixel: u32,
+  replayPass: u32,
+  generation: u32,
+  pad: vec2u,
+  stack: array<TransportPath, ${DIELECTRIC_MAX_STACK}>,
+}
+
+struct FiniteTransportBatch {
+  initialize: u32,
+  running: atomic<u32>,
+  generation: u32,
+  rayCount: u32,
+  slots: array<FiniteTransportWork>,
+}
+
+// Finite cores have no map buffer. Reuse its unused binding rather than
+// increasing the transport entry's storage-binding requirement.
+@group(0) @binding(1) var<storage, read_write> finiteWork: FiniteTransportBatch;
+
+fn finiteWorkReset(slotI: u32, ray: u32, replayPass: u32) {
+  finiteWork.slots[slotI].radiance = vec3f(0.0);
+  finiteWork.slots[slotI].residual = 0.0;
+  finiteWork.slots[slotI].sp = 0u;
+  finiteWork.slots[slotI].processed = 0u;
+  finiteWork.slots[slotI].done = 0u;
+  finiteWork.slots[slotI].pixel = ray;
+  finiteWork.slots[slotI].replayPass = replayPass;
+  finiteWork.slots[slotI].generation = finiteWork.generation;
+  finiteWork.slots[slotI].pad = vec2u(0u);
+}
+
+// A stale batch or corrupt continuation is a disclosed invalid sample.
+// Never resume another pixel's paths, count it as RUNNING, or emit its light.
+fn finiteWorkReject(slotI: u32, ray: u32, replayPass: u32) {
+  if (slotI < arrayLength(&finiteWork.slots)) {
+    finiteWorkReset(slotI, ray, replayPass);
+    finiteWork.slots[slotI].done = 1u;
+  }
+  if (ray < arrayLength(&transportState) / 2u &&
+      ray < arrayLength(&colorOut) && ray < arrayLength(&layerOut)) {
+    transportState[ray * 2u] = vec4f(0.0);
+    transportState[ray * 2u + 1u] = vec4f(
+      f32(TRANSPORT_STATUS_INVALID), 0.0, f32(TRANSPORT_REASON_INVALID_INPUT), f32(replayPass));
+    colorOut[ray] = pack4x8unorm(vec4f(0.0, 0.0, 0.0, 1.0));
+    layerOut[ray] = packSurfaceLayer(1.0, 0.0, 0.0);
+  }
+  transportStatusOut[slotI] = TRANSPORT_STATUS_INVALID;
+}`
     : "";
   const opticsBlock = optics
     ? `
@@ -9197,7 +9279,7 @@ struct TransportPath {${
   // resets the flag, so a mirror view at a later entry never displaces.
   exitPresent: u32,`
       }
-}
+}${finiteTransportWorkSource}
 
 struct TransportBoundary {
   // 1 boundary, 2 miss, 3 refused
@@ -9242,7 +9324,13 @@ const TRANSPORT_INITIAL_THETA = ${DIELECTRIC_INITIAL_BRANCH_THETA};
 const TRANSPORT_REPLAY_PASSES = ${DIELECTRIC_REPLAY_PASSES}u;
 const TRANSPORT_MAX_STACK = ${DIELECTRIC_MAX_STACK}u;
 const TRANSPORT_MAX_PROCESSED = ${transportMaxPaths}u;
-const TRANSPORT_MAX_INTERFACES = ${transportMaxPaths}u;
+const TRANSPORT_MAX_INTERFACES = ${transportMaxPaths}u;${
+        finiteTransportChunk
+          ? `
+const TRANSPORT_STATUS_RUNNING = ${FINITE_TRANSPORT_RUNNING}u;
+const TRANSPORT_CHUNK_PATHS = ${finiteTransportChunkPaths}u;`
+          : ""
+      }
 const TRANSPORT_CROSSING_EPS_REL = ${DIELECTRIC_CROSSING_EPS_REL};
 const TRANSPORT_ANCHOR_ENVELOPE_REL = ${DIELECTRIC_ANCHOR_ENVELOPE_REL}.0;
 const TRANSPORT_QUERY_MAX_STEPS = ${DIELECTRIC_QUERY_MAX_STEPS}u;${
@@ -9580,7 +9668,7 @@ fn transportTrace(
   absorb: vec3f,
   bg: vec3f,
   li: u32,
-  distortion: f32,
+  distortion: f32,${finiteTransportChunk ? "\n  workSlot: u32," : ""}
 ) -> TransportTrace {
   var out: TransportTrace;
   out.radiance = vec3f(0.0);
@@ -9593,7 +9681,21 @@ fn transportTrace(
   var processed = 0u;
   var radiance = vec3f(0.0);
   var residual = 0.0;
-  let eps = TRANSPORT_CROSSING_EPS_REL * radius;
+  let eps = TRANSPORT_CROSSING_EPS_REL * radius;${
+    finiteTransportChunk
+      ? `
+  if (finiteWork.initialize == 0u) {
+    // Identity and bounds were checked by transportRays before this load.
+    sp = finiteWork.slots[workSlot].sp;
+    processed = finiteWork.slots[workSlot].processed;
+    radiance = finiteWork.slots[workSlot].radiance;
+    residual = finiteWork.slots[workSlot].residual;
+    for (var i = 0u; i < sp; i++) {
+      stack[i] = finiteWork.slots[workSlot].stack[i];
+    }
+  } else {`
+      : ""
+  }
 ${
   finiteQuery
     ? `  // The exact query owns the first interface as well as every continuation.
@@ -9685,13 +9787,37 @@ ${
     }
   }
 `
-}  // --- the oracle's work-list loop ---
+}${
+        finiteTransportChunk
+          ? `  }
+  let chunkStartProcessed = processed;
+`
+          : ""
+      }  // --- the oracle's work-list loop ---
   loop {
     if (sp == 0u) {
       out.status = select(TRANSPORT_STATUS_COMPLETE, TRANSPORT_STATUS_RESIDUAL, residual > 0.0);
       break;
     }
-    let path = stack[sp - 1u];
+${
+  finiteTransportChunk
+    ? `    // Pause BEFORE popping: no path, residual term, or arithmetic order
+    // changes at a scheduling boundary. The cumulative guards below remain.
+    if (processed - chunkStartProcessed >= TRANSPORT_CHUNK_PATHS) {
+      finiteWork.slots[workSlot].sp = sp;
+      finiteWork.slots[workSlot].processed = processed;
+      finiteWork.slots[workSlot].radiance = radiance;
+      finiteWork.slots[workSlot].residual = residual;
+      for (var i = 0u; i < sp; i++) {
+        finiteWork.slots[workSlot].stack[i] = stack[i];
+      }
+      atomicAdd(&finiteWork.running, 1u);
+      out.status = TRANSPORT_STATUS_RUNNING;
+      return out;
+    }
+`
+    : ""
+}    let path = stack[sp - 1u];
     sp = sp - 1u;
     if (transportPushCut(path, theta)) {
       residual = residual + path.bound;
@@ -9954,7 +10080,13 @@ ${
       break;
     }
   }
-  out.radiance = radiance;
+${
+  finiteTransportChunk
+    ? `  finiteWork.slots[workSlot].sp = 0u;
+  finiteWork.slots[workSlot].processed = processed;
+`
+    : ""
+}  out.radiance = radiance;
   out.residual = residual;
   return out;
 }
@@ -9973,16 +10105,96 @@ fn transportRays(
   let slotI = gid.x;
   if (slotI >= params.itemCount) {
     return;
+  }${
+    finiteTransportChunk
+      ? `
+  // The host keeps this batch's ray list and replay threshold fixed until
+  // every slot is done. Reject malformed lengths before addressing a slot.
+  if (slotI >= arrayLength(&transportStatusOut)) {
+    return;
   }
-  let ray = activeList[slotI];
+  let replayPass = u32(shade.transport[0]);
+  if (slotI >= arrayLength(&activeList)) {
+    finiteWorkReject(slotI, 0xffffffffu, replayPass);
+    return;
+  }`
+      : ""
+  }
+  let ray = activeList[slotI];${
+    finiteTransportChunk
+      ? `
+  if (slotI >= arrayLength(&finiteWork.slots) ||
+      finiteWork.rayCount != params.itemCount ||
+      finiteWork.rayCount > arrayLength(&finiteWork.slots) ||
+      finiteWork.initialize > 1u || finiteWork.generation == 0u ||
+      replayPass >= TRANSPORT_REPLAY_PASSES ||
+      shade.transport[0] != f32(replayPass) ||
+      ray >= arrayLength(&states) ||
+      ray >= arrayLength(&transportState) / 2u ||
+      ray >= arrayLength(&colorOut) || ray >= arrayLength(&layerOut)) {
+    finiteWorkReject(slotI, ray, replayPass);
+    return;
+  }
+  if (finiteWork.initialize == 1u) {
+    finiteWorkReset(slotI, ray, replayPass);
+  } else {
+    if (finiteWork.slots[slotI].pixel != ray ||
+        finiteWork.slots[slotI].replayPass != replayPass ||
+        finiteWork.slots[slotI].generation != finiteWork.generation ||
+        finiteWork.slots[slotI].done > 1u ||
+        finiteWork.slots[slotI].sp > TRANSPORT_MAX_STACK ||
+        finiteWork.slots[slotI].processed > TRANSPORT_MAX_PROCESSED ||
+        !all(abs(finiteWork.slots[slotI].radiance) <= vec3f(3.0e38)) ||
+        !(finiteWork.slots[slotI].residual >= 0.0 &&
+          finiteWork.slots[slotI].residual <= 3.0e38)) {
+      finiteWorkReject(slotI, ray, replayPass);
+      return;
+    }
+    if (finiteWork.slots[slotI].done == 1u) {
+      // Preserve this slot's final status while other rays keep running.
+      if (finiteWork.slots[slotI].sp != 0u ||
+          (transportStatusOut[slotI] & 255u) > ${SURFACE_GPU_TRANSPORT_SKIPPED}u) {
+        finiteWorkReject(slotI, ray, replayPass);
+      }
+      return;
+    }
+    if (finiteWork.slots[slotI].sp == 0u ||
+        finiteWork.slots[slotI].processed == 0u ||
+        transportStatusOut[slotI] != TRANSPORT_STATUS_RUNNING) {
+      finiteWorkReject(slotI, ray, replayPass);
+      return;
+    }
+  }`
+      : ""
+  }
   let prevStatus = u32(transportState[ray * 2u + 1u][0]);
   if (prevStatus == TRANSPORT_STATUS_COMPLETE ||
       prevStatus == TRANSPORT_STATUS_RESIDUAL ||
-      prevStatus == TRANSPORT_STATUS_INVALID) {
+      prevStatus == TRANSPORT_STATUS_INVALID) {${
+        finiteTransportChunk
+          ? `
+    if (finiteWork.initialize == 0u) {
+      finiteWorkReject(slotI, ray, replayPass);
+      return;
+    }
+    finiteWork.slots[slotI].done = 1u;
+    transportStatusOut[slotI] = prevStatus;`
+          : ""
+      }
     return;
   }
   let st = states[ray];
-  if (st.y != ${SURFACE_GPU_RAY_HIT}.0) {
+  if (st.y != ${SURFACE_GPU_RAY_HIT}.0) {${
+    finiteTransportChunk
+      ? `
+    if (finiteWork.initialize == 0u) {
+      finiteWorkReject(slotI, ray, replayPass);
+      return;
+    }
+    finiteWork.slots[slotI].done = 1u;
+    transportStatusOut[slotI] = ${SURFACE_GPU_TRANSPORT_SKIPPED}u;`
+      : ""
+  }
     return;
   }
   let px = ray % params.rasterWidth;
@@ -10003,17 +10215,36 @@ fn transportRays(
   let lane0 = opticsMaps[u32(fSlot) * 2u];
   let lane1 = opticsMaps[u32(fSlot) * 2u + 1u];
   if (lane0[0] <= 0.0) {
-    // A classic slot: shadeRays owns this pixel exactly as before.
+    // A classic slot: shadeRays owns this pixel exactly as before.${
+      finiteTransportChunk
+        ? `
+    if (finiteWork.initialize == 0u) {
+      finiteWorkReject(slotI, ray, replayPass);
+      return;
+    }
+    finiteWork.slots[slotI].done = 1u;`
+        : ""
+    }
     transportStatusOut[slotI] = ${SURFACE_GPU_TRANSPORT_SKIPPED}u;
     return;
   }
   let ior = lane0[0];
   let radius = lane0[1];
   let absorb = vec3f(lane0[2], lane0[3], lane1[0]);
-  let distortion = lane1[1];
-  let replayPass = u32(shade.transport[0]);
+  let distortion = lane1[1];${finiteTransportChunk ? "" : "\n  let replayPass = u32(shade.transport[0]);"}
   let theta = dielectricReplayTheta(f32(replayPass), TRANSPORT_INITIAL_THETA);
-  let traced = transportTrace(${finiteQuery ? "ro" : "pos"}, rd, theta, ior, radius, absorb, bg, li, distortion);
+  let traced = transportTrace(${finiteQuery ? "ro" : "pos"}, rd, theta, ior, radius, absorb, bg, li, distortion${finiteTransportChunk ? ", slotI" : ""});${
+    finiteTransportChunk
+      ? `
+  if (traced.status == TRANSPORT_STATUS_RUNNING) {
+    // Partial radiance remains private to the work buffer. Neither the
+    // pixel nor its outer replay record is finalized at a scheduling pause.
+    transportStatusOut[slotI] = TRANSPORT_STATUS_RUNNING;
+    return;
+  }
+  finiteWork.slots[slotI].done = 1u;`
+      : ""
+  }
   if (traced.status == TRANSPORT_STATUS_INVALID) {
     // Never retried, never presented as background: black, disclosed by
     // the frame's invalid count.
@@ -15137,6 +15368,6 @@ ${tilingProbeWrapText}`
   return /* wgsl */ `${headerText}${tilingFoldText}${latticeCarrierText}${tilingClipText}${scheduleHelperText}${chaosHelperText}
 
 ${meshSdfHelperText}${trapGeometryHelperText}${condensationHelperText}${tiledBodyBlock}${marchSample ? `\n${balloon ? inversionDistanceShaderSource("wgsl") : ""}\n${sampleLensText}\n${sampleOuterText}` : ""}
-${finiteCore && mode === "march" ? `${finiteSolidTransportSource(core4 ? 4 : 3)}\n` : ""}${entry}
+${finiteCore && mode === "march" ? `${finiteSolidTransportSource(core4 ? 4 : 3, opts.finiteCacheCrossings)}\n` : ""}${entry}
 ${opticsBlock}`;
 }

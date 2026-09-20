@@ -62,6 +62,15 @@ import {
 } from "./schedule";
 import { applyScenarioShard } from "./shard";
 import { finiteEnvelopeEvidenceFailures } from "./surface-transport-envelope";
+import {
+  finiteTransportChunkFailures,
+  type FiniteTransportChunkArm,
+  type FiniteTransportChunkRow,
+} from "./finite-transport-chunks";
+import {
+  FINITE_TRANSPORT_CHUNK_PATHS,
+  finiteTransportWorkBytes,
+} from "../../fractal/finite-transport-work";
 import { buildSurfaceTilingSymmetryAbiSpecs } from "./tiling-symmetry";
 import {
   rotationMatrix4,
@@ -4464,6 +4473,9 @@ interface SurfaceDeResults {
    * adapters only; software adapters skip with a note). Failures surface
    * through `surfaceTransportEnvelopeRowFailures` and gate the verdict. */
   transportEnvelope?: SurfaceTransportEnvelopeRow[];
+  /** Raw per-AA finite continuation equivalence, including intentional
+   * processed-limit refusals. Runs on both hardware and software adapters. */
+  finiteTransportChunks?: FiniteTransportChunkRow[];
   /** Skipped configs/systems, WGSL compile errors (verbatim), and other
    * per-run context — never silent. */
   notes: string[];
@@ -10979,7 +10991,8 @@ interface SurfaceTransportEnvelopeRow {
   /** The transport lane's ADDITIONAL retained allocation, computed from
    * the shipped constants: 32 B/ray records + 4 B/ray status + 4 B/ray
    * staging at the settle raster, plus the create-time opticsMaps lane
-   * pair (32 B/slot). The frame buffers are reused at a steady raster
+   * pair (32 B/slot), plus finite-only batch continuation scratch and its
+   * four-byte running-count staging. The frame buffers are reused at a steady raster
    * (`allocateFrameBuffers`' rays check), so this is the steady-state
    * retained cost, not a per-frame accrual. */
   retainedBytes: number;
@@ -11176,6 +11189,10 @@ async function runSurfaceTransportEnvelopeLeg(
   dom: SurfaceSectionDom,
   status: (text: string) => void,
   activity: ActivityBadge,
+  /** A second agreement-only traversal reuses the SAME finite preset,
+   * material and room recipe, without running timing envelopes. */
+  chunkAgreementRows?: FiniteTransportChunkRow[],
+  chunkAgreementSoftware = false,
 ): Promise<SurfaceTransportEnvelopeRow[]> {
   const rows: SurfaceTransportEnvelopeRow[] = [];
   const arms: {
@@ -11354,6 +11371,7 @@ async function runSurfaceTransportEnvelopeLeg(
     const { core, backend, sys, view4 } = arm;
     const de = sys.de;
     const finite = backend === "finiteSolid";
+    if (chunkAgreementRows && !finite) continue;
     const room = arm.preset ? PRESET_SURFACE_ROOMS[arm.preset] : undefined;
     if (finite && !room)
       throw new Error(`transport envelope ${core}: authored room is missing`);
@@ -11428,27 +11446,39 @@ async function runSurfaceTransportEnvelopeLeg(
       SURFACE_TRANSPORT_ENVELOPE_SETTLE_WIDTH *
         SURFACE_TRANSPORT_ENVELOPE_SETTLE_HEIGHT *
         (SURFACE_COMPUTE_TRANSPORT_RECORD_BYTES + 8) +
-      materials.slots.length * 32;
+      materials.slots.length * 32 +
+      (finite ? finiteTransportWorkBytes(4096) + 4 : 0);
 
     activity.setState("gpu", `Surface transport envelope — ${core}`);
     status(`transport envelope ${core}: creating SurfaceComputeRenderer…`);
-    const renderer = await SurfaceComputeRenderer.create(
-      finite
-        ? {
-            kind: view4 ? "finite4" : "finite",
-            level: 2,
-            groundPlane: room!.groundPlane,
-          }
-        : view4
-          ? { kind: "ifs4", de: de as SurfaceDE4 }
-          : { kind: "ifs", de: de as SurfaceDE },
-      colors,
-      trapIndices,
-      {
-        materials,
-        ...(backend !== "estimator" ? { opticsBackend: backend } : {}),
-      },
-    );
+    const createRenderer = (
+      quota?: number,
+      maxPaths?: number,
+      cacheCrossings?: boolean,
+    ) =>
+      SurfaceComputeRenderer.create(
+        finite
+          ? {
+              kind: view4 ? "finite4" : "finite",
+              level: 2,
+              groundPlane: room!.groundPlane,
+            }
+          : view4
+            ? { kind: "ifs4", de: de as SurfaceDE4 }
+            : { kind: "ifs", de: de as SurfaceDE },
+        colors,
+        trapIndices,
+        {
+          materials,
+          ...(backend !== "estimator" ? { opticsBackend: backend } : {}),
+          ...(quota !== undefined ? { finiteTransportChunkPaths: quota } : {}),
+          ...(maxPaths !== undefined ? { transportMaxPaths: maxPaths } : {}),
+          ...(cacheCrossings !== undefined
+            ? { finiteCacheCrossings: cacheCrossings }
+            : {}),
+        },
+      );
+    const renderer = chunkAgreementRows ? null : await createRenderer();
     try {
       const specFor = (
         width: number,
@@ -11549,6 +11579,87 @@ async function runSurfaceTransportEnvelopeLeg(
         SURFACE_TRANSPORT_ENVELOPE_SETTLE_WIDTH,
         SURFACE_TRANSPORT_ENVELOPE_SETTLE_HEIGHT,
       );
+
+      if (chunkAgreementRows) {
+        if (!arm.preset || (core !== "finite" && core !== "finite4"))
+          throw new Error("finite chunk agreement lost its canonical preset");
+        const spec = specFor(8, 8);
+        const row: FiniteTransportChunkRow = {
+          core,
+          preset: arm.preset,
+          width: 8,
+          height: 8,
+          samples: 4,
+          adapterLabel: undefined,
+          expectedSoftware: chunkAgreementSoftware,
+          controls: [],
+          uncachedControls: [],
+          processedLimitControls: [],
+        };
+        // Publish the partial row before GPU work so an interrupted or failed
+        // control remains visible and cannot silently disappear from the set.
+        chunkAgreementRows.push(row);
+        for (const [target, quotas, maxPaths, cacheCrossings] of [
+          [row.controls, [0, 1, 17, 128, 512, 1024, 2048], undefined, true],
+          [row.uncachedControls, [0], undefined, false],
+          [row.processedLimitControls, [0, 1], 2, true],
+        ] as const) {
+          for (const quota of quotas) {
+            status(
+              `finite chunk agreement ${core}: quota=${String(quota)} maxPaths=${String(maxPaths ?? "default")} cacheCrossings=${String(cacheCrossings)}…`,
+            );
+            const control = await createRenderer(
+              quota,
+              maxPaths,
+              cacheCrossings,
+            );
+            try {
+              row.adapterLabel ??= control.adapterLabel;
+              const samples: FiniteTransportChunkArm["samples"] = [];
+              const frame = await control.renderFrame(spec, {
+                samples: 4,
+                transportReadback: true,
+                onSample: (sample, index) =>
+                  samples.push({
+                    index,
+                    width: sample.width,
+                    height: sample.height,
+                    truncated: sample.truncated,
+                    counts: { ...sample.counts },
+                    transport: sample.transport
+                      ? {
+                          ...sample.transport,
+                          batchMs: [...sample.transport.batchMs],
+                        }
+                      : undefined,
+                    transportState: Array.from(sample.transportState ?? []),
+                    pixels: Array.from(sample.pixels),
+                  }),
+              });
+              if (!frame)
+                throw new Error(
+                  `finite chunk agreement ${core}: quota ${String(quota)} returned no frame`,
+                );
+              target.push({
+                quota,
+                maxPaths: maxPaths ?? null,
+                cacheCrossings,
+                adapterLabel: control.adapterLabel,
+                software: control.software,
+                width: frame.width,
+                height: frame.height,
+                truncated: frame.truncated,
+                pixels: Array.from(frame.pixels),
+                samples,
+              });
+            } finally {
+              control.destroy();
+            }
+          }
+        }
+        continue;
+      }
+      if (!renderer) throw new Error("transport envelope renderer missing");
 
       const observedSamples = new WeakMap<
         SurfaceComputeFrame,
@@ -11698,6 +11809,7 @@ async function runSurfaceTransportEnvelopeLeg(
                   "Fixed 16:9 rasters: 256x144 preview at 1 sample; 512x288 settle at 4 samples (app default 8)",
                   "Native acceptance height 288; app preview/full shadow and AO quality; finite construction level remains 2",
                   "Renderer work only: no UI, presentation, adaptive preview governor or export encoding",
+                  `Production finite scheduling quantum: ${String(FINITE_TRANSPORT_CHUNK_PATHS)} processed paths per submission; guard and optical tolerances unchanged`,
                 ],
               },
             }
@@ -11720,7 +11832,7 @@ async function runSurfaceTransportEnvelopeLeg(
       };
       rows.push(row);
     } finally {
-      renderer.destroy();
+      renderer?.destroy();
     }
     await new Promise<void>((resolve) => setTimeout(resolve));
   }
@@ -23092,6 +23204,46 @@ async function runSurfaceDeSection(
 
       await canaryCheck("the transport envelope leg");
     }
+    // Exact scheduling agreement is independent of adapter timing. Reuse
+    // the finite envelope's actual preset recipe at a bounded raster and
+    // retain every AA sample's raw state, including refusal controls.
+    try {
+      const rows: FiniteTransportChunkRow[] = [];
+      results.finiteTransportChunks = rows;
+      await runSurfaceTransportEnvelopeLeg(
+        systems,
+        affine4Systems,
+        dom,
+        status,
+        activity,
+        rows,
+        acquired.software,
+      );
+      if (
+        rows.length !== 2 ||
+        rows[0]?.core !== "finite" ||
+        rows[1]?.core !== "finite4"
+      ) {
+        transportGateFail = true;
+        results.notes.push(
+          "finite chunk agreement: both dimensional rows are required",
+        );
+      }
+      for (const row of rows) {
+        const failures = finiteTransportChunkFailures(row);
+        results.notes.push(
+          `finite chunk agreement ${row.core}: ${String(row.controls.length)} success controls, ${String(row.uncachedControls.length)} uncached controls, ${String(row.processedLimitControls.length)} processed-limit controls, ${String(failures.length)} failures`,
+        );
+        for (const failure of failures)
+          results.notes.push(`finite chunk agreement ${row.core}: ${failure}`);
+        if (failures.length > 0) transportGateFail = true;
+      }
+    } catch (error) {
+      transportGateFail = true;
+      results.notes.push(`finite chunk agreement: ${describeError(error)}`);
+    }
+    render();
+    await canaryCheck("the finite chunk agreement controls");
     await runSphereInversionLegs();
 
     await canaryCheck("the sphere-inversion legs");

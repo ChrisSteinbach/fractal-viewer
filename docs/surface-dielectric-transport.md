@@ -132,33 +132,49 @@ unresolved.
 
 ## Resumption, cancellation, and capture
 
-Two resumption shapes, both contract:
+Two resumption layers, both contract:
 
-1. **Work chunks (CPU oracle).** `dielectricTraceStep` processes a bounded
-   number of paths and leaves the live stack intact; a chunked run visits
+1. **Work chunks (CPU oracle and finite WebGPU transport).**
+   `dielectricTraceStep` processes a bounded number of paths and leaves the
+   live stack intact; a chunked run visits
    paths in exactly the uninterrupted order and reproduces it bit-for-bit.
-   This is the randomized-chunking acceptance property.
-2. **Replay passes (the GPU shape).** A sample that misses the per-sample
+   This is the randomized-chunking acceptance property. Finite WebGPU traces
+   likewise pause between complete paths, preserving the stack, accumulators
+   and counters in bounded batch storage at the same replay threshold. Other
+   GPU backends retain their uninterrupted per-invocation trace.
+2. **Replay passes (outer GPU refinement).** A sample that misses the per-sample
    budget (or hits a guard) keeps its pending identity and is re-traced FROM
    SCRATCH at the next pass's halved theta (`dielectricReplayTheta`). Nothing
    crosses passes except the pending mask, the accumulated radiance/residual
    of accepted samples, and the invalid mask. This is what the qualified
-   kernel implements per tile pass, and it is the cancellation boundary:
-   cancellation generations are replay-pass indices; a cancelled pixel keeps
-   its pending identity and a fresh-device follow-up reproduces the baseline
-   bytes (measured in the study's cancellation probes).
+   study kernel implements per tile pass; its cancellation probes establish
+   that a fresh-device follow-up reproduces the baseline bytes. Production
+   checks cancellation at each submitted batch's fence, including each finite
+   continuation chunk. The frame token invalidates a canceled job; a separate
+   renderer-wide batch generation validates finite slot identity and stays
+   fixed across chunks. Neither generation is the replay-pass index.
 
 **Continuation payload.** The oracle's `DielectricTraceState` is a plain data
 record: per-live-path `origin`/`direction`/`throughput`/`inside`/`interfaces`/
 `anchor`/`bound`, plus `radiance`, `residual`, `processedPaths`, `status`,
-`failure`, `theta`, `limits`. The per-pixel record a production scheduler
-owns is: linear radiance (3×f32), residual (f32), status and failure kind
-(u32), pending/invalid/accepted masks (u32 each), the replay-pass generation
-(u32), and the sample identity below. The live stack itself stays
-shader-private in the GPU shape (the qualified kernel's accounting treats it
-as logical private state); the CPU chunk shape serialises it verbatim. A
-backend adopting the emitted optics must keep every threshold, bound and
+`failure`, `theta`, `limits`. The production GPU per-pixel record is two
+`vec4f`: linear radiance.rgb plus residual, then status, failure kind, boundary
+refusal reason and replay-pass index, each encoded as f32. A separate packed
+u32 status per dispatched slot drives the host's pending list and terminal
+counts; finite failures use its upper bytes for the failure kind and reason.
+The frame token and finite batch generation are separate from that record.
+The live stack remains shader-private for uninterrupted GPU traces; finite
+chunks serialize it into bounded batch storage, and CPU chunks retain it in
+the oracle state. A backend adopting the emitted optics must keep every threshold, bound and
 compositing line in THIS module's text — no restated constants.
+
+**Diagnostic readback.** `transportReadback: true` requests the completed
+sample's eight raw u32 words per pixel, preserving the f32 bits. The existing
+transport record buffer permits `COPY_SRC`; only a requested readback allocates
+temporary `MAP_READ` staging, destroyed after copying or cancellation. Normal
+rendering does not perform this readback. `onSample` observes each completed
+AA sample before averaging; a multisample result carries only its last
+sample's raw record. Canceled diagnostic jobs return null.
 
 **Sample identity and full-image coordinates.** A sample is identified by its
 full-image pixel (absolute x, y) and its sub-pixel sample index; sub-pixel
@@ -613,22 +629,25 @@ are byte-unchanged (4D off exactly 64,679 B as recorded).
 
 - **The tally line is the lane's frame verdict.** `?surfacetrace`'s ring
   carries one `transport done final resolved=N unresolved=M (cumulative
-…) passes=K` line per settled frame — the LAST pass's own split (the
-  cumulative counts re-count every replay retry, so a ray that resolved
-  at pass 5 was "unresolved" at passes 0–4; only the last pass's split
-  says how the FRAME landed, the black-pixel question). The invalidation
-  sweep, the envelope leg and the resolve gate all read it; it is
-  permanent ring vocabulary, not a diagnostic to revert.
-- **The replay-pass shape is the resumption.** Per pixel the record is two
-  vec4f (radiance.rgb + residual; status/failure/reason/generation); the
-  seed zeroes it per frame. A pass dispatches a batch of rays; each still-
+…) passes=K` line per rendered AA sample. Accepted, unresolved and invalid
+  rays leave the pending queue once, so cumulative terminal counts do not
+  recount retries; the final and cumulative labels report the same terminal
+  partition. Qualification requires every expected AA sample to be complete
+  and untruncated; a pending retry is not an unresolved terminal sample.
+  The invalidation sweep, envelope leg and resolve gate read this permanent
+  ring vocabulary together with the sample's completion evidence.
+- **Replay passes refine; finite chunks resume.** Per pixel the record is two
+  vec4f (radiance.rgb + residual; status/failure/reason/replay-pass index); the
+  seed zeroes it per AA sample. A pass dispatches batches of rays; each still-
   pending sample re-traces FROM SCRATCH at the halved theta; accepted
   samples (per-sample residual ≤ `DIELECTRIC_ERROR_BUDGET`) overwrite the
   pixel and never reprocess. Six passes and a still-pending sample is
   final UNRESOLVED; a non-finite outcome is final INVALID; both go BLACK —
-  never background — and the frame's counts disclose them. Cancellation
-  generations are pass indices; the frame token's invalidation rules are
-  the renderer's own.
+  never background — and the sample's counts disclose them. A finite trace
+  may pause within a batch at the same theta; its ray list and batch generation
+  remain fixed until all its slots finish. RUNNING is internal to those chunks,
+  never a completed census or permission to advance the replay pass. Frame
+  token invalidation cancels the whole job, independently of either index.
 - **The lane is the dispatch discipline.** HIT rays take BOTH the classic
   shade queue (which skips optics slots after the one hit-info the slot
   attribution needs) and the transport queue (which skips classic slots
@@ -1629,6 +1648,101 @@ new live frame started after delivery. The corrected report and raw console
 are `scripts/out/finite-glass-correction/native4d-early-export-report.json`
 and the adjacent console file. Because capture started after the provisional
 frame, this is a checkpoint diagnostic, not a normal export qualification.
+
+### Pausing a finite trace between paths
+
+The remaining long submission is work within individual rays. Finite 3D and
+native 4D therefore share a scheduling quantum of 2048 processed paths. A
+trace pauses before popping the next path, stores its live LIFO stack,
+radiance, residual and cumulative processed count, and resumes at the same
+replay threshold. No path is split, no accumulated term is rounded to an
+image value, and no partial result is published. The 16384 processed/interface
+guards, 24-entry stack, six replay thresholds and accepted residual budget
+retain their previous meanings. A quantum of zero is an uninterrupted
+diagnostic control, not a document setting.
+
+Finite cores have no map array, so the shade pipeline reuses binding 1 for
+one batch of continuation records without increasing the nine storage
+bindings. The march pipeline retains its dummy map binding. A 16-byte batch
+header carries initialization, an atomic running count, generation and ray
+count. Each slot has a 48-byte header followed by the existing 24 × 112-byte
+paths: a 2736-byte stride. Headers identify the pixel, replay pass and batch
+generation; malformed or stale continuations refuse. Completed slots stay
+done while their neighbors finish. The host holds the ray list and threshold
+fixed, copies the four-byte running count alongside the existing status copy,
+and checks cancellation or loss after every completing counter map. Because
+that copy follows the dispatch and status copy in the same submission, its
+map already fences the chunk; finite work needs no preceding queue-wide wait.
+
+The allocation is bounded by 4096 rays and reused across batches, frames and
+AA samples. At that capacity its declared storage plus counter staging is
+11,206,676 bytes (10.688 MiB). Added to the full-HD optical buffers, the
+modeled extra allocation is about 89.789 MiB; that is not a measurement of
+driver-private memory or browser RSS. Every actual submission contributes
+its own checkpoint timing, while the batch-size model learns the cumulative
+work of the original ray batch. Source-layout checks and unchanged optical
+loop text support the implementation; real-GPU raw-state equivalence,
+performance, cancellation and independent memory measurements are still
+required to qualify this scheduling change.
+
+The initial 128-path quantum demonstrated both sides of the tradeoff on the
+quiet RX 7900 XTX: native 4D full-HD four-sample export finished every sample
+and reproduced the uninterrupted PNG byte for byte, with a maximum
+submission of 69.4 ms instead of 926.8 ms. However, 7873 submissions raised
+delivery time to 148.750 s, outside the unchanged 120-second line. Most
+submissions (6116) were in the first replay pass. The scheduling quantum was
+therefore increased to 512; this changes how often work pauses, not how much
+optical work resolves. The 128-path diagnostic is preserved under
+`scripts/out/finite-glass-resumption-128/` and is not a performance pass.
+
+The 512-path diagnostic completed the same image in 117.828 s with a
+154.5 ms maximum submission, again with complete samples and identical PNG
+bytes. Its export headroom was only 2.2 seconds, while checkpoint headroom
+remained large; the production quantum was therefore moved to 1024 for
+final qualification. The 512-path record is preserved under
+`scripts/out/finite-glass-resumption-512/`.
+
+The full real-driver benchmark at quantum 1024 passes the strict boundary
+and exact-primary controls and every raw-state scheduling comparison in both
+dimensions. Quanta 0, 1, 17, 128, 512 and 1024 reproduce every individual AA
+sample's eight-word optical records and RGBA, including intentional
+processed-limit refusals at cap 2. Every positive quantum exercises an actual
+pause. The 3D envelope settles in 6.727 s, but native 4D takes 10.697 s and
+fails the unchanged 10-second line despite complete samples and a 277.2 ms
+largest submission. This is a failed performance qualification, preserved at
+`scripts/out/finite-glass-resumption-1024-baseline/results.json`.
+
+The next implementation uses quantum 2048 and removes the redundant explicit
+queue fence before the finite counter map. Timing now runs through that map's
+completion, and cancellation still waits for submitted work. The diagnostic
+uninterrupted and other backend lanes retain their original queue fence.
+On the same quiet real driver, the frozen settle takes 6.283 s / 10.082 s
+and the largest submissions take 140.9 ms / 501.2 ms. Native 4D still fails
+the unchanged ten-second limit. Every raw comparison agrees, but the 8×8,
+two-sample 4D control never pauses at quantum 2048 and therefore fails its
+continuation-witness requirement. Neither failure is waived. This report is
+preserved under `scripts/out/finite-glass-resumption-2048-map-baseline/`.
+
+### Retaining unchanged axis crossings
+
+Within one finite DDA query, the intrinsic origin and direction are fixed.
+Only an axis whose integer cell advances needs a new crossing time. Both
+dimensions now retain the other axes' already rounded values and recompute
+advanced axes with the original `(plane - origin) / direction` expression.
+There is no incremental time update or reciprocal substitution. The minimum
+and tie scans retain their order, and event, medium, root-exit and visit
+guards run before any next-iteration update.
+
+An uncached diagnostic emission remains available for direct comparison.
+Its emitted query bytes are pinned to the pre-cache source in both dimensions.
+The f32 twin agrees over 88,800 queries covering every cell at levels zero
+through two, signed/zero directions and exact/near ties. Independent f64
+root-face and posed reflection/refraction controls also compare both f32
+forms. Malformed-input and visit-cap refusals remain unchanged. The GPU gate
+compares complete raw transport records and per-sample/final pixels on the
+same adapter.
+This removes repeated arithmetic on longer walks; it does not by itself
+establish a speedup or satisfy the remaining performance gates.
 
 ## What is not yet qualified
 

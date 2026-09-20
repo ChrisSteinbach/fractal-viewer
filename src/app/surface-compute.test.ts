@@ -61,6 +61,9 @@ import type {
 import {
   SURFACE_GPU_CHAOS_BYTES,
   SURFACE_GPU_RAY_MISS,
+  SURFACE_GPU_RAY_HIT,
+  SURFACE_GPU_TRANSPORT_COMPLETE,
+  SURFACE_GPU_TRANSPORT_PENDING,
   SURFACE_GPU_SHADE_LIGHTING_BYTES,
   SURFACE_GPU_HIT_FLOOR,
   SURFACE_GPU_LENS4_POST_BYTES,
@@ -106,6 +109,14 @@ import {
   DEFAULT_SURFACE_LIGHTING,
   surfaceLightingRuntime,
 } from "../fractal/surface-lighting";
+import {
+  FINITE_TRANSPORT_RUNNING,
+  finiteTransportWorkBytes,
+} from "../fractal/finite-transport-work";
+import { FINITE_SOLID_HALF_EXTENT } from "../fractal/finite-solid";
+import { finiteSolidTransportSource } from "../fractal/surface-finite-solid-gpu";
+import { surfaceSlotMaterials } from "./surface-slots";
+import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
 
 describe("the two engines' full-tier hit floor (mirror pin)", () => {
   it("is ONE number: surface-de-gpu.ts's SURFACE_GPU_HIT_FLOOR is surface-material.ts's SURFACE_FULL_HIT_FLOOR", () => {
@@ -1616,6 +1627,7 @@ globalThis.GPUBufferUsage = {
   INDIRECT: 0x0100,
   QUERY_RESOLVE: 0x0200,
 };
+globalThis.GPUMapMode = { READ: 0x1, WRITE: 0x2 };
 globalThis.GPUShaderStage = {
   VERTEX: 0x1,
   FRAGMENT: 0x2,
@@ -1652,6 +1664,8 @@ async function createPaletteResourceHarness(
   targetOverride?: SurfaceComputeAnyTarget,
   lighting = false,
   deviceFeatures: string[] = [],
+  opticsOpts?: { chunkPaths?: number; maxPaths?: number },
+  finiteCacheCrossings?: boolean,
 ): Promise<PaletteResourceHarness> {
   const layoutDescriptors: GPUBindGroupLayoutDescriptor[] = [];
   const bufferDescriptors: GPUBufferDescriptor[] = [];
@@ -1748,8 +1762,12 @@ async function createPaletteResourceHarness(
     trapIndices: number[],
     shadeDeWidth: number,
     adapterStatus: { label: string | undefined; software: boolean },
-    materials: null,
+    materials: SurfaceMaterialSlots | null,
     lighting: boolean,
+    opticsBackend?: "finiteSolid",
+    chunkPaths?: number,
+    maxPaths?: number,
+    cacheCrossings?: boolean,
   ) => Promise<SurfaceComputeRenderer>;
   const renderer = await build.call(
     SurfaceComputeRenderer,
@@ -1759,8 +1777,19 @@ async function createPaletteResourceHarness(
     [0],
     1,
     { label: undefined, software: false },
-    null,
+    opticsOpts
+      ? surfaceSlotMaterials(
+          [{ ...defaultTransforms()[0], optics: { model: "dielectric" } }],
+          [{ baseIndex: 0 }],
+          undefined,
+          FINITE_SOLID_HALF_EXTENT,
+        )
+      : null,
     lighting,
+    opticsOpts ? "finiteSolid" : undefined,
+    opticsOpts?.chunkPaths,
+    opticsOpts?.maxPaths,
+    finiteCacheCrossings,
   );
   return {
     renderer,
@@ -3165,6 +3194,628 @@ describe("SurfaceComputeRenderer authored lighting", () => {
         new Float32Array([0, 0, 0, 3 + 2 * 65536, 0, 0, 0, 7]),
       ),
     ).toEqual({ exhausted: 10, invalid: 2 });
+  });
+});
+
+interface FiniteHostDispatch {
+  submission: number;
+  initialize: number;
+  counterBefore: number;
+  generation: number;
+  rayIds: number[];
+  replayPass: number;
+  statusBefore: number[];
+}
+
+/** Exercise the actual host loop, copies and readbacks over byte-backed GPU
+ * buffers. Writes and submitted commands remain queued until a fence or map
+ * completes. The simulated kernel supplies only completion outcomes; it does
+ * not reproduce optical arithmetic or the continuation implementation. */
+function finiteContinuationHarness(
+  opts: {
+    kind?: "finite" | "finite4";
+    chunkPaths?: number;
+    maxPaths?: number;
+    parkLabel?: string;
+    outcome?: (dispatch: FiniteHostDispatch) => {
+      running: number;
+      statuses: (number | null)[];
+    };
+  } = {},
+) {
+  interface BufferMemory {
+    data: ArrayBuffer;
+    descriptor: GPUBufferDescriptor;
+    destroy: ReturnType<typeof vi.fn>;
+  }
+  const memory = new Map<GPUBuffer, BufferMemory>();
+  const bindGroups = new Map<GPUBindGroup, Map<number, GPUBuffer>>();
+  const dispatches: FiniteHostDispatch[] = [];
+  const copies: {
+    submission: number;
+    src: GPUBuffer;
+    dst: GPUBuffer;
+    srcOffset: number;
+    bytes: number;
+  }[] = [];
+  const maps: string[] = [];
+  const completions: {
+    kind: "map" | "fence";
+    label?: string;
+    transportDispatches: number;
+  }[] = [];
+  const queued: { submission: number; operation: () => void }[] = [];
+  const parked = deferred();
+  let didPark = false;
+  let submission = 0;
+  let executingSubmission = 0;
+  const completeQueue = (kind: "map" | "fence", label?: string) => {
+    const before = dispatches.length;
+    for (const command of queued.splice(0)) {
+      executingSubmission = command.submission;
+      command.operation();
+    }
+    completions.push({
+      kind,
+      label,
+      transportDispatches: dispatches.length - before,
+    });
+  };
+  const createBuffer = (descriptor: GPUBufferDescriptor): GPUBuffer => {
+    const item: BufferMemory = {
+      data: new ArrayBuffer(Number(descriptor.size)),
+      descriptor,
+      destroy: vi.fn(),
+    };
+    let mapped = false;
+    const buffer = {
+      size: Number(descriptor.size),
+      destroy: item.destroy,
+      mapAsync: async () => {
+        const label = descriptor.label ?? "";
+        maps.push(label);
+        if (!didPark && opts.parkLabel === label) {
+          didPark = true;
+          await parked.promise;
+        }
+        await Promise.resolve();
+        completeQueue("map", label);
+        mapped = true;
+      },
+      getMappedRange: (offset = 0, size = item.data.byteLength - offset) => {
+        expect(mapped).toBe(true);
+        return item.data.slice(offset, offset + size);
+      },
+      unmap: () => {
+        mapped = false;
+      },
+    } as unknown as GPUBuffer;
+    memory.set(buffer, item);
+    return buffer;
+  };
+  const words = (buffer: GPUBuffer) =>
+    new Uint32Array(memory.get(buffer)!.data);
+  const plain = (size = 512) =>
+    createBuffer({
+      size,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+  const paramsBuf = plain();
+  const shadeBuf = plain();
+  const mapsBuf = plain();
+  const pipelines = {
+    seed: {} as GPUComputePipeline,
+    march: {} as GPUComputePipeline,
+    shade: {} as GPUComputePipeline,
+    transport: {} as GPUComputePipeline,
+  };
+  const deviceDestroy = vi.fn();
+  const device = {
+    lost: new Promise<GPUDeviceLostInfo>(() => {}),
+    limits: {
+      maxBufferSize: 1 << 28,
+      maxStorageBufferBindingSize: 1 << 28,
+      maxComputeWorkgroupsPerDimension: 65535,
+    },
+    pushErrorScope: () => {},
+    popErrorScope: async () => null,
+    createBuffer,
+    createBindGroup: (descriptor: GPUBindGroupDescriptor) => {
+      const group = {} as GPUBindGroup;
+      const bindings = new Map<number, GPUBuffer>();
+      for (const entry of descriptor.entries) {
+        if ("buffer" in entry.resource)
+          bindings.set(entry.binding, entry.resource.buffer);
+      }
+      bindGroups.set(group, bindings);
+      return group;
+    },
+    queue: {
+      writeTexture: () => {},
+      writeBuffer: (
+        buffer: GPUBuffer,
+        offset: number,
+        data: ArrayBuffer | ArrayBufferView,
+      ) => {
+        const view = ArrayBuffer.isView(data)
+          ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+          : new Uint8Array(data);
+        const bytes = view.slice();
+        queued.push({
+          submission: 0,
+          operation: () => {
+            new Uint8Array(memory.get(buffer)!.data).set(bytes, offset);
+          },
+        });
+      },
+      submit: (commands: { operations: (() => void)[] }[]) => {
+        submission++;
+        for (const command of commands)
+          for (const operation of command.operations)
+            queued.push({ submission, operation });
+      },
+      onSubmittedWorkDone: async () => {
+        await Promise.resolve();
+        completeQueue("fence");
+      },
+    },
+    createCommandEncoder: () => {
+      const operations: (() => void)[] = [];
+      return {
+        beginComputePass: () => {
+          let pipeline: GPUComputePipeline;
+          let group: GPUBindGroup;
+          return {
+            setPipeline: (value: GPUComputePipeline) => {
+              pipeline = value;
+            },
+            setBindGroup: (_index: number, value: GPUBindGroup) => {
+              group = value;
+            },
+            dispatchWorkgroups: (count: number) => {
+              operations.push(() => {
+                if (count === 0) return;
+                const bindings = bindGroups.get(group)!;
+                const length = words(paramsBuf)[14]; // shared Params.itemCount
+                if (pipeline === pipelines.march) {
+                  words(bindings.get(5)!).fill(SURFACE_GPU_RAY_HIT, 0, length);
+                } else if (pipeline === pipelines.transport) {
+                  const work = bindings.get(1)!;
+                  const header = work === mapsBuf ? [1, 0, 0] : words(work);
+                  const status = words(bindings.get(15)!);
+                  const rayIds = Array.from(
+                    words(bindings.get(2)!).slice(0, length),
+                  );
+                  const dispatch: FiniteHostDispatch = {
+                    submission: executingSubmission,
+                    initialize: header[0],
+                    counterBefore: header[1],
+                    generation: header[2],
+                    rayIds,
+                    replayPass: new Float32Array(
+                      memory.get(shadeBuf)!.data,
+                    )[56],
+                    statusBefore: Array.from(status.slice(0, length)),
+                  };
+                  dispatches.push(dispatch);
+                  const outcome = opts.outcome?.(dispatch) ?? {
+                    running:
+                      work !== mapsBuf && dispatch.initialize === 1 ? 1 : 0,
+                    statuses: rayIds.map((_, i) =>
+                      work !== mapsBuf && dispatch.initialize === 1 && i === 0
+                        ? FINITE_TRANSPORT_RUNNING
+                        : SURFACE_GPU_TRANSPORT_COMPLETE,
+                    ),
+                  };
+                  outcome.statuses.forEach((value, i) => {
+                    if (value !== null) status[i] = value;
+                  });
+                  if (work !== mapsBuf) words(work)[1] = outcome.running;
+                  // Non-round f32 bits ensure the diagnostic path is a raw
+                  // GPU copy rather than reconstructed display pixels.
+                  const records = words(bindings.get(14)!);
+                  for (const ray of rayIds) records[ray * 8] = 0x3f800001 + ray;
+                }
+              });
+            },
+            end: () => {},
+          };
+        },
+        copyBufferToBuffer: (
+          src: GPUBuffer,
+          srcOffset: number,
+          dst: GPUBuffer,
+          dstOffset: number,
+          bytes: number,
+        ) => {
+          operations.push(() => {
+            expect(
+              memory.get(src)!.descriptor.usage & GPUBufferUsage.COPY_SRC,
+            ).not.toBe(0);
+            new Uint8Array(memory.get(dst)!.data, dstOffset, bytes).set(
+              new Uint8Array(memory.get(src)!.data, srcOffset, bytes),
+            );
+            copies.push({
+              submission: executingSubmission,
+              src,
+              dst,
+              srcOffset,
+              bytes,
+            });
+          });
+        },
+        finish: () => ({ operations }),
+      };
+    },
+    destroy: deviceDestroy,
+  } as unknown as GPUDevice;
+  const renderer = new SurfaceComputeRenderer({
+    device,
+    target: { kind: opts.kind ?? "finite", level: 2 },
+    marchPipeline: pipelines.march,
+    shadePipeline: pipelines.shade,
+    marchLayout: {} as GPUBindGroupLayout,
+    shadeLayout: {} as GPUBindGroupLayout,
+    marchPipelineNoSlab: null,
+    shadePipelineNoSlab: null,
+    transportPipeline: pipelines.transport,
+    transportPipelineNoSlab: null,
+    finiteTransportChunkPaths: opts.chunkPaths,
+    transportMaxPaths: opts.maxPaths,
+    opticsMapsBuf: plain(),
+    seedPipeline: pipelines.seed,
+    seedLayout: {} as GPUBindGroupLayout,
+    seedBuf: plain(),
+    paramsBuf,
+    shadeBuf,
+    mapsBuf,
+    shadeMapsBuf: plain(),
+    lutTex: { createView: () => ({}) } as unknown as GPUTexture,
+    lutSamp: {} as GPUSampler,
+    software: false,
+  });
+  const spec = frameSpec();
+  spec.width = 3;
+  spec.height = 1;
+  if (opts.kind === "finite4")
+    spec.view4 = {
+      rotor: rotorMatrix(identityRotorPair()),
+      w0: 0.18,
+      sliceHalfW: 0,
+    };
+  return {
+    renderer,
+    spec,
+    memory,
+    maps,
+    completions,
+    copies,
+    dispatches,
+    deviceDestroy,
+    resume: parked.resolve,
+  };
+}
+
+describe("SurfaceComputeRenderer finite continuation", () => {
+  it.each(["finite", "finite4"] as const)(
+    "forwards the %s crossing-cache diagnostic to primary and transport kernels",
+    async (kind) => {
+      const dim = kind === "finite" ? 3 : 4;
+      const cached = finiteSolidTransportSource(dim);
+      const uncached = finiteSolidTransportSource(dim, false);
+      expect(cached).not.toBe(uncached);
+      for (const cacheCrossings of [undefined, true, false]) {
+        const h = await createPaletteResourceHarness(
+          false,
+          { kind, level: 2 },
+          false,
+          [],
+          {},
+          cacheCrossings,
+        );
+        expect(h.shaderSources).toHaveLength(2);
+        for (const source of h.shaderSources)
+          expect(source).toContain(
+            cacheCrossings === false ? uncached : cached,
+          );
+        h.renderer.destroy();
+      }
+    },
+  );
+
+  it("leaves nonfinite kernels unchanged when the finite crossing-cache diagnostic is supplied", async () => {
+    const defaults = await createPaletteResourceHarness(false);
+    const diagnostic = await createPaletteResourceHarness(
+      false,
+      undefined,
+      false,
+      [],
+      undefined,
+      false,
+    );
+    expect(diagnostic.shaderSources).toEqual(defaults.shaderSources);
+    defaults.renderer.destroy();
+    diagnostic.renderer.destroy();
+  });
+
+  it.each(["finite", "finite4"] as const)(
+    "builds %s continuation with the existing nine storage bindings and retains the uninterrupted control",
+    async (kind) => {
+      for (const chunkPaths of [undefined, 0]) {
+        const h = await createPaletteResourceHarness(
+          false,
+          { kind, level: 2 },
+          false,
+          [],
+          { chunkPaths, maxPaths: 2 },
+        );
+        const shadeLayout = Array.from(h.layoutDescriptors[1].entries);
+        expect(
+          shadeLayout.filter((e) => e.buffer && e.buffer.type !== "uniform"),
+        ).toHaveLength(9);
+        expect(shadeLayout.find((e) => e.binding === 1)?.buffer?.type).toBe(
+          chunkPaths === 0 ? "read-only-storage" : "storage",
+        );
+        expect(
+          Array.from(h.layoutDescriptors[0].entries).find(
+            (e) => e.binding === 1,
+          )?.buffer?.type,
+        ).toBe("read-only-storage");
+        const allocate = Reflect.get(h.renderer, "allocateFrameBuffers") as (
+          rays: number,
+        ) => Promise<unknown>;
+        await allocate.call(h.renderer, 17);
+        const work = h.bufferDescriptors.filter(
+          (b) => b.label === "finite-transport-work",
+        );
+        expect(work).toHaveLength(chunkPaths === 0 ? 0 : 1);
+        if (work.length)
+          expect(work[0].size).toBe(finiteTransportWorkBytes(17));
+        const march = Array.from(h.bindGroups[0].entries).find(
+          (e) => e.binding === 1,
+        )?.resource;
+        const shade = Array.from(h.bindGroups[1].entries).find(
+          (e) => e.binding === 1,
+        )?.resource;
+        if (chunkPaths === 0) expect(shade).toEqual(march);
+        else expect(shade).not.toEqual(march);
+        h.renderer.destroy();
+      }
+    },
+  );
+
+  it.each(["finite", "finite4"] as const)(
+    "holds %s slot identity and theta until every paused trace finishes",
+    async (kind) => {
+      const h = finiteContinuationHarness({
+        kind,
+        outcome: (d) => {
+          if (d.initialize === 1)
+            return {
+              running: 1,
+              statuses: d.rayIds.map((_, i) =>
+                i === 0
+                  ? FINITE_TRANSPORT_RUNNING
+                  : SURFACE_GPU_TRANSPORT_COMPLETE,
+              ),
+            };
+          return {
+            running: 0,
+            statuses: d.rayIds.map((_, i) =>
+              i === 0
+                ? d.replayPass === 0
+                  ? SURFACE_GPU_TRANSPORT_PENDING
+                  : SURFACE_GPU_TRANSPORT_COMPLETE
+                : null,
+            ),
+          };
+        },
+      });
+      const frame = await h.renderer.renderFrame(h.spec, {
+        transportReadback: true,
+      });
+      expect(frame?.transport).toMatchObject({
+        passes: 2,
+        resolved: 3,
+        unresolved: 0,
+        invalid: 0,
+        continuationChunks: 2,
+      });
+      expect(frame?.transport?.batchMs).toHaveLength(4);
+      expect(
+        h.dispatches.map((d) => [
+          d.initialize,
+          d.generation,
+          d.replayPass,
+          d.rayIds,
+        ]),
+      ).toEqual([
+        [1, 1, 0, [0, 1, 2]],
+        [0, 1, 0, [0, 1, 2]],
+        [1, 2, 1, [0]],
+        [0, 2, 1, [0]],
+      ]);
+      expect(h.dispatches.every((d) => d.counterBefore === 0)).toBe(true);
+      expect(h.dispatches[1].statusBefore).toEqual([
+        FINITE_TRANSPORT_RUNNING,
+        SURFACE_GPU_TRANSPORT_COMPLETE,
+        SURFACE_GPU_TRANSPORT_COMPLETE,
+      ]);
+      expect(
+        Array.from(frame!.transportState!).filter((_, i) => i % 8 === 0),
+      ).toEqual([0x3f800001, 0x3f800002, 0x3f800003]);
+      const counterCopies = h.copies.filter(
+        (c) =>
+          h.memory.get(c.dst)!.descriptor.label === "finite-transport-running",
+      );
+      expect(counterCopies).toHaveLength(4);
+      expect(h.completions.filter((c) => c.transportDispatches > 0)).toEqual(
+        Array.from({ length: 4 }, () => ({
+          kind: "map",
+          label: "finite-transport-running",
+          transportDispatches: 1,
+        })),
+      );
+      for (const counter of counterCopies) {
+        expect(counter).toMatchObject({ srcOffset: 4, bytes: 4 });
+        expect(
+          h.copies.filter((c) => c.submission === counter.submission),
+        ).toHaveLength(2);
+      }
+      const diagnostics = [...h.memory.values()].filter(
+        (b) => b.descriptor.label === "transport diagnostic readback",
+      );
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0].destroy).toHaveBeenCalledOnce();
+      h.renderer.destroy();
+    },
+  );
+
+  it("waits for the finite counter map to finish GPU work and includes that wait in each chunk timing", async () => {
+    let now = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    const h = finiteContinuationHarness({
+      parkLabel: "finite-transport-running",
+    });
+    try {
+      const pending = h.renderer.renderFrame(h.spec);
+      await flushMicrotasks();
+      expect(h.maps).toContain("finite-transport-running");
+      // submit() only queued the kernel and copies. A redundant queue fence
+      // would already have completed this work before the map was reached.
+      expect(h.dispatches).toHaveLength(0);
+      now = 37;
+      h.resume();
+      const frame = await pending;
+      expect(frame?.transport?.resolved).toBe(3);
+      expect(frame?.transport?.batchMs).toEqual([37, 0]);
+      expect(h.dispatches).toHaveLength(2);
+    } finally {
+      h.resume();
+      h.renderer.destroy();
+      clock.mockRestore();
+    }
+  });
+
+  it("reuses bounded batch scratch across AA samples and frames, while generations advance", async () => {
+    const h = finiteContinuationHarness();
+    h.spec.width = 5000;
+    const observed: number[] = [];
+    expect(
+      await h.renderer.renderFrame(h.spec, {
+        samples: 2,
+        onSample: (frame) => observed.push(frame.transport!.resolved),
+      }),
+    ).not.toBeNull();
+    const before = h.dispatches.at(-1)!.generation;
+    const scratch = [...h.memory.values()].filter(
+      (b) => b.descriptor.label === "finite-transport-work",
+    );
+    expect(scratch).toHaveLength(1);
+    expect(scratch[0].descriptor.size).toBe(finiteTransportWorkBytes(4096));
+    h.spec.width = 3;
+    expect(await h.renderer.renderFrame(h.spec)).not.toBeNull();
+    expect(h.dispatches.at(-1)!.generation).toBeGreaterThan(before);
+    expect(
+      [...h.memory.values()].filter(
+        (b) => b.descriptor.label === "finite-transport-work",
+      ),
+    ).toHaveLength(1);
+    expect(observed).toEqual([5000, 5000]);
+    expect(h.maps).not.toContain("transport diagnostic readback");
+    // Growth releases the old frame allocation; later device teardown
+    // releases the currently retained allocation through WebGPU itself.
+    h.spec.width = 6000;
+    expect(await h.renderer.renderFrame(h.spec)).not.toBeNull();
+    expect(scratch[0].destroy).toHaveBeenCalledOnce();
+    h.renderer.destroy();
+    expect(h.deviceDestroy).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the zero-quantum control uninterrupted and allocates no continuation state", async () => {
+    const h = finiteContinuationHarness({ chunkPaths: 0 });
+    expect((await h.renderer.renderFrame(h.spec))?.transport).toMatchObject({
+      resolved: 3,
+      passes: 1,
+    });
+    expect(h.dispatches).toHaveLength(1);
+    expect(h.completions.filter((c) => c.transportDispatches > 0)).toEqual([
+      { kind: "fence", label: undefined, transportDispatches: 1 },
+    ]);
+    expect(
+      [...h.memory.values()].some((b) =>
+        b.descriptor.label?.startsWith("finite-transport-"),
+      ),
+    ).toBe(false);
+    h.renderer.destroy();
+  });
+
+  it("cancels while a running-counter readback is pending and starts the next frame fresh", async () => {
+    const h = finiteContinuationHarness({
+      parkLabel: "finite-transport-running",
+    });
+    const pending = h.renderer.renderFrame(h.spec);
+    await flushMicrotasks();
+    expect(h.maps).toContain("finite-transport-running");
+    h.renderer.cancel();
+    h.resume();
+    expect(await pending).toBeNull();
+    expect(h.dispatches).toHaveLength(1);
+    expect(await h.renderer.renderFrame(h.spec)).not.toBeNull();
+    expect(h.dispatches[1]).toMatchObject({ initialize: 1, generation: 2 });
+    h.renderer.destroy();
+  });
+
+  it("defers teardown and always destroys temporary diagnostic staging after cancellation", async () => {
+    const h = finiteContinuationHarness({
+      parkLabel: "transport diagnostic readback",
+    });
+    const pending = h.renderer.renderFrame(h.spec, { transportReadback: true });
+    await flushMicrotasks();
+    expect(h.maps).toContain("transport diagnostic readback");
+    const staging = [...h.memory.values()].find(
+      (b) => b.descriptor.label === "transport diagnostic readback",
+    )!;
+    h.renderer.destroy();
+    expect(h.deviceDestroy).not.toHaveBeenCalled();
+    expect(staging.destroy).not.toHaveBeenCalled();
+    h.resume();
+    expect(await pending).toBeNull();
+    expect(staging.destroy).toHaveBeenCalledOnce();
+    expect(h.deviceDestroy).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    "excess running",
+    "running escaped",
+    "never drains",
+    "unknown status",
+  ])("refuses a malformed continuation: %s", async (failure) => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const h = finiteContinuationHarness({
+      maxPaths: 2,
+      chunkPaths: 1,
+      outcome: (d) => ({
+        running:
+          failure === "excess running"
+            ? d.rayIds.length + 1
+            : failure === "running escaped" || failure === "unknown status"
+              ? 0
+              : 1,
+        statuses: d.rayIds.map(() =>
+          failure === "unknown status" ? 255 : FINITE_TRANSPORT_RUNNING,
+        ),
+      }),
+    });
+    try {
+      expect(await h.renderer.renderFrame(h.spec)).toBeNull();
+      expect(errors).toHaveBeenCalledOnce();
+      expect(h.dispatches.length).toBeLessThanOrEqual(3);
+      expect(h.dispatches.every((d) => d.replayPass === 0)).toBe(true);
+    } finally {
+      h.renderer.destroy();
+      errors.mockRestore();
+    }
   });
 });
 
