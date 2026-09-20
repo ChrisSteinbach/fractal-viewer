@@ -38,7 +38,7 @@ const settleMs = Number(argOf("--settle", "180000"));
 
 const STARTERS = [
   { id: "glass-garden", label: "Glass garden (3D)" },
-  { id: "glass-menger", label: "Glass Menger (3D)" },
+  { id: "glass-corner-cells", label: "Glass corner cells (3D)" },
   { id: "glass-cells", label: "Glass cells (4D)" },
 ];
 

@@ -1126,11 +1126,14 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   systems — the **Lit interiors** (whole lighting rigs) and the **Glass
   transmission** starters: **Glass garden (3D)** — stacked glass members and
   a slab over a checker floor, every member carrying the dielectric model at
-  the distortion study's working value — and **Glass cells (4D)** — the same
-  material on the hypertetrahedron's four corners at the canonical posed
-  slice. Loading either replaces the whole scene (camera, backdrop, floor,
-  palette and per-transform optics included) and arms the Surface entry, the
-  Lit interiors' contract one material over.
+  the distortion study's working value — **Glass corner cells (3D)** — one
+  emitter whose shape is the eight-box gapped corner cluster (the closed-solid
+  union's multi-cell traversal; NOT the recursive sponge, which is the
+  adjacent Glass optgroup's **Glass Menger** preset) — and **Glass cells
+  (4D)** — the same material on the hypertetrahedron's four corners at the
+  canonical posed slice. Loading any of them replaces the whole scene
+  (camera, backdrop, floor, palette and per-transform optics included) and
+  arms the Surface entry, the Lit interiors' contract one material over.
 - **Systems → + Add isolated block** — preserves the current system, copies a
   chosen preset, saved scene, or the current system, measures both x extents,
   seats the copy beyond the old with a gap, and writes block-diagonal Xaos rows

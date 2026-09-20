@@ -968,22 +968,33 @@ qualified default 1 — the pattern scale row's construction one band
 over). Both write through the per-field rule's own twin; the model is the
 object's spine, never a leaf (a pure `{model: "dielectric"}` is the
 qualified Glass default, and clearing happens through the bundle). The
-group carries one static restriction note naming where the transport
-routes. State rides the finish group's own timing (a row edit re-enters
+group carries one scene-directed restriction note — the transmission
+boundary as the CURRENT document sits on it (`surfaceOpticsOutlook`'s
+document mirror of the routing admission): resolving finite-cell
+constructions, resolving emitter scenes (naming the saved-slice coupling
+in 4D), or classic everywhere else, rewritten on every eligibility
+refresh so a user authoring Glass on an arbitrary system reads the
+boundary before entering Surface, not after. State rides the finish
+group's own timing (a row edit re-enters
 Surface once at the editor's settlement boundary) and the finish codec's
 wire; the transform list names the material (`Optics: Glass`).
 
 ### The starter scenes
 
-Two whole-scene compositions ride the preset menu's one door under the
+Three whole-scene compositions ride the preset menu's one door under the
 `glass:` prefix (`surface-transmission-starters.ts`, the Lit interiors'
-split), both emitter-only C0 with the dielectric model and the
+split), all emitter-only C0 with the dielectric model and the
 distortion working value 0.08 on every member and the checker floor on
 (the bright rear structure the transmission and its distortion are for):
 
 - **Glass garden (3D)** — stacked glass spheres and a posed box slab over
   the floor; the depth arrangement puts rear structure behind every
   sight line through the front glass.
+- **Glass corner cells (3D)** — one emitter whose shape is the eight-box
+  gapped corner cluster at ±0.28, scale 0.42: the closed-solid union's
+  multi-cell traversal, deliberately labelled away from the recursive
+  Menger (the adjacent Glass optgroup's **Glass Menger** preset, the
+  finite-cell route).
 - **Glass cells (4D)** — the hypertetrahedron's four corners, each member
   carrying a `w` scale (the non-flat degree of freedom that lifts the
   session onto the native 4D pipeline) parked at the value that keeps

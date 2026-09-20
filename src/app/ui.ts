@@ -172,6 +172,7 @@ import {
   type SurfaceEligibilityResult,
   type SurfaceRouteKind,
 } from "./surface-eligibility";
+import type { SurfaceOpticsOutlook } from "./surface-optics-backend";
 import {
   BALLOON_CENTRE_REFUSAL_REASON,
   resolvePanelApplicability,
@@ -802,6 +803,24 @@ function cloneSurfaceOptics(
   optics: SurfaceOptics | undefined,
 ): SurfaceOptics | undefined {
   return optics === undefined ? undefined : { ...optics };
+}
+
+/** The optics restriction note's copy, keyed on the document's transmission
+ * outlook (surface-optics-backend.ts's document mirror). Each sentence is
+ * scene-directed — which side of the boundary THIS document sits on — and
+ * the classic state still names the resolving families and the Glass door,
+ * so the boundary is visible before authoring rather than after entry. All
+ * four sit inside the note word budget. */
+function opticsOutlookNoteText(outlook: SurfaceOpticsOutlook): string {
+  if (outlook.resolves === "finite-cells") {
+    return "This scene's glass resolves: the finite-cell transport walks the construction's cells exactly.";
+  }
+  if (outlook.resolves === "closed-solid") {
+    return outlook.sliceCoupled
+      ? "This emitter scene's glass resolves at the saved slice pose; scrubbing the slice away leaves it unresolved."
+      : "This emitter scene's glass resolves on the closed-solid transport at the next Surface entry.";
+  }
+  return "This scene keeps the classic finish: transmission resolves on emitter-only scenes and finite-cell Menger constructions.";
 }
 
 /** The three w-mixing planes shared by `WExtension.rotation`/`.shear` (see
@@ -1947,6 +1966,10 @@ interface FinishControls {
   opticsRows: Record<OpticsKey, AxisControl>;
   /** Adjacent reason for any Surface refusal affecting this map's finish. */
   note: HTMLElement;
+  /** The scene-directed transmission note beside the optics rows — the
+   * boundary as THIS document sits on it, rewritten by
+   * {@link applyMaterialDisclosure} on every eligibility refresh. */
+  opticsNote: HTMLElement;
 }
 
 /**
@@ -3006,6 +3029,11 @@ export class Ui {
     note: null,
     kind: null,
   };
+  /** The document's transmission outlook (see surfaceOpticsOutlook) — the
+   * scene-directed optics note's text source, refreshed with every
+   * eligibility refresh. An eligibility call that does not state one reads
+   * classic, so the note never claims resolution the caller did not assert. */
+  private surfaceOpticsOutlook: SurfaceOpticsOutlook = { resolves: false };
   /** The first positively-weighted transform — the one finish a
    * forward-orbit session reads (see {@link forwardHeadIndex}); refreshed
    * with every transform-list render, the panel's feed of the whole set. */
@@ -8092,6 +8120,7 @@ export class Ui {
     detail: string | null,
     kind: SurfaceRouteKind | null = null,
     recovery: SurfaceEligibilityRecovery | null = null,
+    opticsOutlook?: SurfaceOpticsOutlook,
   ): void {
     const button = this.modeButtons.surface;
     const blocked = status === "ineligible";
@@ -8120,6 +8149,9 @@ export class Ui {
     // editor rebuild cannot lose an ineligibility reason.
     this.surfaceEligibility = { status, note: detail, kind };
     if (recovery !== null) this.surfaceEligibility.recovery = recovery;
+    // Absent means UNKNOWN, and unknown reads classic — never a stale
+    // resolution claim from an earlier document.
+    this.surfaceOpticsOutlook = opticsOutlook ?? { resolves: false };
     this.applyMaterialDisclosure();
   }
 
@@ -10185,14 +10217,16 @@ export class Ui {
       opticsRows[key] = { slider, readout, numeric };
     }
 
-    // The optics restriction note — static, one honest sentence beside the
-    // rows it qualifies (the panel-ia dormant-disclosure rule): the
-    // transport's routing admission, named so an authored-but-unrouted
-    // material is never a silent no-op.
+    // The optics restriction note — SCENE-DIRECTED, one honest sentence
+    // beside the rows it qualifies (the panel-ia dormant-disclosure rule):
+    // which side of the transmission boundary THIS document sits on, from
+    // surfaceOpticsOutlook's document mirror, so a user authoring Glass on
+    // an arbitrary system reads the boundary before entering Surface, not
+    // after. applyMaterialDisclosure keeps it current on every refresh.
     const opticsNote = this.doc.createElement("p");
     opticsNote.className = "flame-note-info";
-    opticsNote.textContent =
-      "Transmission resolves on closed-solid (emitter) and finite-cell (Menger) scenes — load a Glass starter to see it; other surfaces keep the classic finish.";
+    opticsNote.id = "transformOpticsNote";
+    opticsNote.textContent = opticsOutlookNoteText(this.surfaceOpticsOutlook);
     group.appendChild(opticsNote);
 
     this.syncFinishBundleSelect(bundle, finish, optics);
@@ -10200,7 +10234,7 @@ export class Ui {
       materialPresetOf(finish, pattern)?.id ?? MATERIAL_CUSTOM_ID;
 
     this.transformEditor.appendChild(group);
-    return { group, material, bundle, rows, opticsRows, note };
+    return { group, material, bundle, rows, opticsRows, note, opticsNote };
   }
 
   /** Point the bundle select at whichever bundle the working copy IS, or at
@@ -10303,7 +10337,7 @@ export class Ui {
       return "";
     };
     if (editor.finishControls) {
-      const { group, material, bundle, rows, opticsRows, note } =
+      const { group, material, bundle, rows, opticsRows, note, opticsNote } =
         editor.finishControls;
       material.disabled = refused;
       bundle.disabled = refused;
@@ -10319,6 +10353,10 @@ export class Ui {
       this.setReasonNote(note, reason("finish"));
       note.classList.toggle("hidden", !refused);
       group.classList.toggle("material-inert", refused);
+      // The scene-directed transmission boundary, current as of the last
+      // eligibility refresh (setSurfaceEligibility re-runs this on every
+      // document edit, so the note cannot go stale behind a document).
+      opticsNote.textContent = opticsOutlookNoteText(this.surfaceOpticsOutlook);
     }
     if (editor.patternControls) {
       const { group, family, axis, scale, strength, note } =
