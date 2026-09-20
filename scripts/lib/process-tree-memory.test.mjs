@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { spawn } from "node:child_process";
+import fs from "node:fs/promises";
+import { Worker } from "node:worker_threads";
 import test from "node:test";
 
 import {
@@ -76,6 +78,187 @@ test("includes a live child and reports a peak around an async operation", async
       await once(child, "exit");
     }
   }
+});
+
+test("includes a non-leader thread's real child and that child's descendant", async () => {
+  const childSource = `
+    const { spawn } = require('node:child_process');
+    const grandchild = spawn(process.execPath,
+      ['-e', "process.stdout.write('ready'); setInterval(() => {}, 1000)"],
+      { stdio: ['ignore', 'pipe', 'inherit'] });
+    grandchild.stdout.once('data', () => {
+      process.stdout.write(JSON.stringify({ child: process.pid, grandchild: grandchild.pid }) + '\\n');
+    });
+    process.once('SIGTERM', () => {
+      grandchild.once('exit', () => process.exit(0));
+      grandchild.kill();
+    });
+  `;
+  const worker = new Worker(
+    `
+      const { parentPort } = require('node:worker_threads');
+      const { spawn } = require('node:child_process');
+      const { createInterface } = require('node:readline');
+      const child = spawn(process.execPath, ['-e', ${JSON.stringify(childSource)}],
+        { stdio: ['ignore', 'pipe', 'inherit'] });
+      createInterface({ input: child.stdout }).once('line', line => {
+        parentPort.postMessage(JSON.parse(line));
+      });
+      parentPort.once('message', () => child.kill());
+      child.once('exit', () => parentPort.close());
+    `,
+    { eval: true },
+  );
+  let childInfo;
+  try {
+    [childInfo] = await once(worker, "message");
+    const leaderChildren = (
+      await fs.readFile(
+        `/proc/${process.pid}/task/${process.pid}/children`,
+        "utf8",
+      )
+    )
+      .trim()
+      .split(/\s+/)
+      .map(Number);
+    // This fixture exercises exactly the old blind spot, independently of
+    // the sampler: the process leader cannot see the worker's child.
+    assert.ok(!leaderChildren.includes(childInfo.child));
+    const sample = await sampleProcessTreeRss(process.pid);
+    for (const pid of [process.pid, childInfo.child, childInfo.grandchild]) {
+      assert.ok(sample.sampledPids.includes(pid), `Missing descendant ${pid}`);
+      assert.equal(
+        sample.sampledPids.filter((value) => value === pid).length,
+        1,
+      );
+    }
+    assert.ok(sample.knownRssBytes > 0);
+  } finally {
+    if (childInfo) {
+      const exited = once(worker, "exit");
+      worker.postMessage("stop");
+      await exited;
+    } else {
+      await worker.terminate();
+    }
+  }
+});
+
+function mockProcFiles(t, files, directories) {
+  const read = (collection, path) => {
+    const value = collection[path];
+    if (value instanceof Error) throw value;
+    if (value === undefined)
+      throw Object.assign(new Error(`Missing fixture ${path}`), {
+        code: "ENOENT",
+      });
+    return value;
+  };
+  t.mock.method(fs, "readFile", async (path) => read(files, path));
+  t.mock.method(fs, "readdir", async (path) => read(directories, path));
+}
+
+const procStatus = (parent, rssKb) => `PPid:\t${parent}\nVmRSS:\t${rssKb} kB\n`;
+
+test("unions all task children but counts each process RSS only once", async (t) => {
+  mockProcFiles(
+    t,
+    {
+      "/proc/101/status": procStatus(1, 10),
+      "/proc/101/task/101/children": "201\n",
+      "/proc/101/task/102/children": "201 301\n",
+      "/proc/201/status": procStatus(101, 20),
+      "/proc/201/task/201/children": "\n",
+      "/proc/301/status": procStatus(101, 30),
+      "/proc/301/task/301/children": "",
+      "/proc/301/task/302/children": "",
+    },
+    {
+      "/proc/101/task": ["101", "102"],
+      "/proc/201/task": ["201"],
+      "/proc/301/task": ["301", "302"],
+    },
+  );
+  assert.deepEqual(await sampleProcessTreeRss(101), {
+    rootPid: 101,
+    status: "ok",
+    rssBytes: 60 * 1024,
+    knownRssBytes: 60 * 1024,
+    sampledPids: [101, 201, 301],
+    unavailableProcessCount: 0,
+    issues: [],
+  });
+});
+
+test("keeps known descendants when another task disappears or is unreadable", async (t) => {
+  mockProcFiles(
+    t,
+    {
+      "/proc/101/status": procStatus(1, 10),
+      "/proc/101/task/101/children": "201",
+      "/proc/101/task/103/children": Object.assign(new Error("denied"), {
+        code: "EACCES",
+      }),
+      "/proc/201/status": procStatus(101, 20),
+      "/proc/201/task/201/children": "",
+    },
+    {
+      "/proc/101/task": ["101", "102", "103"],
+      "/proc/201/task": ["201"],
+    },
+  );
+  const sample = await sampleProcessTreeRss(101);
+  assert.equal(sample.status, "partial");
+  assert.equal(sample.rssBytes, null);
+  assert.equal(sample.knownRssBytes, 30 * 1024);
+  assert.deepEqual(sample.sampledPids, [101, 201]);
+  assert.deepEqual(
+    sample.issues.map(({ path, reason }) => ({ path, reason })),
+    [
+      { path: "/proc/101/task/102/children", reason: "ENOENT" },
+      { path: "/proc/101/task/103/children", reason: "EACCES" },
+    ],
+  );
+});
+
+test("refuses incomplete task enumeration instead of claiming an empty child tree", async (t) => {
+  for (const tasks of [
+    [],
+    ["101", "invalid"],
+    Object.assign(new Error("denied"), { code: "EACCES" }),
+  ]) {
+    mockProcFiles(
+      t,
+      {
+        "/proc/101/status": procStatus(1, 10),
+        "/proc/101/task/101/children": "",
+      },
+      { "/proc/101/task": tasks },
+    );
+    const sample = await sampleProcessTreeRss(101);
+    assert.equal(sample.status, "partial");
+    assert.equal(sample.rssBytes, null);
+    assert.equal(sample.knownRssBytes, 10 * 1024);
+    assert.ok(sample.issues.length > 0);
+    t.mock.restoreAll();
+  }
+});
+
+test("a malformed non-leader children file cannot produce a complete total", async (t) => {
+  mockProcFiles(
+    t,
+    {
+      "/proc/101/status": procStatus(1, 10),
+      "/proc/101/task/101/children": "",
+      "/proc/101/task/102/children": "201 invalid",
+    },
+    { "/proc/101/task": ["101", "102"] },
+  );
+  const sample = await sampleProcessTreeRss(101);
+  assert.equal(sample.status, "partial");
+  assert.equal(sample.rssBytes, null);
+  assert.equal(sample.knownRssBytes, 10 * 1024);
+  assert.match(sample.issues[0].reason, /invalid pid/);
 });
 
 test("stops sampling and preserves an operation failure", async () => {

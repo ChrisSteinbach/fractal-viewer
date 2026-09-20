@@ -5,7 +5,10 @@
  * listing `/proc` and reading its status, and a restricted host can deny a
  * status file altogether. Those cases must never turn into a zero-byte child.
  * A sample therefore publishes an exact `rssBytes` only when every process
- * named by the root's recursive `children` walk was readable. Partial samples
+ * named by the root's recursive per-task `children` walk was readable, with
+ * every listed task's child list available. Linux child lists belong to
+ * threads: the leader's list alone omits processes spawned by other threads.
+ * RSS is counted once per process, never once per thread. Partial samples
  * retain their known lower bound in `knownRssBytes` and describe what was
  * unavailable. It deliberately does not enumerate unrelated `/proc` entries:
  * doing that work on every short-interval sample would perturb the run it is
@@ -23,6 +26,9 @@ export const DEFAULT_PEAK_INTERVAL_MS = 25;
 
 /** Keep a result useful without retaining one error for every raced process. */
 const MAX_REPORTED_ISSUES = 32;
+
+/** Read only descendants' task files, with bounded filesystem concurrency. */
+const MAX_CONCURRENT_TASK_READS = 16;
 
 /**
  * Parse the two `/proc/<pid>/status` fields this sampler needs.
@@ -90,8 +96,8 @@ async function readProcessStatus(pid) {
   return { pid, record, issue: null };
 }
 
-async function readChildren(pid) {
-  const path = `/proc/${pid}/task/${pid}/children`;
+async function readTaskChildren(pid, tid) {
+  const path = `/proc/${pid}/task/${tid}/children`;
   let text;
   try {
     text = await fs.readFile(path, "utf8");
@@ -109,9 +115,53 @@ async function readChildren(pid) {
   return { children, issue: null };
 }
 
+async function readChildren(pid) {
+  const path = `/proc/${pid}/task`;
+  let entries;
+  try {
+    entries = await fs.readdir(path);
+  } catch (error) {
+    return { children: [], issues: [issue(pid, path, error)] };
+  }
+  const tasks = [];
+  const issues = [];
+  for (const entry of entries) {
+    const tid = Number(entry);
+    if (/^[1-9]\d*$/.test(entry) && validPid(tid)) tasks.push(tid);
+    else if (issues.length < MAX_REPORTED_ISSUES)
+      issues.push({
+        pid,
+        path,
+        reason: "task directory contains an invalid tid",
+      });
+  }
+  if (entries.length === 0)
+    issues.push({ pid, path, reason: "task directory contains no tasks" });
+  const children = new Set();
+  for (
+    let offset = 0;
+    offset < tasks.length;
+    offset += MAX_CONCURRENT_TASK_READS
+  ) {
+    const reads = await Promise.all(
+      tasks
+        .slice(offset, offset + MAX_CONCURRENT_TASK_READS)
+        .map((tid) => readTaskChildren(pid, tid)),
+    );
+    for (const read of reads) {
+      if (read.issue && issues.length < MAX_REPORTED_ISSUES)
+        issues.push(read.issue);
+      for (const child of read.children ?? []) children.add(child);
+    }
+  }
+  return { children: [...children], issues };
+}
+
 /**
  * Sum a root process and every descendant named by the recursive
- * `/proc/<pid>/task/<pid>/children` walk. This function never throws for
+ * union of `/proc/<pid>/task/<tid>/children` over all listed threads. Only
+ * `/proc/<pid>/status` contributes RSS, so shared process memory is not
+ * counted again for its threads. This function never throws for
  * ordinary process races or denied procfs reads; inspect `status` and `issues`
  * before accepting a total.
  *
@@ -156,12 +206,9 @@ export async function sampleProcessTreeRss(rootPid) {
     records.set(pid, read.record);
 
     const childRead = await readChildren(pid);
-    if (childRead.children === null) {
-      // A readable parent with an unreadable child list still has known RSS,
-      // but its descendant total is incomplete.
-      addIssue(summary, childRead.issue, false);
-      continue;
-    }
+    // Keep successfully discovered children even if another task disappeared
+    // or was unreadable. Its absence makes the total partial, never zero.
+    for (const next of childRead.issues) addIssue(summary, next, false);
     for (const child of childRead.children) {
       if (!discovered.has(child)) {
         discovered.add(child);
