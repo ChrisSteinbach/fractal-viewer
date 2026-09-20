@@ -8713,35 +8713,64 @@ async function runSurfaceTransportAgreementLegs(
   // legs' convention; the posed-lift agreement is their record and the
   // envelope leg's). The fixture's `estimate` is the SIGNED closed-solid
   // union field — the same SAFETY-scaled certified bound the kernel's
-  // transportSolidField evaluates — mirrored, not restated.
-  const pushClosedSolidLeg = (fourD: boolean): void => {
-    const transforms: Transform[] = [
-      {
-        id: 0,
-        position: [0.35, -0.1, 0.05],
-        rotation: [0.15, -0.2, 0.1],
-        scale: [0.35, 0.35, 0.35],
-        emitter: {
-          parts: [
-            { primitive: { kind: "sphere", radius: 1 }, combine: "union" },
-          ],
-        },
-      },
-      {
-        id: 1,
-        position: [-0.4, 0.25, -0.05],
-        rotation: [-0.1, 0.12, -0.2],
-        scale: [0.3, 0.3, 0.3],
-        emitter: {
-          parts: [
+  // transportSolidField evaluates — mirrored, not restated. The ABUTTING
+  // variant is the one arrangement the separated primitives cannot reach:
+  // two half-unit boxes at x = ∓0.5 sharing the plane x = 0, whose
+  // min-union field reads exactly zero ON that interior plane — the CPU
+  // twin's measured verdict (condensation-abutting.test.ts) is radiance
+  // parity with the spanning control, and this leg pins the KERNEL to the
+  // same behavior on the real driver.
+  const pushClosedSolidLeg = (
+    fourD: boolean,
+    variant: "separated" | "abutting" = "separated",
+  ): void => {
+    const transforms: Transform[] =
+      variant === "abutting"
+        ? [
             {
-              primitive: { kind: "box", half: [0.7, 0.5, 0.8] },
-              combine: "union",
+              id: 0,
+              position: [0, 0, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+              emitter: {
+                parts: ([-0.5, 0.5] as const).map((x) => ({
+                  primitive: { kind: "box", half: [0.5, 0.5, 0.5] } as const,
+                  combine: "union" as const,
+                  pose: { offset: [x, 0, 0] as Vec3 },
+                })),
+              },
             },
-          ],
-        },
-      },
-    ];
+          ]
+        : [
+            {
+              id: 0,
+              position: [0.35, -0.1, 0.05],
+              rotation: [0.15, -0.2, 0.1],
+              scale: [0.35, 0.35, 0.35],
+              emitter: {
+                parts: [
+                  {
+                    primitive: { kind: "sphere", radius: 1 },
+                    combine: "union",
+                  },
+                ],
+              },
+            },
+            {
+              id: 1,
+              position: [-0.4, 0.25, -0.05],
+              rotation: [-0.1, 0.12, -0.2],
+              scale: [0.3, 0.3, 0.3],
+              emitter: {
+                parts: [
+                  {
+                    primitive: { kind: "box", half: [0.7, 0.5, 0.8] },
+                    combine: "union",
+                  },
+                ],
+              },
+            },
+          ];
     const de3 = fourD
       ? null
       : buildSurfaceDE(transforms, null, { order: 1, plane: "xy" }, {});
@@ -8751,13 +8780,19 @@ async function runSurfaceTransportAgreementLegs(
     const de = fourD ? de4 : de3;
     if (!de || de.maps.length !== 0 || !de.condensation) {
       throw new Error(
-        `transport closed-solid: the ${fourD ? "4D" : "3D"} fixture did not ` +
+        `transport closed-solid: the ${fourD ? "4D" : "3D"} ${variant} fixture did not ` +
           "build its emitter-only union",
       );
     }
     legs.push({
       core: fourD ? "affine4" : "affine",
-      systemName: fourD ? "emitterOnlyUnion4" : "emitterOnlyUnion3",
+      systemName: fourD
+        ? variant === "abutting"
+          ? "closedSolidAbutting4"
+          : "emitterOnlyUnion4"
+        : variant === "abutting"
+          ? "closedSolidAbutting3"
+          : "emitterOnlyUnion3",
       backend: "closedSolid",
       options: {
         mode: "shade",
@@ -8801,6 +8836,8 @@ async function runSurfaceTransportAgreementLegs(
   };
   pushClosedSolidLeg(false);
   pushClosedSolidLeg(true);
+  pushClosedSolidLeg(false, "abutting");
+  pushClosedSolidLeg(true, "abutting");
 
   // The finite-solid backend's legs (both dimensions, the same bisect
   // slot): the study's finite cell decomposition — the level-2 Menger

@@ -463,6 +463,28 @@ retained 5.6 MiB, byte-identical repeats). The unresolved fractions are
 grazing paths riding the declared resolution — disclosed per arm, never
 absorbed.
 
+**The face-abutting control (2026-09-20).** The one arrangement the
+separated-primitive fixtures could not reach: two half-unit boxes at
+x = ∓0.5 sharing the plane x = 0, where the min-union field reads exactly
+ZERO while the point is interior to the optical solid. Measured through
+the CPU twin in BOTH dimensions (`condensation-abutting.test.ts`, the
+4D canonical identity pose reproducing the 3D figures digit for digit):
+every ray completes in the abutting system with the same status as the
+one-spanning control of the same combined solid — no unresolved, no
+refusal, complete accounting — and per-ray radiance agrees to ≤ 2.1e-5
+(relative ~4e-5) on a uniform backdrop. The interior zero is NOT
+invisible to the boundary query: the abutting traces record 18 boundary
+events where the control records 4 — the shared plane's crossing band
+fires, the tap gradient there is dominated by the deep member, and the
+event reads as a glass→air interface whose reflected child recirculates
+and escapes through another face — but the recirculated energy is
+direction-independent against a uniform backdrop, so the optical result
+carries no seam at the 1e-5 level. The transport legs carry the abutting
+arm (`closedSolidAbutting3`/`4`) pinning the kernel to the same behavior
+on the real driver; the limitation this control was built to catch —
+phantom unresolved work or a radiance discontinuity at the shared plane —
+did not reproduce.
+
 ### The rear-scene contract (delivered), and the straight shadow visibility
 
 `transportRearRadiance(origin, direction)` is the rear scene's ONE seam, and
