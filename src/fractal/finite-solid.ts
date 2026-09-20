@@ -1557,3 +1557,903 @@ export function finiteSolidIntervals(
   }
   return union;
 }
+
+// ---------------------------------------------------------------------------
+// The general construction: the document's OWN maps as the cell tree.
+//
+// The shipped construction above is the special case where the document's
+// maps ARE a shared ternary grid's structure — diag(1/3) at {0, ±0.5}
+// offsets — so every face has a canonical grid-plane value and every
+// neighbor a discrete grid index. A general document's maps are arbitrary
+// axis-aligned diagonal contractions; no shared grid exists, so the
+// construction is the WORD TREE: the level-N images of the root box under
+// the document's maps, every word occupied. The holes are the complement
+// BETWEEN cells, not a carved rule.
+//
+// Disclosed limits of this first lift (each with its admission reason):
+// - the maps must compose DIAGONAL affines (no rotation or shear): a
+//   rotated map's cell is an oriented box, and the axis-aligned slab,
+//   interval and anchor machinery below is the certified v1. The
+//   oriented-frame lift is its own follow-up inside the
+//   general-construction work, not a silent widening;
+// - the maps must CONTRACT (|scale| < 1 on every displayed axis) and keep
+//   the root box INVARIANT. The root is the maps' fixed points' bounding
+//   box; a map that pushes the box's boundary outside itself breaks the
+//   nested level structure the glass displays;
+// - adjacency is decided at the declared coordinate envelope. Two cell
+//   faces that coincide as reals may differ in the last ulp through
+//   different word compositions, and interval endpoints within
+//   FINITE_SOLID_GENERAL_TIE_REL merge — a gap below the construction's
+//   declared resolution is unrepresentable on the f32 wire the transport
+//   rides. The shipped grid path stays exact because its shared planes
+//   come from ONE formula, which is why the shipped shapes keep the
+//   shipped construction byte for byte and this path serves shape-less
+//   documents;
+// - the query enumerates the level-N leaves (K^level clips per query —
+//   the same order as the shipped interval union's 400/2,304-cell
+//   enumeration). This is the f64 REFERENCE; the production walk prunes.
+// ---------------------------------------------------------------------------
+
+/** The word-tree construction's map cap — the shipped 4D construction's
+ * own map count, so the general path admits at least everything the
+ * shipped one does. */
+export const FINITE_SOLID_GENERAL_MAX_MAPS = 48;
+
+/** Adjacency's declared resolution: interval endpoints within this
+ * relative distance are ONE boundary (the anchor reconstruction's
+ * coordinate envelope, promoted from a restart allowance to the
+ * construction's declared resolution). A genuine gap below it is
+ * unrepresentable on the f32 wire the transport rides. */
+export const FINITE_SOLID_GENERAL_TIE_REL = 2 * 2 ** -23;
+
+/** The general construction: cells are the level-`level` images of the
+ * root box under the document's own maps. Diagonal per-axis signed scales
+ * (reflections keep cells axis-aligned); the 4th slots carry the 4D w
+ * axis and are 1/0 in 3D. */
+export interface FiniteSolidGeneralConstruction {
+  dimension: 3 | 4;
+  level: number;
+  mapScale: Vec4[];
+  mapOffset: Vec4[];
+  mapCount: number;
+  /** The maps' fixed points' bounding box, verified invariant under every
+   * map at admission. */
+  rootMin: Vec4;
+  rootMax: Vec4;
+}
+
+export interface FiniteSolidGeneralAnalysis {
+  status: "eligible" | "ineligible";
+  reasons: string[];
+  construction?: FiniteSolidGeneralConstruction;
+}
+
+/** One composed map's diagonal form: signed per-axis scale and offset. */
+interface GeneralMap {
+  scale: Vec4;
+  offset: Vec4;
+}
+
+/** Compose the document's active maps through the shared affine twins and
+ * keep the ones the word-tree construction certifies: pure affine (the
+ * shipped structural refusals), DIAGONAL (an oriented cell frame is the
+ * oriented-frame lift, refused here with its reason), contracting on
+ * every displayed axis, and non-degenerate. */
+function collectGeneralFiniteSolidMaps(
+  active: readonly Transform[],
+  dimension: 3 | 4,
+  reasons: string[],
+): GeneralMap[] | null {
+  const maps: GeneralMap[] = [];
+  for (const transform of active) {
+    if (transform.variations && transform.variations.length > 0) {
+      reasons.push(
+        `map ${transform.id + 1} carries variations; the glass solid is the bare affine contraction tree`,
+      );
+      return null;
+    }
+    if (transform.emitter) {
+      reasons.push(
+        `map ${transform.id + 1} carries an emitter; the glass solid is the bare affine contraction tree`,
+      );
+      return null;
+    }
+    if (transform.chaos) {
+      reasons.push(
+        `map ${transform.id + 1} carries a chaos row; the glass solid has no graph-directed selection`,
+      );
+      return null;
+    }
+    if (transform.post && !isIdentityAffine(transform.post)) {
+      reasons.push(
+        `map ${transform.id + 1} carries a post-affine; the glass solid is the bare affine contraction tree`,
+      );
+      return null;
+    }
+    let m: readonly number[];
+    let t: Vec4;
+    if (transform.w) {
+      const lifted = toTransform4(transform);
+      if (lifted.post4) {
+        reasons.push(
+          `map ${transform.id + 1} carries a 4D post-affine; the glass solid is the bare affine contraction tree`,
+        );
+        return null;
+      }
+      const a4 = composeAffine4(lifted);
+      m = a4.m;
+      t = a4.t;
+    } else {
+      const a = composeAffine(transform);
+      m = a.m;
+      t = [a.t[0], a.t[1], a.t[2], 0];
+    }
+    const size = dimension;
+    const scale = [1, 1, 1, 1] as Vec4;
+    const offset = [0, 0, 0, 0] as Vec4;
+    for (let axis = 0; axis < size; axis++) {
+      scale[axis] = m[axis * size + axis];
+      offset[axis] = t[axis];
+      for (let col = 0; col < size; col++) {
+        if (col === axis) continue;
+        if (Math.abs(m[axis * size + col]) > MAP_TOL) {
+          reasons.push(
+            `map ${transform.id + 1} rotates or shears (off-diagonal ${m[axis * size + col]} on axis ${axis}); the axis-aligned construction refuses it until the oriented-frame lift`,
+          );
+          return null;
+        }
+      }
+      if (!(Math.abs(scale[axis]) < 1)) {
+        reasons.push(
+          `map ${transform.id + 1} does not contract on axis ${axis} (scale ${scale[axis]}); the glass solid needs every map to shrink`,
+        );
+        return null;
+      }
+      if (Math.abs(scale[axis]) <= MAP_TOL) {
+        reasons.push(
+          `map ${transform.id + 1} degenerates on axis ${axis} (scale ${scale[axis]}); a collapsed cell is not a solid`,
+        );
+        return null;
+      }
+    }
+    maps.push({ scale, offset });
+  }
+  return maps;
+}
+
+/** The general admission: the document's own maps as a word-tree glass
+ * solid. The structural refusals match the shipped construction's (pure
+ * affine, order-1 symmetry, identity lens); the numeric checks are the
+ * general ones — contraction, diagonal composition, root invariance. */
+export function analyzeFiniteSolidGeneral(
+  transforms: readonly Transform[],
+  finalTransform: Transform | null,
+  symmetry: SymmetryParams,
+  level: number,
+  dimension: 3 | 4,
+): FiniteSolidGeneralAnalysis {
+  if (!Number.isInteger(level) || level < 0 || level > FINITE_SOLID_MAX_LEVEL) {
+    return {
+      status: "ineligible",
+      reasons: [
+        `finite-solid level ${level} is outside the certified band 0..${FINITE_SOLID_MAX_LEVEL}`,
+      ],
+    };
+  }
+  const active = transforms.filter((t) => (t.weight ?? 1) > 0);
+  const reasons: string[] = [];
+  if (active.length < 1 || active.length > FINITE_SOLID_GENERAL_MAX_MAPS) {
+    reasons.push(
+      `the word-tree construction carries 1..${FINITE_SOLID_GENERAL_MAX_MAPS} active maps; this document has ${active.length}`,
+    );
+    return { status: "ineligible", reasons };
+  }
+  if (symmetry.order > 1) {
+    reasons.push(
+      "the kaleidoscope does not compose with a finite cell decomposition (the cells are the un-symmetrized set)",
+    );
+    return { status: "ineligible", reasons };
+  }
+  if (finalTransform && !isIdentityAffine(composeAffine(finalTransform))) {
+    reasons.push(
+      "the final transform warps the cell decomposition (only an untouched identity lens composes)",
+    );
+    return { status: "ineligible", reasons };
+  }
+  const maps = collectGeneralFiniteSolidMaps(active, dimension, reasons);
+  if (!maps) {
+    return { status: "ineligible", reasons };
+  }
+  // The root box: the maps' fixed points' bounding box. For a diagonal
+  // contraction x -> s·x + t the fixed point is t / (1 - s).
+  const rootMin = [0, 0, 0, 0] as Vec4;
+  const rootMax = [0, 0, 0, 0] as Vec4;
+  for (let axis = 0; axis < dimension; axis++) {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const map of maps) {
+      const fixed = map.offset[axis] / (1 - map.scale[axis]);
+      if (!Number.isFinite(fixed)) {
+        reasons.push(
+          `map fixed point on axis ${axis} is not finite; the root box has no certified extent`,
+        );
+        return { status: "ineligible", reasons };
+      }
+      lo = Math.min(lo, fixed);
+      hi = Math.max(hi, fixed);
+    }
+    rootMin[axis] = lo;
+    rootMax[axis] = hi;
+  }
+  // Invariance: every map keeps the root box inside itself, so the level
+  // images nest and the glass reads as one recursive solid. A violation
+  // beyond the round-trip tolerance refuses (never clamps).
+  for (let i = 0; i < maps.length; i++) {
+    const map = maps[i];
+    for (let axis = 0; axis < dimension; axis++) {
+      const s = map.scale[axis];
+      const o = map.offset[axis];
+      const lo = o + s * rootMin[axis];
+      const hi = o + s * rootMax[axis];
+      if (Math.min(lo, hi) < rootMin[axis] - MAP_TOL) {
+        reasons.push(
+          `map ${i + 1} pushes the root box ${Math.min(lo, hi) - rootMin[axis]} below its lower bound on axis ${axis}; the level images do not nest`,
+        );
+        return { status: "ineligible", reasons };
+      }
+      if (Math.max(lo, hi) > rootMax[axis] + MAP_TOL) {
+        reasons.push(
+          `map ${i + 1} pushes the root box ${Math.max(lo, hi) - rootMax[axis]} above its upper bound on axis ${axis}; the level images do not nest`,
+        );
+        return { status: "ineligible", reasons };
+      }
+    }
+  }
+  return {
+    status: "eligible",
+    reasons: [],
+    construction: {
+      dimension,
+      level,
+      mapScale: maps.map((m) => m.scale),
+      mapOffset: maps.map((m) => m.offset),
+      mapCount: maps.length,
+      rootMin,
+      rootMax,
+    },
+  };
+}
+
+/** One leaf's clip: the word's box against the intrinsic ray, with the
+ * binding axes at each end (the atomic-event candidates). */
+interface GeneralLeafInterval {
+  enter: number;
+  exit: number;
+  enterAxes: number[];
+  exitAxes: number[];
+  /** The word's map indices, depth = level entries. */
+  word: number[];
+}
+
+function clipGeneralLeaf(
+  c: FiniteSolidGeneralConstruction,
+  word: number[],
+  scale: Vec4,
+  offset: Vec4,
+  q: Vec4,
+  qd: Vec4,
+): GeneralLeafInterval | null {
+  let enter = -Infinity;
+  let exit = Infinity;
+  let enterAxes: number[] = [];
+  let exitAxes: number[] = [];
+  for (let axis = 0; axis < c.dimension; axis++) {
+    const s = scale[axis];
+    const lo0 = offset[axis] + s * c.rootMin[axis];
+    const hi0 = offset[axis] + s * c.rootMax[axis];
+    const lo = Math.min(lo0, hi0);
+    const hi = Math.max(lo0, hi0);
+    const d = qd[axis];
+    if (d === 0) {
+      if (q[axis] < lo || q[axis] > hi) return null;
+      continue;
+    }
+    const ta = (lo - q[axis]) / d;
+    const tb = (hi - q[axis]) / d;
+    const near = Math.min(ta, tb);
+    const far = Math.max(ta, tb);
+    if (near > enter) {
+      enter = near;
+      enterAxes = [axis];
+    } else if (near === enter) {
+      enterAxes.push(axis);
+    }
+    if (far < exit) {
+      exit = far;
+      exitAxes = [axis];
+    } else if (far === exit) {
+      exitAxes.push(axis);
+    }
+  }
+  if (!(exit > enter)) return null;
+  return { enter, exit, enterAxes, exitAxes, word };
+}
+
+/** Every level-N leaf's interval against the intrinsic ray, word attached.
+ * K^level entries — the reference enumeration the production walk prunes. */
+function enumerateGeneralLeaves(
+  c: FiniteSolidGeneralConstruction,
+  q: Vec4,
+  qd: Vec4,
+): GeneralLeafInterval[] {
+  const leaves: GeneralLeafInterval[] = [];
+  const scale: Vec4 = [1, 1, 1, 1];
+  const offset: Vec4 = [0, 0, 0, 0];
+  const word: number[] = [];
+  const walk = (depth: number): void => {
+    if (depth === c.level) {
+      const leaf = clipGeneralLeaf(c, [...word], scale, offset, q, qd);
+      if (leaf) leaves.push(leaf);
+      return;
+    }
+    for (let a = 0; a < c.mapCount; a++) {
+      const s = c.mapScale[a];
+      const t = c.mapOffset[a];
+      for (let axis = 0; axis < 4; axis++) {
+        offset[axis] += scale[axis] * t[axis];
+        scale[axis] *= s[axis];
+      }
+      word.push(a);
+      walk(depth + 1);
+      word.pop();
+      for (let axis = 0; axis < 4; axis++) {
+        scale[axis] /= s[axis];
+        offset[axis] -= scale[axis] * t[axis];
+      }
+    }
+  };
+  walk(0);
+  return leaves;
+}
+
+function generalTieAbs(t: number): number {
+  return FINITE_SOLID_GENERAL_TIE_REL * Math.max(1, Math.abs(t));
+}
+
+/** The word's box (axis-aligned in intrinsic space) as center + per-axis
+ * half, for membership clamps and the display hybrid. */
+function generalLeafBox(
+  c: FiniteSolidGeneralConstruction,
+  word: readonly number[],
+): { center: Vec4; half: Vec4 } {
+  const scale: Vec4 = [1, 1, 1, 1];
+  const offset: Vec4 = [0, 0, 0, 0];
+  for (const a of word) {
+    const s = c.mapScale[a];
+    const t = c.mapOffset[a];
+    for (let axis = 0; axis < 4; axis++) {
+      offset[axis] += scale[axis] * t[axis];
+      scale[axis] *= s[axis];
+    }
+  }
+  const center = [0, 0, 0, 0] as Vec4;
+  const half = [0, 0, 0, 0] as Vec4;
+  for (let axis = 0; axis < 4; axis++) {
+    const lo = offset[axis] + scale[axis] * c.rootMin[axis];
+    const hi = offset[axis] + scale[axis] * c.rootMax[axis];
+    center[axis] = (lo + hi) / 2;
+    half[axis] = Math.abs(hi - lo) / 2;
+  }
+  return { center, half };
+}
+
+/** The exact interval union along the ray: the leaves' intervals merged
+ * with the declared-resolution tie (endpoints within the envelope are ONE
+ * boundary — a shared face's two sides, computed through different word
+ * compositions, must not read as a phantom gap). */
+export function finiteSolidGeneralIntervals(
+  c: FiniteSolidGeneralConstruction,
+  pose: FiniteSolidPose,
+  origin: Vec3,
+  dir: Vec3,
+): Array<{ enter: number; exit: number }> {
+  const q = finiteSolidIntrinsicPoint(pose, origin);
+  const qd = finiteSolidIntrinsicDirection(pose, dir);
+  const leaves = enumerateGeneralLeaves(c, q, qd);
+  const endpoints: Array<{ t: number; delta: number }> = [];
+  for (const leaf of leaves) {
+    endpoints.push({ t: leaf.enter, delta: 1 });
+    endpoints.push({ t: leaf.exit, delta: -1 });
+  }
+  endpoints.sort((a, b) => a.t - b.t);
+  const union: Array<{ enter: number; exit: number }> = [];
+  let coverage = 0;
+  let openEnter = 0;
+  let i = 0;
+  while (i < endpoints.length) {
+    const groupT = endpoints[i].t;
+    const tie = generalTieAbs(groupT);
+    let net = 0;
+    while (i < endpoints.length && endpoints[i].t - groupT <= tie) {
+      net += endpoints[i].delta;
+      i++;
+    }
+    const before = coverage;
+    coverage += net;
+    if (before === 0 && coverage > 0) openEnter = groupT;
+    if (before > 0 && coverage === 0)
+      union.push({ enter: openEnter, exit: groupT });
+  }
+  return union;
+}
+
+/** The word-tree boundary query — the shipped DDA's event taxonomy over
+ * the document's own cell tree. The medium flips where the leaves'
+ * interval union's coverage crosses zero; tied endpoints (a shared face's
+ * two sides, or an exact corner across cells) are ONE atomic event with
+ * the span-projected normal, so an interior shared face is traversed
+ * silently and a genuine gap fires the honest exit/enter pair. */
+export function finiteSolidGeneralNextBoundary(
+  c: FiniteSolidGeneralConstruction,
+  pose: FiniteSolidPose,
+  origin: Vec3,
+  direction: Vec3,
+  options: FiniteSolidNextBoundaryOptions,
+): FiniteSolidBoundaryResult {
+  if (
+    !validGeneralConstruction(c) ||
+    typeof options.inside !== "boolean" ||
+    !origin.every(Number.isFinite) ||
+    !direction.every(Number.isFinite) ||
+    !(Math.hypot(direction[0], direction[1], direction[2]) > 0)
+  ) {
+    return { kind: "refused", reason: "invalid-input", visits: 0 };
+  }
+  const tMin = options.tMin ?? 0;
+  if (!Number.isFinite(tMin) || tMin < 0) {
+    return { kind: "refused", reason: "invalid-input", visits: 0 };
+  }
+  return finiteSolidGeneralNextBoundaryInternal(c, pose, origin, direction, {
+    ...options,
+    tMin,
+  });
+}
+
+/** The anchored continuation: the intrinsic anchor is authoritative (the
+ * rounded display coordinate cannot replace the canonical boundary
+ * origin). The anchor's word names the post-incident cell; the masked
+ * axes name the incident faces. */
+export function finiteSolidGeneralNextBoundaryFromAnchor(
+  c: FiniteSolidGeneralConstruction,
+  pose: FiniteSolidPose,
+  direction: Vec3,
+  options: { inside: boolean; anchor: FiniteSolidAnchor },
+): FiniteSolidBoundaryResult {
+  if (!validGeneralConstruction(c) || !validGeneralAnchor(c, options.anchor)) {
+    return { kind: "refused", reason: "invalid-input", visits: 0 };
+  }
+  if (
+    typeof options.inside !== "boolean" ||
+    !direction.every(Number.isFinite) ||
+    !(Math.hypot(direction[0], direction[1], direction[2]) > 0)
+  ) {
+    return { kind: "refused", reason: "invalid-input", visits: 0 };
+  }
+  return finiteSolidGeneralNextBoundaryInternal(c, pose, [0, 0, 0], direction, {
+    inside: options.inside,
+    tMin: 0,
+    anchor: options.anchor,
+  });
+}
+
+function validGeneralConstruction(c: FiniteSolidGeneralConstruction): boolean {
+  return (
+    (c.dimension === 3 || c.dimension === 4) &&
+    Number.isInteger(c.level) &&
+    c.level >= 0 &&
+    c.level <= FINITE_SOLID_MAX_LEVEL &&
+    Number.isInteger(c.mapCount) &&
+    c.mapCount >= 1 &&
+    c.mapCount <= FINITE_SOLID_GENERAL_MAX_MAPS &&
+    c.mapScale.length === c.mapCount &&
+    c.mapOffset.length === c.mapCount &&
+    c.rootMin.every(Number.isFinite) &&
+    c.rootMax.every(Number.isFinite)
+  );
+}
+
+/** The anchor's word must name real maps at the construction's depth, and
+ * the masked faces must be the leaf box's own sides. */
+function validGeneralAnchor(
+  c: FiniteSolidGeneralConstruction,
+  anchor: FiniteSolidAnchor,
+): boolean {
+  if (!anchor.intrinsicPoint.every(Number.isFinite)) return false;
+  let depth = 0;
+  for (let slot = 0; slot < 4; slot++) {
+    const index = anchor.cellIndices[slot];
+    if (index === -1) break;
+    if (index < 0 || index >= c.mapCount) return false;
+    depth++;
+  }
+  if (depth !== c.level) return false;
+  for (let slot = depth; slot < 4; slot++) {
+    if (anchor.cellIndices[slot] !== -1) return false;
+  }
+  let masked = 0;
+  for (let axis = 0; axis < 4; axis++) {
+    if ((anchor.planeMask & (1 << axis)) === 0) {
+      if (anchor.planeIndices[axis] !== -1) return false;
+      continue;
+    }
+    masked++;
+    const side = anchor.planeIndices[axis];
+    if (axis >= c.dimension) return false;
+    if (side !== 0 && side !== 1) return false;
+  }
+  return masked > 0;
+}
+
+/** The anchor's leaf box, from the anchor's word. */
+function anchorLeafBox(
+  c: FiniteSolidGeneralConstruction,
+  anchor: FiniteSolidAnchor,
+): { center: Vec4; half: Vec4 } {
+  const word: number[] = [];
+  for (let slot = 0; slot < c.level; slot++)
+    word.push(anchor.cellIndices[slot]);
+  return generalLeafBox(c, word);
+}
+
+function finiteSolidGeneralNextBoundaryInternal(
+  c: FiniteSolidGeneralConstruction,
+  pose: FiniteSolidPose,
+  origin: Vec3,
+  direction: Vec3,
+  options: FiniteSolidNextBoundaryOptions & { anchor?: FiniteSolidAnchor },
+): FiniteSolidBoundaryResult {
+  const anchor = options.anchor;
+  const tMin = options.tMin ?? 0;
+  const q = anchor
+    ? ([...anchor.intrinsicPoint] as Vec4)
+    : finiteSolidIntrinsicPoint(pose, origin);
+  const qd = finiteSolidIntrinsicDirection(pose, direction);
+  // The anchor's word is authoritative for its own faces: snap the masked
+  // coordinates onto the leaf's canonical face planes and clamp the rest
+  // into the leaf box under the declared envelope — the shipped
+  // reconstruction's discipline, one tree up.
+  if (anchor) {
+    const box = anchorLeafBox(c, anchor);
+    const halfMax = Math.max(
+      ...box.half.slice(0, c.dimension).map((h) => Math.abs(h)),
+    );
+    const envelope = FINITE_SOLID_GENERAL_TIE_REL * halfMax;
+    for (let axis = 0; axis < c.dimension; axis++) {
+      const lower = box.center[axis] - box.half[axis];
+      const upper = box.center[axis] + box.half[axis];
+      if ((anchor.planeMask & (1 << axis)) !== 0) {
+        q[axis] = anchor.planeIndices[axis] === 0 ? lower : upper;
+      } else if (q[axis] < lower) {
+        if (lower - q[axis] > envelope) {
+          return { kind: "refused", reason: "invalid-input", visits: 0 };
+        }
+        q[axis] = lower;
+      } else if (q[axis] > upper) {
+        if (q[axis] - upper > envelope) {
+          return { kind: "refused", reason: "invalid-input", visits: 0 };
+        }
+        q[axis] = upper;
+      }
+    }
+  }
+  const leaves = enumerateGeneralLeaves(c, q, qd);
+  // Endpoint sweep with the declared-resolution ties: consecutive
+  // endpoints within the tie of a group's first endpoint are ONE boundary
+  // group. The union's coverage crosses zero exactly at a medium flip; a
+  // group with net zero (a shared face's exit tied with the neighbor's
+  // entry) is traversed silently.
+  const endpoints: Array<{
+    t: number;
+    delta: number;
+    leaf: GeneralLeafInterval;
+    axes: number[];
+  }> = [];
+  for (const leaf of leaves) {
+    endpoints.push({ t: leaf.enter, delta: 1, leaf, axes: leaf.enterAxes });
+    endpoints.push({ t: leaf.exit, delta: -1, leaf, axes: leaf.exitAxes });
+  }
+  endpoints.sort((a, b) => a.t - b.t);
+  interface GeneralGroup {
+    t: number;
+    before: number;
+    after: number;
+    faces: Array<{ leaf: GeneralLeafInterval; axes: number[] }>;
+  }
+  const groups: GeneralGroup[] = [];
+  let coverage = 0;
+  let i = 0;
+  while (i < endpoints.length) {
+    const groupT = endpoints[i].t;
+    const tie = generalTieAbs(groupT);
+    const faces: Array<{ leaf: GeneralLeafInterval; axes: number[] }> = [];
+    let net = 0;
+    while (i < endpoints.length && endpoints[i].t - groupT <= tie) {
+      net += endpoints[i].delta;
+      faces.push({ leaf: endpoints[i].leaf, axes: endpoints[i].axes });
+      i++;
+    }
+    const before = coverage;
+    coverage += net;
+    groups.push({ t: groupT, before, after: coverage, faces });
+  }
+  // The state at tMin: the last group at or before it (within that
+  // group's tie); its after-coverage owns the point (half-open, the
+  // entering side — the shipped ray-side convention).
+  let startGroupIndex = -1;
+  for (let g = 0; g < groups.length; g++) {
+    if (groups[g].t <= tMin + generalTieAbs(groups[g].t)) startGroupIndex = g;
+    else break;
+  }
+  const stateAtStart = startGroupIndex >= 0 ? groups[startGroupIndex].after : 0;
+  const mediumInside = options.inside;
+  const stateMatches = stateAtStart > 0 === mediumInside;
+  const startGroup = startGroupIndex >= 0 ? groups[startGroupIndex] : undefined;
+  const atStartGroup =
+    startGroup !== undefined &&
+    Math.abs(startGroup.t - tMin) <= generalTieAbs(startGroup.t);
+  if (!stateMatches) {
+    if (anchor || !atStartGroup) {
+      // Off a boundary the claim must match the geometry; the anchored
+      // continuation is the interior restart and takes no liberty with
+      // the claim at all.
+      return { kind: "refused", reason: "state-mismatch", visits: 0 };
+    }
+    // The ray starts ON a boundary group with the claim anticipating the
+    // crossing (the display march's primary hit): emit the start event.
+    const event = generalBoundaryEvent(
+      c,
+      pose,
+      q,
+      qd,
+      direction,
+      startGroup,
+      tMin,
+      0,
+    );
+    if (
+      event.kind === "boundary" &&
+      tMin === 0 &&
+      sameFace(options.previousFace, event.face)
+    ) {
+      return { kind: "refused", reason: "state-mismatch", visits: 0 };
+    }
+    return event;
+  }
+  // Walk the groups after the start; the first zero-crossing of the
+  // coverage is the next medium flip. A tied group with net zero (an
+  // interior shared face) leaves the coverage unchanged and is traversed
+  // without an event — the exact behavior the grid DDA gets from its
+  // discrete neighbor step.
+  let visits = 0;
+  for (let g = startGroupIndex + 1; g < groups.length; g++) {
+    const group = groups[g];
+    visits++;
+    const flips =
+      (group.before === 0 && group.after > 0) ||
+      (group.before > 0 && group.after === 0);
+    if (!flips) continue;
+    const event = generalBoundaryEvent(
+      c,
+      pose,
+      q,
+      qd,
+      direction,
+      group,
+      group.t,
+      visits,
+    );
+    if (
+      event.kind === "boundary" &&
+      group.t === tMin &&
+      sameFace(options.previousFace, event.face)
+    ) {
+      return { kind: "refused", reason: "state-mismatch", visits };
+    }
+    return event;
+  }
+  return { kind: "miss", visits };
+}
+
+/** The boundary event from one tied endpoint group. The entering side is
+ * the group's after-coverage (the actual geometry, never the claim); the
+ * tied faces' span carries the projected normal; the anchor names the
+ * incident leaf (its canonical faces are the restart's snap target). */
+function generalBoundaryEvent(
+  c: FiniteSolidGeneralConstruction,
+  pose: FiniteSolidPose,
+  q: Vec4,
+  qd: Vec4,
+  direction: Vec3,
+  group: {
+    t: number;
+    before: number;
+    after: number;
+    faces: Array<{ leaf: GeneralLeafInterval; axes: number[] }>;
+  },
+  t: number,
+  visits: number,
+): FiniteSolidBoundary | FiniteSolidRefusal {
+  const entering = group.after > 0;
+  const crossedAxes = group.faces.flatMap((f) => f.axes);
+  const planeMask = crossedAxes.reduce((mask, axis) => mask | (1 << axis), 0);
+  const outwardNormal = finiteSolidBoundaryNormal(
+    pose,
+    c.dimension,
+    direction,
+    planeMask,
+    entering,
+  );
+  if (!outwardNormal) {
+    return { kind: "refused", reason: "degenerate-projected-normal", visits };
+  }
+  const axis = chooseAxis(crossedAxes, qd);
+  const directionSign = qd[axis] > 0 ? 1 : -1;
+  const faceSign = (entering ? -directionSign : directionSign) as -1 | 1;
+  // The anchor names the INCIDENT leaf — the leaf whose face was crossed
+  // (the entered leaf on an entry, the exited leaf on an exit). Its
+  // canonical planes are what the anchored restart snaps onto; the
+  // half-open sweep from that point suppresses the incident face without
+  // a special flag.
+  const incident = group.faces[0].leaf;
+  const cellIndices: [number, number, number, number] = [-1, -1, -1, -1];
+  for (let slot = 0; slot < incident.word.length; slot++) {
+    cellIndices[slot] = incident.word[slot];
+  }
+  // The crossed face's side within the leaf's own box: an entry through a
+  // positive-direction ray meets the min face; an exit the max face — and
+  // the ray direction flips both.
+  const anchorPlanes: [number, number, number, number] = [-1, -1, -1, -1];
+  for (const crossedAxis of crossedAxes) {
+    anchorPlanes[crossedAxis] = entering !== qd[crossedAxis] > 0 ? 1 : 0;
+  }
+  const intrinsicPoint = q.map(
+    (value, intrinsicAxis) => value + t * qd[intrinsicAxis],
+  ) as Vec4;
+  // Snap the crossed coordinates onto the incident leaf's canonical face
+  // planes; clamp the rest into the leaf box under the declared envelope.
+  const box = generalLeafBox(c, incident.word);
+  const halfMax = Math.max(
+    ...box.half.slice(0, c.dimension).map((h) => Math.abs(h)),
+  );
+  const envelope = FINITE_SOLID_GENERAL_TIE_REL * halfMax;
+  for (const crossedAxis of crossedAxes) {
+    intrinsicPoint[crossedAxis] =
+      anchorPlanes[crossedAxis] === 0
+        ? box.center[crossedAxis] - box.half[crossedAxis]
+        : box.center[crossedAxis] + box.half[crossedAxis];
+  }
+  for (let intrinsicAxis = 0; intrinsicAxis < c.dimension; intrinsicAxis++) {
+    if ((planeMask & (1 << intrinsicAxis)) !== 0) continue;
+    const lower = box.center[intrinsicAxis] - box.half[intrinsicAxis];
+    const upper = box.center[intrinsicAxis] + box.half[intrinsicAxis];
+    if (intrinsicPoint[intrinsicAxis] < lower) {
+      if (lower - intrinsicPoint[intrinsicAxis] > envelope) {
+        return { kind: "refused", reason: "invalid-input", visits };
+      }
+      intrinsicPoint[intrinsicAxis] = lower;
+    } else if (intrinsicPoint[intrinsicAxis] > upper) {
+      if (intrinsicPoint[intrinsicAxis] - upper > envelope) {
+        return { kind: "refused", reason: "invalid-input", visits };
+      }
+      intrinsicPoint[intrinsicAxis] = upper;
+    }
+  }
+  return {
+    kind: "boundary",
+    t,
+    entering,
+    outwardNormal,
+    intrinsicAxis: axis,
+    faceSign,
+    face: { axis, planeIndex: anchorPlanes[axis], level: c.level },
+    anchor: {
+      intrinsicPoint,
+      planeMask,
+      planeIndices: anchorPlanes,
+      cellIndices,
+    },
+    visits,
+  };
+}
+
+/** One box's exact SDF with per-axis extents (the word-tree's cells are
+ * boxes, not cubes): positive outside, negative inside, zero on the
+ * boundary; inside it is the deepest gap's negation. */
+function generalBoxSdf(
+  center: Vec4,
+  half: Vec4,
+  p: Vec4,
+  dimension: number,
+): number {
+  let outsideSquared = 0;
+  let inside = -Infinity;
+  for (let axis = 0; axis < dimension; axis++) {
+    const gap = Math.abs(p[axis] - center[axis]) - half[axis];
+    outsideSquared += Math.max(0, gap) ** 2;
+    inside = Math.max(inside, gap);
+  }
+  return Math.sqrt(outsideSquared) + Math.min(0, inside);
+}
+
+/**
+ * The word-tree display marcher's bounded-work estimate: the certified
+ * hybrid of the level-1 boxes and — one level in — the nearest box's
+ * children. `finiteSolidDisplayDistance`'s argument carries over verbatim:
+ * a box CONTAINS its subtree's part of the union, so its SDF is a lower
+ * bound of the distance to that part, and the global nearest union point
+ * lives in some box whose term the min cannot overstate — a march step can
+ * never skip the surface. The refine-when-close term exists for the same
+ * seal hazard the shipped hybrid names: a level-1 box's own faces are its
+ * SDF's zero set, and the deeper structure pierces those faces (a gap
+ * between children opens exactly at the parent's face), so the plain min
+ * would seal every opening at its mouth plane. Refining the nearest box
+ * into its K children (all of them — the word tree carves no rule holes)
+ * vanishes those zeros on the children's own faces and keeps the bound.
+ * Interior shared child faces also read 0; the zero set is NOT only the
+ * union's boundary, and this field is not a membership oracle — the
+ * transport walks the boundary query above, never this field.
+ *
+ * Level 1 returns the plain min (the boxes ARE the union); level 0 the
+ * root box. The refine margin is relative to the refined box's largest
+ * half-extent (the shipped constant's role, per box).
+ */
+export function finiteSolidGeneralDisplayDistance(
+  c: FiniteSolidGeneralConstruction,
+  pose: FiniteSolidPose,
+  p: Vec3,
+): number {
+  const q = finiteSolidIntrinsicPoint(pose, p);
+  const dimension = c.dimension;
+  if (c.level === 0) {
+    const center = [0, 0, 0, 0] as Vec4;
+    const half = [0, 0, 0, 0] as Vec4;
+    for (let axis = 0; axis < 4; axis++) {
+      center[axis] = (c.rootMin[axis] + c.rootMax[axis]) / 2;
+      half[axis] = Math.abs(c.rootMax[axis] - c.rootMin[axis]) / 2;
+    }
+    const d = generalBoxSdf(center, half, q, dimension);
+    return d > 0 ? d * SHAPE_MARCH_SAFETY : d;
+  }
+  const childBox = (word: number[]): { center: Vec4; half: Vec4 } =>
+    generalLeafBox(c, word);
+  let best = Infinity;
+  let bestWord: number[] | null = null;
+  for (let a = 0; a < c.mapCount; a++) {
+    const box = childBox([a]);
+    const d = generalBoxSdf(box.center, box.half, q, dimension);
+    if (d < best) {
+      best = d;
+      bestWord = [a];
+    }
+  }
+  if (c.level === 1 || bestWord === null) {
+    return best > 0 ? best * SHAPE_MARCH_SAFETY : best;
+  }
+  // Refine the nearest level-1 box into its children when the estimate is
+  // within the margin of that box's own surface.
+  const nearestBox = childBox(bestWord);
+  const halfMax = Math.max(
+    ...nearestBox.half.slice(0, dimension).map((h) => Math.abs(h)),
+  );
+  if (!(best < FINITE_SOLID_DISPLAY_REFINE_REL * halfMax)) {
+    return best > 0 ? best * SHAPE_MARCH_SAFETY : best;
+  }
+  let refined = Infinity;
+  for (let a = 0; a < c.mapCount; a++) {
+    const box = childBox([...bestWord, a]);
+    const d = generalBoxSdf(box.center, box.half, q, dimension);
+    if (d < refined) refined = d;
+  }
+  const result = Math.min(best, refined);
+  return result > 0 ? result * SHAPE_MARCH_SAFETY : result;
+}
