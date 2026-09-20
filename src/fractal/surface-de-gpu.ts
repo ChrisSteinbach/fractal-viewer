@@ -1619,11 +1619,17 @@ export const SURFACE_GPU_TRANSPORT_MAX_INTERFACES = 2048;
 /** The closed-solid floor corridor's straight shadow-visibility march
  * step budget (`transportShadowVisibility`, one ray per call — the
  * rear-scene task's corridor fix). The strides step the certified
- * field's |f| on both sides — no stride can overshoot the boundary — so
- * a lobe traversal costs a handful of steps and the budget paces only
- * the outside approach. The caps are the runtime's, not the document's —
- * never raised to make a failing row green. */
-export const SURFACE_GPU_TRANSPORT_SHADOW_STEPS = 24;
+ * field's |f| on both sides — no stride can overshoot the boundary —
+ * so a normal-incidence lobe traversal costs a handful of steps and
+ * the budget paces the outside approach plus the grazing tail. 48 is
+ * MEASURED, not tuned: the honest march of the grazing TIR control
+ * (a unit sphere at x = 0.9, entry cos 0.44) spends 36 steps between
+ * its entry and exit bands — the interior strides shrink as |f| near
+ * both grazing faces — and the old 24 was sized under the band
+ * mis-pairing that zeroed such rays at their ENTRY band, a defect the
+ * pairing fix removed. The caps are the runtime's, not the document's
+ * — never raised to make a failing row green. */
+export const SURFACE_GPU_TRANSPORT_SHADOW_STEPS = 48;
 
 /** Per-ray transport record status codes (transportState[ray*2+1].x, as
  * f32 values of these). PENDING re-traces from scratch at the next
@@ -9058,9 +9064,12 @@ fn transportSolidField(p: vec3f) -> f32 {
     if (abs(f) < eps) {
       // The declared crossing band: the boundary is here, within the
       // declared resolution. Fire the state's crossing (entry when the
-      // march is outside, exit when inside), then step past the band —
-      // the anchor suppression's own 2·eps skip — so the next sample
-      // reads the far side.
+      // march is outside, exit when inside), then leave the band — it
+      // is ±eps in FIELD value and the SAFETY-scaled field's gradient
+      // at a face is below 1, so the band can be wider in SPACE than
+      // one fixed skip; a bounded advance until the sample reads
+      // |f| >= eps keeps one crossing per band (a re-fire would pay
+      // the interface's Fresnel pair a second time).
       if (inside) {
         let e = vec2f(1.0, -1.0) * 0.5773;
         let grad = e.xyy * transportSolidField(sp + e.xyy * eps) +
@@ -9096,6 +9105,18 @@ fn transportSolidField(p: vec3f) -> f32 {
         cosEnter = abs(dot(dir, n));
       }
       ts = ts + 2.0 * eps;
+      var bandGuard = 0u;
+      loop {
+        let fq = transportSolidField(origin + dir * ts);
+        if (!(fq > -1.0e30) || abs(fq) >= eps) {
+          break;
+        }
+        ts = ts + 2.0 * eps;
+        bandGuard = bandGuard + 1u;
+        if (bandGuard >= 4u) {
+          break;
+        }
+      }
       continue;
     }
     if ((f < 0.0) != inside) {

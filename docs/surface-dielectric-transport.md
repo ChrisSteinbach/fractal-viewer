@@ -485,6 +485,41 @@ on the real driver; the limitation this control was built to catch —
 phantom unresolved work or a radiance discontinuity at the shared plane —
 did not reproduce.
 
+**The abutting leg's analytic control found a real defect (2026-09-20,
+same day).** The bench's first abutting run failed its shadow analytic
+control — not a kernel↔twin disagreement (they agreed to 4e-8) but the
+independent one-pair formula catching BOTH engines paying the same
+interface pair TWICE. Mechanism: the shadow march's declared crossing
+band is |f| < eps in FIELD value, but the SAFETY-scaled field's gradient
+at a perpendicular face is 0.9, so the band is ±1.11·eps wide in SPACE —
+wider than the fixed `2·eps` post-crossing skip; a fire on the band's
+near side re-fired one sample later and paid a second (1−F0)² (measured
+on the abutting through-box: one pair gives 0.8295, the march read
+0.7740; the f64 twin reproduced both figures, so the kernel was faithfully
+mirroring a twin defect). The same mis-pairing had been silently zeroing
+the grazing TIR control at its ENTRY band — a spurious exit at grazing
+incidence hit TIR and broke the ray before the sphere's interior — which
+is why the 24-step budget "passed": it never had to carry an honest
+grazing traversal. Fix, in all three texts and the twin (the WGSL
+kernel, the shared GLSL `surfaceSolidShadowSource`, and
+`transportShadowVisibilityCPU`): after firing a crossing, advance in
+2·eps sub-steps until the sample reads |f| ≥ eps, bounded at four
+sub-steps (a graze along a wall can hold |f| < eps indefinitely; the
+guard surrenders to the march's own budget). The shadow step budget
+rises 24 → 48, measured: the honest grazing TIR traversal spends 36
+steps between its entry and exit bands. The bench leg's analytic control
+now takes the chord from the leg's own fixture geometry (0.7 the
+separated sphere, 1.0 the abutting through-box) — the transport formula
+stays independent; the old condition keyed on the probe's shape, which
+both fixtures match, and would have failed even correct abutting physics.
+A regression test pins the one-pair value on the abutting fixture
+(`surface-transport-fixture.test.ts`). Re-run verdict (quiet RX 7900 XTX,
+same day): `surfaceDe` PASS — both abutting arms resolve in kernel↔twin
+agreement (radiance 1.45e-8, residual ≤ 2.37e-8, normal ≤ 5.96e-8,
+shadow 1.68e-4, displacement ≤ 4.39e-7, both dimensions), the analytic
+controls green on their own fixture chords, and the finite envelopes are
+unchanged (the finite backend never compiles this march).
+
 ### The rear-scene contract (delivered), and the straight shadow visibility
 
 `transportRearRadiance(origin, direction)` is the rear scene's ONE seam, and

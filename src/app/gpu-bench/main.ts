@@ -8309,6 +8309,16 @@ interface SurfaceTransportLegSpec {
    * built where the construction and pose live (the leg's own push), so
    * the runner never needs either. Absent on every other backend. */
   finiteQuery?: TransportFiniteQueryFn;
+  /** The closed-solid legs' analytic control's chord: the through-lobe
+   * probe's geometric path length through the fixture's emitter at
+   * normal incidence — 0.7 through the separated fixture's sphere
+   * (2·0.35, the probe's x/z sit on the sphere's axis), 1.0 through the
+   * abutting pair's +x box (its faces span y ∈ [-0.5, 0.5]; the shared
+   * plane x = 0 is not on the probe). The transport formula
+   * (1-F0)²·Beer stays independent; this is the fixture's geometry,
+   * authored where the geometry is. Absent on every other backend and
+   * every probe shape the through-lobe condition does not select. */
+  analyticChord?: number;
   fixture: TransportFixtureSystem;
 }
 
@@ -8794,6 +8804,7 @@ async function runSurfaceTransportAgreementLegs(
           ? "closedSolidAbutting3"
           : "emitterOnlyUnion3",
       backend: "closedSolid",
+      analyticChord: variant === "abutting" ? 1.0 : 0.7,
       options: {
         mode: "shade",
         core: fourD ? "affine4" : "affine",
@@ -9466,9 +9477,10 @@ async function runSurfaceTransportAgreementLegs(
     // the two gate exits (ball-behind, corridor-clearing) that must
     // return exactly 1 with zero field evals. The through-lobe probe's
     // expected value is the ANALYTIC control (checked below): one
-    // crossing pair through the fixture's sphere emitter at normal
-    // incidence — (1-F0)² · Beer(chord) — from the fixture's own
-    // geometry.
+    // crossing pair through the fixture's emitter at normal incidence —
+    // (1-F0)² · Beer(chord) — the chord the leg authors from its own
+    // fixture's geometry (0.7 the separated sphere, 1.0 the abutting
+    // through-box).
     const shadowQueries: ControlQueryRec[] = [];
     if (leg.backend === "closedSolid") {
       const floorY = -1.2 * visR;
@@ -10310,8 +10322,10 @@ async function runSurfaceTransportAgreementLegs(
     // --- the SHADOW probes (mode 2, closed-solid legs): the floor
     // corridor's straight shadow visibility against the f64 twin, plus
     // the analytic control (the through-lobe probe's expected
-    // (1-F0)²·Beer(chord) through the fixture's sphere emitter at normal
-    // incidence) and the two gate exits' exact-1 pin.
+    // (1-F0)²·Beer(chord) through the fixture's emitter at normal
+    // incidence — the chord is the LEG's authored fixture geometry,
+    // 0.7 for the separated sphere, 1.0 for the abutting through-box)
+    // and the two gate exits' exact-1 pin.
     let maxShadowDelta = 0;
     if (leg.backend === "closedSolid") {
       const material = {
@@ -10319,12 +10333,16 @@ async function runSurfaceTransportAgreementLegs(
         absorption: DIELECTRIC_ABSORPTION,
         radius: visR,
       };
-      const chord = 0.7;
+      const chord = leg.analyticChord;
       const f0 = ((material.ior - 1) / (material.ior + 1)) ** 2;
-      const analytic = [0, 1, 2].map(
-        (c) =>
-          (1 - f0) ** 2 * Math.exp((-DIELECTRIC_ABSORPTION[c] * chord) / visR),
-      );
+      const analytic =
+        chord === undefined
+          ? null
+          : [0, 1, 2].map(
+              (c) =>
+                (1 - f0) ** 2 *
+                Math.exp((-DIELECTRIC_ABSORPTION[c] * chord) / visR),
+            );
       shadowQueries.forEach((q, si) => {
         const cpu = transportShadowVisibilityCPU(
           leg.fixture,
@@ -10348,11 +10366,17 @@ async function runSurfaceTransportAgreementLegs(
               `twin[${String(c)}] — gpu ${String(gpu)} vs cpu ${String(cpu[c])}`,
             );
           }
-          if (q.dir[1] > 0.99 && Math.abs(q.origin[0] - 0.35) < 1e-9) {
+          if (
+            analytic !== null &&
+            q.dir[1] > 0.99 &&
+            Math.abs(q.origin[0] - 0.35) < 1e-9
+          ) {
             // The analytic control: one crossing pair through the
-            // sphere emitter, normal incidence, chord 0.7 — the
-            // independent control the criterion asks the transmitted
-            // shading to match.
+            // fixture's emitter, normal incidence, the leg's own
+            // chord — the independent control the criterion asks the
+            // transmitted shading to match. It is calibrated to the
+            // through-lobe probe's geometry; the condition above
+            // selects exactly that probe.
             const analyticDelta = Math.abs(gpu - analytic[c]);
             maxShadowDelta = Math.max(maxShadowDelta, analyticDelta);
             if (!(analyticDelta <= 6e-3)) {

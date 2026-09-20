@@ -410,6 +410,54 @@ describe("transportShadowVisibilityCPU — the corridor's straight visibility", 
       transportShadowCorridorGate([0, -1.3, 0], [0, 1, 0], ballC, ballR),
     ).toBe(true);
   });
+
+  it("pays the interface pair ONCE on the face-abutting boxes' exit face", () => {
+    // The bench's closedSolidAbutting leg's through-lobe probe, at the
+    // scale where the defect was measured: two half-unit boxes at
+    // x = ∓0.5 (the min-union field), a floor point below, straight up
+    // through the +x box. The SAFETY-scaled field's gradient at the
+    // exit face is 0.9, so the declared crossing band (|f| < eps) is
+    // ±eps/0.9 wide in SPACE — wider than the old fixed 2·eps skip —
+    // and a fire on the band's near side re-fired the crossing one
+    // sample later, paying the interface's (1-F0)² a second time
+    // (measured: 0.7740 of transmittance where the geometry's one pair
+    // gives 0.8198). The march must LEAVE the band after firing.
+    const visR = 1.4353266739736605;
+    const boxes: ShapeSpec = {
+      parts: ([-0.5, 0.5] as const).map((x) => ({
+        primitive: { kind: "box", half: [0.5, 0.5, 0.5] } as const,
+        combine: "union" as const,
+        pose: { offset: [x, 0, 0] as Vec3 },
+      })),
+    };
+    const abutting: TransportFixtureSystem = {
+      estimate: (p: Vec3) =>
+        SHAPE_MARCH_SAFETY * shapeSdf(boxes, p[0], p[1], p[2]),
+      stepScale: 1,
+      visibleRadius: visR,
+    };
+    const mat: DielectricMaterial = {
+      ior: material.ior,
+      absorption: material.absorption,
+      radius: visR,
+    };
+    const vis = transportShadowVisibilityCPU(
+      abutting,
+      [0.35, -1.2 * visR, 0.05],
+      [0, 1, 0],
+      mat,
+      ballC,
+      visR,
+      visR,
+    );
+    // One crossing pair through the box: chord exactly 1.0, normal
+    // incidence on both faces.
+    for (let c = 0; c < 3; c++) {
+      const expected =
+        (1 - f0) ** 2 * Math.exp((-material.absorption[c] * 1.0) / visR);
+      expect(Math.abs(vis[c] - expected)).toBeLessThan(2e-3);
+    }
+  });
 });
 
 describe("transportFiniteBoundaryQueryCPU — the DDA adapter", () => {
