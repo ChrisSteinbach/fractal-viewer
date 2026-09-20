@@ -28,6 +28,7 @@ function completeEvidence(): FiniteEnvelopeEvidence {
         invalid: 0,
         passes: 1,
         batchMs: [0],
+        continuationChunks: 2,
       },
       maxBatchMs: 0,
     };
@@ -170,5 +171,28 @@ describe("finite renderer envelope evidence", () => {
     expect(finiteEnvelopeEvidenceFailures(row, expected)).toContain(
       "settle: maxBatchMs hides an earlier sample",
     );
+  });
+
+  it("requires the production-quantum resumption to pause in preview and settle", () => {
+    // The finite4 quota-2048 witness lives here: the real production
+    // frames must report actual pauses (chain-length counts, not timing).
+    const row = completeEvidence();
+    row.preview.transport.continuationChunks = 0;
+    expect(finiteEnvelopeEvidenceFailures(row, expected)).toContain(
+      "preview: production-quantum resumption never paused (continuationChunks 0)",
+    );
+    const row2 = completeEvidence();
+    row2.settle.transport.continuationChunks = 0;
+    expect(finiteEnvelopeEvidenceFailures(row2, expected)).toContain(
+      "settle: production-quantum resumption never paused (continuationChunks 0)",
+    );
+    // An absent field reads as never-paused.
+    const row3 = completeEvidence();
+    delete row3.preview.transport.continuationChunks;
+    expect(
+      finiteEnvelopeEvidenceFailures(row3, expected).some((failure) =>
+        failure.startsWith("preview: production-quantum resumption"),
+      ),
+    ).toBe(true);
   });
 });

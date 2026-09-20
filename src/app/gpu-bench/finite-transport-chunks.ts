@@ -1,5 +1,6 @@
 import type { SurfaceComputeFrame } from "../surface-compute";
 import { DIELECTRIC_ERROR_BUDGET } from "../../fractal/surface-dielectric";
+import { FINITE_TRANSPORT_CHUNK_PATHS } from "../../fractal/finite-transport-work";
 import { SOFTWARE_RENDERER_RE } from "../render-backend";
 
 export interface FiniteTransportChunkSample {
@@ -267,7 +268,22 @@ export function finiteTransportChunkFailures(
             "uninterrupted control reported a pause",
           );
       }
-      if (arm.quota > 0)
+      // Every positive quota must prove an actual pause — except the
+      // production quantum on finite4. The quantum is per-ray-chain (a
+      // pause needs ONE chain to cross it inside a dispatch), and the
+      // 8×8 diagnostic bank's 4D chains never reach 2048 paths: measured
+      // 2026-09-20, quotas 1–1024 pause and match, 2048 reports zero
+      // chunks in every sample, so there the control reduces to the
+      // uninterrupted-equivalence comparison it already is (word-pinned
+      // against quota 0 below). The production-quantum 4D witness lives
+      // on the renderer-envelope legs' real frames, which pause at 2048
+      // (required by finiteEnvelopeEvidenceFailures). 3D chains DO reach
+      // 2048 in this bank (pauses [2,0,1,2] measured), so the 3D
+      // requirement stays.
+      const pauseRequired =
+        arm.quota > 0 &&
+        !(row.core === "finite4" && arm.quota === FINITE_TRANSPORT_CHUNK_PATHS);
+      if (pauseRequired)
         fail(
           armLabel,
           arm.samples.some(

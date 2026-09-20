@@ -978,19 +978,22 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     unresolved rays dark;
     NO PARTICIPATING MEDIUM (measured cost; a look call). Record:
     `docs/cinematic-surface-lighting.md`.
-  - `finite-solid.ts` — the FRACTAL GLASS oracle: the finite level-N
-    Menger and posed hyper-Menger slice are co-extensive with the displayed
-    optical solid, admitted from the document's own maps. The optional
-    `finiteSolid` block routes to compute-only finite cores; primary rays
-    and transport share the exact ternary DDA; the hybrid DE serves shading.
-    Camera-seeded transport preserves canonical anchors, medium ownership
-    and positive segments; crossed planes derive from post-crossing cells.
-    Traces pause between complete paths with stack and counters
-    preserved; scheduling never changes optics, branch order or guards.
-    One-cell anchor differences fail agreement. Both material references use
-    the study's half extent; bounds remain geometric. Gates pin every AA
-    sample and the live copied pose. Evidence and current
-    qualification: `docs/surface-dielectric-transport.md`.
+  - `finite-solid.ts` — the FRACTAL GLASS oracle: the level-N Menger and
+    posed hyper-Menger slice are co-extensive with the displayed optical
+    solid, admitted from the document's own maps. The optional `finiteSolid`
+    block routes to compute-only cores; primary rays and transport share the
+    exact ternary DDA; the hybrid DE serves shading.
+    Transport preserves canonical anchors, medium ownership, positive
+    segments; crossed planes derive from post-crossing cells; traces pause
+    between complete paths, scheduling never changing
+    optics/branch order/guards. Measured (2026-09-20, real driver): the
+    crossing cache puts the native-4D four-AA settle under 10 s; every
+    production frame pauses at the quantum, both dimensions; finite4's
+    quota-2048 bank control is its uninterrupted-equivalence control,
+    witnessed by the envelope gate. One-cell anchor differences fail
+    agreement. Both material references use the study's half extent, bounds
+    staying geometric. Gates pin every AA sample and the live copied pose.
+    Evidence: `docs/surface-dielectric-transport.md`.
   - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its
     hybrids, for exactly the systems the IFS gate refuses (one or more

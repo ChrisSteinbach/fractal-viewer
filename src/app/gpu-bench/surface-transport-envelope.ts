@@ -152,5 +152,22 @@ export function finiteEnvelopeEvidenceFailures(
       census(sampleLabel, sample, pixels);
     });
   }
+  // The resumption witness at the PRODUCTION quantum: the finite arms'
+  // real preview and settle frames must actually pause. This is the
+  // production-quantum 4D continuation witness the 8×8 chunk bank cannot
+  // provide — its diagnostic chains never reach 2048 paths (the quantum
+  // is per-ray-chain; measured 2026-09-20, quotas 1–1024 pause there while
+  // 2048 reports zero chunks in every sample), while these production
+  // rasters' chains do (3D 9/13, 4D 5/7 chunks). The counts are chain
+  // lengths, not timing, so the requirement is deterministic.
+  for (const [label, frame] of [
+    ["preview", row.preview],
+    ["settle", row.settle],
+  ] as const) {
+    if ((frame.transport.continuationChunks ?? 0) <= 0)
+      failures.push(
+        `${label}: production-quantum resumption never paused (continuationChunks 0)`,
+      );
+  }
   return failures;
 }
