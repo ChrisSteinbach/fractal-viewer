@@ -16,8 +16,8 @@ import { createGlassStudioBackground } from "./preset-background";
  *
  * WHAT QUALIFIES THESE COMPOSITIONS. The dielectric transport resolves on
  * the closed-solid backend, whose signed field is the condensation union —
- * so both starters are EMITTER-ONLY C0 systems (every transform carries an
- * analytic shape emitter, no recursive maps), the exact shape the
+ * so all three starters are EMITTER-ONLY C0 systems (every transform carries
+ * an analytic shape emitter, no recursive maps), the exact shape the
  * qualification and the bench's emitter-only union legs pin. Both author
  * `optics: {model: "dielectric", distortion: 0.08}` on every transform —
  * the Glass bundle's model at the distortion study's working value — and
@@ -45,7 +45,7 @@ import { createGlassStudioBackground } from "./preset-background";
 
 export const SURFACE_TRANSMISSION_STARTERS = [
   { id: "glass-garden", label: "Glass garden (3D)" },
-  { id: "glass-menger", label: "Glass Menger (3D)" },
+  { id: "glass-corner-cells", label: "Glass corner cells (3D)" },
   { id: "glass-cells", label: "Glass cells (4D)" },
 ] as const;
 
@@ -224,16 +224,17 @@ function glassCells(): SceneSnapshot {
   };
 }
 
-/** The intricate tier: one glass emitter whose shape is the EIGHT-CELL
- * level-1 Menger corner cluster — eight posed half-unit boxes at ±0.28,
- * scale 0.42, a gapped tessellation whose every sight line crosses
- * multiple faces. The union field is exact per part (one ShapeSpec, the
- * part min the certified fold), so the transport treats it as ONE solid —
- * the multi-cell traversal the lone-box probes scaled up to. Measured
- * resolving on the real driver (80% of the ray set, the floor visibly
- * refracting through the cells); the residual speckle is the TIR-trapped
- * billiard class, not a field seam. */
-function glassMenger(): SceneSnapshot {
+/** The intricate tier: one glass emitter whose shape is the EIGHT-BOX
+ * GAPPED CORNER CLUSTER — eight posed half-unit boxes at ±0.28, scale 0.42,
+ * a gapped tessellation whose every sight line crosses multiple faces. NOT
+ * the recursive Menger sponge: that object is the "Glass Menger" preset
+ * (the finite-cell route, the adjacent Glass optgroup's 20-map system), and
+ * this starter's label says what it is — the closed-solid union's
+ * multi-cell traversal the lone-box probes scaled up to. Measured resolving
+ * on the real driver (80% of the ray set, the floor visibly refracting
+ * through the cells); the residual speckle is the TIR-trapped billiard
+ * class, not a field seam. */
+function glassCornerCells(): SceneSnapshot {
   const state = baseState();
   const cell = (i: number, j: number, k: number) => ({
     primitive: { kind: "box" as const, half: [0.5, 0.5, 0.5] as Vec3 },
@@ -264,7 +265,7 @@ export function createSurfaceTransmissionStarter(
 ): SceneSnapshot {
   return id === "glass-garden"
     ? glassGarden()
-    : id === "glass-menger"
-      ? glassMenger()
+    : id === "glass-corner-cells"
+      ? glassCornerCells()
       : glassCells();
 }

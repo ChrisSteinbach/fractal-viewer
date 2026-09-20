@@ -5840,6 +5840,55 @@ describe("Ui finish editor", () => {
       );
       expect(bundleSelect().value).toBe("glass");
     });
+
+    function opticsNote(): HTMLElement {
+      const note = document.querySelector<HTMLElement>("#transformOpticsNote");
+      if (!note) throw new Error("No optics note");
+      return note;
+    }
+
+    it("directs the optics note at the document: classic on an unknown route", () => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      ui.renderTransformEditor(plain, 0, 1);
+      expect(opticsNote().textContent).toBe(
+        "This scene keeps the classic finish: transmission resolves on emitter-only scenes and finite-cell Menger constructions.",
+      );
+    });
+
+    it("rewrites the optics note live as the eligibility outlook changes", () => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      ui.renderTransformEditor(plain, 0, 1);
+
+      ui.setSurfaceEligibility("eligible", null, "ifs", null, {
+        resolves: "closed-solid",
+        sliceCoupled: false,
+      });
+      expect(opticsNote().textContent).toBe(
+        "This emitter scene's glass resolves on the closed-solid transport at the next Surface entry.",
+      );
+
+      ui.setSurfaceEligibility("eligible", null, "ifs4", null, {
+        resolves: "closed-solid",
+        sliceCoupled: true,
+      });
+      expect(opticsNote().textContent).toBe(
+        "This emitter scene's glass resolves at the saved slice pose; scrubbing the slice away leaves it unresolved.",
+      );
+
+      ui.setSurfaceEligibility("eligible", null, "finiteSolid", null, {
+        resolves: "finite-cells",
+      });
+      expect(opticsNote().textContent).toBe(
+        "This scene's glass resolves: the finite-cell transport walks the construction's cells exactly.",
+      );
+
+      ui.setSurfaceEligibility("eligible", null, "escape");
+      expect(opticsNote().textContent).toBe(
+        "This scene keeps the classic finish: transmission resolves on emitter-only scenes and finite-cell Menger constructions.",
+      );
+    });
   });
 });
 

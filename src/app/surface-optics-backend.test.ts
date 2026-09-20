@@ -3,8 +3,10 @@ import { buildSurfaceDE } from "../fractal/surface-de";
 import { buildSurfaceDE4 } from "../fractal/surface-de-4d";
 import type { Transform } from "../fractal/types";
 import { identityRotorPair, rotorMatrix } from "./rotor4";
+import { createSurfaceTransmissionStarter } from "./surface-transmission-starters";
 import {
   surfaceClosedSolidAdmitted,
+  surfaceOpticsOutlook,
   type Surface4OpticsPose,
 } from "./surface-optics-backend";
 
@@ -12,6 +14,12 @@ import {
  * The closed-solid routing admission — the codegen refusal list evaluated
  * before any create, over the qualified emitter-only union shape. Every
  * refusal is exercised the way a session can actually reach it.
+ *
+ * The second subject is the document-level OUTLOOK mirror the panel's
+ * optics note reads (`surfaceOpticsOutlook`): the same refusal terms at
+ * document level, so the boundary is visible at authoring time. Its tests
+ * pin agreement with the DE-level predicate over the same systems, because
+ * a disagreement between the two is by definition a bug in the mirror.
  */
 
 const emitterOnly: Transform[] = [
@@ -195,5 +203,124 @@ describe("surfaceClosedSolidAdmitted — the identity final", () => {
     );
     expect(de.final).not.toBeNull();
     expect(surfaceClosedSolidAdmitted(de, {})).toBe(true);
+  });
+});
+
+describe("surfaceOpticsOutlook — the panel note's document mirror", () => {
+  const view3D = {
+    transforms: emitterOnly,
+    finalTransform: null,
+    schedulePresent: false,
+    tilingPresent: false,
+    balloonOn: false,
+  };
+
+  it("reads the finiteSolid route as resolving finite cells", () => {
+    expect(surfaceOpticsOutlook("finiteSolid", view3D)).toEqual({
+      resolves: "finite-cells",
+    });
+    expect(surfaceOpticsOutlook("finiteSolid4", view3D)).toEqual({
+      resolves: "finite-cells",
+    });
+  });
+
+  it("reads the emitter-only 3D route as resolving closed-solid, uncoupled", () => {
+    expect(surfaceOpticsOutlook("ifs", view3D)).toEqual({
+      resolves: "closed-solid",
+      sliceCoupled: false,
+    });
+  });
+
+  it("reads the emitter-only 4D route as closed-solid with the slice coupling", () => {
+    expect(surfaceOpticsOutlook("ifs4", view3D)).toEqual({
+      resolves: "closed-solid",
+      sliceCoupled: true,
+    });
+  });
+
+  it("keeps classic on forward and replaced-subject routes", () => {
+    for (const kind of [
+      "escape",
+      "bulb",
+      "escape4",
+      "sphereInversion",
+      "sphereInversion4",
+      null,
+    ]) {
+      expect(surfaceOpticsOutlook(kind, view3D)).toEqual({ resolves: false });
+    }
+  });
+
+  it("keeps classic on every composition the DE-level predicate refuses", () => {
+    const mixedMap: Transform = {
+      id: 2,
+      position: [0.2, 0.2, 0.2],
+      rotation: [0, 0, 0],
+      scale: [0.4, 0.4, 0.4],
+      weight: 1,
+    };
+    expect(
+      surfaceOpticsOutlook("ifs", {
+        ...view3D,
+        transforms: [...emitterOnly, mixedMap],
+      }),
+    ).toEqual({ resolves: false });
+    expect(
+      surfaceOpticsOutlook("ifs", { ...view3D, schedulePresent: true }),
+    ).toEqual({ resolves: false });
+    expect(
+      surfaceOpticsOutlook("ifs", { ...view3D, tilingPresent: true }),
+    ).toEqual({ resolves: false });
+    expect(surfaceOpticsOutlook("ifs", { ...view3D, balloonOn: true })).toEqual(
+      { resolves: false },
+    );
+  });
+
+  it("refuses a final the descent warps the query by, admits the identity lens", () => {
+    const lens: Transform = {
+      id: 9,
+      position: [0, 0, 0],
+      rotation: [0.3, 0, 0],
+      scale: [1, 1, 1],
+    };
+    expect(
+      surfaceOpticsOutlook("ifs", { ...view3D, finalTransform: lens }),
+    ).toEqual({ resolves: false });
+    const identityLens: Transform = { ...lens, rotation: [0, 0, 0] };
+    expect(
+      surfaceOpticsOutlook("ifs", { ...view3D, finalTransform: identityLens }),
+    ).toEqual({ resolves: "closed-solid", sliceCoupled: false });
+    // A variation on the final is a real warp even at an identity affine.
+    const swirled: Transform = {
+      ...identityLens,
+      variations: [{ type: "swirl", weight: 0.9 }],
+    };
+    expect(
+      surfaceOpticsOutlook("ifs", { ...view3D, finalTransform: swirled }),
+    ).toEqual({ resolves: false });
+  });
+
+  it("agrees with the DE-level predicate over the shipped starters' documents", () => {
+    for (const id of ["glass-garden", "glass-corner-cells"] as const) {
+      const snap = createSurfaceTransmissionStarter(id);
+      const de = buildSurfaceDE(
+        snap.transforms,
+        snap.finalTransform ?? null,
+        { order: 1, plane: "xy" },
+        {},
+      );
+      const outlook = surfaceOpticsOutlook("ifs", {
+        transforms: snap.transforms,
+        finalTransform: snap.finalTransform ?? null,
+        schedulePresent: false,
+        tilingPresent: false,
+        balloonOn: false,
+      });
+      expect(outlook).toEqual({
+        resolves: "closed-solid",
+        sliceCoupled: false,
+      });
+      expect(surfaceClosedSolidAdmitted(de, {})).toBe(true);
+    }
   });
 });

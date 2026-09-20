@@ -113,6 +113,7 @@ import {
 } from "./surface-slots";
 import {
   surfaceClosedSolidAdmitted,
+  surfaceOpticsOutlook,
   type SurfaceOpticsBackend,
 } from "./surface-optics-backend";
 import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
@@ -7537,11 +7538,24 @@ async function main(): Promise<void> {
     // The route kind rides along for the transform editor's Finish group:
     // a forward-orbit route shades the whole object with the head
     // transform's finish, and the panel says so on the rows it would skip.
+    // The optics outlook rides beside it — the transmission boundary as
+    // THIS document sits on it, computed from the same state the entry
+    // path will re-derive (surfaceOpticsOutlook's document view; balloon
+    // is the one session flag its mirror still reads, and it is document
+    // state here).
+    const opticsOutlook = surfaceOpticsOutlook(eligibility.kind, {
+      transforms: state.transforms,
+      finalTransform: state.finalTransform ?? null,
+      schedulePresent: state.schedule !== null && state.schedule !== undefined,
+      tilingPresent: state.tiling !== null && state.tiling !== undefined,
+      balloonOn: state.balloonEcho,
+    });
     ui.setSurfaceEligibility(
       eligibility.status,
       eligibility.note,
       eligibility.kind,
       eligibility.recovery ?? null,
+      opticsOutlook,
     );
     refreshFinalSwirlRadius();
     return eligibility;

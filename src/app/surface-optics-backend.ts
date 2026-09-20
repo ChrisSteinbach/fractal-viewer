@@ -1,4 +1,7 @@
 import { shapeMeshIds } from "../fractal/shapes";
+import { transformHasEmitter, systemHasChaos } from "../fractal/chaos-game";
+import { composeAffine, isIdentityAffine } from "../fractal/affine";
+import type { Transform } from "../fractal/types";
 import type { SurfaceDE } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 
@@ -194,4 +197,75 @@ export function surfaceClosedSolidAdmitted(
     }
   }
   return true;
+}
+
+/** Which side of the transmission boundary a document sits on, as the
+ * panel's optics note states it BEFORE any Surface session exists —
+ * {@link surfaceClosedSolidAdmitted}'s composition terms evaluated at the
+ * DOCUMENT level (the session predicate stays the authority at entry; this
+ * is its authoring-time voice, and a disagreement between the two is a bug
+ * in this mirror). `"finite-cells"` is the finiteSolid route's backend by
+ * construction; `"closed-solid"` is the emitter-only C0 family, with
+ * `sliceCoupled` naming the 4D route's live-pose coupling the document
+ * cannot prove (the saved pose passes at entry, but scrubbing the slice or
+ * turning a w-plane rotor mid-session moves the object off the composition
+ * the field describes). Everything else — forward routes, sphere
+ * inversion's replaced subject, mixed maps and emitters, and every
+ * composition refusal — keeps the classic finish, the estimator backend's
+ * disclosed vacuous state on IFS geometry. */
+export type SurfaceOpticsOutlook =
+  | { resolves: "finite-cells" }
+  | { resolves: "closed-solid"; sliceCoupled: boolean }
+  | { resolves: false };
+
+/** The document facts the outlook reads — all scene state, no session. */
+export interface SurfaceOpticsDocumentView {
+  transforms: readonly Transform[];
+  finalTransform: Transform | null | undefined;
+  schedulePresent: boolean;
+  tilingPresent: boolean;
+  balloonOn: boolean;
+}
+
+export function surfaceOpticsOutlook(
+  routeKind: string | null,
+  view: SurfaceOpticsDocumentView,
+): SurfaceOpticsOutlook {
+  if (routeKind === "finiteSolid" || routeKind === "finiteSolid4") {
+    return { resolves: "finite-cells" };
+  }
+  if (routeKind !== "ifs" && routeKind !== "ifs4") {
+    return { resolves: false };
+  }
+  // The closed-solid family's document terms, mirroring
+  // surfaceClosedSolidAdmitted term for term: the codegen refusals first,
+  // then the emitter-only C0 shape of the signed field.
+  if (view.schedulePresent) return { resolves: false };
+  if (systemHasChaos(view.transforms)) return { resolves: false };
+  if (view.tilingPresent) return { resolves: false };
+  if (view.balloonOn) return { resolves: false };
+  const active = view.transforms.filter((t) => (t.weight ?? 1) > 0);
+  if (active.length === 0) return { resolves: false };
+  if (active.some((t) => !transformHasEmitter(t))) return { resolves: false };
+  // Mesh-bearing emitter shapes refuse (the mesh lattice's interior band
+  // is not a certified stepping bound — the DE-level predicate's own term).
+  for (const emitter of active) {
+    if (emitter.emitter && shapeMeshIds(emitter.emitter).length > 0) {
+      return { resolves: false };
+    }
+  }
+  // A final the descent warps the query by is the DE-level predicate's
+  // `de.final` refusal; the exact identity (the enabled lens nobody moved)
+  // admits. Any authored variation or live post makes the final a real
+  // warp, so the mirror refuses it — conservative in the direction that
+  // never promises resolution the session would not deliver.
+  const final = view.finalTransform;
+  if (final) {
+    if ((final.variations?.length ?? 0) > 0) return { resolves: false };
+    if (final.post !== undefined && !isIdentityAffine(final.post)) {
+      return { resolves: false };
+    }
+    if (!isIdentityAffine(composeAffine(final))) return { resolves: false };
+  }
+  return { resolves: "closed-solid", sliceCoupled: routeKind === "ifs4" };
 }

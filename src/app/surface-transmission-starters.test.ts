@@ -28,7 +28,7 @@ describe("surface transmission starters", () => {
   it("exposes the three compositions under glass: values", () => {
     expect(SURFACE_TRANSMISSION_STARTERS.map((s) => s.id)).toEqual([
       "glass-garden",
-      "glass-menger",
+      "glass-corner-cells",
       "glass-cells",
     ]);
     expect(surfaceTransmissionStarterValue("glass-garden")).toBe(
@@ -41,7 +41,7 @@ describe("surface transmission starters", () => {
   });
 
   it("builds 3D emitter-only unions that are eligible and closed-solid admitted", () => {
-    for (const id of ["glass-garden", "glass-menger"] as const) {
+    for (const id of ["glass-garden", "glass-corner-cells"] as const) {
       const snap = createSurfaceTransmissionStarter(id);
       const eligibility = analyzeSurfaceSystem(
         snap.transforms,
@@ -65,11 +65,13 @@ describe("surface transmission starters", () => {
         expect(t.optics).toEqual({ model: "dielectric", distortion: 0.08 });
       }
     }
-    // The Menger's one emitter is the eight-cell posed-box union — the
-    // intricate tier's multi-face traversal, one solid to the field.
-    const menger = createSurfaceTransmissionStarter("glass-menger");
-    expect(menger.transforms).toHaveLength(1);
-    expect(menger.transforms[0].emitter?.parts).toHaveLength(8);
+    // The corner cells' one emitter is the eight-box posed union — the
+    // intricate tier's multi-face traversal, one solid to the field, and
+    // NOT the recursive Menger (that is the "Glass Menger" preset's
+    // finite-cell route).
+    const cornerCells = createSurfaceTransmissionStarter("glass-corner-cells");
+    expect(cornerCells.transforms).toHaveLength(1);
+    expect(cornerCells.transforms[0].emitter?.parts).toHaveLength(8);
   });
 
   it("builds a native 4D composition whose saved slice carries every flat", () => {
