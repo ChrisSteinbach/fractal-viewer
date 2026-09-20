@@ -1442,9 +1442,13 @@ ${fourD ? transportSolidField4D() : transportSolidField3D()}
       if (abs(f) < eps) {
         // The declared crossing band: the boundary is here, within the
         // declared resolution. Fire the state's crossing (entry when
-        // the march is outside, exit when inside), then step past the
-        // band — the anchor suppression's own 2·eps skip — so the next
-        // sample reads the far side.
+        // the march is outside, exit when inside), then leave the
+        // band — it is ±eps in FIELD value and the SAFETY-scaled
+        // field's gradient at a face is below 1, so the band can be
+        // wider in SPACE than one fixed skip; a bounded advance until
+        // the sample reads |f| >= eps keeps one crossing per band (a
+        // re-fire would pay the interface's Fresnel pair a second
+        // time).
         if (inside) {
           vec2 e = vec2(1.0, -1.0) * 0.5773;
           vec3 grad = e.xyy * transportSolidField(sp + e.xyy * eps) +
@@ -1480,6 +1484,13 @@ ${fourD ? transportSolidField4D() : transportSolidField3D()}
           cosEnter = abs(dot(dir, n));
         }
         ts = ts + 2.0 * eps;
+        for (int bandGuard = 0; bandGuard < 4; bandGuard++) {
+          float fq = transportSolidField(origin + dir * ts);
+          if (!(fq > -1.0e30) || abs(fq) >= eps) {
+            break;
+          }
+          ts = ts + 2.0 * eps;
+        }
         continue;
       }
       if ((f < 0.0 ? 1 : 0) != (inside ? 1 : 0)) {

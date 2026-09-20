@@ -910,7 +910,8 @@ export function transportShadowVisibilityCPU(
     if (Math.abs(f) < eps) {
       // The declared crossing band: the boundary is here, within the
       // declared resolution. Fire the state's crossing, then step past
-      // the band (the anchor suppression's own 2·eps skip).
+      // the band (below — a bounded advance, since the band's width in
+      // space depends on the field's gradient at the face).
       if (inside) {
         const n = normal(sp);
         const segLen = ts - segStart;
@@ -955,6 +956,27 @@ export function transportShadowVisibilityCPU(
         cosEnter = Math.abs(dir[0] * n[0] + dir[1] * n[1] + dir[2] * n[2]);
       }
       ts += 2 * eps;
+      // Leave the declared band. It is ±eps in FIELD value, and the
+      // SAFETY-scaled field's gradient at a face is below 1, so the
+      // band can be wider in SPACE than 2·eps and one fixed skip can
+      // land inside it — the next sample would re-fire the crossing
+      // and pay the interface's Fresnel pair a second time (measured
+      // on the abutting boxes' exit face: one pair gives 0.8198, the
+      // re-fire read 0.7740). Advance in 2·eps sub-steps until the
+      // sample reads |f| >= eps; bounded, because a graze along a wall
+      // can hold |f| < eps indefinitely — the guard surrenders to the
+      // march, whose own budget paces it.
+      let guard = 0;
+      while (guard < 4) {
+        const fq = solidField([
+          origin[0] + dir[0] * ts,
+          origin[1] + dir[1] * ts,
+          origin[2] + dir[2] * ts,
+        ]);
+        if (!(fq > -1e30) || Math.abs(fq) >= eps) break;
+        ts += 2 * eps;
+        guard += 1;
+      }
       continue;
     }
     if ((f < 0 ? 1 : 0) !== (inside ? 1 : 0)) {
