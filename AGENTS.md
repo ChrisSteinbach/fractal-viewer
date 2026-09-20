@@ -983,10 +983,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     optical solid, admitted from the document's own maps. The optional
     `finiteSolid` block routes to compute-only finite cores; primary rays
     and transport share the exact ternary DDA; the hybrid DE serves shading.
-    Both dimensions start transport at the camera and use the same exact
-    boundary for every optical split. Canonical anchors preserve medium
-    ownership and distinct positive segments; crossed planes derive from
-    post-crossing cells, without a mutable pre-crossing array snapshot.
+    Camera-seeded transport preserves canonical anchors, medium ownership
+    and positive segments; crossed planes derive from post-crossing cells.
+    Traces pause between complete paths with stack and counters
+    preserved; scheduling never changes optics, branch order or guards.
     One-cell anchor differences fail agreement. Both material references use
     the study's half extent; bounds remain geometric. Gates pin every AA
     sample and the live copied pose. Evidence and current

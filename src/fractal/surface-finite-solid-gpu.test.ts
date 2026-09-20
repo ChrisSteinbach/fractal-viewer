@@ -4,6 +4,7 @@
  * arithmetic itself is pinned by `finite-solid.test.ts` (f64) and the
  * bench's transport agreement legs (f32 against that oracle).
  */
+import { createHash } from "node:crypto";
 import {
   FINITE_SOLID_HALF_EXTENT,
   FINITE_SOLID_IDENTITY_POSE,
@@ -29,8 +30,18 @@ import {
 } from "./surface-de-gpu";
 import {
   DIELECTRIC_MAX_PROCESSED_PATHS,
+  DIELECTRIC_MAX_STACK,
   dielectricRefract,
 } from "./surface-dielectric";
+import {
+  FINITE_TRANSPORT_BUFFER_HEADER_BYTES,
+  FINITE_TRANSPORT_CHUNK_PATHS,
+  FINITE_TRANSPORT_PATH_BYTES,
+  FINITE_TRANSPORT_RUNNING,
+  FINITE_TRANSPORT_RUNNING_OFFSET,
+  FINITE_TRANSPORT_WORK_BYTES,
+  FINITE_TRANSPORT_WORK_HEADER_BYTES,
+} from "./finite-transport-work";
 import type { Vec3, Vec4 } from "./types";
 import {
   packSurfaceGpuParamsFinite,
@@ -54,6 +65,275 @@ const baseOpts = (
 });
 
 describe("finite-solid GPU sources", () => {
+  const chunkOptions = {
+    optics: true,
+    opticsBackend: "finiteSolid" as const,
+    finiteTransportChunkPaths: FINITE_TRANSPORT_CHUNK_PATHS,
+  };
+
+  it("retains the original uncached query bytes and all traversal guards", () => {
+    const legacyHashes = {
+      3: "ee1559f5bd1a126b90d497c85a5a4aeb747ca99b1a3ec3d3080ef196390ec951",
+      4: "a4c9ce1368b895bd2063b143f80570772b4b3f2d2baf3a19d0bb818c41b95739",
+    };
+    for (const dim of [3, 4] as const) {
+      const legacy = finiteSolidTransportSource(dim, false);
+      const cached = finiteSolidTransportSource(dim);
+      // Frozen before introducing the cache: the diagnostic control must
+      // not accidentally acquire the same algorithm change as the candidate.
+      expect(createHash("sha256").update(legacy).digest("hex")).toBe(
+        legacyHashes[dim],
+      );
+      const traversal = (source: string) =>
+        source.slice(
+          source.indexOf("    if (nextT >= 1.0e30)"),
+          source.indexOf("    sideInside = nextInside;") +
+            "    sideInside = nextInside;".length,
+        );
+      expect(traversal(cached)).toBe(traversal(legacy));
+      expect(cached).toContain(`let maxVisits = ${dim} * (g - 1) + 1;`);
+    }
+  });
+
+  it("packs resumable batch and slot storage at the shared host offsets", () => {
+    const types = new Map([
+      ["u32", { align: 4, size: 4 }],
+      ["atomic<u32>", { align: 4, size: 4 }],
+      ["f32", { align: 4, size: 4 }],
+      ["vec3f", { align: 16, size: 12 }],
+      ["vec2u", { align: 8, size: 8 }],
+      [
+        `array<TransportPath, ${DIELECTRIC_MAX_STACK}>`,
+        { align: 16, size: DIELECTRIC_MAX_STACK * FINITE_TRANSPORT_PATH_BYTES },
+      ],
+      ["array<FiniteTransportWork>", { align: 16, size: 0 }],
+    ]);
+    for (const core of ["finite", "finite4"] as const) {
+      const source = surfaceDeKernelWgsl(baseOpts(core, chunkOptions));
+      const layout = (name: string) => {
+        const body = new RegExp(`struct ${name} \\{([^}]+)\\}`).exec(
+          source,
+        )?.[1];
+        expect(body).toBeDefined();
+        let offset = 0;
+        let alignment = 1;
+        const offsets: Record<string, number> = {};
+        for (const [, field, type] of (body ?? "").matchAll(
+          /^\s*(\w+): ([^\n]+),$/gm,
+        )) {
+          const value = types.get(type);
+          if (!value) throw new Error(`Unexpected storage field: ${type}`);
+          alignment = Math.max(alignment, value.align);
+          offset = Math.ceil(offset / value.align) * value.align;
+          offsets[field] = offset;
+          offset += value.size;
+        }
+        return { offsets, size: Math.ceil(offset / alignment) * alignment };
+      };
+      expect(layout("FiniteTransportBatch")).toEqual({
+        offsets: {
+          initialize: 0,
+          running: FINITE_TRANSPORT_RUNNING_OFFSET,
+          generation: 8,
+          rayCount: 12,
+          slots: FINITE_TRANSPORT_BUFFER_HEADER_BYTES,
+        },
+        size: FINITE_TRANSPORT_BUFFER_HEADER_BYTES,
+      });
+      expect(layout("FiniteTransportWork")).toEqual({
+        offsets: {
+          radiance: 0,
+          residual: 12,
+          sp: 16,
+          processed: 20,
+          done: 24,
+          pixel: 28,
+          replayPass: 32,
+          generation: 36,
+          pad: 40,
+          stack: FINITE_TRANSPORT_WORK_HEADER_BYTES,
+        },
+        size: FINITE_TRANSPORT_WORK_BYTES,
+      });
+      const bindings = [
+        ...source.matchAll(/@binding\((\d+)\) var<storage, [^>]+>/g),
+      ].map((match) => Number(match[1]));
+      expect(bindings).toHaveLength(9);
+      expect(new Set(bindings).size).toBe(9);
+      expect(source).toContain(
+        "@binding(1) var<storage, read_write> finiteWork: FiniteTransportBatch;",
+      );
+      expect(source.indexOf("struct TransportPath")).toBeLessThan(
+        source.indexOf("struct FiniteTransportWork"),
+      );
+      const plain = surfaceDeKernelWgsl(
+        baseOpts(core, { ...chunkOptions, finiteTransportChunkPaths: 0 }),
+      );
+      expect(/struct TransportPath \{[^}]+\}/.exec(source)?.[0]).toBe(
+        /struct TransportPath \{[^}]+\}/.exec(plain)?.[0],
+      );
+    }
+  });
+
+  it("pauses before popping and leaves the complete optical work loop unchanged", () => {
+    for (const core of ["finite", "finite4"] as const) {
+      const source = surfaceDeKernelWgsl(baseOpts(core, chunkOptions));
+      const plain = surfaceDeKernelWgsl(
+        baseOpts(core, { ...chunkOptions, finiteTransportChunkPaths: 0 }),
+      );
+      const opticalWork = (text: string) =>
+        text.slice(
+          text.indexOf("    let path = stack[sp - 1u];"),
+          text.indexOf("    if (abort) {\n      break;\n    }\n  }") +
+            "    if (abort) {\n      break;\n    }\n  }".length,
+        );
+      expect(opticalWork(source).length).toBeGreaterThan(6000);
+      expect(opticalWork(source)).toBe(opticalWork(plain));
+      expect(source).toContain(
+        `const TRANSPORT_MAX_PROCESSED = ${DIELECTRIC_MAX_PROCESSED_PATHS}u;`,
+      );
+      expect(source).toContain(
+        `const TRANSPORT_STATUS_RUNNING = ${FINITE_TRANSPORT_RUNNING}u;`,
+      );
+      const pause = source.slice(
+        source.indexOf("    // Pause BEFORE popping:"),
+        source.indexOf("    let path = stack[sp - 1u];"),
+      );
+      expect(pause).toContain(
+        "processed - chunkStartProcessed >= TRANSPORT_CHUNK_PATHS",
+      );
+      for (const field of ["sp", "processed", "radiance", "residual"]) {
+        expect(pause).toContain(
+          `finiteWork.slots[workSlot].${field} = ${field};`,
+        );
+        expect(source).toContain(
+          `${field} = finiteWork.slots[workSlot].${field};`,
+        );
+      }
+      expect(pause).toContain("for (var i = 0u; i < sp; i++)");
+      expect(pause).toContain(
+        "finiteWork.slots[workSlot].stack[i] = stack[i];",
+      );
+      expect(source).toContain(
+        "stack[i] = finiteWork.slots[workSlot].stack[i];",
+      );
+      expect(pause).toContain("atomicAdd(&finiteWork.running, 1u);");
+      expect(pause).toContain(
+        "out.status = TRANSPORT_STATUS_RUNNING;\n      return out;",
+      );
+      expect(pause).not.toMatch(
+        /residual = residual \+|sp = sp -|transportState\[|colorOut\[/,
+      );
+      const running = source.slice(
+        source.indexOf("  if (traced.status == TRANSPORT_STATUS_RUNNING)"),
+        source.indexOf("  if (traced.status == TRANSPORT_STATUS_INVALID)"),
+      );
+      expect(running).toContain(
+        "transportStatusOut[slotI] = TRANSPORT_STATUS_RUNNING;",
+      );
+      expect(running).not.toMatch(/transportState\[|colorOut\[|layerOut\[/);
+    }
+  });
+
+  it("validates resumable slot identity and counters before every load or done-slot return", () => {
+    for (const core of ["finite", "finite4"] as const) {
+      const source = surfaceDeKernelWgsl(baseOpts(core, chunkOptions));
+      const entry = source.slice(source.indexOf("fn transportRays("));
+      for (const condition of [
+        "finiteWork.rayCount != params.itemCount",
+        "finiteWork.rayCount > arrayLength(&finiteWork.slots)",
+        "finiteWork.initialize > 1u",
+        "finiteWork.generation == 0u",
+        "replayPass >= TRANSPORT_REPLAY_PASSES",
+        "shade.transport[0] != f32(replayPass)",
+        "finiteWork.slots[slotI].pixel != ray",
+        "finiteWork.slots[slotI].replayPass != replayPass",
+        "finiteWork.slots[slotI].generation != finiteWork.generation",
+        "finiteWork.slots[slotI].done > 1u",
+        "finiteWork.slots[slotI].sp > TRANSPORT_MAX_STACK",
+        "finiteWork.slots[slotI].processed > TRANSPORT_MAX_PROCESSED",
+        "finiteWork.slots[slotI].sp == 0u",
+        "finiteWork.slots[slotI].processed == 0u",
+        "transportStatusOut[slotI] != TRANSPORT_STATUS_RUNNING",
+      ]) {
+        expect(entry).toContain(condition);
+        expect(entry.indexOf(condition)).toBeLessThan(
+          entry.indexOf("let traced ="),
+        );
+      }
+      expect(
+        entry.indexOf("finiteWork.slots[slotI].generation !="),
+      ).toBeLessThan(entry.indexOf("if (finiteWork.slots[slotI].done == 1u)"));
+      expect(entry).toContain("finiteWorkReset(slotI, ray, replayPass);");
+      // New-batch early returns are also terminal slots; a resumed active
+      // trace encountering those routes refuses instead of losing its stack.
+      for (const start of [
+        "  if (prevStatus == TRANSPORT_STATUS_COMPLETE",
+        "  if (st.y !=",
+        "  if (lane0[0] <= 0.0)",
+      ]) {
+        const early = entry.slice(
+          entry.indexOf(start),
+          entry.indexOf(start) + 650,
+        );
+        expect(early).toContain("finiteWork.slots[slotI].done = 1u;");
+        expect(early).toContain("finiteWorkReject(slotI, ray, replayPass);");
+      }
+    }
+  });
+
+  it("compile-gates resumable work to explicitly requested finite optics shade", () => {
+    for (const core of ["finite", "finite4"] as const) {
+      const implicit = surfaceDeKernelWgsl(
+        baseOpts(core, {
+          ...chunkOptions,
+          finiteTransportChunkPaths: undefined,
+        }),
+      );
+      expect(implicit).toBe(
+        surfaceDeKernelWgsl(
+          baseOpts(core, { ...chunkOptions, finiteTransportChunkPaths: 0 }),
+        ),
+      );
+      expect(implicit).not.toContain("FiniteTransportWork");
+      for (const mode of ["eval", "march"] as const)
+        expect(
+          surfaceDeKernelWgsl(baseOpts(core, { ...chunkOptions, mode })),
+        ).toBe(
+          surfaceDeKernelWgsl(
+            baseOpts(core, {
+              ...chunkOptions,
+              mode,
+              finiteTransportChunkPaths: 0,
+            }),
+          ),
+        );
+      expect(
+        surfaceDeKernelWgsl(baseOpts(core, { finiteTransportChunkPaths: 1 })),
+      ).toBe(surfaceDeKernelWgsl(baseOpts(core)));
+      for (const paths of [-1, 0.5, Number.NaN, Infinity, 2 ** 32])
+        expect(() =>
+          surfaceDeKernelWgsl(
+            baseOpts(core, {
+              ...chunkOptions,
+              finiteTransportChunkPaths: paths,
+            }),
+          ),
+        ).toThrow(/chunk size/);
+      expect(
+        surfaceDeKernelWgsl(
+          baseOpts(core, { ...chunkOptions, finiteTransportChunkPaths: 1 }),
+        ),
+      ).toContain("const TRANSPORT_CHUNK_PATHS = 1u;");
+    }
+    for (const core of ["fold", "fold4"] as const) {
+      const options = { ...baseOpts("finite"), core, optics: true };
+      expect(
+        surfaceDeKernelWgsl({ ...options, finiteTransportChunkPaths: 1 }),
+      ).toBe(surfaceDeKernelWgsl(options));
+    }
+  });
+
   it("packs every finite continuation field into a 112-byte private path", () => {
     const types = new Map([
       ["u32", { align: 4, size: 4 }],
@@ -265,6 +545,115 @@ describe("finite GPU occupancy against the independent generic rule", () => {
             expect(finiteSolidCellOccupiedF32(dim, level, idx)).toBe(false);
           }
         }
+      }
+    });
+  }
+});
+
+describe("finite DDA cached crossings against the original f32 traversal", () => {
+  for (const dim of [3, 4] as const) {
+    it(
+      `${dim}D preserves complete results from every cell at every supported level`,
+      // The 4D sweep walks every cell of every level in both DDA forms;
+      // its several seconds exceed the 5s default under any CPU contention.
+      { timeout: 20000 },
+      () => {
+        const directions: Vec3[] = [
+          [1, 0, 0],
+          [-1, 0, 0],
+          [0, 1, 0],
+          [0, -1, 0],
+          [0, 0, 1],
+          [0, 0, -1],
+          [1, 1, 1],
+          [-1, -1, -1],
+          [1, -1, 1],
+          [-1, 1, -1],
+          [1, Math.fround(1 + 2 ** -23), 1],
+          [-1, -1, Math.fround(-1 + 2 ** -24)],
+        ];
+        let boundaries = 0;
+        let misses = 0;
+        for (const level of [0, 1, 2]) {
+          const grid = 3 ** level;
+          for (let cell = 0; cell < grid ** dim; cell++) {
+            const indices = Array.from(
+              { length: dim },
+              (_, axis) => Math.floor(cell / grid ** axis) % grid,
+            );
+            const point = indices.map((index) =>
+              Math.fround(-0.75 + ((index + 0.5) * 1.5) / grid),
+            );
+            const inside = finiteSolidCellOccupiedByRule(dim, level, indices);
+            for (const direction of directions) {
+              const args = [
+                dim,
+                level,
+                0.75,
+                dim === 4 ? FINITE_SOLID_IDENTITY_POSE.rows : null,
+                dim === 4 ? point[3] : 0,
+                point.slice(0, 3) as Vec3,
+                direction,
+                null,
+                inside,
+              ] as const;
+              const actual = finiteSolidDdaF32(...args);
+              expect(actual).toEqual(finiteSolidDdaF32(...args, false));
+              expect(actual.kind).not.toBe(3);
+              boundaries += Number(actual.kind === 1);
+              misses += Number(actual.kind === 2);
+            }
+          }
+        }
+        expect(boundaries).toBeGreaterThan(1000);
+        expect(misses).toBeGreaterThan(100);
+      },
+    );
+
+    it(`${dim}D retains the visit-cap refusal for a nonadvancing malformed query`, () => {
+      // A NaN origin produces NaN crossing times and no tied axis. This is
+      // deliberately outside geometry admission, but must still terminate
+      // through the existing visit guard rather than hang after caching.
+      for (const level of [0, 1, 2]) {
+        const args = [
+          dim,
+          level,
+          0.75,
+          dim === 4 ? FINITE_SOLID_IDENTITY_POSE.rows : null,
+          -0.7,
+          [Number.NaN, -0.7, -0.7] as Vec3,
+          [1, 0, 0] as Vec3,
+          null,
+          true,
+        ] as const;
+        const actual = finiteSolidDdaF32(...args);
+        expect(actual).toEqual(finiteSolidDdaF32(...args, false));
+        expect(actual).toMatchObject({ kind: 3, reason: 1 });
+      }
+    });
+
+    it(`${dim}D retains refusals for zero and nonfinite directions`, () => {
+      const directions: Vec3[] = [
+        [0, 0, 0],
+        [Number.NaN, 0, 1],
+        [1, Infinity, 0],
+        [0, 1, -Infinity],
+      ];
+      for (const direction of directions) {
+        const args = [
+          dim,
+          2,
+          0.75,
+          dim === 4 ? FINITE_SOLID_IDENTITY_POSE.rows : null,
+          -0.7,
+          [-2, -0.7, -0.7] as Vec3,
+          direction,
+          null,
+          false,
+        ] as const;
+        const actual = finiteSolidDdaF32(...args);
+        expect(actual).toEqual(finiteSolidDdaF32(...args, false));
+        expect(actual).toMatchObject({ kind: 3, reason: 2 });
       }
     });
   }
@@ -650,6 +1039,20 @@ describe("finite DDA geometry against the independent f64 oracle", () => {
               anchor,
               inside,
             );
+            expect(actual).toEqual(
+              finiteSolidDdaF32(
+                dim,
+                0,
+                root.half,
+                dim === 4 ? facePose.rows : null,
+                facePose.slice,
+                unusedOrigin,
+                direction,
+                anchor,
+                inside,
+                false,
+              ),
+            );
             expect(actual.kind).toBe(
               kind === "boundary" ? 1 : kind === "miss" ? 2 : 3,
             );
@@ -717,6 +1120,20 @@ describe("finite DDA geometry against the independent f64 oracle", () => {
             direction,
             anchor,
             inside,
+          );
+          expect(actual).toEqual(
+            finiteSolidDdaF32(
+              dim,
+              2,
+              c.half,
+              dim === 4 ? chainPose.rows : null,
+              chainPose.slice,
+              origin,
+              direction,
+              anchor,
+              inside,
+              false,
+            ),
           );
           expect(actual.kind).toBe(
             expected.kind === "boundary" ? 1 : expected.kind === "miss" ? 2 : 3,

@@ -262,8 +262,17 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
  * convention's rank-zero refusal sentinel; a legitimate displayed normal
  * is never zero.
  */
-export function finiteSolidTransportSource(dim: 3 | 4): string {
+export function finiteSolidTransportSource(
+  dim: 3 | 4,
+  cacheCrossings = true,
+): string {
   const dim4 = dim === 4;
+  // Identical f32 expression at initialization and after a crossed axis
+  // advances. In particular, never advance time by an accumulated delta.
+  const crossingTime = `      let planeIndex = select(index[a], index[a] + 1, qd[a] > 0.0);
+      let plane = finiteGridPlane(planeIndex);
+      crossingT[a] = (plane - q[a]) / qd[a];
+`;
   const rowsFn = dim4
     ? `fn finiteRowXyz(axis: i32) -> vec3f {
   var rows = array<vec3f, 4>(
@@ -747,19 +756,34 @@ fn transportFiniteBoundary(
       planeIndices,
       index,
     );
+  }${
+    cacheCrossings
+      ? `
+  // q and qd stay fixed throughout this query. An axis's crossing time
+  // therefore changes only when its integer cell changes. Retain the same
+  // rounded expression for unchanged axes; all min/tie scans keep their order.
+  var crossingT: array<f32, 4> =
+    array<f32, 4>(1.0e30, 1.0e30, 1.0e30, 1.0e30);
+  for (var a = 0; a < ${dim}; a++) {
+    if (qd[a] == 0.0) {
+      continue;
+    }
+${crossingTime}  }`
+      : ""
   }
   loop {
-    var nextT = 1.0e30;
+    var nextT = 1.0e30;${
+      cacheCrossings
+        ? ""
+        : `
     var crossingT: array<f32, 4> =
-      array<f32, 4>(1.0e30, 1.0e30, 1.0e30, 1.0e30);
+      array<f32, 4>(1.0e30, 1.0e30, 1.0e30, 1.0e30);`
+    }
     for (var a = 0; a < ${dim}; a++) {
       if (qd[a] == 0.0) {
         continue;
       }
-      let planeIndex = select(index[a], index[a] + 1, qd[a] > 0.0);
-      let plane = finiteGridPlane(planeIndex);
-      crossingT[a] = (plane - q[a]) / qd[a];
-      nextT = min(nextT, crossingT[a]);
+${cacheCrossings ? "" : crossingTime}      nextT = min(nextT, crossingT[a]);
     }
     if (nextT >= 1.0e30) {
       result.kind = 2u;
@@ -832,6 +856,15 @@ fn transportFiniteBoundary(
       result.kind = 2u;
       result.reason = 0u;
       return result;
+    }${
+      cacheCrossings
+        ? `
+    // Only advanced cells have new planes; recompute from the original
+    // origin, after the unchanged event/miss/visit guards have admitted it.
+    for (var ai = 0; ai < axisCount; ai++) {
+      let a = axes[ai];
+${crossingTime}    }`
+        : ""
     }
   }
 }
@@ -910,6 +943,7 @@ export function finiteSolidDdaF32(
   dirIn: Vec3,
   anchor: FiniteSolidAnchor | null,
   inside: boolean,
+  cacheCrossings = true,
 ): FiniteSolidDdaF32Result {
   const f = Math.fround;
   const half = f(halfIn);
@@ -1263,14 +1297,27 @@ export function finiteSolidDdaF32(
     }
     return event(start, sideInside, axes, planeIndices, index);
   }
-  for (;;) {
-    let nextT = 1e30;
-    const crossingT = [1e30, 1e30, 1e30, 1e30];
+  const cachedCrossingT = [1e30, 1e30, 1e30, 1e30];
+  if (cacheCrossings) {
     for (let a = 0; a < dim; a++) {
       if (qd[a] === 0) continue;
       const planeIndex = qd[a] > 0 ? index[a] + 1 : index[a];
       const plane = finiteGridPlane(planeIndex);
-      crossingT[a] = f(f(plane - q[a]) / qd[a]);
+      cachedCrossingT[a] = f(f(plane - q[a]) / qd[a]);
+    }
+  }
+  for (;;) {
+    let nextT = 1e30;
+    const crossingT = cacheCrossings
+      ? cachedCrossingT
+      : [1e30, 1e30, 1e30, 1e30];
+    for (let a = 0; a < dim; a++) {
+      if (qd[a] === 0) continue;
+      if (!cacheCrossings) {
+        const planeIndex = qd[a] > 0 ? index[a] + 1 : index[a];
+        const plane = finiteGridPlane(planeIndex);
+        crossingT[a] = f(f(plane - q[a]) / qd[a]);
+      }
       nextT = f(Math.min(nextT, crossingT[a]));
     }
     if (nextT >= 1e30) return miss();
@@ -1301,5 +1348,12 @@ export function finiteSolidDdaF32(
     }
     sideInside = nextInside;
     if (!inRoot) return miss();
+    if (cacheCrossings) {
+      for (const a of axes) {
+        const planeIndex = qd[a] > 0 ? index[a] + 1 : index[a];
+        const plane = finiteGridPlane(planeIndex);
+        crossingT[a] = f(f(plane - q[a]) / qd[a]);
+      }
+    }
   }
 }

@@ -137,8 +137,9 @@
  * Pipelines warm at 256x144, their buffers release, and one recorded CDP GC
  * precedes the full-HD controls plateau. Live render and two repeated saves
  * then measure retained host RSS without GC; presentation/encoding is separate.
- * GPU buffer create/destroy census independently pins 40*C+32*slots, where C
- * is actual retained capacity. Each observable is checked against128MiB; they
+ * GPU buffer create/destroy census independently pins 40*C+32*slots plus
+ * 16+2736*min(C,4096)+4 bytes of finite continuation scratch, where C is
+ * actual retained capacity. Each observable is checked against128MiB; they
  * are never added. Driver-private memory/VRAM and prior larger-raster capacity
  * histories remain outside this specifically scoped qualification.
  *
@@ -806,6 +807,7 @@ async function cancelFiniteExport(page, label, finite, maxRays, priorToken) {
           modalHidden,
           saveEnabled,
           frame: readFrame(),
+          gpu: window.__finiteOpticalSubmissions.snapshot(),
         };
       }
     };
@@ -902,6 +904,18 @@ async function cancelFiniteExport(page, label, finite, maxRays, priorToken) {
     check(
       evidence.ackMs >= 0 && evidence.ackMs <= EXPORT_CANCEL_LIMIT_MS,
       `${label}: trusted Cancel to toast/modal/button acknowledgement ${evidence.ackMs.toFixed(2)}ms <= ${EXPORT_CANCEL_LIMIT_MS}ms`,
+    );
+    // Record the first visible acknowledgement even if it was premature:
+    // waiting for a later drain would conceal a UI that declared cleanup
+    // while this export still held submitted GPU work.
+    evidence.cleanupAtAcknowledgement =
+      record.ack.gpu.failures.length === 0 &&
+      !record.ack.gpu.outstanding.some(
+        (submission) => submission.token === record.request.frame.token,
+      );
+    check(
+      evidence.cleanupAtAcknowledgement,
+      `${label}: the acknowledged export has no outstanding optical GPU submissions or fence errors`,
     );
     const beforeLive = await copiedLiveDocument(page);
     evidence.beforeInteraction = {
@@ -1026,8 +1040,12 @@ function installGpuBufferCensus() {
       bytes: buffer.size,
       requestedBytes: Number(descriptor.size),
       usage: buffer.usage,
+      label: String(descriptor.label ?? ""),
       live: true,
-      role: null,
+      role:
+        descriptor.label === "finite-transport-running"
+          ? "finite-transport-running"
+          : null,
     };
     identities.set(buffer, record);
     buffers.set(record.id, record);
@@ -1067,10 +1085,22 @@ function installGpuBufferCensus() {
     const maps = binding(13);
     const state = binding(14);
     const status = binding(15);
+    // Both finite variants bind the same shared shade uniform at 4 and the
+    // layer output at 9. Its optical tail is the only legitimate shared
+    // buffer-size difference in the paired document (224 -> 256 bytes).
+    if (binding(0) && binding(4) && binding(9))
+      binding(4).sharedRole = "shade-uniform";
     if (maps && state && status) {
       maps.role = "optics-maps";
       state.role = "transport-state";
       status.role = "transport-status";
+      // Binding 1 is normally plain maps. Only the named finite work
+      // allocation bound beside the actual transport buffers is scratch.
+      const work = binding(1);
+      if (work?.label === "finite-transport-work") {
+        work.role = "finite-transport-work";
+        work.boundAt1 = true;
+      }
       const staging = [...buffers.values()].findLast(
         (record) =>
           record.live &&
@@ -1092,6 +1122,8 @@ function installGpuBufferCensus() {
           "transport-state",
           "transport-status",
           "transport-staging",
+          "finite-transport-work",
+          "finite-transport-running",
         ].map((role) => [
           role,
           live
@@ -1135,6 +1167,83 @@ function summarizeRssSamples(samples) {
       ...samples.map((sample) => sample.knownRssBytes ?? 0),
     ),
   };
+}
+
+/** Compare corresponding retained phases, not unrelated allocation peaks.
+ * Every declared live buffer participates, including unlabelled allocations.
+ * The optical shader's 32-byte uniform tail is separate from the role census. */
+function pairedDeclaredGpuBuffers(opaque, glass) {
+  return ["live", "repeat1", "repeat2"].map((phase) => {
+    const a = opaque?.gpu?.[phase];
+    const b = glass?.gpu?.[phase];
+    const errors = [];
+    const valid = (snapshot) =>
+      snapshot &&
+      Number.isSafeInteger(snapshot.liveBytes) &&
+      snapshot.liveBytes >= 0 &&
+      Array.isArray(snapshot.live) &&
+      snapshot.live.every(
+        (record) => Number.isSafeInteger(record.bytes) && record.bytes >= 0,
+      ) &&
+      snapshot.live.reduce((sum, record) => sum + record.bytes, 0) ===
+        snapshot.liveBytes;
+    if (!valid(a) || !valid(b))
+      return {
+        phase,
+        errors: ["missing or inconsistent total live-buffer census"],
+      };
+    const uniforms = (snapshot) =>
+      snapshot.live.filter((record) => record.sharedRole === "shade-uniform");
+    const au = uniforms(a);
+    const bu = uniforms(b);
+    if (
+      au.length !== 1 ||
+      bu.length !== 1 ||
+      au[0]?.bytes !== 224 ||
+      bu[0]?.bytes !== 256
+    )
+      errors.push(
+        "unexpected shared shade-uniform allocation (expected 224/256 bytes)",
+      );
+    const shared = (snapshot) =>
+      snapshot.live
+        .filter(
+          (record) => !record.role && record.sharedRole !== "shade-uniform",
+        )
+        .map((record) => `${record.usage}:${record.bytes}`)
+        .sort();
+    if (JSON.stringify(shared(a)) !== JSON.stringify(shared(b)))
+      errors.push(
+        "unattributed shared/unlabelled live-buffer allocations differ",
+      );
+    const totalDeltaBytes = b.liveBytes - a.liveBytes;
+    const recognizedOpticalDeltaBytes = b.opticalLiveBytes - a.opticalLiveBytes;
+    const expectedSharedDeltaBytes = 32;
+    const unattributedDeltaBytes =
+      totalDeltaBytes - recognizedOpticalDeltaBytes - expectedSharedDeltaBytes;
+    if (
+      !Number.isSafeInteger(recognizedOpticalDeltaBytes) ||
+      unattributedDeltaBytes !== 0
+    )
+      errors.push(
+        "total allocation delta is not fully explained by optical buffers and the uniform tail",
+      );
+    if (totalDeltaBytes < 0 || totalDeltaBytes > RETAINED_RENDER_LIMIT_BYTES)
+      errors.push(
+        "total additional declared GPU buffers exceed the retained-memory limit",
+      );
+    return {
+      phase,
+      opaqueLiveBytes: a.liveBytes,
+      glassLiveBytes: b.liveBytes,
+      totalDeltaBytes,
+      recognizedOpticalDeltaBytes,
+      expectedSharedDeltaBytes,
+      unattributedDeltaBytes,
+      limitBytes: RETAINED_RENDER_LIMIT_BYTES,
+      errors,
+    };
+  });
 }
 
 /** Fresh canonical history only: warm pipelines at 256x144, release their buffers,
@@ -1294,6 +1403,7 @@ async function runFiniteMemoryArm(ctx, label, authored, optics, evidence) {
       undefined,
       { timeout: 30_000 },
     );
+    await snapshot("warmupReleased");
     await page.setViewportSize(FINITE_VIEWPORT);
     if (
       !(await page.$eval("#panel", (panel) => panel.classList.contains("open")))
@@ -1351,6 +1461,16 @@ async function runFiniteMemoryArm(ctx, label, authored, optics, evidence) {
       await page.waitForTimeout(1_200);
       await snapshot(`repeat${repeat}`);
     }
+    // Observe renderer destruction while the census is still reachable.
+    // Closing a page alone would hide whether these allocations were freed.
+    phase = "measured-release";
+    await page.$eval("#modePointsBtn", (button) => button.click());
+    await page.waitForFunction(
+      () => window.__finiteGpuBufferCensus?.snapshot().liveBytes === 0,
+      undefined,
+      { timeout: 30_000 },
+    );
+    await snapshot("measuredReleased");
     evidence.gpuHistory = await page.evaluate(() =>
       window.__finiteGpuBufferCensus.snapshot(true),
     );
@@ -1408,10 +1528,16 @@ async function runFiniteMemoryArm(ctx, label, authored, optics, evidence) {
           `${name}: ${observed.samples}/${minimumSamples} required samples, status=${observed.status}`,
         );
     }
-    if (samples.some((sample) => sample.status !== "ok"))
-      evidence.rss.qualificationFailures.push(
-        "procfs observations contain partial or unknown samples",
-      );
+    // The frozen line observes retained rendering after pipeline warmup.
+    // Keep excluded-phase sampling gaps visible without treating an unknown
+    // boot/encoding watch observation as missing render-phase evidence.
+    evidence.rss.excludedPhaseObservationGaps = samples
+      .filter(
+        (sample) =>
+          !Object.hasOwn(phaseRequirements, sample.phase) &&
+          sample.status !== "ok",
+      )
+      .map((sample) => ({ phase: sample.phase, status: sample.status }));
     evidence.rss.status =
       evidence.rss.qualificationFailures.length === 0 ? "ok" : "unqualified";
     const render = summarizeRssSamples(
@@ -1441,28 +1567,73 @@ async function runFiniteMemoryArm(ctx, label, authored, optics, evidence) {
   );
   const capacity = Math.max(...capacities);
   const slots = snapshots[0].roleBytes["optics-maps"] / 32;
+  // Intentionally independent from finite-transport-work.ts: this browser
+  // census must catch a changed allocation/layout, not share its arithmetic.
+  const scratchBytes = (rays) => 16 + 2736 * Math.min(rays, 4096);
   evidence.opticalAccounting = {
     formula:
-      "40*C + 32*slots = 32*C records + 4*C status + 4*C staging + 32*slots materials",
+      "40*C + 32*slots + 16 + 2736*min(C,4096) + 4: records/status/staging/materials plus one batch scratch and running-count staging",
     capacity,
     slots,
-    expectedBytes: optics ? 40 * capacity + 32 * slots : 0,
+    scratchCapacity: optics ? Math.min(capacity, 4096) : 0,
+    expectedScratchBytes: optics ? scratchBytes(capacity) + 4 : 0,
+    expectedBytes: optics
+      ? 40 * capacity + 32 * slots + scratchBytes(capacity) + 4
+      : 0,
     observedBytes: snapshots.map((gpu) => gpu.opticalLiveBytes),
     frameRayHighWater: Math.max(...evidence.frames.map((frame) => frame.rays)),
     repeatedDeclaredLiveBytes: snapshots.map((gpu) => gpu.liveBytes),
     highWaterScope:
-      "Fresh canonical full-HD history only. A prior larger raster retains its larger C; 4M-ray optical buffers alone exceed 128 MiB. Four AA samples and repeated live/export renders reuse one renderer, not four copies.",
+      "Fresh canonical full-HD history only. A prior larger raster retains its larger C; 4M-ray optical buffers alone exceed 128 MiB. One batch-limited stack allocation serves all AA samples and repeated live/export renders; no full-image stack or AA/export multiplication.",
   };
   check(
-    snapshots.every(
-      (gpu) =>
+    snapshots.every((gpu) => {
+      const rays = gpu.roleBytes["transport-state"] / 32;
+      const expected = optics
+        ? {
+            "optics-maps": 32,
+            "transport-state": 32 * rays,
+            "transport-status": 4 * rays,
+            "transport-staging": 4 * rays,
+            "finite-transport-work": scratchBytes(rays),
+            "finite-transport-running": 4,
+          }
+        : Object.fromEntries(
+            Object.keys(gpu.roleBytes).map((role) => [role, 0]),
+          );
+      return (
+        (!optics || (Number.isSafeInteger(rays) && rays >= 1920 * 1080)) &&
+        Object.entries(expected).every(([role, bytes]) => {
+          const records = gpu.live.filter((record) => record.role === role);
+          return (
+            gpu.roleBytes[role] === bytes &&
+            records.length === (optics ? 1 : 0) &&
+            (role !== "finite-transport-work" ||
+              !optics ||
+              records[0].boundAt1 === true)
+          );
+        }) &&
         gpu.opticalLiveBytes ===
-        (optics
-          ? 40 * (gpu.roleBytes["transport-state"] / 32) +
-            gpu.roleBytes["optics-maps"]
-          : 0),
-    ),
-    `${label}: declared live optical buffers match independent 40*C+32*slots accounting`,
+          Object.values(expected).reduce((sum, bytes) => sum + bytes, 0)
+      );
+    }),
+    `${label}: declared optical buffers independently match every size/count, including one bounded finite scratch and 4-byte running staging`,
+  );
+  check(
+    evidence.gpu.warmupReleased?.liveBytes === 0 &&
+      evidence.gpu.measuredReleased?.liveBytes === 0 &&
+      (!optics ||
+        ["finite-transport-work", "finite-transport-running"].every((name) => {
+          const records =
+            evidence.gpuHistory?.records.filter(
+              (record) => record.label === name,
+            ) ?? [];
+          return (
+            records.length >= 2 &&
+            records.every((record) => record.live === false)
+          );
+        })),
+    `${label}: warmup and measured continuation buffers were released with their renderer`,
   );
   check(
     snapshots.every((gpu) => gpu.liveBytes === snapshots[0].liveBytes),
@@ -2162,6 +2333,10 @@ async function main() {
               leg.arms.glass.rss?.retainedRenderAboveControlsBytes;
             const opticalBytes =
               leg.arms.glass.opticalAccounting?.expectedBytes;
+            const pairedDeclaredGpu = pairedDeclaredGpuBuffers(
+              leg.arms.opaque,
+              leg.arms.glass,
+            );
             leg.memoryComparison = {
               opaqueRenderAboveControlsBytes: opaqueRss ?? null,
               glassRenderAboveControlsBytes: glassRss ?? null,
@@ -2170,6 +2345,9 @@ async function main() {
                   ? glassRss - opaqueRss
                   : null,
               independentOpticalDeclaredBytes: opticalBytes ?? null,
+              pairedDeclaredGpu,
+              pairedDeclaredGpuScope:
+                "All live GPU buffers at matching live/repeat1/repeat2 phases. Shared buffers must match by size/usage except the independently identified 224-to-256-byte shade uniform; every other added byte must belong to the optical census.",
               limitBytes: RETAINED_RENDER_LIMIT_BYTES,
               combiningObservables: false,
             };
@@ -2182,6 +2360,11 @@ async function main() {
                 opticalBytes <= RETAINED_RENDER_LIMIT_BYTES,
               `${preset}: independently counted optical declared buffers ${opticalBytes ?? "unqualified"} <= ${RETAINED_RENDER_LIMIT_BYTES} bytes`,
             );
+            for (const paired of pairedDeclaredGpu)
+              check(
+                paired.errors.length === 0,
+                `${preset} ${paired.phase}: total glass-minus-opaque declared GPU buffers ${paired.totalDeltaBytes ?? "missing"} <= ${RETAINED_RENDER_LIMIT_BYTES} bytes, no unattributed allocations (${paired.errors.join("; ") || "exact optical buffers plus 32-byte uniform tail"})`,
+              );
             continue;
           }
           const images = {};
