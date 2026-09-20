@@ -33,12 +33,12 @@ const references = argOf(
 const PAIRS = [
   {
     label: "menger3",
-    app: "finite-glass-menger3-canonical.png",
+    app: "finite-glass-menger3-canonical-scene.png",
     reference: "staged-authoritative-menger3-256x144.png",
   },
   {
     label: "hyper4",
-    app: "finite-glass-hyper4-canonical-canonical.png",
+    app: "finite-glass-hyper4-canonical-canonical-scene.png",
     reference: "staged-authoritative-hyper4-256x144.png",
   },
 ];
