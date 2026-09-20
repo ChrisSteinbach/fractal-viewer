@@ -213,6 +213,34 @@ describe("finite continuation evidence", () => {
     }
   });
 
+  it("exempts only finite4's production quantum from the pause witness, still word-pinning it against quota 0", () => {
+    // The measured structural case: no 8×8 4D chain reaches 2048 paths,
+    // so quota 2048 reports zero pauses in every sample. The control must
+    // still pass on the strength of its word equality with quota 0.
+    const row4 = evidence("finite4");
+    for (const sample of row4.controls[6].samples)
+      sample.transport!.continuationChunks = 0;
+    expect(finiteTransportChunkFailures(row4)).toEqual([]);
+    // ...and a 4D quota that the bank CAN reach must still pause.
+    for (const sample of row4.controls[5].samples)
+      sample.transport!.continuationChunks = 0;
+    expect(
+      finiteTransportChunkFailures(row4).some((failure) =>
+        failure.startsWith("complete quota 1024"),
+      ),
+    ).toBe(true);
+    // 3D chains DO reach the production quantum in this bank (pauses
+    // [2,0,1,2] measured), so its 2048 requirement stays.
+    const row3 = evidence("finite");
+    for (const sample of row3.controls[6].samples)
+      sample.transport!.continuationChunks = 0;
+    expect(
+      finiteTransportChunkFailures(row3).some((failure) =>
+        failure.startsWith("complete quota 2048"),
+      ),
+    ).toBe(true);
+  });
+
   it("records every adapter and retains software correctness without hardware claims", () => {
     const software = evidence();
     software.expectedSoftware = true;

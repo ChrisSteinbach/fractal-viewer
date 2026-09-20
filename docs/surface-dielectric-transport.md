@@ -1744,6 +1744,40 @@ same adapter.
 This removes repeated arithmetic on longer walks; it does not by itself
 establish a speedup or satisfy the remaining performance gates.
 
+### The cache-qualified real-driver run (2026-09-20)
+
+Both mechanisms measured together on the quiet RX 7900 XTX
+(`scripts/out/finite-glass-resumption-2048-cache/`, provenance naming the
+measured tree):
+
+| Core    | Preview | Repeat (byte-identical) | Four-AA settle | Max batch | Cancel ack | Production-quantum pauses (preview/settle) |
+| ------- | ------: | ----------------------: | -------------: | --------: | ---------: | -----------------------------------------: |
+| finite  | 0.726 s |                 0.716 s |        6.131 s |  138.7 ms |     9.1 ms |                                     9 / 13 |
+| finite4 | 1.031 s |                 1.027 s |    **9.929 s** |  493.7 ms |   128.3 ms |                                      5 / 7 |
+
+The crossing cache brings the native 4D four-AA settle under its 10-second
+line for the first time (10.082 s → 9.929 s; ~0.7% headroom). Every envelope
+line passes in both dimensions (preview ≤ 1.5 s, settle ≤ 10 s, batch ≤
+600 ms, cancel ≤ 600 ms), every AA sample resolves (zero unresolved/invalid
+everywhere), and the preview repeats are byte-identical.
+
+The quota-2048 continuation witness changed shape, decided from the measured
+row. The scheduling quantum is per-ray-chain — a pause needs ONE ray's chain
+to cross the quantum inside a dispatch — so a larger diagnostic raster adds
+rays, not chain depth, and cannot reach the witness. The 8×8 bank's 4D
+chains never reach 2048 paths (chunk counts [quota 1: ~1568–2497/sample,
+17: 91–146, 128: 11–19, 512: 2–4, 1024: 2/1/1/0, 2048: 0 every sample]),
+while the 3D bank pauses at 2048 ([2,0,1,2]). The production-quantum 4D
+witness therefore lives on the renderer-envelope legs, whose real
+512×288×4 frames pause 5 (preview) / 7 (settle) times at 2048 — now a
+REQUIRED gate row (`finiteEnvelopeEvidenceFailures`), so a scene whose
+chains no longer reach the production quantum fails honestly instead of
+silently running uninterrupted. The chunk bank's validator exempts exactly
+finite4's production-quota control (it is the uninterrupted-equivalence
+comparison it already was, still word-pinned against quota 0); every other
+positive quota in both dimensions must still pause and match bit for bit.
+No pause requirement was dropped.
+
 ## What is not yet qualified
 
 The backend and routing sections above record the current implementation;
@@ -1766,8 +1800,13 @@ uses complete optical samples, not a resolved-pixel percentage.
 What remains:
 the fold core's transport (the measured timeout, three recorded paths —
 the closed-solid backend is now DOUBLY motivated for the finite-construction
-path, being its own recorded scope); built-app qualification (the
-final visual review and the measured envelope on a quiet real driver).
+path, being its own recorded scope); built-app qualification (the final
+visual review; the delegated preview/settle/cancel envelope itself is
+MEASURED and passing in both dimensions since the 2026-09-20 run above —
+what remains unmeasured there is the larger-raster tier: the 960×640
+eight-AA settles and the full-HD export rows, whose pre-cache 120-second
+failures the resumption/cache work is expected to move but has not yet
+re-measured).
 The estimator arms' IFS
 vacuity is disclosed, not solved — IFS geometry has no closed solid for
 the signed field to describe. Shader changes require the corresponding
