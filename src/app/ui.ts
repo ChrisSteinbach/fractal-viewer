@@ -88,6 +88,7 @@ import type {
   Affine,
 } from "../fractal/types";
 import { clone3, to255 } from "../fractal/vec";
+import { FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES } from "../fractal/surface-finite-solid-gpu";
 import type { Preset } from "../fractal/presets";
 import {
   isLatticeTilingSpec,
@@ -155,6 +156,7 @@ import {
   tilingClipSelectValue,
 } from "./control-spec";
 import type { ScalarControlSpec } from "./control-spec";
+import { isGlassSolidDepth } from "./control-spec";
 import {
   SPHERE_INVERSION_AUTHORED_OPTION,
   SPHERE_INVERSION_CONTROLS_MODE_REASON,
@@ -644,6 +646,29 @@ const FOG_FOUR_D_DORMANT_REASON =
   "Fog and Tint are kept; 4D Points dim with Depth fade instead.";
 const FOG_FOUR_D_BALLOON_REASON =
   "Fog changes Balloon’s fade horizon only; Tint does not color Balloon.";
+
+/** The Glass solid section's two standing disclosures. The general block's
+ * note names the admission's structural limits (the per-document refusals
+ * flow through the Surface eligibility note); a shaped block is the glass
+ * presets' authored construction and stays read-only here. */
+const GLASS_SOLID_GENERAL_NOTE =
+  "Every map must contract and stay axis-aligned; rotated or sheared maps refuse until the oriented-frame lift.";
+const GLASS_SOLID_SHAPED_NOTE =
+  "The glass preset authors this exact construction; the depth control stays read-only.";
+
+/** The depth row's disclosure: the construction's own size, and — for a
+ * dense document — the enumeration cap's disclosed refusal shape
+ * (`surface-finite-solid-gpu.ts`'s walk refuses past the cap as
+ * visit-cap, never truncates). */
+function glassSolidDepthNote(level: number, maps: number): string {
+  if (level === 0) return "Depth 0 renders the root box itself.";
+  if (level === 1) return "Depth 1 builds one box per map.";
+  const cells = maps * maps;
+  const cap = FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES;
+  return cells > cap
+    ? `Depth 2 builds ${String(cells)} cells; rays crossing more than ${String(cap)} leaves refuse as unresolved.`
+    : `Depth 2 builds ${String(cells)} cells, within the ${String(cap)}-leaf ray cap.`;
+}
 
 function foglessPointsStyleName(state: AppState): string {
   switch (state.renderStyle) {
@@ -2842,6 +2867,12 @@ export class Ui {
     HTMLElement
   >;
   private readonly finalLensNote: HTMLElement;
+  // The Glass solid section (finite-solid.ts's general admission): the
+  // owner's authoring control for the shape-less `{level}` block. A shaped
+  // block (the glass presets' vocabulary) reads read-only.
+  private readonly glassSolidDepthRow: HTMLElement;
+  private readonly glassSolidDepthNote: HTMLElement;
+  private readonly glassSolidNote: HTMLElement;
   /** The replaced transform system's sections, disabled while a
    * sphere-inversion block is the subject (docs/panel-ia.md: a dormant
    * authored capability stays visible but disabled beside its reason). */
@@ -3588,6 +3619,9 @@ export class Ui {
     this.sphereInversionControls = this.byId("sphereInversionControls");
     this.sphereInversionTimingHint = this.byId("sphereInversionTimingHint");
     this.sphereInversionNote = this.byId("sphereInversionNote");
+    this.glassSolidDepthRow = this.byId("glassSolidDepthRow");
+    this.glassSolidDepthNote = this.byId("glassSolidDepthNote");
+    this.glassSolidNote = this.byId("glassSolidNote");
     this.sphereInversionSizeRow = this.byId("sphereInversionSizeRow");
     this.sphereInversionSizeCaption = this.byId("sphereInversionSizeCaption");
     this.sphereInversionRows = {
@@ -5205,6 +5239,48 @@ export class Ui {
   }
 
   /**
+   * Paint the Glass solid section from the document (the control specs'
+   * table-driven sync has already put every value on its controls): the
+   * depth row's visibility, the read-only state a shaped block puts the
+   * section in, and the two disclosures — the section's admission limits
+   * and the depth row's enumeration-cap warning.
+   */
+  private syncGlassSolidSection(state: AppState): void {
+    const block = state.finiteSolid;
+    const shaped =
+      block !== undefined &&
+      "shape" in block &&
+      typeof (block as Record<string, unknown>).shape === "string";
+    this.setScalarDisabled("glassSolidEnabledCheckbox", shaped);
+    this.setScalarDisabled("glassSolidDepthSelect", shaped);
+    this.glassSolidDepthRow.classList.toggle("hidden", block === undefined);
+    const level = block?.level;
+    const depthSelect = this.scalarSelect("glassSolidDepthSelect");
+    const depthValue = isGlassSolidDepth(level) ? String(level) : "";
+    if (depthSelect.value !== depthValue) {
+      depthSelect.value = depthValue;
+    }
+    if (block === undefined || shaped) {
+      this.setReasonNote(this.glassSolidDepthNote, "");
+      this.glassSolidDepthNote.classList.add("hidden");
+    } else {
+      // The general admission's active-map count, the analyzer's own rule.
+      const maps = state.transforms.filter((t) => (t.weight ?? 1) > 0).length;
+      const note = glassSolidDepthNote(level as number, maps);
+      this.setReasonNote(this.glassSolidDepthNote, note);
+      this.glassSolidDepthNote.classList.toggle("hidden", note === "");
+    }
+    this.setReasonNote(
+      this.glassSolidNote,
+      shaped
+        ? GLASS_SOLID_SHAPED_NOTE
+        : block !== undefined
+          ? GLASS_SOLID_GENERAL_NOTE
+          : "",
+    );
+  }
+
+  /**
    * Keep operational copy about the renderer the user is looking at. The
    * longer cross-renderer explanation lives in optional panel disclosures;
    * controls keep describing these short, visible nodes so keyboard and
@@ -5663,6 +5739,7 @@ export class Ui {
     );
     this.finalLensNote.classList.toggle("hidden", !dormantLens);
     this.syncSphereInversionSection(state);
+    this.syncGlassSolidSection(state);
 
     // The render-mode segmented control is the panel's one fixed switch
     // between the three sibling renderers; each mode's own params show
