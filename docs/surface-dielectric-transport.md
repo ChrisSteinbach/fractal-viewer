@@ -1251,6 +1251,65 @@ same `core: "finite"` / `"finite4"` pair under
   ray, its anchored continuation, honest exits, the contradicting-claim
   refusal, and the twin-vs-grid-twin cross-construction check).
 
+## The general word tree's routing and panel (landed, 2026-09-21)
+
+The general construction's Phase 3 (the shape-less block routed and
+authored in the app, both dimensions) LANDED:
+
+- **The block resolves two kinds.** `resolveFiniteSolid` admits the
+  SHAPE-LESS block `{level}` alone as `kind: "general"` — the word tree
+  built from the document's OWN maps — beside the shaped blocks'
+  `kind: "shaped"` (`{shape, level}`, the presets' vocabulary). Unknown
+  keys and out-of-band levels refuse with reasons, never clamp, and any
+  refusal wins over any value. `PRESET_FINITE_SOLIDS` now carries
+  `FiniteSolidAuthored` — the authored wire the resolver validates; its
+  values are unchanged and `kind` never rides an authored block.
+- **The gate branches.** `deriveFiniteSolidEligibility`: shape present →
+  the shipped analyzer unchanged (the dimension-mismatch checks ride the
+  shaped arm only); absent → `analyzeFiniteSolidGeneral` with the SCENE's
+  dimension (the word tree is the document's own maps, so no construction
+  can disagree with it), the same combination policy (tiling, shape trap,
+  schedule), and its own degraded disclosure naming the word-tree route.
+- **The target carries the construction.** `FiniteSolidComputeTarget`
+  gains `general?: FiniteSolidGeneralWire` on both kinds; the
+  `finiteSolid` option assembly threads it (only when present — the
+  shipped cores' emissions and option objects stay byte-identical).
+  main.ts's finite arm re-runs the admission at the session door (a
+  gate/door flip throws), builds the wire from the analysis's
+  construction, and derives the marching ball from the root box's
+  farthest-corner norm and the material's H from the root box's largest
+  per-axis half extent — the same "the solid's own scale" role the shipped
+  construction's 0.75 plays for Beer distance and slab lengths.
+- **The Glass solid panel section** (the owner's authoring control, asked
+  for and confirmed with the owner): a checkbox that installs/clears the
+  shape-less block (default depth 1) and a depth select over the
+  certified band 0..2, in Scene / Look beside Sphere inversion. A SHAPED
+  block reads checked but DISABLED beside its reason ("the glass preset
+  authors this exact construction"), so a preset's exact wire is never
+  silently converted to the capped word tree. Disclosures per the
+  panel-IA contract: the timing hint names the recompile-per-enter edit
+  timing, the section note names the admission's standing limits (every
+  map must contract and stay axis-aligned), and the depth note derives
+  the construction's own cell count — a dense document's K² cells
+  disclose the enumeration cap's refusal shape beside the routing. The
+  block is Surface-route state only: the effect refreshes the gate and
+  restarts a live Surface session, and never regenerates the Points
+  cloud. Per-document refusals flow through the existing eligibility
+  note row (persistent, beside the mode switch — the transient-toast
+  complaint's answer).
+- **The app gate** (`scripts/glass-solid-panel.verify.mjs`, real driver
+  RX 7900 XTX, certified quiet): the checkbox authored on the SIERPINSKI
+  preset's document, `{level: 1}` decoded from the `#v1=` hash, the
+  word-tree route named in the eligibility note, the compute session's
+  settled first frame (estimator optics — no Glass authored), the depth
+  rewrite's restart-and-re-settle with the depth note's own 16-cell
+  count, and the shaped block's read-only state with the glassMenger
+  preset's optics backend LIVE. The gate also witnesses the refusal
+  disclosure working: checking the box on the default system's ROTATING
+  maps refuses with the analyzer's reason in the note row — the route
+  needs the document's own diagonal contractions, and the Surface button
+  disables beside the reason until the block is cleared.
+
 ## The finite routing (landed, 2026-09-19)
 
 The finite-solid family's app routing LANDED: the document's optional
