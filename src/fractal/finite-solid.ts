@@ -85,11 +85,14 @@ export const FINITE_SOLID_SHAPES: readonly FiniteSolidShape[] = [
   "hyperMenger",
 ];
 
-export interface FiniteSolid {
-  shape: FiniteSolidShape;
-  /** Construction level 0..2. */
-  level: number;
-}
+/** The resolved finite-solid block. `kind: "shaped"` names one of the
+ * shipped constructions (the maps must BE it — `analyzeFiniteSolidSystem`);
+ * `kind: "general"` is the SHAPE-LESS block `{level}` alone: the word tree
+ * built from the DOCUMENT's own maps (`analyzeFiniteSolidGeneral`, the
+ * general admission). */
+export type FiniteSolid =
+  | { kind: "shaped"; shape: FiniteSolidShape; level: number }
+  | { kind: "general"; level: number };
 
 /** The authored finite-solid block exactly as the document carries it —
  * {@link resolveFiniteSolid} validates it, never clamps, so a refused block
@@ -104,12 +107,14 @@ export type FiniteSolidResolution =
   { ok: true; value: FiniteSolid } | { ok: false; reasons: string[] };
 
 /**
- * Validate one authored finite-solid block: both fields required, the shape
- * one of the shipped constructions, the level an integer in the certified
- * band. Out-of-domain values and unknown keys REFUSE with reasons, never
- * clamp or coerce — a clamp would render a different object than the
- * document names, and an unknown key may be a field from a newer version
- * that must not silently render as if absent.
+ * Validate one authored finite-solid block. A block carrying `shape` names
+ * one of the shipped constructions and resolves `kind: "shaped"`; a block
+ * carrying `{level}` alone resolves `kind: "general"` — the document's own
+ * maps as the word tree. Either way the level must be an integer in the
+ * certified band. Out-of-domain values and unknown keys REFUSE with
+ * reasons, never clamp or coerce — a clamp would render a different object
+ * than the document names, and an unknown key may be a field from a newer
+ * version that must not silently render as if absent.
  */
 export function resolveFiniteSolid(
   authored: FiniteSolidAuthored,
@@ -120,29 +125,35 @@ export function resolveFiniteSolid(
       reasons.push(`unknown finite-solid field "${key}"`);
     }
   }
-  let shape: FiniteSolidShape | null = null;
-  if (typeof authored.shape !== "string") {
-    reasons.push("the finite-solid block needs a shape");
-  } else if (authored.shape === "menger" || authored.shape === "hyperMenger") {
-    shape = authored.shape;
-  } else {
-    reasons.push(`unknown finite-solid shape "${authored.shape}"`);
-  }
   const level = authored.level;
-  if (
-    typeof level !== "number" ||
-    !Number.isInteger(level) ||
-    level < 0 ||
-    level > FINITE_SOLID_MAX_LEVEL
-  ) {
+  const levelOk =
+    typeof level === "number" &&
+    Number.isInteger(level) &&
+    level >= 0 &&
+    level <= FINITE_SOLID_MAX_LEVEL;
+  if (!levelOk) {
     reasons.push(
       `the finite-solid level must be an integer in 0..${FINITE_SOLID_MAX_LEVEL}`,
     );
   }
-  if (reasons.length > 0 || shape === null || typeof level !== "number") {
+  const shapeKey = "shape" in authored ? authored.shape : undefined;
+  const shape: FiniteSolidShape | null =
+    shapeKey === "menger" || shapeKey === "hyperMenger" ? shapeKey : null;
+  if (shapeKey !== undefined && shape === null) {
+    reasons.push(`unknown finite-solid shape "${String(shapeKey)}"`);
+  }
+  // Any refusal wins over any value: a block the document names must never
+  // silently render as a different one (the resolver's own discipline).
+  if (reasons.length > 0 || !levelOk) {
     return { ok: false, reasons };
   }
-  return { ok: true, value: { shape, level } };
+  return {
+    ok: true,
+    value:
+      shape === null
+        ? { kind: "general", level }
+        : { kind: "shaped", shape, level },
+  };
 }
 
 /** The construction's origin-centred bound: the root box's circumscribed

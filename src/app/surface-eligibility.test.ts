@@ -2017,4 +2017,135 @@ describe("the finite-solid route", () => {
     });
     expect(result.kind).toBe("ifs");
   });
+
+  it("routes the shape-less block as the general word tree over the document's own maps", () => {
+    // The owner's tetrahedron: 4 diagonal contractions, level 2 = 16 leaves.
+    const result = deriveSurfaceEligibility(
+      sierpinskiTetrahedron(),
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      null,
+      null,
+      undefined,
+      null,
+      { level: 2 },
+    );
+    expect(result.status).toBe("degraded");
+    expect(result.kind).toBe("finiteSolid");
+    expect(result.note).toContain("level-2");
+    expect(result.note).toContain("document's own maps");
+  });
+
+  it("routes the general block in 4D off the scene's dimension", () => {
+    const result = deriveSurfaceEligibility(
+      pentatope(),
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      null,
+      null,
+      undefined,
+      null,
+      { level: 1 },
+    );
+    expect(result.status).toBe("degraded");
+    expect(result.kind).toBe("finiteSolid4");
+  });
+
+  it("admits the shipped construction's maps through the general block too", () => {
+    // The cross-construction case: the same maps the shaped block verifies
+    // by value also build a word tree. Eligibility admits; the enumeration
+    // cap is a runtime resource bound, never an eligibility refusal.
+    const result = deriveSurfaceEligibility(
+      mengerMaps,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      null,
+      null,
+      undefined,
+      null,
+      { level: 1 },
+    );
+    expect(result.status).toBe("degraded");
+    expect(result.kind).toBe("finiteSolid");
+  });
+
+  it("refuses the general block with the analyzer's reasons: variations, rotation, no compute", () => {
+    const varied = sierpinskiTetrahedron().map((t, i) =>
+      i === 0
+        ? { ...t, variations: [{ type: "swirl" as const, weight: 0.5 }] }
+        : t,
+    );
+    const variedResult = deriveSurfaceEligibility(
+      varied,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      null,
+      null,
+      undefined,
+      null,
+      { level: 1 },
+    );
+    expect(variedResult.status).toBe("ineligible");
+    expect(variedResult.note).toContain("carries variations");
+    // A rotated map: the axis-aligned cell frame refuses until the
+    // oriented-frame lift.
+    const rotated = sierpinskiTetrahedron().map((t, i) =>
+      i === 0
+        ? { ...t, rotation: [0, Math.PI / 4, 0] as [number, number, number] }
+        : t,
+    );
+    const rotatedResult = deriveSurfaceEligibility(
+      rotated,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      null,
+      null,
+      undefined,
+      null,
+      { level: 1 },
+    );
+    expect(rotatedResult.status).toBe("ineligible");
+    expect(rotatedResult.note).toContain("rotates or shears");
+    const noCompute = deriveSurfaceEligibility(
+      sierpinskiTetrahedron(),
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: false },
+      null,
+      null,
+      null,
+      undefined,
+      null,
+      { level: 1 },
+    );
+    expect(noCompute.status).toBe("ineligible");
+    expect(noCompute.note).toContain("WebGPU compute");
+  });
+
+  it("refuses the general block's combination policy like the shaped one", () => {
+    const result = deriveSurfaceEligibility(
+      sierpinskiTetrahedron(),
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      null,
+      { group: "a3" },
+      undefined,
+      null,
+      { level: 1 },
+    );
+    expect(result.status).toBe("ineligible");
+    expect(result.note).toContain("Space tiling");
+  });
 });

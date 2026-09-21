@@ -89,23 +89,31 @@ describe("finite-solid admission", () => {
   it("resolves an authored block and refuses bad ones without clamping", () => {
     expect(resolveFiniteSolid({ shape: "menger", level: 2 })).toEqual({
       ok: true,
-      value: { shape: "menger", level: 2 },
+      value: { kind: "shaped", shape: "menger", level: 2 },
     });
     expect(resolveFiniteSolid({ shape: "hyperMenger", level: 0 })).toEqual({
       ok: true,
-      value: { shape: "hyperMenger", level: 0 },
+      value: { kind: "shaped", shape: "hyperMenger", level: 0 },
     });
-    // Missing fields, out-of-band levels, and unknown keys all refuse with
+    // The SHAPE-LESS block: `{level}` alone resolves the general word tree
+    // built from the document's own maps.
+    expect(resolveFiniteSolid({ level: 2 })).toEqual({
+      ok: true,
+      value: { kind: "general", level: 2 },
+    });
+    // Missing levels, out-of-band levels, and unknown keys all refuse with
     // reasons — a refusal is the block's persisted state, never a clamp.
     for (const block of [
       {},
       { shape: "menger" },
-      { level: 2 },
+      { level: 2.5 },
       { shape: "sponge", level: 2 },
       { shape: "menger", level: 3 },
       { shape: "menger", level: -1 },
       { shape: "menger", level: 1.5 },
       { shape: "menger", level: 2, warp: true },
+      { level: 1, warp: true },
+      { shape: "", level: 1 },
     ]) {
       const r = resolveFiniteSolid(block);
       expect(r.ok).toBe(false);
