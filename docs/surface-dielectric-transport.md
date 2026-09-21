@@ -1187,6 +1187,70 @@ grid, pad}`. The grid needs NO bitmap in-shader — the ternary rule is
   can exclude an unstable probe, within its existing cap. Independent f64
   continuation regressions additionally check the f32 query's mathematics.
 
+## The general word tree's GPU half (landed, 2026-09-21)
+
+The general construction's Phase 2 (the document's OWN maps as the cell
+tree, the owner scope correction's deliverable) LANDED as
+`finiteSolidGeneralDisplaySource` / `finiteSolidGeneralTransportSource` /
+`finiteSolidGeneralDdaF32` in `surface-finite-solid-gpu.ts`, emitted by the
+same `core: "finite"` / `"finite4"` pair under
+`finiteSolid: { level, general }`:
+
+- **The construction bakes into the source, not the wire.** The maps and
+  root box ride `const` WGSL (the tiling clip's and `shapes.ts`'
+  baked-constant pattern), so the params tail, the packers
+  (`packSurfaceGpuParamsFinite`/`Finite4` reused verbatim) and the
+  bindingless design are unchanged. A general session recompiles its
+  kernels per enter (the session freezes its construction), the shipped
+  cores' discipline; the shipped emissions stay byte for byte (the general
+  path is an opt-in branch). The marching ball is the root box's farthest
+  corner's norm (`finiteSolidGeneralBoundingRadius` — exact, not a bound;
+  the root box need not be origin-centred).
+- **The walk is the reference's endpoint sweep, pruned** (`finEnumerate` →
+  stable insertion sort → greedy tie groups → coverage sweep): subtrees
+  whose box the ray misses contribute no endpoints anywhere (a descendant's
+  box nests inside its parent's), so the pruned enumeration equals the
+  reference's unpruned one endpoint for endpoint. The sweep holds the
+  first zero-crossing until the claim check has admitted the walk — the
+  reference's order, so a mismatching claim refuses before any walk event
+  is emitted. The anchor contract survives unchanged: the incident leaf's
+  WORD rides `cellIndices`, the crossed faces ride LOCAL leaf sides {0,1}
+  in `planeIndices`, the anchored restart snaps/clamps onto the leaf's
+  canonical faces under the declared envelope. The anchor's word depth
+  reads the params tail's LIVE `finiteLevel` lane (the shipped grid DDA's
+  own convention) — one live params dependency in every kernel that
+  includes the walk, which is what keeps the bench's auto-layout bind
+  group complete for the 3D general core (a bindingless-everywhere walk
+  silently drops binding 0 from it).
+- **The enumeration is capped at
+  `FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES` (128)**, codegen-baked to the
+  smaller of that and the construction's own worst case (K^level), so
+  small constructions allocate exactly their own bound. A ray that clips
+  more pruned leaves refuses visit-cap (the shipped DDA's own
+  resource-refusal shape), never truncates — disclosed unresolved work,
+  and a Phase 3 disclosure duty for dense documents.
+- **The tie-edge class is disclosed, not absorbed**: the reference groups
+  endpoints greedily from each group's first t in f64; the WGSL realizes
+  the same arithmetic in f32, and two endpoints that tie in f64 can order
+  differently in f32 (and across drivers, under fused multiply-add). The
+  bench legs treat it the escape legs' way (the pre-hoc ULP ensemble
+  excludes the probe and counts it), never a raised tolerance. The
+  Sierpinski witness's dyadic arithmetic is exact in f32 and shows none.
+- **The agreement legs** (the surface bench's transport section, real
+  driver RX 7900 XTX, certified quiet, `--display=:0`): three general
+  documents, each kernel against `finiteSolidGeneralDdaF32` — the owner's
+  Sierpinski tetrahedron (4 maps, level 2, 16 leaves) 2 stable traces / 2
+  resolved, maxRadianceDelta 1.52e-8, maxResidualDelta 1.01e-10,
+  maxNormalDelta 0; the shipped Menger maps at level 1 as the
+  cross-construction witness (the same object the grid construction
+  renders, through the word tree) 4/4, maxRadianceDelta 2.83e-8,
+  maxNormalDelta 0; the hyper-Menger maps at level 1 one dimension up 4/4,
+  maxRadianceDelta 2.48e-8, maxNormalDelta 0. The f64 oracle stays the
+  soundness record (pinned by the module's own tests: the twin against
+  `finiteSolidGeneralNextBoundary`/`FromAnchor` on the hand-exact spine
+  ray, its anchored continuation, honest exits, the contradicting-claim
+  refusal, and the twin-vs-grid-twin cross-construction check).
+
 ## The finite routing (landed, 2026-09-19)
 
 The finite-solid family's app routing LANDED: the document's optional
