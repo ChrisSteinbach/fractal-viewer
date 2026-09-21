@@ -155,6 +155,7 @@ import {
   fernSpongeLeak,
   gearworks,
   hyperfern,
+  hyperMengerSpongeTransforms,
   mandelboxKifs,
   pentatope,
   PRESET_SCHEDULES,
@@ -284,15 +285,22 @@ import {
 import {
   FINITE_SOLID_HALF_EXTENT,
   FINITE_SOLID_IDENTITY_POSE,
+  analyzeFiniteSolidGeneral,
   buildFiniteSolidConstruction,
   finiteSolidDisplayDistance,
   finiteSolidBoundingRadius,
+  finiteSolidGeneralDisplayDistance,
   finiteSolidIntervals,
   finiteSolidPose,
   type FiniteSolidAnchor,
   type FiniteSolidPose,
 } from "../../fractal/finite-solid";
-import { finiteSolidDdaF32 } from "../../fractal/surface-finite-solid-gpu";
+import {
+  finiteSolidDdaF32,
+  finiteSolidGeneralDdaF32,
+  finiteSolidGeneralBoundingRadius,
+  type FiniteSolidGeneralWire,
+} from "../../fractal/surface-finite-solid-gpu";
 import {
   transportBoundaryQueryCPU,
   transportShadowVisibilityCPU,
@@ -8964,6 +8972,127 @@ async function runSurfaceTransportAgreementLegs(
   };
   pushFiniteSolidLeg(false);
   pushFiniteSolidLeg(true);
+
+  // The general word-tree legs (the document's OWN maps as the cell tree —
+  // the general-construction work's GPU half, both dimensions). Each leg's
+  // construction comes from `analyzeFiniteSolidGeneral` over a REAL document
+  // (the owner's Sierpinski tetrahedron; the shipped Menger maps as the
+  // cross-construction witness; the hyper-Menger maps one dimension up), so
+  // the leg pins the kernel against the SAME realization the CPU chain
+  // pins: the general twin mirrors the WGSL walk term for term, the f64
+  // oracle stays the soundness record, and the shipped-grid cross-check
+  // lives in the CPU tests (the word tree with the grid's own maps
+  // reproduces the grid's union). The construction bakes into the source,
+  // so the params wire and packers are the shipped finite ones verbatim;
+  // the marching ball is the root box's farthest corner — the fixture's
+  // domain gate reads the same number the packer carries.
+  const pushFiniteGeneralLeg = (
+    fourD: boolean,
+    transforms: Transform[],
+    level: number,
+    systemName: string,
+  ): void => {
+    const analysis = analyzeFiniteSolidGeneral(
+      transforms,
+      null,
+      { order: 1, plane: "xz" },
+      level,
+      fourD ? 4 : 3,
+    );
+    if (analysis.status !== "eligible" || !analysis.construction) {
+      throw new Error(
+        `transport ${systemName}: the general admission refused its own fixture: ${analysis.reasons.join("; ")}`,
+      );
+    }
+    const construction = analysis.construction;
+    const wire: FiniteSolidGeneralWire = {
+      mapScale: construction.mapScale,
+      mapOffset: construction.mapOffset,
+      rootMin: construction.rootMin,
+      rootMax: construction.rootMax,
+    };
+    const pose = FINITE_SOLID_IDENTITY_POSE;
+    const boundingRadius = finiteSolidGeneralBoundingRadius(construction);
+    legs.push({
+      core: fourD ? "finite4" : "finite",
+      systemName,
+      backend: "finiteSolid",
+      options: {
+        mode: "shade",
+        core: fourD ? "finite4" : "finite",
+        width: 4,
+        workgroupSize: SURFACE_TRANSPORT_WG,
+        sharedFrontier: false,
+        bnbStage2: false,
+        optics: true,
+        opticsBackend: "finiteSolid",
+        finiteSolid: { level, general: wire },
+        transportMaxPaths: SURFACE_TRANSPORT_LEG_MAX_PATHS,
+      },
+      packParams: (n) =>
+        fourD
+          ? packSurfaceGpuParamsFinite4(
+              canonicalView4,
+              { itemCount: n, cutoff: 0 },
+              level,
+              boundingRadius,
+            )
+          : packSurfaceGpuParamsFinite(
+              { itemCount: n, cutoff: 0 },
+              level,
+              boundingRadius,
+            ),
+      packMaps: null,
+      finiteQuery: (origin, dir, anchor, inside) => {
+        const r = finiteSolidGeneralDdaF32(
+          fourD ? 4 : 3,
+          level,
+          wire,
+          // The identity rows for BOTH dimensions (the shipped finite
+          // leg's comment carries: 3D IS the identity pose — the WGSL 3D
+          // rowsFn emits the identity — and `null` made the twin's rowXyz
+          // return zero rows, refusing every event degenerate-normal).
+          [
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1],
+          ],
+          0,
+          origin,
+          dir,
+          anchor,
+          inside,
+        );
+        return {
+          kind: r.kind === 1 ? "boundary" : r.kind === 2 ? "miss" : "refused",
+          reason: r.reason,
+          t: r.t,
+          normal: r.normal,
+          anchor: r.anchor,
+        };
+      },
+      fixture: {
+        estimate: (p) =>
+          finiteSolidGeneralDisplayDistance(construction, pose, p),
+        stepScale: 1,
+        visibleRadius: boundingRadius,
+      },
+    });
+  };
+  pushFiniteGeneralLeg(
+    false,
+    sierpinskiTetrahedron(),
+    2,
+    "finiteGeneralSierpinski3",
+  );
+  pushFiniteGeneralLeg(false, mengerSponge(), 1, "finiteGeneralMenger3");
+  pushFiniteGeneralLeg(
+    true,
+    hyperMengerSpongeTransforms(),
+    1,
+    "finiteGeneralHyperMenger4",
+  );
 
   const escapeSys = systems.escape[0];
   if (escapeSys) {

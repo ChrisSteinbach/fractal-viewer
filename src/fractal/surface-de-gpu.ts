@@ -44,6 +44,7 @@ import {
 import { swirlLensShaderSource } from "./swirl-lens-shader";
 import { inversionDistanceShaderSource } from "./inversion";
 import {
+  FINITE_SOLID_GENERAL_MAX_MAPS,
   FINITE_SOLID_HALF_EXTENT,
   FINITE_SOLID_MAX_LEVEL,
 } from "./finite-solid";
@@ -56,7 +57,10 @@ import {
 import {
   SURFACE_GPU_PARAMS4_FINITE_BYTES,
   SURFACE_GPU_PARAMS_FINITE_BYTES,
+  type FiniteSolidGeneralWire,
   finiteSolidDisplaySource,
+  finiteSolidGeneralDisplaySource,
+  finiteSolidGeneralTransportSource,
   finiteSolidTransportSource,
 } from "./surface-finite-solid-gpu";
 import {
@@ -2014,8 +2018,16 @@ export interface SurfaceGpuKernelOptions {
    * admitted document (`analyzeFiniteSolidSystem`'s verdict — the gate
    * lives in the routing; codegen only validates the range). The half
    * extent is the module's constant and the grid size derives from the
-   * level; both ride the params tail so the kernel reads one wire. */
-  finiteSolid?: { level: number } | null;
+   * level; both ride the params tail so the kernel reads one wire.
+   * `general` present swaps the construction for the document's OWN maps
+   * (`analyzeFiniteSolidGeneral`'s word tree): the maps and root box bake
+   * into the source (the tiling clip's pattern), the params tail and
+   * packers stay byte-identical, and the admission lives in the routing
+   * (the general analysis's verdict — codegen validates the shape). */
+  finiteSolid?: {
+    level: number;
+    general?: FiniteSolidGeneralWire;
+  } | null;
   /** The escape family's SHAPE-TRAP color channel (`types.ts`'s ShapeTrap;
    * the formula is `escape-de.ts`'s, defined once): bake this spec's SDF
    * into the kernel (`shapeSdfSource`, the create-time-geometry decision —
@@ -4810,10 +4822,14 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // The FINITE-SOLID cores: neither a descent nor a forward orbit — the
   // primary and optical boundaries use the exact DDA; shading probes use
   // the certified box-union hybrid DE. Bindingless like "bulb"; the
-  // construction rides the params tail.
+  // construction rides the params tail (grid) or bakes into the source
+  // (the general word tree — the maps ride the source the way the tiling
+  // clip's roots do, so the params wire stays byte-identical).
   const finiteCore = core === "finite" || core === "finite4";
+  const finiteGeneral = finiteCore ? (opts.finiteSolid?.general ?? null) : null;
+  const finiteLevel = finiteCore ? opts.finiteSolid?.level : undefined;
   if (finiteCore) {
-    const level = opts.finiteSolid?.level;
+    const level = finiteLevel;
     if (
       level === undefined ||
       !Number.isInteger(level) ||
@@ -4823,6 +4839,32 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
       throw new RangeError(
         `surface-de-gpu: the ${core} core needs an authored level 0..${FINITE_SOLID_MAX_LEVEL}`,
       );
+    }
+    if (finiteGeneral) {
+      const g = finiteGeneral;
+      const mapCount = g.mapScale.length;
+      if (
+        !Number.isInteger(mapCount) ||
+        mapCount < 1 ||
+        mapCount > FINITE_SOLID_GENERAL_MAX_MAPS ||
+        g.mapOffset.length !== mapCount
+      ) {
+        throw new RangeError(
+          `surface-de-gpu: the ${core} core's general construction carries 1..${FINITE_SOLID_GENERAL_MAX_MAPS} maps; this wire has ${String(mapCount)}`,
+        );
+      }
+      const finiteVec4 = (v: readonly number[]): boolean =>
+        v.length === 4 && v.every(Number.isFinite);
+      if (
+        !g.mapScale.every(finiteVec4) ||
+        !g.mapOffset.every(finiteVec4) ||
+        !finiteVec4(g.rootMin) ||
+        !finiteVec4(g.rootMax)
+      ) {
+        throw new RangeError(
+          `surface-de-gpu: the ${core} core's general construction carries a non-finite map or root bound`,
+        );
+      }
     }
     const refusals: [boolean, string][] = [
       [
@@ -9192,7 +9234,13 @@ ${dielectricOpticsSource("wgsl")}${
 // ---- the finite-solid DDA (surface-finite-solid-gpu.ts's
 // finiteSolidTransportSource): the exact boundary query the transport
 // walks, with the full anchor contract in and out.
-${finiteSolidTransportSource(core4 ? 4 : 3, opts.finiteCacheCrossings)}`
+${
+  finiteGeneral
+    ? `// The GENERAL word tree walk: the reference's endpoint sweep over the
+// document's own maps, pruned, in f32.
+${finiteSolidGeneralTransportSource(core4 ? 4 : 3, finiteGeneral, finiteLevel ?? 0)}`
+    : finiteSolidTransportSource(core4 ? 4 : 3, opts.finiteCacheCrossings)
+}`
           : ""
       }`
     : "";
@@ -10330,11 +10378,20 @@ fn transportRays(
   // outside cameras and cameras in the construction's empty tunnels.
   let primaryOrigin = finiteLift(ro);
   let primaryDir = finiteLiftDir(rd);
-  var primaryCells = array<i32, 4>(-1, -1, -1, -1);
+  ${
+    finiteGeneral
+      ? `// The general word tree's ray-side state is point membership: the
+  // coverage at the origin is > 0 exactly when some leaf contains it
+  // (closed — a point on a shared face reads inside, and the boundary
+  // group's half-open sweep at that origin resolves the event either way).
+  let primaryInside = select(0u, 1u, finiteGeneralPointInside(primaryOrigin));`
+      : `var primaryCells = array<i32, 4>(-1, -1, -1, -1);
   for (var axis = 0; axis < ${core4 ? 4 : 3}; axis++) {
     primaryCells[axis] = finiteRaySideIndex(primaryOrigin[axis], primaryDir[axis]);
   }
-  let primaryInside = select(0u, 1u, finiteOccupied(primaryCells));
+  let primaryInside = select(0u, 1u, finiteOccupied(primaryCells));`
+  }
+
   let primary = transportFiniteBoundary(
     ro, rd, 0u, vec4f(0.0), 0u, vec4i(-1), vec4i(-1), primaryInside,
   );
@@ -14495,7 +14552,14 @@ ${siDescentText}`
     : finiteCore
       ? `// The finite-solid display DE (surface-finite-solid-gpu.ts's
 // finiteSolidDisplaySource) — ${core4 ? "the posed 4D construction behind the shared view lift" : "the 3D construction"}.
-${finiteSolidDisplaySource(core4 ? 4 : 3)}`
+${
+  finiteGeneral
+    ? `// The GENERAL word tree: the document's own maps as the cell tree,
+// baked into the source (surface-finite-solid-gpu.ts's
+// finiteSolidGeneralDisplaySource).
+${finiteSolidGeneralDisplaySource(core4 ? 4 : 3, finiteGeneral, finiteLevel ?? 0)}`
+    : finiteSolidDisplaySource(core4 ? 4 : 3)
+}`
       : core === "affine"
         ? `// descend's refine=true path (surface-de.ts) — the estimator the
 // AFFINE GLSL marches, in that mirror's f32 formulation. Fixed width 4.
@@ -15389,6 +15453,6 @@ ${tilingProbeWrapText}`
   return /* wgsl */ `${headerText}${tilingFoldText}${latticeCarrierText}${tilingClipText}${scheduleHelperText}${chaosHelperText}
 
 ${meshSdfHelperText}${trapGeometryHelperText}${condensationHelperText}${tiledBodyBlock}${marchSample ? `\n${balloon ? inversionDistanceShaderSource("wgsl") : ""}\n${sampleLensText}\n${sampleOuterText}` : ""}
-${finiteCore && mode === "march" ? `${finiteSolidTransportSource(core4 ? 4 : 3, opts.finiteCacheCrossings)}\n` : ""}${entry}
+${finiteCore && mode === "march" ? `${finiteGeneral ? finiteSolidGeneralTransportSource(core4 ? 4 : 3, finiteGeneral, finiteLevel ?? 0) : finiteSolidTransportSource(core4 ? 4 : 3, opts.finiteCacheCrossings)}\n` : ""}${entry}
 ${opticsBlock}`;
 }
