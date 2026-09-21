@@ -113,8 +113,15 @@ import {
   FINITE_TRANSPORT_RUNNING,
   finiteTransportWorkBytes,
 } from "../fractal/finite-transport-work";
-import { FINITE_SOLID_HALF_EXTENT } from "../fractal/finite-solid";
-import { finiteSolidTransportSource } from "../fractal/surface-finite-solid-gpu";
+import {
+  FINITE_SOLID_HALF_EXTENT,
+  analyzeFiniteSolidGeneral,
+} from "../fractal/finite-solid";
+import { sierpinskiTetrahedron } from "../fractal/presets";
+import {
+  finiteSolidTransportSource,
+  type FiniteSolidGeneralWire,
+} from "../fractal/surface-finite-solid-gpu";
 import { surfaceSlotMaterials } from "./surface-slots";
 import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
 
@@ -1966,6 +1973,53 @@ describe("SurfaceComputeRenderer finite-tiling target integration", () => {
       ).toEqual(new Array(12).fill(0));
       harness.renderer.destroy();
     }
+  });
+});
+
+describe("SurfaceComputeRenderer general finite target", () => {
+  const noSymmetry = { order: 1, plane: "xz" as const };
+  const construction = analyzeFiniteSolidGeneral(
+    sierpinskiTetrahedron(),
+    null,
+    noSymmetry,
+    1,
+    3,
+  );
+  if (construction.status !== "eligible" || !construction.construction) {
+    throw new Error("the Sierpinski fixture must admit");
+  }
+  const wire: FiniteSolidGeneralWire = {
+    mapScale: construction.construction.mapScale,
+    mapOffset: construction.construction.mapOffset,
+    rootMin: construction.construction.rootMin,
+    rootMax: construction.construction.rootMax,
+  };
+
+  it("bakes the document's own maps into the emitted kernels and leaves the shipped construction alone", async () => {
+    const general = await createPaletteResourceHarness(false, {
+      kind: "finite",
+      level: 1,
+      general: wire,
+    });
+    expect(general.shaderSources.length).toBeGreaterThan(0);
+    for (const source of general.shaderSources) {
+      expect(source).toContain("const FIN_SCALE = array<vec4f, 4>(");
+      expect(source).toContain("const FIN_ROOT_MIN = vec4f(");
+      expect(source).toContain("fn finCompose(");
+    }
+    general.renderer.destroy();
+    const shipped = await createPaletteResourceHarness(false, {
+      kind: "finite",
+      level: 2,
+    });
+    for (const source of shipped.shaderSources) {
+      // The shipped grid construction's own display body is present; the
+      // baked word tree is not.
+      expect(source).toContain("fn finiteBoxSdf(");
+      expect(source).not.toContain("const FIN_SCALE");
+      expect(source).not.toContain("fn finCompose(");
+    }
+    shipped.renderer.destroy();
   });
 });
 
