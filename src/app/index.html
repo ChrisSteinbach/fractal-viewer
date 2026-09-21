@@ -630,6 +630,66 @@
           ></p>
         </details>
 
+        <!-- Glass solid: the finite-solid block the owner authors on their
+             OWN documents (finite-solid.ts's general admission — the
+             shape-less `{level}` block, the word tree built from the
+             document's maps). Checked, Surface stops tracing the IFS
+             attractor and renders the level-N solid the optical transport
+             walks; Points, Flame and Solid keep drawing the attractor. The
+             shipped glass presets carry a SHAPED block of the same
+             vocabulary; this panel edits the general one and reads a
+             preset's read-only. Per docs/panel-ia.md: document state,
+             Scene / Look. -->
+        <details
+          class="panel-section"
+          id="glassSolidSection"
+          name="panel-section"
+        >
+          <summary>Glass solid</summary>
+          <p id="glassSolidTimingHint" class="flame-hint">
+            Depth edits restart Surface; the kernels rebuild for the session's
+            maps.
+          </p>
+          <details class="panel-explainer">
+            <summary>How the glass solid works</summary>
+            <p>
+              Glass needs a solid with an interior, and an IFS attractor is an
+              infinitely thin dust. Turned on, Surface renders instead the solid
+              your maps build by applying them this many passes deep to a box —
+              the shape the transmission walks through. Author Glass on a map to
+              see it.
+            </p>
+          </details>
+          <label class="checkbox-label">
+            <input
+              type="checkbox"
+              id="glassSolidEnabledCheckbox"
+              aria-describedby="glassSolidTimingHint glassSolidNote"
+            />
+            Glass solid (renders the maps' recursive solid on Surface)
+          </label>
+          <div id="glassSolidDepthRow" class="hidden">
+            <label class="select-label">
+              Depth
+              <select
+                id="glassSolidDepthSelect"
+                aria-describedby="glassSolidTimingHint glassSolidDepthNote"
+              >
+                <option value="0">0 — the root box</option>
+                <option value="1">1 — one pass</option>
+                <option value="2">2 — two passes</option>
+              </select>
+            </label>
+            <p id="glassSolidDepthNote" class="flame-note hidden"></p>
+          </div>
+          <p
+            id="glassSolidNote"
+            class="flame-note-info"
+            role="status"
+            aria-live="polite"
+          ></p>
+        </details>
+
         <!-- Xaos: edit graph-directed selection over Transform.chaos rows
              (chaos-game.ts's systemHasChaos). The construction gesture lives
              under Workflow → Systems; this Scene editor owns the resulting

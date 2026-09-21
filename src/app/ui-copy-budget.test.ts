@@ -3,6 +3,7 @@ import { Ui } from "./ui";
 import type { UiHandlers } from "./ui";
 import {
   initialState,
+  setFiniteSolid,
   setSchedule,
   setShapeTrap,
   setSphereInversion,
@@ -15,6 +16,7 @@ import {
   gearworks,
   hybridChainCube,
   mandelboxKifs,
+  sierpinskiTetrahedron,
   swirlPentatopeLens,
 } from "../fractal/presets";
 import { GEAR_SHAPE } from "../fractal/shapes";
@@ -171,6 +173,23 @@ function walkCases(): WalkCase[] {
         seed: { kind: "ball", size: 0.28 },
         depth: 8,
       }),
+    },
+    {
+      label: "glass solid (general, sparse)",
+      state: setFiniteSolid(
+        stateWith({ transforms: sierpinskiTetrahedron() }),
+        {
+          level: 2,
+        },
+      ),
+    },
+    {
+      label: "glass solid (general, dense)",
+      state: setFiniteSolid(stateWith(), { level: 2 }),
+    },
+    {
+      label: "glass solid (shaped, read-only)",
+      state: setFiniteSolid(stateWith(), { shape: "menger", level: 2 }),
     },
     {
       label: "shape trap (surface escape)",

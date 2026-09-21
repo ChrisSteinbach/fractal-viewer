@@ -120,6 +120,7 @@ import {
   setSurfaceLightAzimuth,
   setSurfaceLightElevation,
   setSurfacePaletteId,
+  setFiniteSolid,
   setSphereInversion,
   setTiling,
   SOLID_ITERATION_DETENTS,
@@ -658,6 +659,27 @@ const sphereInversionLiveEffect: ControlEffect = (_state, fx) => {
   fx.regenerateIfAutoUpdate();
   fx.refreshSurfaceEligibility();
 };
+
+/** The glass-solid block is Surface-route state: Points, Flame and Solid
+ * draw the attractor, so the cloud never regenerates. The gate re-derives
+ * (a depth outside the certified band, or maps the general admission
+ * refuses, disable the Surface button beside its reason), and a live
+ * Surface session restarts — the block is read once per enter, and a
+ * general session recompiles its kernels for the new construction
+ * (disclosed in the section's timing hint). */
+const glassSolidEffect: ControlEffect = (state, fx) => {
+  fx.refreshSurfaceEligibility();
+  if (state.renderMode === "surface") fx.restartSurfaceRender();
+};
+
+/** The certified level band (finite-solid.ts's `FINITE_SOLID_MAX_LEVEL`). */
+const GLASS_SOLID_DEFAULT_DEPTH = 1;
+
+/** The depth select's domain: the certified band, exported for the panel's
+ * sync (a refused out-of-band level shows as no selection). */
+export function isGlassSolidDepth(level: unknown): level is 0 | 1 | 2 {
+  return level === 0 || level === 1 || level === 2;
+}
 
 const sphereInversionCommit: ControlEffect = (_state, fx) => {
   fx.syncSphereInversion();
@@ -1789,6 +1811,57 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     "Depth",
     "depth",
   ),
+  // ——— Glass solid: the finite-solid block the OWNER authors on their own
+  // documents (finite-solid.ts's general admission). The checkbox installs
+  // the shape-less `{level}` block; the depth select rewrites its level.
+  // A shaped block (the glass presets' vocabulary) stays read-only here —
+  // its exact construction is the showcase's, and the panel edits the
+  // general word tree. Surface-route state only: Points, Flame and Solid
+  // keep drawing the attractor, so the effect never regenerates the cloud —
+  // the gate re-derives and a live Surface session restarts (the block is
+  // read once per enter; a general session recompiles its kernels for the
+  // new construction). ———
+  {
+    kind: "checkbox",
+    id: "glassSolidEnabledCheckbox",
+    read: (s) => s.finiteSolid !== undefined,
+    apply: (s, checked) => {
+      if (checked) {
+        if (s.finiteSolid) return s;
+        return setFiniteSolid(s, { level: GLASS_SOLID_DEFAULT_DEPTH });
+      }
+      return s.finiteSolid ? setFiniteSolid(s, null) : s;
+    },
+    effect: glassSolidEffect,
+  },
+  {
+    kind: "select",
+    id: "glassSolidDepthSelect",
+    read: (s) => {
+      const level = s.finiteSolid?.level;
+      // A refused block's out-of-band level shows as no selection; the
+      // refusal disclosure beside the row carries it.
+      return level !== undefined && isGlassSolidDepth(level)
+        ? String(level)
+        : "";
+    },
+    apply: (s, raw) => {
+      const block = s.finiteSolid;
+      if (!block) return s;
+      // An empty selection (a refused out-of-band level) is not 0: the
+      // domain is the select's own option values.
+      const level = Number(raw);
+      if (raw === "" || !isGlassSolidDepth(level)) return s;
+      if (block.level === level) return s;
+      // A shaped block keeps its shape through a depth rewrite (the
+      // disabled UI is the real gate; this is the belt to its braces).
+      return setFiniteSolid(
+        s,
+        "shape" in block ? { ...block, level } : { level },
+      );
+    },
+    effect: glassSolidEffect,
+  },
   {
     kind: "select",
     id: "tilingClip",

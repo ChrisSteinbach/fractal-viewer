@@ -38,7 +38,7 @@ import {
 } from "./constants";
 import { pentatope } from "../fractal/presets";
 import { BUNDLED_SHAPES, BUNDLED_TRAP_SHAPES } from "./bundled-shapes";
-import { setSphereInversion } from "./state";
+import { setFiniteSolid, setSphereInversion } from "./state";
 import { PRESET_SPHERE_INVERSIONS } from "../fractal/presets";
 
 /** Look up a table entry by its index.html element id. */
@@ -2520,5 +2520,65 @@ describe("sphere-inversion controls", () => {
     const release = mockEffects();
     slider.commit?.(state, release, state);
     expect(release.syncSphereInversion).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("glass-solid controls", () => {
+  it("checks on to install {level: 1} and off to clear the block", () => {
+    const spec = specById("glassSolidEnabledCheckbox");
+    const initial = initialState(true);
+
+    const added = applyScalarControl(initial, spec, true);
+    const removed = applyScalarControl(added, spec, false);
+
+    expect(added.finiteSolid).toEqual({ level: 1 });
+    expect(removed.finiteSolid).toBeUndefined();
+  });
+
+  it("keeps an existing block when the checkbox reports checked again", () => {
+    const spec = specById("glassSolidEnabledCheckbox");
+    const state = setFiniteSolid(initialState(true), { level: 2 });
+
+    expect(applyScalarControl(state, spec, true)).toBe(state);
+  });
+
+  it("rewrites the depth of the general block and refuses junk", () => {
+    const spec = specById("glassSolidDepthSelect");
+    const bare = initialState(true);
+    const withBlock = setFiniteSolid(bare, { level: 1 });
+
+    // No block: no write (the row is hidden).
+    expect(applyScalarControl(bare, spec, "2")).toBe(bare);
+    // A present block: rewrite the level; out-of-band and non-numeric
+    // refusals leave the state alone.
+    expect(applyScalarControl(withBlock, spec, "2").finiteSolid).toEqual({
+      level: 2,
+    });
+    expect(applyScalarControl(withBlock, spec, "7")).toBe(withBlock);
+    expect(applyScalarControl(withBlock, spec, "")).toBe(withBlock);
+  });
+
+  it("reads a refused out-of-band level as no selection", () => {
+    const spec = specById("glassSolidDepthSelect");
+    const refused = setFiniteSolid(initialState(true), { level: 5 });
+
+    expect(spec.read(refused)).toBe("");
+    expect(spec.read(setFiniteSolid(initialState(true), { level: 2 }))).toBe(
+      "2",
+    );
+  });
+
+  it("restarts Surface on a block edit and never regenerates the cloud", () => {
+    for (const id of ["glassSolidEnabledCheckbox", "glassSolidDepthSelect"]) {
+      const fx = mockEffects();
+      const state = setFiniteSolid(
+        { ...initialState(true), renderMode: "surface" },
+        { level: 1 },
+      );
+      specById(id).effect?.(state, fx, state);
+      expect(fx.refreshSurfaceEligibility, id).toHaveBeenCalledTimes(1);
+      expect(fx.restartSurfaceRender, id).toHaveBeenCalledTimes(1);
+      expect(fx.regenerateIfAutoUpdate, id).not.toHaveBeenCalled();
+    }
   });
 });
