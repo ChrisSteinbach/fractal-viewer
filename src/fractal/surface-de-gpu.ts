@@ -9886,7 +9886,10 @@ ${
     }
 `
     : ""
-}    let path = stack[sp - 1u];
+}    // A var, not a let: the corner-class retry adopts the sweep's own
+    // medium onto the popped path (WGSL forbids member writes through a
+    // let-bound struct).
+    var path = stack[sp - 1u];
     sp = sp - 1u;
     if (transportPushCut(path, theta)) {
       residual = residual + path.bound;
@@ -9905,7 +9908,7 @@ ${
       break;
     }
     processed = processed + 1u;
-    let hit = ${
+    var hit = ${
       finiteQuery
         ? `transportFiniteBoundary(
         path.origin,
@@ -9920,7 +9923,37 @@ ${
         : `transportNextBoundary(path.origin, path.dir, path.anchorPresent, path.anchorPoint, ${
             solidQuery ? "path.inside, eps, li" : "eps, li"
           })`
-    };
+    };${
+      finiteQuery
+        ? `  // The corner class, resolved the closed-solid backend's way (the
+  // geometry re-anchors the split, one query deeper): the event's medium
+  // flag rides the INCIDENT direction's coverage, and at a shared-edge
+  // crossing the child's own sweep can honestly read the other side —
+  // the walk's near-tie corner fires a split whose anchored restart the
+  // same walk reads as interior (a driver-divergent rounding of the same
+  // near-tie the twin cannot bracket). Re-query ONCE with the flipped
+  // claim and adopt what the sweep says; the DDA's own discipline is
+  // untouched — it still refused the stale flag, and a query that
+  // refuses both ways stays the disclosed unresolved work.
+  if (hit.kind == 3u && hit.reason == 3u && path.anchorPresent == 1u) {
+    let flipped = 1u - path.inside;
+    let retry = transportFiniteBoundary(
+      path.origin,
+      path.dir,
+      path.anchorPresent,
+      path.finiteIntrinsic,
+      path.finiteMask,
+      path.finitePlanes,
+      path.finiteCells,
+      flipped,
+    );
+    if (retry.kind != 3u) {
+      path.inside = flipped;
+      hit = retry;
+    }
+  }`
+        : ""
+    }
     if (hit.kind == 3u) {
       residual = residual + path.bound;
       out.status = TRANSPORT_STATUS_UNRESOLVED;

@@ -1931,6 +1931,40 @@ function generalTieAbs(t: number): number {
   return FINITE_SOLID_GENERAL_TIE_REL * Math.max(1, Math.abs(t));
 }
 
+/** The word's composed box bounds, per axis — the EXACT values the clip
+ * clips against (`offset + scale·root`). The anchor's snap/clamp must
+ * target these, never a center/half reconstruction: `center + half` does
+ * not round-trip to `hi` in general (f64 for non-dyadic maps, f32 for
+ * most), and an anchor 1 ulp off its own leaf's face makes the anchored
+ * restart read that leaf 1 ulp outside — the tied-start merge fails and
+ * an honest re-entering continuation (the TIR child's own face) refuses
+ * state-mismatch. The display hybrid's SDF keeps the center/half form
+ * (a bound either way, its 1-ulp slack inside the march safety). */
+function generalLeafBounds(
+  c: FiniteSolidGeneralConstruction,
+  word: readonly number[],
+): { lo: Vec4; hi: Vec4 } {
+  const scale: Vec4 = [1, 1, 1, 1];
+  const offset: Vec4 = [0, 0, 0, 0];
+  for (const a of word) {
+    const s = c.mapScale[a];
+    const t = c.mapOffset[a];
+    for (let axis = 0; axis < 4; axis++) {
+      offset[axis] += scale[axis] * t[axis];
+      scale[axis] *= s[axis];
+    }
+  }
+  const lo = [0, 0, 0, 0] as Vec4;
+  const hi = [0, 0, 0, 0] as Vec4;
+  for (let axis = 0; axis < 4; axis++) {
+    const lo0 = offset[axis] + scale[axis] * c.rootMin[axis];
+    const hi0 = offset[axis] + scale[axis] * c.rootMax[axis];
+    lo[axis] = Math.min(lo0, hi0);
+    hi[axis] = Math.max(lo0, hi0);
+  }
+  return { lo, hi };
+}
+
 /** The word's box (axis-aligned in intrinsic space) as center + per-axis
  * half, for membership clamps and the display hybrid. */
 function generalLeafBox(
@@ -2139,9 +2173,17 @@ function finiteSolidGeneralNextBoundaryInternal(
       ...box.half.slice(0, c.dimension).map((h) => Math.abs(h)),
     );
     const envelope = FINITE_SOLID_GENERAL_TIE_REL * halfMax;
+    // The snap/clamp targets the COMPOSED face bounds — the clip's own
+    // values — never a center/half reconstruction (its round-trip drifts
+    // by an ulp, and an anchor off its own leaf's face breaks the tied
+    // start: see generalLeafBounds).
+    const bounds = generalLeafBounds(
+      c,
+      [...anchor.cellIndices].slice(0, c.level),
+    );
     for (let axis = 0; axis < c.dimension; axis++) {
-      const lower = box.center[axis] - box.half[axis];
-      const upper = box.center[axis] + box.half[axis];
+      const lower = bounds.lo[axis];
+      const upper = bounds.hi[axis];
       if ((anchor.planeMask & (1 << axis)) !== 0) {
         q[axis] = anchor.planeIndices[axis] === 0 ? lower : upper;
       } else if (q[axis] < lower) {
@@ -2331,8 +2373,12 @@ function generalBoundaryEvent(
     (value, intrinsicAxis) => value + t * qd[intrinsicAxis],
   ) as Vec4;
   // Snap the crossed coordinates onto the incident leaf's canonical face
-  // planes; clamp the rest into the leaf box under the declared envelope.
+  // planes — the COMPOSED bounds the clip clips against (the center/half
+  // reconstruction drifts by an ulp and would mint an anchor off its own
+  // leaf's face; see generalLeafBounds) — and clamp the rest into the
+  // leaf box under the declared envelope.
   const box = generalLeafBox(c, incident.word);
+  const bounds = generalLeafBounds(c, incident.word);
   const halfMax = Math.max(
     ...box.half.slice(0, c.dimension).map((h) => Math.abs(h)),
   );
@@ -2340,13 +2386,13 @@ function generalBoundaryEvent(
   for (const crossedAxis of crossedAxes) {
     intrinsicPoint[crossedAxis] =
       anchorPlanes[crossedAxis] === 0
-        ? box.center[crossedAxis] - box.half[crossedAxis]
-        : box.center[crossedAxis] + box.half[crossedAxis];
+        ? bounds.lo[crossedAxis]
+        : bounds.hi[crossedAxis];
   }
   for (let intrinsicAxis = 0; intrinsicAxis < c.dimension; intrinsicAxis++) {
     if ((planeMask & (1 << intrinsicAxis)) !== 0) continue;
-    const lower = box.center[intrinsicAxis] - box.half[intrinsicAxis];
-    const upper = box.center[intrinsicAxis] + box.half[intrinsicAxis];
+    const lower = bounds.lo[intrinsicAxis];
+    const upper = bounds.hi[intrinsicAxis];
     if (intrinsicPoint[intrinsicAxis] < lower) {
       if (lower - intrinsicPoint[intrinsicAxis] > envelope) {
         return { kind: "refused", reason: "invalid-input", visits };
