@@ -1024,6 +1024,29 @@ fn finBoxCenterHalf(scale: vec4f, offset: vec4f) -> FinBox {
   return FinBox(center, half);
 }
 
+struct FinBounds {
+  lo: vec4f,
+  hi: vec4f,
+}
+
+// The word's COMPOSED face bounds — the exact values the clip clips
+// against. The anchor snap targets these, never center±half: that
+// reconstruction does not round-trip in f32 (an ulp off the composed
+// face), and an anchor off its own leaf's face breaks the tied start —
+// an honest re-entering continuation (the TIR child's own face) reads
+// the leaf 1 ulp outside and refuses state-mismatch.
+fn finBoxBounds(scale: vec4f, offset: vec4f) -> FinBounds {
+  var lo: vec4f;
+  var hi: vec4f;
+  for (var axis = 0; axis < ${dim}; axis++) {
+    let lo0 = offset[axis] + scale[axis] * FIN_ROOT_MIN[axis];
+    let hi0 = offset[axis] + scale[axis] * FIN_ROOT_MAX[axis];
+    lo[axis] = min(lo0, hi0);
+    hi[axis] = max(lo0, hi0);
+  }
+  return FinBounds(lo, hi);
+}
+
 fn finBoxSdf(center: vec4f, half: vec4f, q: array<f32, 4>) -> f32 {
   var outsideSq = 0.0;
   var inside = -1.0e30;
@@ -1292,6 +1315,11 @@ fn finLeafBox(w0: i32, w1: i32) -> FinBox {
   return finBoxCenterHalf(word.scale, word.offset);
 }
 
+fn finLeafBounds(w0: i32, w1: i32) -> FinBounds {
+  let word = finCompose(w0, w1, i32(params.finiteLevel));
+  return finBoxBounds(word.scale, word.offset);
+}
+
 fn finBoxHalfMax(box: FinBox) -> f32 {
   var halfMax = 0.0;
   for (var axis = 0; axis < ${dim}; axis++) {
@@ -1425,6 +1453,7 @@ fn finEvent(
   result.normal = normal;
   let box = finLeafBox(incidentWord0, incidentWord1);
   let envelope = FIN_TIE_REL * finBoxHalfMax(box);
+  let faceBounds = finLeafBounds(incidentWord0, incidentWord1);
   var intrinsic: array<f32, 4>;
   var anchorPlanes: array<i32, 4> = array<i32, 4>(-1, -1, -1, -1);
   var anchorCells: array<i32, 4> = array<i32, 4>(-1, -1, -1, -1);
@@ -1439,18 +1468,14 @@ fn finEvent(
       continue;
     }
     anchorPlanes[a] = select(0, 1, entering != (qd[a] > 0.0));
-    intrinsic[a] = select(
-      box.center[a] - box.half[a],
-      box.center[a] + box.half[a],
-      anchorPlanes[a] == 1,
-    );
+    intrinsic[a] = select(faceBounds.lo[a], faceBounds.hi[a], anchorPlanes[a] == 1);
   }
   for (var a = 0; a < ${dim}; a++) {
     if ((planeMask & (1u << u32(a))) != 0u) {
       continue;
     }
-    let lower = box.center[a] - box.half[a];
-    let upper = box.center[a] + box.half[a];
+    let lower = faceBounds.lo[a];
+    let upper = faceBounds.hi[a];
     if (intrinsic[a] < lower) {
       if (lower - intrinsic[a] > envelope) {
         result.kind = 3u;
@@ -1803,16 +1828,18 @@ fn transportFiniteBoundary(
     }
     // The anchor's intrinsic point seeds the reconstruction (the
     // reference's authoritative coordinate): snap the masked coordinates
-    // onto the leaf's canonical face planes and clamp the rest into the
-    // leaf box under the declared envelope.
+    // onto the leaf's canonical face planes — the COMPOSED bounds the
+    // clip clips against (see finBoxBounds) — and clamp the rest into
+    // the leaf box under the declared envelope.
     for (var a = 0; a < 4; a++) {
       q[a] = anchorIntrinsic[a];
     }
     let box = finLeafBox(anchorCellsIn[0], anchorCellsIn[1]);
     let envelope = FIN_TIE_REL * finBoxHalfMax(box);
+    let faceBounds = finLeafBounds(anchorCellsIn[0], anchorCellsIn[1]);
     for (var a = 0; a < ${dim}; a++) {
-      let lower = box.center[a] - box.half[a];
-      let upper = box.center[a] + box.half[a];
+      let lower = faceBounds.lo[a];
+      let upper = faceBounds.hi[a];
       if ((anchorMask & (1u << u32(a))) != 0u) {
         q[a] = select(lower, upper, anchorPlanesIn[a] == 1);
       } else if (q[a] < lower) {
@@ -2536,7 +2563,13 @@ export function finiteSolidGeneralDdaF32(
     }
     return { ok: true, enter, exit, enterAxes, exitAxes };
   };
-  // The leaf's box (finLeafBox / finBoxCenterHalf / finBoxHalfMax).
+  // The leaf's box (finLeafBox / finBoxCenterHalf / finBoxHalfMax), plus
+  // the leaf's COMPOSED face bounds — the clip's own values. The snap
+  // sites must target these, never center±half: that reconstruction does
+  // not round-trip in f32 (f32(center) + f32(half) can sit 1 ulp off the
+  // composed face), and an anchor off its own leaf's face breaks the
+  // tied start — an honest re-entering continuation (the TIR child's own
+  // face) reads the leaf 1 ulp outside and refuses state-mismatch.
   const leafBox = (
     w0: number,
     w1: number,
@@ -2555,6 +2588,21 @@ export function finiteSolidGeneralDdaF32(
       halfMax = Math.max(halfMax, Math.abs(half[axis]));
     }
     return { center, half, halfMax };
+  };
+  const leafFaceBounds = (
+    w0: number,
+    w1: number,
+  ): { lo: number[]; hi: number[] } => {
+    const { scale, offset } = compose(w0, w1, level);
+    const lo: number[] = [];
+    const hi: number[] = [];
+    for (let axis = 0; axis < 4; axis++) {
+      const lo0 = f(offset[axis] + f(scale[axis] * rootMin[axis]));
+      const hi0 = f(offset[axis] + f(scale[axis] * rootMax[axis]));
+      lo.push(Math.min(lo0, hi0));
+      hi.push(Math.max(lo0, hi0));
+    }
+    return { lo, hi };
   };
   // The exact-corner normal — the WGSL finiteBoundaryNormal's own
   // arithmetic, fround per op (the shipped twin's text, one tree up).
@@ -2703,13 +2751,19 @@ export function finiteSolidGeneralDdaF32(
     const box = leafBox(anchor.cellIndices[0], anchor.cellIndices[1]);
     const envelope = f(tieRel * box.halfMax);
     // The anchor's intrinsic point seeds the reconstruction (the
-    // reference's authoritative coordinate) before the snap/clamp.
+    // reference's authoritative coordinate) before the snap/clamp. The
+    // snap targets the COMPOSED face bounds — the clip's own values —
+    // never the center/half reconstruction (see leafFaceBounds).
+    const faceBounds = leafFaceBounds(
+      anchor.cellIndices[0],
+      anchor.cellIndices[1],
+    );
     for (let a = 0; a < 4; a++) {
       q[a] = f(anchor.intrinsicPoint[a]);
     }
     for (let a = 0; a < dim; a++) {
-      const lower = f(box.center[a] - box.half[a]);
-      const upper = f(box.center[a] + box.half[a]);
+      const lower = faceBounds.lo[a];
+      const upper = faceBounds.hi[a];
       if ((anchor.planeMask & (1 << a)) !== 0) {
         q[a] = anchor.planeIndices[a] === 0 ? lower : upper;
       } else if (q[a] < lower) {
@@ -2796,6 +2850,10 @@ export function finiteSolidGeneralDdaF32(
     const incidentW1 = endpoints[groupLo].w1;
     const box = leafBox(incidentW0, incidentW1);
     const envelope = f(tieRel * box.halfMax);
+    // The event's snap targets the COMPOSED face bounds (the clip's own
+    // values — see leafFaceBounds), so the minted anchor sits exactly on
+    // the leaf's face and the next hop's tied start merges.
+    const faceBounds = leafFaceBounds(incidentW0, incidentW1);
     const intrinsic = [0, 0, 0, 0];
     const anchorPlanes = [-1, -1, -1, -1];
     const anchorCells = [-1, -1, -1, -1];
@@ -2809,14 +2867,12 @@ export function finiteSolidGeneralDdaF32(
       if ((planeMask & (1 << a)) === 0) continue;
       anchorPlanes[a] = entering !== qd[a] > 0 ? 1 : 0;
       intrinsic[a] =
-        anchorPlanes[a] === 0
-          ? f(box.center[a] - box.half[a])
-          : f(box.center[a] + box.half[a]);
+        anchorPlanes[a] === 0 ? faceBounds.lo[a] : faceBounds.hi[a];
     }
     for (let a = 0; a < dim; a++) {
       if ((planeMask & (1 << a)) !== 0) continue;
-      const lower = f(box.center[a] - box.half[a]);
-      const upper = f(box.center[a] + box.half[a]);
+      const lower = faceBounds.lo[a];
+      const upper = faceBounds.hi[a];
       if (intrinsic[a] < lower) {
         if (f(lower - intrinsic[a]) > envelope) return refused(2);
         intrinsic[a] = lower;

@@ -194,7 +194,7 @@ describe("finite-solid GPU sources", () => {
       );
       const opticalWork = (text: string) =>
         text.slice(
-          text.indexOf("    let path = stack[sp - 1u];"),
+          text.indexOf("    var path = stack[sp - 1u];"),
           text.indexOf("    if (abort) {\n      break;\n    }\n  }") +
             "    if (abort) {\n      break;\n    }\n  }".length,
         );
@@ -208,7 +208,7 @@ describe("finite-solid GPU sources", () => {
       );
       const pause = source.slice(
         source.indexOf("    // Pause BEFORE popping:"),
-        source.indexOf("    let path = stack[sp - 1u];"),
+        source.indexOf("    var path = stack[sp - 1u];"),
       );
       expect(pause).toContain(
         "processed - chunkStartProcessed >= TRANSPORT_CHUNK_PATHS",
@@ -2000,5 +2000,70 @@ describe("general walk f32 twin against the f64 oracle", () => {
         }
       }
     }
+  });
+
+  it("resolves the TIR child's re-entering continuation at a shared face", () => {
+    // The corner class the owner-glass app gate caught (one unresolved
+    // path in ~127k glass hits): a chain whose second hop exits through a
+    // face whose SNAPPED anchor sat an ulp off the clip's own bound —
+    // the center/half reconstruction's f32 round-trip — so the TIR child
+    // re-entering through that same face read its own leaf 1 ulp
+    // outside, the tied start failed to merge, and the query refused
+    // state-mismatch. The snap now targets the composed bounds, so the
+    // chain resolves. The chain replays the transport's own discipline:
+    // the primary, then the Snell-bent refracted child (air→glass),
+    // then the TIR child (the exact mirror, staying inside).
+    const wire2 = wire(1);
+    const origin: Vec3 = [-2.58806502, -0.15623059, 0.375442716];
+    const primaryDir: Vec3 = [0.983974153, 0.1783109, 0.000299680885];
+    const primary = finiteSolidGeneralDdaF32(
+      3,
+      1,
+      wire2,
+      null,
+      0,
+      origin,
+      primaryDir,
+      null,
+      false,
+    );
+    expect(primary.kind).toBe(1);
+    if (primary.kind !== 1 || !primary.anchor) return;
+    // The refracted child: Snell air→glass at the entry's outward normal.
+    const entryNormal: Vec3 = [-1, 0, 0];
+    const refracted = dielectricRefract(primaryDir, entryNormal, 1, 1.45);
+    expect(refracted.tir).toBe(false);
+    const interior = finiteSolidGeneralDdaF32(
+      3,
+      1,
+      wire2,
+      null,
+      0,
+      origin,
+      refracted.direction,
+      primary.anchor,
+      true,
+    );
+    expect(interior.kind).toBe(1);
+    if (interior.kind !== 1 || !interior.anchor) return;
+    // The interior hop's exit TIRs: the child stays inside, mirrored
+    // about the exit's outward normal, restarting from the exit's anchor.
+    const exitNormal: Vec3 = [0, 1, 0];
+    const tir = dielectricRefract(refracted.direction, exitNormal, 1.45, 1);
+    expect(tir.tir).toBe(true);
+    const childDir: Vec3 = [...tir.direction] as Vec3;
+    const restart = finiteSolidGeneralDdaF32(
+      3,
+      1,
+      wire2,
+      null,
+      0,
+      origin,
+      childDir,
+      interior.anchor,
+      true,
+    );
+    expect(restart.kind).not.toBe(3);
+    expect(restart.reason).not.toBe(3);
   });
 });

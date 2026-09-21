@@ -587,12 +587,38 @@ export function transportTraceCPU(
     let hitAnchor: FiniteSolidAnchor | null = null;
     let hit: TransportBoundaryResult;
     if (finiteQuery) {
-      const finiteHit = finiteQuery(
+      let finiteHit = finiteQuery(
         path.origin,
         path.dir,
         path.finiteAnchor ?? null,
         path.inside,
       );
+      if (
+        finiteHit.kind === "refused" &&
+        finiteHit.reason === SURFACE_GPU_TRANSPORT_REASON_STATE_MISMATCH &&
+        path.finiteAnchor
+      ) {
+        // The corner class, resolved the closed-solid backend's way (the
+        // geometry re-anchors the split, one query deeper): the event's
+        // medium flag rides the INCIDENT direction's coverage, and at a
+        // shared-edge crossing the child's own sweep can honestly read
+        // the other side — the walk's near-tie corner fires a split
+        // whose anchored restart the same walk reads as interior. The
+        // kernel retries identically (its transportTrace emission);
+        // re-query ONCE with the flipped claim and adopt what the sweep
+        // says. A query that refuses both ways stays unresolved.
+        const flipped = !path.inside;
+        const retry = finiteQuery(
+          path.origin,
+          path.dir,
+          path.finiteAnchor,
+          flipped,
+        );
+        if (retry.kind !== "refused") {
+          path.inside = flipped;
+          finiteHit = retry;
+        }
+      }
       hit = finiteHit;
       if (finiteHit.kind === "boundary") {
         hitAnchor = finiteHit.anchor;
