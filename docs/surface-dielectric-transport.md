@@ -1310,6 +1310,101 @@ authored in the app, both dimensions) LANDED:
   needs the document's own diagonal contractions, and the Surface button
   disables beside the reason until the block is cleared.
 
+## The general word tree's Phase 4 record (landed, 2026-09-21)
+
+The harness legs and the owner-authored app gate that close the general
+word tree's qualification, plus the one defect they caught:
+
+- **The harness's general legs** (`scripts/finite-solid.harness.ts`,
+  32 tests): the word tree's f64 query forms pinned against an
+  INDEPENDENT box union built in the harness — per-word leaf boxes by the
+  outer-inward Horner fold (root bound folded in), where the production
+  walk composes innermost first, so agreement pins the arithmetic, not
+  one rounding of it — endpoint agreement 1e-12, the declared resolution
+  (`FINITE_SOLID_GENERAL_TIE_REL`) grouped on both sides because it is
+  the construction's contract. Legs: 24-ray sweeps on the Sierpinski
+  document at levels 0/1/2 (24/24, 24/24, 21/24 of the rays hit); the
+  hyper-Menger maps one dimension up under the fixture's frozen rotor
+  pose (10/20 hit); a 12-map document whose level-2 word tree (144
+  leaves) exceeds the device's 128-leaf enumeration cap — the f64
+  reference is uncapped by decision, and that sweep keeps it honest.
+  The event chain: anchor-to-anchor continuations must reconstruct the
+  interval union event for event — enter/exit alternating, the first
+  event's parameter BIT-IDENTICAL to the union's endpoint, the
+  anchor-driven hops within the declared envelope (bound ~4.5e-6, tested
+  at 1e-5), a miss to close, a refusal anywhere a failure — on the same
+  four sweeps. Hand-exact dyadic controls: the spine's shared face
+  merged bit-exactly (one interval [1.2, 3.6]); the four-leaf corner
+  silent (one interval [0.875, 2.375], the corner's tied group netting
+  −1, the chain two events, 0.875 + 1.5 = 2.375 exact); the
+  state-mismatch refusal on a wrong medium claim. The cross-construction
+  equivalence: the shipped Menger maps through the WORD TREE against the
+  GRID construction at levels 1 and 2 (24 rays each) and the hyper-Menger
+  maps under the posed 4D slice (20 rays), agreement 1e-9 (composed
+  affines against canonical grid planes). The admission's CPU record:
+  the boot document's rotating maps refuse with the diagonal-composition
+  reason; the witness admits 0..2; the 12-map document admits level 2
+  with 144 leaves — the admission does not enforce the device cap.
+- **The corner-class defect** (caught by the owner-authored app gate:
+  one unresolved path in ~127k glass hits, 2 of 8 antialias samples,
+  failure f4/reason 3). The chain: an entry through one leaf's face, a
+  grazing TIR exit through a neighbor's shared face, and the TIR child's
+  restart — REFUSED state-mismatch. Two roots, both real:
+  **(1) the leaf-box reconstruction does not round-trip** — the snap
+  sites targeted `center ± half`, and `center + half` does not land back
+  on the composed face bound (f32: `f32(−0.2) + f32(0.60000002)` rounds
+  1 ulp above `hi`; f64 has the same latent defect for non-dyadic maps —
+  the search `s=0.02, t=−0.283203125` shows it). An anchor 1 ulp off its
+  own leaf's face makes the restart read that leaf 1 ulp outside — the
+  tied start fails to merge and an honest re-entering continuation
+  refuses. **Fix**: the anchor's snap/clamp and the event's snap target
+  the COMPOSED face bounds (`offset + scale·root` — the clip's own
+  values) in the f64 oracle (`generalLeafBounds`), the f32 twin
+  (`leafFaceBounds`) and the WGSL (`finBoxBounds`/`finLeafBounds`); the
+  center/half form stays only where a box SDF needs it (a bound either
+  way). Pinned by the twin's chain test (replaying the transport's
+  primary → Snell-bent refracted child → TIR mirror; pre-fix refused,
+  post-fix resolves — verified to fail on a reverted twin).
+  **(2) the transport's split children inherit the event's medium flag**,
+  which rides the INCIDENT direction's coverage — at a shared-edge
+  crossing the child's own sweep can honestly read the other side, and a
+  driver-divergent rounding of the same near-tie (FMA vs the per-op
+  twin) leaves a residue the twin cannot bracket: the app gate still
+  showed 1 unresolved in 2 samples after fix (1). **Fix (2)**: the
+  transport re-anchors the split — the closed-solid backend's own rule
+  one query deeper: on a state-mismatch refusal of an ANCHORED query,
+  re-query once with the flipped claim and adopt what the sweep says
+  (kernel `transportTrace` + the bench model's twin loop, term for
+  term); a query that refuses both ways stays the disclosed unresolved
+  work, and an unanchored refusal stays loud. The shared transport body
+  also takes `var path` (WGSL forbids member writes through a let) —
+  the seven cores' `shade|optics` sources move by that one token and the
+  digest record is re-frozen for it in its own commit.
+- **The app gate's owner-authored leg** (the gate now runs FIVE legs,
+  verdict pass, real driver RX 7900 XTX, certified quiet): the general
+  block authored from the panel on the Sierpinski document, GLASS
+  authored on the HEAD map through the Finish group's bundle — FROM THE
+  APP, never a hand-built document (the `#v1=` hash carries
+  `{level: 1}` plus exactly one dielectric map, decoded not read) — a
+  reboot on the authored hash so the settled session is deterministic,
+  Surface on compute with the word tree's OWN optical backend LIVE
+  (`opticsBackend: "finiteSolid"`, covered ≥ 20%), COMPLETE transport in
+  every antialias sample (the finite-glass gate's strict
+  `completionFailures` over the `?surfacetrace` feed — zero unresolved,
+  zero invalid, every sample complete and untruncated), and two Save-PNG
+  exports byte for byte (30,020 bytes, 960×640, the export seam's
+  determinism pinned for the general word tree). The gate's console
+  listener also gains the capture-export filter's known
+  service-worker/SSL preview-origin noise class and the leg-scoped
+  `activeLeg` attribution the new leg needs for its trace capture.
+- **The bench after the change** (real driver RX 7900 XTX, certified
+  quiet, exit 0, verdict pass): the three general agreement legs
+  unchanged at their Phase 2 figures — Sierpinski 2/2 traces,
+  maxRadianceDelta 1.52e-8; Menger maps 4/4, 2.83e-8; hyper-Menger 4/4,
+  2.48e-8 — and the grid finite legs, envelopes and chunk controls all
+  green, so the snap fix and the retry are pinned by the same device
+  agreement the GPU half shipped with.
+
 ## The finite routing (landed, 2026-09-19)
 
 The finite-solid family's app routing LANDED: the document's optional
