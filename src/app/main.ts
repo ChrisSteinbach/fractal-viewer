@@ -6,9 +6,12 @@ import {
 import { scenePartsAreNonFlat } from "../fractal/scene-dimension";
 import {
   FINITE_SOLID_HALF_EXTENT,
+  analyzeFiniteSolidGeneral,
   finiteSolidBoundingRadius,
   resolveFiniteSolid,
 } from "../fractal/finite-solid";
+import { finiteSolidGeneralBoundingRadius } from "../fractal/surface-finite-solid-gpu";
+import type { FiniteSolidGeneralWire } from "../fractal/surface-finite-solid-gpu";
 import { BALLOON_CENTRE_REFUSAL_REASON } from "./panel-applicability";
 import {
   resolveSphereInversion,
@@ -6185,7 +6188,51 @@ async function main(): Promise<void> {
               terminate: () => teardownSurfaceCompute(),
             };
           }
-          const boundingRadius = finiteSolidBoundingRadius(fourD ? 4 : 3);
+          // A GENERAL block re-runs the admission at the door (pure and
+          // cheap — the gate passed this same analysis) and the target
+          // carries its construction: the maps and root box bake into the
+          // kernel source, so the wire IS the session's construction.
+          let general: FiniteSolidGeneralWire | null = null;
+          let boundingRadius: number;
+          let opticsRadius: number;
+          if (block.value.kind === "general") {
+            const analysis = analyzeFiniteSolidGeneral(
+              state.transforms,
+              state.finalTransform ?? null,
+              state.symmetry,
+              block.value.level,
+              fourD ? 4 : 3,
+            );
+            if (analysis.status !== "eligible" || !analysis.construction) {
+              throw new Error(
+                analysis.reasons.join("; ") ||
+                  "the general finite-solid admission flipped between the gate and the door",
+              );
+            }
+            const construction = analysis.construction;
+            general = {
+              mapScale: construction.mapScale,
+              mapOffset: construction.mapOffset,
+              rootMin: construction.rootMin,
+              rootMax: construction.rootMax,
+            };
+            boundingRadius = finiteSolidGeneralBoundingRadius(general);
+            // The material's H: the root box's largest per-axis half extent
+            // — the same "the solid's own scale" role the shipped
+            // construction's 0.75 plays (Beer distance and slab lengths).
+            opticsRadius = Math.max(
+              ...[0, 1, 2, 3]
+                .slice(0, fourD ? 4 : 3)
+                .map(
+                  (axis) =>
+                    (construction.rootMax[axis] - construction.rootMin[axis]) /
+                    2,
+                ),
+            );
+          } else {
+            boundingRadius = finiteSolidBoundingRadius(fourD ? 4 : 3);
+            opticsRadius = FINITE_SOLID_HALF_EXTENT;
+          }
           // ONE material slot: the finite cores' hit-info pins firstChoice
           // 0, so the head map's authored finish/optics is the whole
           // material wire — the forward families' exact shape. The optical
@@ -6198,7 +6245,7 @@ async function main(): Promise<void> {
             state.transforms,
             [surfaceForwardSlot(state.transforms)],
             undefined,
-            FINITE_SOLID_HALF_EXTENT,
+            opticsRadius,
             true,
           );
           sessionOpticsBackend =
@@ -6215,6 +6262,7 @@ async function main(): Promise<void> {
             computeTarget = {
               kind: fourD ? "finite4" : "finite",
               level: block.value.level,
+              ...(general ? { general } : {}),
               groundPlane: state.groundPlane,
             };
             scene.enterSurfaceComputeFiniteSession(

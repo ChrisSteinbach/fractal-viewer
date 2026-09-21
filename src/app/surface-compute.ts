@@ -132,6 +132,7 @@ import {
   SURFACE_GPU_PARAMS4_FINITE_BYTES,
   SURFACE_GPU_PARAMS_FINITE_BYTES,
 } from "../fractal/surface-finite-solid-gpu";
+import type { FiniteSolidGeneralWire } from "../fractal/surface-finite-solid-gpu";
 import {
   SURFACE_GPU_LENS4_POST_BYTES,
   SURFACE_GPU_LENS_POST_BYTES,
@@ -814,21 +815,27 @@ export type SphereInversionComputeTarget =
  * for the same reason. There is NO `de`: the cores are bindingless and
  * construction-carrying — the authored level and the construction's
  * origin-centred bound (the marching ball) are the whole session wire.
- * `tiling` is declared absent (the mirrored copies are not the
- * construction, refused at the gate), the slab is refused at pack, and the
- * balloon is refused at the session door (a filled solid's echo swallows
- * the camera; the finite cores throw on it anyway).
+ * `general` present (the SHAPE-LESS block's route) swaps the construction
+ * for the document's OWN maps — the general wire baked into the WGSL
+ * source; the level and the wire's root box (whose farthest-corner norm is
+ * the general session's marching ball) ride exactly where the shipped
+ * construction's do. `tiling` is declared absent (the mirrored copies are
+ * not the construction, refused at the gate), the slab is refused at pack,
+ * and the balloon is refused at the session door (a filled solid's echo
+ * swallows the camera; the finite cores throw on it anyway).
  */
 export type FiniteSolidComputeTarget =
   | {
       kind: "finite";
       level: number;
+      general?: FiniteSolidGeneralWire;
       groundPlane?: boolean;
       tiling?: undefined;
     }
   | {
       kind: "finite4";
       level: number;
+      general?: FiniteSolidGeneralWire;
       groundPlane?: boolean;
       tiling?: undefined;
     };
@@ -3106,10 +3113,14 @@ export class SurfaceComputeRenderer {
             ? { finiteCacheCrossings }
             : {}),
           // The finite cores' authored construction (the kernel option
-          // doc): null for every other kind, whose packers and codegen
+          // doc): `general` present bakes the document's own maps into the
+          // source; null for every other kind, whose packers and codegen
           // never read it.
           finiteSolid: isFiniteSolidTarget(target)
-            ? { level: target.level }
+            ? {
+                level: target.level,
+                ...(target.general ? { general: target.general } : {}),
+              }
             : null,
         }),
       });
