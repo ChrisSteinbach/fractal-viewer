@@ -1,7 +1,7 @@
 import { composeAffine } from "./affine";
 import type { FlamePaletteId, PaletteSelection } from "./palette";
 import type { Rng } from "./rng";
-import type { FiniteSolid } from "./finite-solid";
+import type { FiniteSolidAuthored } from "./finite-solid";
 import { GEAR_SHAPE, PEACE_SIGN_SHAPE, STAR_PRISM_SHAPE } from "./shapes";
 import type { SphereInversionAuthored } from "./sphere-inversion";
 import type { TilingSpec } from "./tiling";
@@ -2967,14 +2967,18 @@ export const PRESET_SURFACE_ROOMS: Partial<
 };
 
 /**
- * The FINITE-SOLID block a preset IS — the authored construction and the
- * displayed level (`finite-solid.ts`'s `FiniteSolid`), which reroute the
- * Surface session to the level-N cell decomposition the glass transport
- * walks. {@link PRESET_SPHERE_INVERSIONS}' ABSENT-MEANS-CLEAR rule: a
- * leftover block would reroute an unrelated system (or refuse it), so
- * every other preset load clears the block.
+ * The FINITE-SOLID block a preset IS — the authored block
+ * (`finite-solid.ts`'s `FiniteSolidAuthored`), which reroutes the Surface
+ * session to the level-N cell decomposition the glass transport walks.
+ * A `shape` names one of the shipped constructions (`resolveFiniteSolid`
+ * resolves it `kind: "shaped"`); a `{level}` block would author the
+ * document's own word tree. {@link PRESET_SPHERE_INVERSIONS}'
+ * ABSENT-MEANS-CLEAR rule: a leftover block would reroute an unrelated
+ * system (or refuse it), so every other preset load clears the block.
  */
-export const PRESET_FINITE_SOLIDS: Partial<Record<Preset, FiniteSolid>> = {
+export const PRESET_FINITE_SOLIDS: Partial<
+  Record<Preset, FiniteSolidAuthored>
+> = {
   glassMenger: { shape: "menger", level: 2 },
   glassMenger4: { shape: "hyperMenger", level: 2 },
 };

@@ -18,6 +18,7 @@
 import { systemPartsAreNonFlat, toTransform4 } from "../fractal/affine4";
 import { analyzeBulbSystem } from "../fractal/bulb-de";
 import {
+  analyzeFiniteSolidGeneral,
   analyzeFiniteSolidSystem,
   resolveFiniteSolid,
 } from "../fractal/finite-solid";
@@ -274,25 +275,29 @@ export const SPHERE_INVERSION_SLAB_REFUSAL =
 
 /**
  * The FINITE-SOLID ROUTE. Unlike a sphere-inversion block, the finite-solid
- * block does NOT replace the transform system — it reroutes it: the
- * document's maps must BE the shipped construction's level-1 map set
+ * block does NOT replace the transform system — it reroutes it. A SHAPED
+ * block (`{shape, level}`, the presets' vocabulary): the document's maps
+ * must BE the shipped construction's level-1 map set
  * (`analyzeFiniteSolidSystem` refuses edited maps by values and signs), and
- * the block authors which construction and displayed level. The block takes
- * precedence over the affine/fold, escape and bulb gates because those
- * would march the construction's attractor — the limit set — while the
- * finite route marches the level-N SOLID, the object the optical
- * transport's exact DDA is co-extensive with.
+ * the block authors which construction and displayed level. A GENERAL block
+ * (`{level}` alone, the panel's vocabulary): the document's own maps build
+ * the word tree (`analyzeFiniteSolidGeneral`), the scene's dimension
+ * deciding 3D/4D. The block takes precedence over the affine/fold, escape
+ * and bulb gates because those would march the construction's attractor —
+ * the limit set — while the finite route marches the level-N SOLID, the
+ * object the optical transport's exact DDA is co-extensive with.
  *
  * COMBINATION POLICY: refused (document) — Space tiling (the mirrored
  * copies are not the construction), a shape trap, and a hybrid schedule
  * (the B maps would move the subject off the bare construction); refused
  * outright by the analyzer — kaleidoscopes above order 1, warping finals,
- * per-map variations/emitters/posts/chaos rows. COMPOSES — the ground
- * plane, authored finishes on the head map (the kernels' one shade slot),
- * and the optical transport through the finite DDA backend. ENGINE:
- * WebGPU compute only — no fragment arm exists for the finite cores (the
- * escape4 verdict one family over), so without compute the route is
- * refused, never handed to a WebGL tracer that would draw the attractor.
+ * per-map variations/emitters/posts/chaos rows, and (general) maps that
+ * rotate, shear or fail to contract. COMPOSES — the ground plane, authored
+ * finishes on the head map (the kernels' one shade slot), and the optical
+ * transport through the finite DDA backend. ENGINE: WebGPU compute only —
+ * no fragment arm exists for the finite cores (the escape4 verdict one
+ * family over), so without compute the route is refused, never handed to a
+ * WebGL tracer that would draw the attractor.
  */
 function deriveFiniteSolidEligibility(
   block: FiniteSolidAuthored,
@@ -312,24 +317,27 @@ function deriveFiniteSolidEligibility(
       kind: null,
     };
   }
-  const shape = resolution.value.shape;
   const fourD = systemPartsAreNonFlat(transforms, finalTransform, symmetry);
-  // The construction names the dimension; the document must agree. A
-  // mismatch means the maps were edited away from the block's construction,
-  // and rendering either object would lie about the other.
-  if (shape === "hyperMenger" && !fourD) {
-    return {
-      status: "ineligible",
-      note: "Finite-solid scene refused: the hyper-Menger construction is native 4D, but this document's maps are flat — restore the maps' w offsets or choose the 3D Menger.",
-      kind: null,
-    };
-  }
-  if (shape === "menger" && fourD) {
-    return {
-      status: "ineligible",
-      note: "Finite-solid scene refused: the 3D Menger construction is flat, but this document reaches into 4D — remove the w extension or choose the hyper-Menger.",
-      kind: null,
-    };
+  const value = resolution.value;
+  if (value.kind === "shaped") {
+    // The construction names the dimension; the document must agree. A
+    // mismatch means the maps were edited away from the block's construction,
+    // and rendering either object would lie about the other.
+    const shape = value.shape;
+    if (shape === "hyperMenger" && !fourD) {
+      return {
+        status: "ineligible",
+        note: "Finite-solid scene refused: the hyper-Menger construction is native 4D, but this document's maps are flat — restore the maps' w offsets or choose the 3D Menger.",
+        kind: null,
+      };
+    }
+    if (shape === "menger" && fourD) {
+      return {
+        status: "ineligible",
+        note: "Finite-solid scene refused: the 3D Menger construction is flat, but this document reaches into 4D — remove the w extension or choose the hyper-Menger.",
+        kind: null,
+      };
+    }
   }
   const refusals: string[] = [];
   if (tiling) {
@@ -354,19 +362,38 @@ function deriveFiniteSolidEligibility(
       kind: null,
     };
   }
-  const analysis = analyzeFiniteSolidSystem(
-    transforms,
-    finalTransform,
-    symmetry,
-    shape,
-    resolution.value.level,
-  );
-  if (analysis.status === "ineligible") {
-    return {
-      status: "ineligible",
-      note: `Finite-solid scene refused: ${analysis.reasons.join("; ")}`,
-      kind: null,
-    };
+  if (value.kind === "shaped") {
+    const analysis = analyzeFiniteSolidSystem(
+      transforms,
+      finalTransform,
+      symmetry,
+      value.shape,
+      value.level,
+    );
+    if (analysis.status === "ineligible") {
+      return {
+        status: "ineligible",
+        note: `Finite-solid scene refused: ${analysis.reasons.join("; ")}`,
+        kind: null,
+      };
+    }
+  } else {
+    // The general admission takes the SCENE's dimension: the word tree is
+    // the document's own maps, so there is no construction to disagree with.
+    const analysis = analyzeFiniteSolidGeneral(
+      transforms,
+      finalTransform,
+      symmetry,
+      value.level,
+      fourD ? 4 : 3,
+    );
+    if (analysis.status === "ineligible") {
+      return {
+        status: "ineligible",
+        note: `Finite-solid scene refused: ${analysis.reasons.join("; ")}`,
+        kind: null,
+      };
+    }
   }
   if (!opts.computeAvailable) {
     return {
@@ -375,11 +402,18 @@ function deriveFiniteSolidEligibility(
       kind: null,
     };
   }
-  const dim = shape === "hyperMenger" ? 4 : 3;
+  if (value.kind === "shaped") {
+    const dim = value.shape === "hyperMenger" ? 4 : 3;
+    return {
+      status: "degraded",
+      note: `Finite-solid render: Surface marches the level-${value.level} ${dim === 4 ? "hyper-Menger" : "Menger"} cell decomposition — the solid the glass transport walks — rather than the transform system's IFS attractor.`,
+      kind: dim === 4 ? "finiteSolid4" : "finiteSolid",
+    };
+  }
   return {
     status: "degraded",
-    note: `Finite-solid render: Surface marches the level-${resolution.value.level} ${dim === 4 ? "hyper-Menger" : "Menger"} cell decomposition — the solid the glass transport walks — rather than the transform system's IFS attractor.`,
-    kind: dim === 4 ? "finiteSolid4" : "finiteSolid",
+    note: `Word-tree render: Surface marches the level-${value.level} glass solid from the document's own maps — the transmission transport's object, not the IFS attractor.`,
+    kind: fourD ? "finiteSolid4" : "finiteSolid",
   };
 }
 

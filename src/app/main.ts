@@ -6164,7 +6164,14 @@ async function main(): Promise<void> {
           if (!block.ok) {
             throw new Error(block.reasons.join("; "));
           }
-          const fourD = block.value.shape === "hyperMenger";
+          // The dimension: a SHAPED block names the construction (the
+          // hyper-Menger is native 4D, the Menger flat); a GENERAL block's
+          // word tree is the document's own maps, so the scene's dimension
+          // decides — the same answer the gate's kind carries.
+          const fourD =
+            block.value.kind === "shaped"
+              ? block.value.shape === "hyperMenger"
+              : sessionEligibility.kind === "finiteSolid4";
           surfaceSessionIs4D = fourD;
           // The session door's balloon refusal — the finite solid fills its
           // enclosing-ball centre, so the echo degenerates exactly as it
