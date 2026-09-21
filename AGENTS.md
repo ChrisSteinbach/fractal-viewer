@@ -982,17 +982,18 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     posed hyper-Menger slice are co-extensive with the displayed optical
     solid, admitted from the document's own maps. The optional `finiteSolid`
     block routes to compute-only cores; primary rays and transport share the
-    exact ternary DDA; the hybrid DE serves shading.
-    Transport preserves canonical anchors, medium ownership, positive
-    segments; crossed planes derive from post-crossing cells; traces pause
-    between complete paths, scheduling never changing
-    optics/branch order/guards. Measured (2026-09-20, real driver): the
-    crossing cache puts the native-4D four-AA settle under 10 s; every
-    production frame pauses at the quantum, both dimensions; finite4's
-    quota-2048 bank control is its uninterrupted-equivalence control,
-    witnessed by the envelope gate. One-cell anchor differences fail
-    agreement. Both material references use the study's half extent, bounds
-    staying geometric. Gates pin every AA sample and the live copied pose.
+    exact DDA — the grid's ternary walk for `{shape, level}`, and
+    `{level}` alone as the document's OWN maps' WORD TREE (diagonal
+    contractions only, root-invariant, the 128-leaf device cap refuses
+    disclosed); the hybrid DE serves shading.
+    Transport preserves canonical anchors, medium ownership and crossed
+    planes from post-crossing cells. The anchor snap targets composed
+    face bounds (the center/half ulp drift broke the tied start); a
+    split child's stale medium re-anchors once. One-cell anchor
+    differences fail agreement. Gates pin every AA sample, the copied
+    pose and export identity; the word tree's harness reference is an
+    independent Horner-fold box union, its owner-authored Glass app gate
+    five legs.
     Evidence: `docs/surface-dielectric-transport.md`.
   - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its
