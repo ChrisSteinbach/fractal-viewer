@@ -41,11 +41,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mulberry32 } from "../src/fractal/rng";
-import {
-  PREVIEW_HIT,
-  renderPreview,
-  writeLabeledContactSheet,
-} from "./de-preview";
+import { renderPreview, writeLabeledContactSheet } from "./de-preview";
 import type { PanelStats, PreviewScene, Vec3 } from "./de-preview";
 import { sampleSetExtent } from "./set-extent";
 import {
@@ -62,7 +58,6 @@ import {
   makeFoldScratch,
   octahedral6,
   shellSeed,
-  sliceBasis4,
   tesseract16,
 } from "./sphere-inversion-orbit";
 import type {
@@ -71,6 +66,11 @@ import type {
   InversionSceneSpec,
   RotorPlane,
 } from "./sphere-inversion-orbit";
+import {
+  foldWordColumns,
+  offSliceFlags,
+  sliceSubArrangement,
+} from "./sphere-inversion-slice";
 
 const SIZE = Number(process.env.SI4_SIZE ?? 128);
 const SHARD = Number(process.env.SI4_SHARD ?? 0);
@@ -732,42 +732,6 @@ function cloud3(R: number): Float64Array {
   return pts;
 }
 
-const dot4 = (a: number[], b: number[]) =>
-  a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
-
-/**
- * The slice's EXPLICIT 3D sub-arrangement: generators centred in the slice
- * hyperplane, acting on the seed's own slice. Null when the seed misses the
- * slice entirely (every member is then a non-member of both).
- */
-function subArrangement(
-  spec: InversionSceneSpec,
-  pose: Pose4,
-): InversionSceneSpec | null {
-  const basis = sliceBasis4(pose.planes);
-  const toSlice = (c: number[]) => [0, 1, 2].map((a) => dot4(basis[a], c));
-  const gens: Generator[] = [];
-  for (const g of spec.gens) {
-    if (Math.abs(dot4(basis[3], g.c) - pose.w0) < 1e-9) {
-      gens.push({ c: toSlice(g.c), r: g.r });
-    }
-  }
-  const seed: GBall[] = [];
-  for (const b of spec.seed) {
-    const h = dot4(basis[3], b.c) - pose.w0;
-    if (Math.abs(h) >= b.r) {
-      if (b.sign === 1) return null;
-      continue;
-    }
-    seed.push({
-      c: toSlice(b.c),
-      r: Math.sqrt(b.r * b.r - h * h),
-      sign: b.sign,
-    });
-  }
-  return { dim: 3, gens, seed, depth: spec.depth };
-}
-
 function measureCandidate(cand: Candidate, size: number, twin = true) {
   const scene = buildInversionScene(cand.spec);
   const scratch = makeFoldScratch(scene);
@@ -787,10 +751,7 @@ function measureCandidate(cand: Candidate, size: number, twin = true) {
   const masks: Uint8Array[] = [];
   const copyMasks: Uint8Array[] = [];
   const results: PoseResult[] = cand.poses.map((pose, i) => {
-    const basis = sliceBasis4(pose.planes);
-    const offPlane = cand.spec.gens.map(
-      (g) => Math.abs(dot4(basis[3], g.c) - pose.w0) >= 1e-9,
-    );
+    const offPlane = offSliceFlags(cand.spec.gens, pose);
     const mask = new Uint8Array(CLOUD_POINTS);
     const copyMask = new Uint8Array(CLOUD_POINTS);
     let members = 0;
@@ -818,7 +779,7 @@ function measureCandidate(cand: Candidate, size: number, twin = true) {
     masks.push(mask);
     copyMasks.push(copyMask);
     let sub = NaN;
-    const subSpec = subArrangement(cand.spec, pose);
+    const subSpec = sliceSubArrangement(cand.spec, pose);
     try {
       let inter = 0;
       let union = 0;
@@ -865,31 +826,11 @@ function measureCandidate(cand: Candidate, size: number, twin = true) {
       ),
       size,
     );
-    let hitPx = 0;
-    let copyPx = 0;
-    let offPx = 0;
-    let sameWord = 0;
-    const scratch0 = makeFoldScratch(scene);
-    for (let px = 0; px < size * size; px++) {
-      if (stats.status![px] !== PREVIEW_HIT) continue;
-      hitPx++;
-      p3[0] = stats.hitPos![px * 3];
-      p3[1] = stats.hitPos![px * 3 + 1];
-      p3[2] = stats.hitPos![px * 3 + 2];
-      const f = foldQuery(scene, lifts[i](p3), scratch);
-      if (f.k === 0) continue;
-      copyPx++;
-      for (let t = 0; t < f.k; t++) {
-        if (offPlane[f.word[t]]) {
-          offPx++;
-          break;
-        }
-      }
-      const f0 = foldQuery(scene, lifts[0](p3), scratch0);
-      let same = f0.k === f.k;
-      for (let t = 0; same && t < f.k; t++) same = f0.word[t] === f.word[t];
-      if (same) sameWord++;
-    }
+    const words = foldWordColumns(scene, stats, size, {
+      lift: lifts[i],
+      liftRef: lifts[0],
+      offPlane,
+    });
     let subDiff = NaN;
     try {
       if (subSpec && twin) {
@@ -916,9 +857,9 @@ function measureCandidate(cand: Candidate, size: number, twin = true) {
     return {
       pose,
       stats,
-      copyPx: hitPx > 0 ? copyPx / hitPx : 0,
-      offPx: copyPx > 0 ? offPx / copyPx : 0,
-      wordMatch: copyPx > 0 ? sameWord / copyPx : 1,
+      copyPx: words.copyPx,
+      offPx: words.offPx,
+      wordMatch: words.wordMatch,
       subDiff,
       fill: (100 * members) / CLOUD_POINTS,
       copyShare: members > 0 ? copies / members : 0,
