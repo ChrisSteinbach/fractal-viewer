@@ -2253,3 +2253,54 @@ opposite of where the estimator's cost concentrates. The 4D arm uses the
 sheet's own cheap arrangements because `cell600` — both shipped 4D presets —
 costs about 20x per evaluation and no glass panel of one finished on the CPU;
 that is a cost finding about the arrangement, not about the dimension.
+
+### The signed field lands (2026-09-22)
+
+`sphereInversionSignedDistance` and `sphereInversionSignedDistance4` are the
+gate's field, shipped: the existing estimator outside, and inside a certified
+interior clearance — a lower bound on a member's distance to the complement of
+`O_D`. Both dimensions landed together; every existing path is untouched
+(pure additions, no existing line changed), and the sheet now calls the
+shipped entries instead of keeping its own copy, re-rendering its 3D panel
+BYTE-IDENTICALLY.
+
+THE INTERIOR VALUE IS EXACT IN FOLDED COORDINATES AND EXACTLY TRANSPORTED OUT.
+`K ∩ F` is an intersection of generalized balls with exact member SDFs, so the
+clearance there is `−max_i(sdf_i)` — the value the estimator already computed —
+and carrying it out is `transportSphereInversionBound` unchanged, because the
+full-ball law IS the empty-ball law (the identity recorded above). It is
+deliberately conservative at the seams: the clearance is the containing
+PIECE's, and the union may reach further past a generator sphere where the
+next copy continues, so a march understeps there and never oversteps.
+
+THE SIGN AGREES WITH `sphereInversionContains` BY CONSTRUCTION, not by
+measurement, and the argument is the fold's: at DOMAIN the folded point lies
+outside every generator ball (the fold inverts through any ball but the
+parent, and inversion through the parent put the point outside it), so every
+copy and gap term — each contained in its own ball — is positive, and the only
+term that can be non-positive is the domain seed, which is exactly what
+membership tests. At EXHAUSTED the point sits inside some non-parent ball,
+which the seed's `ext(B_i)` members make positive, and that ball's own copy
+term is skipped for want of budget. A POLE returns 0.
+
+THE SIGN IS ALSO CUTOFF-INDEPENDENT, which is worth stating because the
+obvious worry is that it is not: a cutoff exit returns a small POSITIVE
+decision value, so an exit taken before a negative term was reached would
+invert the sign. It cannot happen — a member's negative term is the domain
+seed, the FIRST term evaluated, and it short-circuits ahead of every cutoff
+test. A member returns the same value at every cutoff, pinned in the tests.
+The signed entries still take no cutoff, because one would buy nothing: the
+interior branch is a single table scan, and the exterior branch IS the
+unsigned estimator.
+
+Pinned per fixture across the shipped arrangements, seed kinds and depths, in
+both dimensions: bit-identical to the unsigned estimator outside; sign ≡
+membership; interior clearance never above `explicitOrbitClearance` (the
+oracle's new interior reference — the largest inscribed radius among
+containing pieces, a sound lower bound on the union's own clearance); and the
+interior value is a STEPPING bound, a step of `|f|` in any direction staying
+inside. The 4D arm adds the flat reduction (bit-identical to 3D at `w = 0`)
+and the posed-slice arm at zero slab thickness, where a step of `|f|` taken
+WITHIN the slice keeps the displayed point a member — the in-slice reading the
+module doc's inequality licenses. The degenerate Möbius case (a clearance ball
+that swallows an inversion centre) has its own fixture.
