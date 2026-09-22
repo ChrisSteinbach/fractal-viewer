@@ -26,6 +26,20 @@
  * field is written only once its control moves, and moving it onto the
  * resolver's default for the current seed kind REMOVES it again (an emptied
  * seed object goes with it).
+ *
+ * THE VOCABULARY IS REGISTRY IDS ONLY. The authored-sets look study
+ * (docs/sphere-inversion-family.md) grew the registry by four 3D ids and
+ * refused parametric families, explicit centres and per-generator radii, so
+ * a new arrangement is one more `<option>` in the select and nothing else
+ * here moves: no centre list reaches the panel, and
+ * {@link SPHERE_INVERSION_AUTHORED_OPTION} keeps its one job, naming an id
+ * this version does not offer. The wire stays one string, so the share link
+ * does not grow. Unmoved by the growth, checked rather than assumed: morph
+ * never carries the block, `random-system.ts` never rolls one, persistence
+ * keeps it verbatim (no decoder change), the legend's generation slots key
+ * on DEPTH rather than generator count, Flame and Solid still refuse the
+ * family, and the dormant disclosures (kaleidoscope above order 1, the
+ * final-transform lens, per-transform finishes) are unchanged.
  */
 import {
   SPHERE_INVERSION_ARRANGEMENTS,

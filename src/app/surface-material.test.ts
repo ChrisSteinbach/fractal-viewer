@@ -4012,6 +4012,7 @@ describe("SURFACE_SPHERE_INVERSION variant", () => {
       SPHERE_INVERSION_ARRANGEMENTS,
     )) {
       if (arrangement.dim !== 3) continue;
+      if (id === "icosidodec30") continue; // past the ceiling, below
       for (const kind of SPHERE_INVERSION_SEED_KINDS) {
         const de = siDE({
           arrangement: id,
@@ -4029,9 +4030,16 @@ describe("SURFACE_SPHERE_INVERSION variant", () => {
         fitted++;
       }
     }
-    expect(fitted).toBe(9);
-    // ico12 cut shell is the largest SHIPPED construction (183 table vec4),
-    // well inside caps that are now the guaranteed block's ceiling rather
+    expect(fitted).toBe(18);
+    // The one 3D registry arrangement past the ceiling routes to compute, so
+    // the arm never has to hold it.
+    expect(
+      sphereInversionFitsFragmentArm(
+        siDE({ arrangement: "icosidodec30", seed: { kind: "ball" } }),
+      ),
+    ).toBe(false);
+    // rhombicuboct24 cut shell is the largest construction the arm holds
+    // (651 table vec4), inside caps that are now the guaranteed block's ceiling rather
     // than the registry's largest: 931 + 35 vec4 = 15,456 B against 16,384.
     expect(SURFACE_SPHERE_INVERSION_TABLE_ENTRIES).toBe(931);
     expect(SURFACE_SPHERE_INVERSION_COLOR_SLOTS).toBe(35);

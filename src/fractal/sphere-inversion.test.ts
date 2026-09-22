@@ -39,6 +39,10 @@ describe("sphere-inversion arrangements", () => {
       oct6: [3, 6],
       cube8: [3, 8],
       ico12: [3, 12],
+      tetra4: [3, 4],
+      dodec20: [3, 20],
+      rhombicuboct24: [3, 24],
+      icosidodec30: [3, 30],
       cell24: [4, 24],
       tess16: [4, 16],
       cross8: [4, 8],
@@ -60,6 +64,16 @@ describe("sphere-inversion arrangements", () => {
     expect(t("oct6")).toBeCloseTo(Math.SQRT1_2, 14);
     expect(t("cube8")).toBeCloseTo(1 / Math.sqrt(3), 14);
     expect(t("ico12")).toBeCloseTo(0.5257311121, 9);
+    expect(t("tetra4")).toBeCloseTo(Math.sqrt(2 / 3), 14);
+    expect(t("dodec20")).toBeCloseTo(
+      2 / ((1 + Math.sqrt(5)) * Math.sqrt(3)),
+      14,
+    );
+    expect(t("rhombicuboct24")).toBeCloseTo(
+      1 / Math.sqrt(5 + 2 * Math.SQRT2),
+      14,
+    );
+    expect(t("icosidodec30")).toBeCloseTo(1 / (1 + Math.sqrt(5)), 14);
     expect(t("cross8")).toBeCloseTo(Math.SQRT1_2, 14);
     expect(t("cell24")).toBeCloseTo(0.5, 14);
     expect(t("tess16")).toBeCloseTo(0.5, 14);
@@ -81,6 +95,63 @@ describe("sphere-inversion arrangements", () => {
       expect(neighbours).toBe(12);
     }
     expect(minDistance).toBeCloseTo(edge, 14);
+  });
+});
+
+describe("the look study's registry growth", () => {
+  // One test per id, each checking the polyhedron's own vertex figure: the
+  // centres are distinct, and every one has exactly the polyhedron's degree
+  // of neighbours at the kissing edge and none nearer — so the shared
+  // tangent radius is every generator's OWN, and the shared and per-generator
+  // radius rules the study compared are the same number here.
+  const cases: [id: string, count: number, degree: number][] = [
+    ["tetra4", 4, 3],
+    ["dodec20", 20, 3],
+    ["rhombicuboct24", 24, 4],
+    ["icosidodec30", 30, 4],
+  ];
+  for (const [id, count, degree] of cases) {
+    it(`builds ${id} as ${count} distinct unit vertices, each with exactly ${degree} neighbours at the edge`, () => {
+      const arr = SPHERE_INVERSION_ARRANGEMENTS[id];
+      const edge = 2 * arr.tangentRadius;
+      expect(arr.dim).toBe(3);
+      expect(arr.centers).toHaveLength(count);
+      for (let i = 0; i < arr.centers.length; i++) {
+        expect(Math.hypot(...arr.centers[i])).toBeCloseTo(1, 14);
+        let neighbours = 0;
+        for (let j = 0; j < arr.centers.length; j++) {
+          if (i === j) continue;
+          const d = Math.hypot(
+            ...arr.centers[i].map((x, a) => x - arr.centers[j][a]),
+          );
+          expect(d).toBeGreaterThan(edge - 1e-12);
+          if (d < edge + 1e-12) neighbours++;
+        }
+        expect(neighbours).toBe(degree);
+      }
+    });
+  }
+
+  it("derives icosidodec30 as the midpoints of ico12's thirty edges", () => {
+    const ico = SPHERE_INVERSION_ARRANGEMENTS.ico12;
+    const edge = 2 * ico.tangentRadius;
+    const midpoints = SPHERE_INVERSION_ARRANGEMENTS.icosidodec30.centers;
+    for (const m of midpoints) {
+      const near = ico.centers.filter(
+        (c) => Math.hypot(...c.map((x, a) => x - m[a])) < edge * 0.6,
+      );
+      expect(near).toHaveLength(2);
+    }
+  });
+
+  it("resolves every new id under every seed kind at the defaults", () => {
+    for (const [id] of cases) {
+      for (const kind of ["ball", "shell", "cutShell"] as const) {
+        const r = resolved({ arrangement: id, seed: { kind } });
+        expect(r.construction.dim).toBe(3);
+        expect(r.eligibility.status).toBe("eligible");
+      }
+    }
   });
 });
 

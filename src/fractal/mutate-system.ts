@@ -1888,7 +1888,11 @@ export function mutateSystemSeeded(
  *   and writing it would turn a default into authored state.
  * - Discrete and structural fields never move: the arrangement, the seed
  *   kind, the depth (an integer whose cost scales with the generator count)
- *   and the cut direction (the subject's orientation, not a nudge).
+ *   and the cut direction (the subject's orientation, not a nudge). The
+ *   generator CENTRES are structural too, on measured evidence rather than
+ *   by omission: the authored-sets look study's jitter sweep found that
+ *   perturbing a regular set only ever DECAYS it (dust by 35–50% of an
+ *   edge, draw-dependently), never a look lever.
  * - Every candidate must RESOLVE: a nudge that lands out of domain is
  *   rejected and redrawn, up to {@link MUTATION_MAX_ATTEMPTS} times, after
  *   which the block itself is returned. A block the resolver already refuses
