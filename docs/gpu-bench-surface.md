@@ -528,6 +528,37 @@ come from the sphere-inversion-only runs, which share the section's device
 acquisition and canary. A full-section `pass` with these legs is still owed, on
 a machine where that swirl leg survives.
 
+**The AMD box (2026-09-22): the owed full-section pass.** On an RX 7900 XTX
+(`:0`, radeonsi, WebGPU `amd rdna-3`, `software=false`, `quiet=YES`) a full
+`npm run bench:surface -- --display=:0` ended **`surfaceDe: verdict=pass`**
+with the sphere-inversion legs included (`sphere-inversion: failed=false`):
+this card holds the device through the swirl leg the Iris loses it at, and
+`escChainKaleido` agrees there (`fail=0`).
+
+The same box's timing leg, widened for the generator-count cost record
+(`docs/sphere-inversion-family.md`, "Cost against generator count"): three
+more 3D rows and the 24-generator 4D row, and every row timed a second time
+with `uniformUnit` cleared (the linear first-containing scan, on the same
+tables and queries), `--surface-sphere-inversion-only=1`:
+
+| Subject                        |   n | Core         | µs/query, unit arm | µs/query, linear arm |
+| ------------------------------ | --: | ------------ | -----------------: | -------------------: |
+| `siOct6Pearls3`                |   6 | `sphereInv`  |              0.031 |                0.027 |
+| `siOct6Kiss3`                  |   6 | `sphereInv`  |              0.025 |                0.026 |
+| `siCube8Shell3`                |   8 | `sphereInv`  |              0.032 |                0.024 |
+| `siIco12Vault3`                |  12 | `sphereInv`  |              0.024 |                0.023 |
+| `siIcosidodec30Star3`          |  30 | `sphereInv`  |              0.026 |                0.029 |
+| `siCell24Shell4`               |  24 | `sphereInv4` |              0.024 |                0.023 |
+| `si600Vault4@XW.3W.1`          | 120 | `sphereInv4` |              0.045 |                0.048 |
+| `si600Medallion4@XW.4YW.3ZW.2` | 120 | `sphereInv4` |              0.058 |                0.057 |
+| `si600Snowflake4@W.06`         | 120 | `sphereInv4` |              0.056 |                0.061 |
+
+Per query the family is FLAT across 3D (6 to 30 generators) on this card,
+and the 600-cell costs about 2× a 3D row (4–7.5× on the Iris). The linear arm
+lands inside the timing's ~15% run-to-run spread on every row, so on this
+card the unit arrangement's early exit does not show in throughput. The
+`linear` rows are informational like every timing row and never gate.
+
 ## Mutation-testing the f32 twins
 
 A stale f32 twin does not disagree with its f64 CPU oracle — it makes the

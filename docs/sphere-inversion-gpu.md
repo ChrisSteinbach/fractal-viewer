@@ -918,3 +918,24 @@ deliberate: that one is per-invocation scratch in a compute kernel, where a
 raise buys only a construction that does not exist, and the next regular 4D
 candidate (the 120-cell's 600 vertices) is five times it and would need its
 own cost argument long before its scratch mattered.
+
+## Cost against generator count (2026-09-22, delegated)
+
+The covering tables grow as `n + s + n(s + n − 1)`, quadratic in the
+generator count; the kernels' costs do not. Measured on the AMD box (RX 7900
+XTX, `quiet=YES`), across every registry arrangement, 4 to 120 generators;
+the full tables are in `docs/sphere-inversion-family.md` ("Cost against
+generator count") and `docs/gpu-bench-surface.md`:
+
+- **Compute eval is flat across 3D**, 0.024–0.032 µs per query at 6 to 30
+  generators; 0.045–0.058 at the 600-cell's 120.
+- **Compute settle is flat across 3D**, 5.6–7.8 s at 1920×1080 from 4 to 30
+  generators, and dispatches stay ≤ 10 ms, so the 29-generator block
+  ceiling and the kernel's 120-generator scratch both have headroom on cost.
+- **The GLSL arm grows mildly** with `n`, about +30% from 8 to 24 generators
+  (2.7–3.3 s to 3.4–4.2 s settle), and no cliff at the block ceiling.
+- **The uniformUnit-off penalty is not measurable** on this card: the linear
+  arm is within the timing's run-to-run spread of the unit arm on every row.
+  The linear arm is therefore a usable capability, not just a legal one;
+  non-unit and mixed-radius sets remain unreachable because no authored tier
+  expresses them, a look decision and not a cost one.

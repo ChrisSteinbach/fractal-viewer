@@ -1213,10 +1213,11 @@ lengths move 3D cost by at most 25% and 4D cost by at most 40%. The 600-cell bal
 
 ### Public ranges (delegated)
 
-- **Arrangements.** All eleven are public. No arrangement is refused on
-  cost. The four look-study ids ride the seven's measured radius, seed and
-  depth spans unchanged; their own settle rows against generator count are
-  not yet measured.
+- **Arrangements.** All eleven are public: 4–30 generators in 3D, 8–120 in
+  4D. No arrangement is refused on cost. The generator count moves settle
+  less than the seed does (section "Cost against generator count" below), so
+  the four look-study ids ride the seven's radius, seed and depth spans
+  unchanged.
 - **Depth.** Public slider `[0, 12]` in both dimensions, the same for every
   arrangement. Cost does not bound it: settle is flat to D32. The cap is
   where the image stops changing at a 1080p pane. The resolver's structural
@@ -2032,3 +2033,171 @@ today, and the covering tables are quadratic.
   fields on `oct6` for the draw-dependence check above), not a distribution.
 - `deep` is a PIXEL share at one camera, so it measures what the panel shows,
   not what the object contains — which is the point, and also its limit.
+
+## Cost against generator count (2026-09-22, delegated)
+
+The covering tables hold `n + s + n(s + n − 1)` generalized balls, QUADRATIC
+in the generator count `n`: 21 at `tetra4`'s 4, 993 at `icosidodec30`'s 30,
+14,763 at the 600-cell's 120. The look study's ids opened the 12-to-30 band
+in 3D, which no earlier row had measured. This section asks whether cost
+follows the tables. It does not: every measured cost is flat or close to
+linear in `n`, because a query folds shallowly and its cover scan visits a
+few candidates, not the whole table.
+
+**Machine.** The AMD box: RX 7900 XTX on `:0` (radeonsi, navi31), WebGPU
+`amd rdna-3` (software = false). `quiet=YES` before every GPU cell; the three
+cells that first ran beside a desktop Firefox were rerun quiet by the probe
+and moved by at most 0.1 s. Figures are this machine's, beside the Iris
+record above rather than in place of it.
+
+**Instruments.**
+
+- CPU: `scripts/sphere-inversion-gencount.harness.ts`, one core, the median
+  of three runs per figure.
+- Compute and WebGL settle, preview exhaustion, per-dispatch work and shade
+  share: `scripts/sphere-inversion-cost.probe.mjs --plans=gencount`, 1920×1080,
+  8 antialiasing passes, identity pose, trusted click and 3 s drag, raw rows
+  in `scripts/out/sphere-inversion-cost-gencount.json`.
+- GPU µs per query: the bench's timing leg (`docs/gpu-bench-surface.md`).
+- Export: the qualification rerun's Save-PNG times, one preset per id.
+
+Every row uses the cost probe's representative seeds (3D ball .28, shell
+1 ± .03, cut shell 1 ± .06; 4D ball .28, shell 1.1 ± .03, cut shell
+.9 ± .04), radius fraction .99, D8 in 3D and D5 in 4D (settle is flat in
+depth, "Depth: not a cost lever").
+
+### Surface settle, preview exhaustion and dispatch (compute, WebGL in 3D)
+
+| Arrangement      |   n | Seed     | Compute settle | Preview exh max % | Max dispatch ms | Shade % | WebGL settle |
+| ---------------- | --: | -------- | -------------: | ----------------: | --------------: | ------: | -----------: |
+| `tetra4`         |   4 | ball     |          6.9 s |              2.14 |             2.9 |      61 |        3.0 s |
+| `tetra4`         |   4 | shell    |          6.4 s |              0.09 |             0.8 |      75 |        2.7 s |
+| `tetra4`         |   4 | cutShell |          6.5 s |              0.33 |             0.9 |      75 |        2.8 s |
+| `oct6`           |   6 | ball     |          6.9 s |              2.08 |             2.1 |      73 |        3.2 s |
+| `oct6`           |   6 | shell    |          7.8 s |              0.49 |             2.4 |      81 |        3.0 s |
+| `oct6`           |   6 | cutShell |          7.4 s |              1.02 |             1.7 |      85 |        3.1 s |
+| `cube8`          |   8 | ball     |          6.7 s |              2.80 |             3.2 |      70 |        3.3 s |
+| `cube8`          |   8 | shell    |          6.4 s |              0.16 |             0.8 |      82 |        2.8 s |
+| `cube8`          |   8 | cutShell |          6.4 s |              0.19 |             1.2 |      87 |        3.1 s |
+| `ico12`          |  12 | ball     |          6.8 s |              2.97 |             2.8 |      82 |        3.8 s |
+| `ico12`          |  12 | shell    |          6.3 s |              0.18 |             0.9 |      87 |        3.0 s |
+| `ico12`          |  12 | cutShell |          6.5 s |              0.75 |             1.6 |      89 |        3.4 s |
+| `dodec20`        |  20 | ball     |          5.6 s |              0.73 |             2.2 |      81 |        3.9 s |
+| `dodec20`        |  20 | shell    |          6.4 s |              0.04 |             1.0 |      91 |        3.4 s |
+| `dodec20`        |  20 | cutShell |          6.9 s |              0.24 |             1.5 |      93 |        3.6 s |
+| `rhombicuboct24` |  24 | ball     |          6.4 s |              1.74 |             3.3 |      88 |        4.2 s |
+| `rhombicuboct24` |  24 | shell    |          6.5 s |              0.08 |             9.9 |      91 |        3.5 s |
+| `rhombicuboct24` |  24 | cutShell |          7.0 s |              0.46 |             1.9 |      94 |        3.8 s |
+| `icosidodec30`   |  30 | ball     |          5.7 s |              0.98 |             3.0 |      88 |            — |
+| `icosidodec30`   |  30 | shell    |          6.9 s |              0.19 |             2.7 |      93 |            — |
+| `icosidodec30`   |  30 | cutShell |          7.7 s |              0.50 |             2.2 |      94 |            — |
+| `cross8`         |   8 | ball     |          9.6 s |              8.95 |             6.2 |      78 |            — |
+| `cross8`         |   8 | shell    |         10.4 s |              0.63 |             2.8 |      82 |            — |
+| `cross8`         |   8 | cutShell |          9.6 s |              3.12 |             5.0 |      85 |            — |
+| `tess16`         |  16 | ball     |          5.5 s |              0.12 |             2.4 |      48 |            — |
+| `tess16`         |  16 | shell    |         10.5 s |              0.67 |             1.8 |      87 |            — |
+| `tess16`         |  16 | cutShell |          9.5 s |              0.44 |             2.2 |      88 |            — |
+| `cell24`         |  24 | ball     |          9.5 s |              8.51 |             8.9 |      86 |            — |
+| `cell24`         |  24 | shell    |         10.5 s |              0.48 |             3.5 |      93 |            — |
+| `cell24`         |  24 | cutShell |         11.3 s |              2.91 |             5.9 |      94 |            — |
+| `cell600`        | 120 | ball     |         16.9 s |              7.57 |            38.9 |      88 |            — |
+| `cell600`        | 120 | shell    |         15.3 s |              0.64 |             8.0 |      95 |            — |
+| `cell600`        | 120 | cutShell |         23.7 s |              4.87 |            30.6 |      93 |            — |
+
+Every one of the 51 cells settled with 0 exhausted rays. WebGL stops at
+`rhombicuboct24`: `icosidodec30` is past the fragment arm's 29 generators.
+
+- **3D compute settle is flat in `n`**: 5.6–7.8 s from 4 generators to 30,
+  the table growing 47×. The 30-generator cells sit inside the 6-generator
+  ones' spread.
+- **The WebGL arm grows, mildly**: 2.7–3.3 s at up to 8 generators,
+  3.4–4.2 s at 20–24, about +30%, and still faster than compute here. The
+  fragment path's per-eval scratch and cover scan are the growth the
+  routing child predicted; at the block ceiling it is not a cliff.
+- **Preview exhaustion follows the SEED, not `n`.** Balls exhaust most
+  (0.7–3.0% in 3D); the four new ids sit at or below `ico12`'s ball.
+- **Shade share rises with `n`** (61–75% at 4 generators, 88–94% at 30 in 3D): the shading taps grow with the generator count while the march does
+  not. The dispatches stay far under any watchdog (≤ 10 ms in 3D, ≤ 39 ms on
+  the 600-cell).
+- **4D** is 5.5–11.3 s from 8 to 24 generators and 15–24 s at 120, the
+  600-cell staying the family's costliest arrangement as on the Iris.
+
+### Per-query cost: CPU and GPU
+
+CPU, µs per query (`sphere-inversion-gencount.harness.ts`; uniform in the
+bounding ball at the identity slice, and 0.005 off the set):
+
+| Arrangement      |   n |         Balls | Uniform µs (ball / shell / cut) | Near µs (ball / shell / cut) |
+| ---------------- | --: | ------------: | ------------------------------- | ---------------------------- |
+| `tetra4`         |   4 |         21–31 | .45 / .33 / .32                 | .22 / .19 / .17              |
+| `oct6`           |   6 |         43–57 | .40 / .44 / .32                 | .20 / .23 / .22              |
+| `cube8`          |   8 |         73–91 | .50 / .33 / .37                 | .21 / .23 / .23              |
+| `ico12`          |  12 |       157–183 | .66 / .51 / .54                 | .27 / .31 / .31              |
+| `dodec20`        |  20 |       421–463 | .98 / .66 / .74                 | .33 / .38 / .37              |
+| `rhombicuboct24` |  24 |       601–651 | 1.25 / .86 / .91                | .39 / .46 / .45              |
+| `icosidodec30`   |  30 |       931–993 | 1.50 / 1.01 / 1.10              | .47 / .52 / .51              |
+| `cross8` (4D)    |   8 |         73–91 | .71 / .37 / .46                 | .23 / .23 / .26              |
+| `tess16` (4D)    |  16 |       273–307 | 1.01 / .50 / .60                | .29 / .32 / .32              |
+| `cell24` (4D)    |  24 |       601–651 | 1.30 / .88 / 1.03               | .41 / .42 / .47              |
+| `cell600` (4D)   | 120 | 14,521–14,763 | 7.31 / 5.42 / 4.99              | 1.62 / 1.81 / 1.87           |
+
+The near-set cost, the queries a tracer spends its steps on, is close to
+LINEAR in `n`: a line through the 3D rows (about 0.16 + 0.011·n µs) predicts 1.5 µs at 120, and the 600-cell measures 1.6–1.9 µs: close to linear, slightly above it at the far end, and nowhere near the tables' quadratic growth. Uniform queries grow
+faster (3–4× across 3D), because a point far from the set scans more cover
+candidates before it can bound, but they are not where a tracer is.
+
+GPU, µs per query over each row's whole 700-query mix (the bench's timing
+leg): 0.024–0.032 at 6, 8, 12 and 30 generators in 3D, 0.024 at 24 in 4D,
+0.045–0.058 at 120. FLAT across the 3D band, and the 600-cell costs about 2× a 3D row, where its CPU near-set cost is 3.5–9× a 3D row's. Run to run the same row moves about 15%
+(the pearls read 0.036 and 0.031 in two runs), so differences inside the 3D
+band are noise.
+
+**Points sampling** (the same sheet, 200k points, one core): prepare stays
+under 1 ms for every ball seed and grows about linearly for shells, 3 ms at
+4 generators to 20 ms at 30 and 120–126 ms on the 600-cell. The steady cost
+is 330–2,240 ns per point in 3D with no clear trend in `n` (the seed kind moves it more: balls 330–530, cut shells 1,120–2,240), and 1.5–5.3 µs on the 600-cell. No row skipped a point.
+
+**Export** (the qualification rerun, 3200×1800, 2 bands): the new ids'
+presets exported in 16.9–26.7 s against the shipped 3D presets' 19.4–48.9 s.
+The vault's interior view is the slowest export by pose, not by `n`.
+
+### The uniformUnit-off penalty
+
+Every registry arrangement is a UNIT arrangement, so the kernels take the
+radial reject and nearest-centre pick. The linear first-containing scan is
+correct for any construction and is what a non-unit or mixed-radius set
+would take. The bench times each timing row a second time with the flag
+cleared on the same tables and queries:
+
+| Row                            |   n | Unit µs | Linear µs |
+| ------------------------------ | --: | ------: | --------: |
+| `siOct6Pearls3`                |   6 |   0.031 |     0.027 |
+| `siOct6Kiss3`                  |   6 |   0.025 |     0.026 |
+| `siCube8Shell3`                |   8 |   0.032 |     0.024 |
+| `siIco12Vault3`                |  12 |   0.024 |     0.023 |
+| `siIcosidodec30Star3`          |  30 |   0.026 |     0.029 |
+| `siCell24Shell4`               |  24 |   0.024 |     0.023 |
+| `si600Vault4@XW.3W.1`          | 120 |   0.045 |     0.048 |
+| `si600Medallion4@XW.4YW.3ZW.2` | 120 |   0.058 |     0.057 |
+| `si600Snowflake4@W.06`         | 120 |   0.056 |     0.061 |
+
+The linear arm is within −25% to +12% of the unit arm on every row, inside
+the timing's own run-to-run spread, and faster on five of nine. **Verdict:
+cost is not what keeps non-unit and mixed-radius sets out.** On this card
+the linear arm is a usable capability; those sets stay undocumented because
+the look study refused the tiers that would author them, on how they look.
+The unit arm's early exit is real work saved on the CPU (the radial reject
+ends 12–74% of fold tests), but a GPU query here is so cheap that it does
+not show in the timing.
+
+### Verdict and ranges
+
+- **Public generator-count range: every registry arrangement**, 4–30 in 3D
+  and 8–120 in 4D. The document domain is the same set of ids, so the control
+  range is the whole domain, and nothing clamps. No id is refused or demoted
+  on cost: the costliest 3D cell settles in 7.8 s, and 4D's costliest remain
+  the 600-cell rows already public at 15–24 s.
+- **What would move this.** A future id past 30 in 3D is compute-only, and
+  past the kernel's 120-generator scratch (`SPHERE_INVERSION_GPU_MAX_GENERATORS`)
+  needs its own cost argument. Nothing measured here predicts a cliff before
+  either.

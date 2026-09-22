@@ -525,19 +525,20 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     values and unknown keys REFUSE, never clamp. The optional
     `sphereInversion` block persists VERBATIM (refused included), REPLACES the
     transform system as the subject, and its arrangement decides the scene's
-    dimension (`scene-dimension.ts`). `sphere-inversion-de.ts`/`-de-4d.ts` are
-    the twins: the TRANSPORTED CERTIFIED BOUND on the depth-D SEED ORBIT
-    (never the limit set), step scale 1, the cutoff contract; f64 only, pinned
-    by `sphere-inversion-oracle.ts`. SURFACE routes to bench-pinned WGSL
+    dimension (`scene-dimension.ts`). `-de.ts`/`-de-4d.ts` twins: the
+    TRANSPORTED CERTIFIED BOUND on the depth-D SEED ORBIT (never the limit
+    set), step scale 1, the cutoff contract; f64 only, pinned by
+    `sphere-inversion-oracle.ts`. SURFACE routes to bench-pinned WGSL
     `sphereInv`/`sphereInv4`; `SURFACE_SPHERE_INVERSION` is the 3D GLSL
     fallback, admitted PER CONSTRUCTION, never per dimension (caps: WebGL2's
     guaranteed block); 4D and `icosidodec30`'s 30 generators are COMPUTE-ONLY
     under one subject phrase the family gate's refusal leg reads.
     Kaleidoscope/lens/finishes DORMANT+disclosed; tiling, balloon, trap, slab
-    REFUSE. POINTS draws the same set exactly (`sphere-inversion-sample.ts`);
-    Flame/Solid REFUSE. Cost is flat in depth. CONTROLS: Scene / Look after
-    Transforms (`sphere-inversion-controls.ts`); replaced sections DISABLE.
-    Record: `docs/sphere-inversion-family.md`, `docs/sphere-inversion-gpu.md`.
+    REFUSE. POINTS draws the same set exactly; Flame/Solid REFUSE. Cost is
+    flat in depth and in generator count (tables quadratic); every id is
+    public. CONTROLS: Scene / Look after Transforms
+    (`sphere-inversion-controls.ts`); replaced sections DISABLE. Record:
+    `docs/sphere-inversion-family.md`, `docs/sphere-inversion-gpu.md`.
   - `morph.ts` — pure interpolation (`lerpSystem`): endpoint-exact at t=0/1,
     rotation lerped nearest-turn, transform-count mismatches fade surplus by
     weight, flat↔4D continuous via derived w-scale, kaleidoscope crossfade
