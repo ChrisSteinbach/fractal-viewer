@@ -1,3 +1,19 @@
+import { mulberry32 } from "../../fractal/rng";
+import {
+  resolveSphereInversion,
+  type SphereInversionAuthored,
+  type SphereInversionConstruction,
+} from "../../fractal/sphere-inversion";
+import {
+  buildSphereInversionDE,
+  sphereInversionContains,
+  sphereInversionSignedDistance,
+} from "../../fractal/sphere-inversion-de";
+import {
+  buildSphereInversionDE4,
+  sphereInversionContains4,
+  sphereInversionSignedDistance4,
+} from "../../fractal/sphere-inversion-de-4d";
 import {
   SURFACE_GPU_TRANSPORT_REASON_INVALID_INPUT,
   SURFACE_GPU_TRANSPORT_REASON_STATE_MISMATCH,
@@ -8,11 +24,13 @@ import {
   transportTerminalDisplacementCPU,
   transportSolidBoundaryQueryCPU,
   transportTraceCPU,
+  TRANSPORT_SHADOW_BAND_SUBSTEPS,
   type TransportFiniteQueryFn,
   type TransportFixtureSystem,
 } from "./surface-transport-fixture";
 import {
   DIELECTRIC_CROSSING_EPS_REL,
+  DIELECTRIC_ERROR_BUDGET,
   DIELECTRIC_INITIAL_BRANCH_THETA,
   type DielectricMaterial,
 } from "../../fractal/surface-dielectric";
@@ -623,3 +641,366 @@ for (const dim of [3, 4] as const) {
     }
   });
 }
+
+/**
+ * THE SPHERE-INVERSION ARM. Its field is a certified LOWER BOUND, not a
+ * signed distance, so the queries above run with the exact membership
+ * predicate wired in (`TransportFixtureSystem.contains`). What is pinned
+ * here is what that changes and what it must not: the analytic control on a
+ * construction whose orbit IS a sphere, the gate's effect on a phantom band,
+ * the family's three singular outcomes, and the 4D arm through the app's own
+ * posed lift at zero slab thickness.
+ */
+describe("the sphere-inversion arm's transport", () => {
+  const authored = (a: SphereInversionAuthored) => {
+    const r = resolveSphereInversion(a);
+    if (!r.ok) throw new Error(r.reasons.join("; "));
+    return r.construction;
+  };
+
+  /** A construction whose depth-0 orbit is EXACTLY the seed ball: the
+   * generators sit at distance 1 with radius 0.7, so they reach in to 0.3
+   * and never touch a seed of radius 0.28. `K ∩ F` is then the ball alone,
+   * and every optical quantity through it has a closed form. */
+  const BALL_RADIUS = 0.28;
+  const ballOnly = authored({
+    arrangement: "oct6",
+    seed: { size: BALL_RADIUS },
+    depth: 0,
+  });
+
+  const material: DielectricMaterial = {
+    ior: 1.45,
+    absorption: [0.17, 0.055, 0.025],
+    radius: 1,
+  };
+
+  function siSystem(c: SphereInversionConstruction): TransportFixtureSystem {
+    const de = buildSphereInversionDE(c);
+    return {
+      estimate: (p) => sphereInversionSignedDistance(de, p),
+      contains: (p) => sphereInversionContains(de, p),
+      stepScale: 1,
+      visibleRadius: 2,
+    };
+  }
+
+  it("ANALYTIC CONTROL: one interface pair and Beer over a known chord", () => {
+    // Independent of the twin and of the field: the orbit is a ball of a
+    // radius the construction states, so a normal-incidence shadow ray pays
+    // exactly (1 - F0)^2 and Beer over its diameter.
+    const system = siSystem(ballOnly);
+    const f0 = ((material.ior - 1) / (material.ior + 1)) ** 2;
+    const chord = 2 * BALL_RADIUS;
+    const vis = transportShadowVisibilityCPU(
+      system,
+      [0, -1.3, 0],
+      [0, 1, 0],
+      material,
+      [0, 0, 0],
+      1.2,
+      1.2,
+    );
+    for (let c = 0; c < 3; c++) {
+      const expected =
+        (1 - f0) ** 2 *
+        Math.exp((-material.absorption[c] * chord) / material.radius);
+      expect(Math.abs(vis[c] - expected)).toBeLessThan(2e-3);
+    }
+  });
+
+  it("finds the ball's entry and exit at the radii the construction states", () => {
+    const system = siSystem(ballOnly);
+    const eps = DIELECTRIC_CROSSING_EPS_REL * material.radius;
+    const entry = transportSolidBoundaryQueryCPU(
+      system,
+      [0, -1, 0],
+      [0, 1, 0],
+      false,
+      [0, -1, 0],
+      false,
+      eps,
+    );
+    expect(entry.kind).toBe("boundary");
+    expect(Math.abs(entry.t - (1 - BALL_RADIUS))).toBeLessThan(4 * eps);
+    expect(entry.normal[1]).toBeLessThan(-0.99);
+    const hit: Vec3 = [0, -1 + entry.t, 0];
+    const exit = transportSolidBoundaryQueryCPU(
+      system,
+      hit,
+      [0, 1, 0],
+      true,
+      hit,
+      true,
+      eps,
+    );
+    expect(exit.kind).toBe("boundary");
+    expect(Math.abs(exit.t - 2 * BALL_RADIUS)).toBeLessThan(4 * eps);
+    expect(exit.normal[1]).toBeGreaterThan(0.99);
+  });
+
+  it("THE MEMBERSHIP GATE changes the answer where the bound is merely loose", () => {
+    // A near-kissing arrangement at depth: the bound dips into the band at
+    // the tangency cusps with no surface there. Without the predicate the
+    // query reports those as crossings; with it, every reported crossing
+    // has membership flipping across it.
+    const c = authored({
+      arrangement: "oct6",
+      radiusFraction: 0.99,
+      seed: { size: 0.28 },
+      depth: 6,
+    });
+    const gated = siSystem(c);
+    const ungated: TransportFixtureSystem = {
+      estimate: gated.estimate,
+      stepScale: 1,
+      visibleRadius: 2,
+    };
+    const eps = DIELECTRIC_CROSSING_EPS_REL * material.radius;
+    const rng = mulberry32(0xc0ffee);
+    let phantomsRejected = 0;
+    let gatedCrossings = 0;
+    for (let i = 0; i < 400; i++) {
+      const origin: Vec3 = [2 * rng() - 1, 2 * rng() - 1, -1.8];
+      const dir: Vec3 = [0, 0, 1];
+      const a = transportSolidBoundaryQueryCPU(
+        ungated,
+        origin,
+        dir,
+        false,
+        origin,
+        false,
+        eps,
+      );
+      const b = transportSolidBoundaryQueryCPU(
+        gated,
+        origin,
+        dir,
+        false,
+        origin,
+        false,
+        eps,
+      );
+      if (b.kind === "boundary") {
+        gatedCrossings++;
+        // Every gated crossing is a real one: membership flips across it.
+        const p: Vec3 = [
+          origin[0] + dir[0] * b.t,
+          origin[1] + dir[1] * b.t,
+          origin[2] + dir[2] * b.t,
+        ];
+        expect(
+          gated.contains?.([
+            p[0] + dir[0] * 2 * eps,
+            p[1] + dir[1] * 2 * eps,
+            p[2] + dir[2] * 2 * eps,
+          ]),
+        ).toBe(true);
+      }
+      if (a.kind === "boundary" && (b.kind !== "boundary" || b.t > a.t + eps)) {
+        phantomsRejected++;
+      }
+    }
+    expect(gatedCrossings).toBeGreaterThan(20);
+    expect(phantomsRejected).toBeGreaterThan(0);
+  });
+
+  it("invents no crossing at a POLE, a CUSP or an exhausted fold", () => {
+    const c = authored({
+      arrangement: "oct6",
+      radiusFraction: 1,
+      seed: { size: 0.28 },
+      depth: 2,
+    });
+    const system = siSystem(c);
+    const eps = DIELECTRIC_CROSSING_EPS_REL * material.radius;
+    const centre = c.generators[0].center as unknown as Vec3;
+    // Straight at a generator centre: the bound decays toward it, so the
+    // march creeps and must terminate in a REFUSAL or a miss — never a
+    // crossing the ray can be marked inside of.
+    const len = Math.hypot(...centre);
+    const dir: Vec3 = [centre[0] / len, centre[1] / len, centre[2] / len];
+    const start: Vec3 = [-dir[0] * 1.6, -dir[1] * 1.6, -dir[2] * 1.6];
+    const pole = transportSolidBoundaryQueryCPU(
+      system,
+      start,
+      dir,
+      false,
+      start,
+      false,
+      eps,
+    );
+    if (pole.kind === "boundary") {
+      const p: Vec3 = [
+        start[0] + dir[0] * pole.t,
+        start[1] + dir[1] * pole.t,
+        start[2] + dir[2] * pole.t,
+      ];
+      expect(
+        system.contains?.([
+          p[0] + dir[0] * 2 * eps,
+          p[1] + dir[1] * 2 * eps,
+          p[2] + dir[2] * 2 * eps,
+        ]),
+      ).toBe(true);
+    }
+    // At a kissing tangency the estimate reaches 0 without membership. The
+    // gate must not read that as an interface.
+    const tangency: Vec3 = [
+      c.generators[0].center[0] - c.generators[0].radius,
+      0,
+      0,
+    ];
+    expect(system.contains?.(tangency)).toBe(false);
+    const cusp = transportSolidBoundaryQueryCPU(
+      system,
+      [tangency[0] - 0.2, 0, 0],
+      [1, 0, 0],
+      false,
+      [tangency[0] - 0.2, 0, 0],
+      false,
+      eps,
+    );
+    if (cusp.kind === "boundary") {
+      const p: Vec3 = [tangency[0] - 0.2 + cusp.t, 0, 0];
+      expect(system.contains?.([p[0] + 2 * eps, p[1], p[2]])).toBe(true);
+    }
+  });
+
+  it("traces a sphere-inversion glass path end to end with complete accounting", () => {
+    const system = siSystem(ballOnly);
+    const result = transportTraceCPU(
+      system,
+      [0, 0, -BALL_RADIUS],
+      [0, 0, 1],
+      DIELECTRIC_INITIAL_BRANCH_THETA,
+      material,
+      [0.6, 0.6, 0.6],
+      { maxProcessedPaths: 4096, maxInterfaces: 4096 },
+      (origin, dir, anchorPresent, anchorPoint, inside, eps) =>
+        transportSolidBoundaryQueryCPU(
+          system,
+          origin,
+          dir,
+          anchorPresent,
+          anchorPoint,
+          inside,
+          eps,
+        ),
+    );
+    // COMPLETE ACCOUNTING is the claim, not "complete": a trace that cuts
+    // weak branches at theta terminates `residual` and carries what it
+    // omitted, which is a resolved sample as long as the omission fits the
+    // per-sample budget. What must never happen is `unresolved` or
+    // `invalid` — an inside path with nowhere to go, or a refusal presented
+    // as background.
+    expect(["complete", "residual"]).toContain(result.status);
+    expect(result.failure).toBe(0);
+    expect(result.residual).toBeLessThanOrEqual(DIELECTRIC_ERROR_BUDGET);
+    expect(result.radiance.every((v) => Number.isFinite(v) && v >= 0)).toBe(
+      true,
+    );
+    expect(Math.max(...result.radiance)).toBeGreaterThan(0);
+  });
+
+  it("MEASURES the declared band's width in space against the sub-step guard", () => {
+    // The closed-solid field's gradient at a face is the SAFETY factor 0.9,
+    // so its band is 1.11·eps wide and four 2·eps sub-steps clear it. A
+    // certified BOUND is a different regime, and this is the figure the
+    // guard is qualified against for this family.
+    const c = authored({
+      arrangement: "oct6",
+      radiusFraction: 0.99,
+      seed: { size: 0.28 },
+      depth: 6,
+    });
+    const de = buildSphereInversionDE(c);
+    const field = (p: Vec3) => sphereInversionSignedDistance(de, p);
+    const eps = DIELECTRIC_CROSSING_EPS_REL * material.radius;
+    const rng = mulberry32(0xba2d);
+    let samples = 0;
+    let worstWidth = 0;
+    let sumWidth = 0;
+    for (let i = 0; i < 4000000 && samples < 400; i++) {
+      const p: Vec3 = [3 * rng() - 1.5, 3 * rng() - 1.5, 3 * rng() - 1.5];
+      const f = field(p);
+      if (!(Math.abs(f) < eps)) continue;
+      samples++;
+      const h = eps * 0.25;
+      const g: Vec3 = [
+        (field([p[0] + h, p[1], p[2]]) - field([p[0] - h, p[1], p[2]])) /
+          (2 * h),
+        (field([p[0], p[1] + h, p[2]]) - field([p[0], p[1] - h, p[2]])) /
+          (2 * h),
+        (field([p[0], p[1], p[2] + h]) - field([p[0], p[1], p[2] - h])) /
+          (2 * h),
+      ];
+      const m = Math.hypot(...g);
+      // Band width in SPACE for this sample: 2·eps / |grad f|.
+      const width = m > 1e-9 ? (2 * eps) / m : Infinity;
+      sumWidth += Math.min(width, 1e6);
+      if (width > worstWidth) worstWidth = width;
+    }
+    const mean = sumWidth / samples;
+    console.log(
+      `  sphere-inversion band width in space: mean ${(mean / eps).toFixed(2)}·eps,` +
+        ` worst ${(worstWidth / eps).toFixed(2)}·eps` +
+        ` over ${samples} band samples (the guard advances ${TRANSPORT_SHADOW_BAND_SUBSTEPS} × 2·eps)`,
+    );
+    expect(samples).toBeGreaterThan(100);
+    // The measurement is the point; what it must establish is that a fixed
+    // sub-step count is NOT the thing keeping the march honest here — the
+    // exact-membership exit is.
+    expect(worstWidth).toBeGreaterThan(
+      2 * eps * TRANSPORT_SHADOW_BAND_SUBSTEPS,
+    );
+  });
+
+  it("carries the 4D field through a posed slice at zero slab thickness", () => {
+    const c = authored({
+      arrangement: "cross8",
+      radiusFraction: 0.99,
+      seed: { size: 0.32 },
+      depth: 3,
+    });
+    const de = buildSphereInversionDE4(c);
+    const angle = 0.3;
+    const w0 = 0.1;
+    const lift = (p: Vec3): [number, number, number, number] => {
+      const co = Math.cos(angle);
+      const si = Math.sin(angle);
+      return [co * p[0] - si * w0, p[1], p[2], si * p[0] + co * w0];
+    };
+    const system: TransportFixtureSystem = {
+      estimate: (p) => sphereInversionSignedDistance4(de, lift(p)),
+      contains: (p) => sphereInversionContains4(de, lift(p)),
+      stepScale: 1,
+      visibleRadius: 2,
+    };
+    const eps = DIELECTRIC_CROSSING_EPS_REL * material.radius;
+    const rng = mulberry32(0x4d5e);
+    let crossings = 0;
+    for (let i = 0; i < 300; i++) {
+      const origin: Vec3 = [0.8 * (2 * rng() - 1), 0.8 * (2 * rng() - 1), -1.8];
+      const dir: Vec3 = [0, 0, 1];
+      const r = transportSolidBoundaryQueryCPU(
+        system,
+        origin,
+        dir,
+        false,
+        origin,
+        false,
+        eps,
+      );
+      expect(["boundary", "miss", "refused"]).toContain(r.kind);
+      if (r.kind !== "boundary") continue;
+      crossings++;
+      const p: Vec3 = [origin[0], origin[1], origin[2] + r.t];
+      // The displayed point's membership flips across the crossing: the 4D
+      // field read in the slice is an in-slice boundary query.
+      expect(system.contains?.([p[0], p[1], p[2] + 2 * eps])).toBe(true);
+      expect(Math.hypot(...r.normal)).toBeGreaterThan(0.99);
+    }
+    expect(crossings).toBeGreaterThan(20);
+  });
+});
