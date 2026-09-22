@@ -368,6 +368,82 @@ export function sphereInversionHitInfo(
   return out;
 }
 
+/**
+ * The SIGNED field: {@link estimateSphereInversionDistance} outside, and a
+ * CERTIFIED INTERIOR CLEARANCE inside — a lower bound on the distance from a
+ * member to the complement of `O_D`. The optical transport needs a sign to
+ * march a refracted ray (`docs/surface-dielectric-transport.md`'s scope wall:
+ * a boundary query "can find a boundary only from OUTSIDE, so a refracted
+ * child — which is what glass IS — either misses the domain without a
+ * crossing or crawls its anchor suppression into the step cap"), and the
+ * unsigned estimator's `<= 0` is a MEMBER SIGNAL in FOLDED coordinates, not
+ * a distance in the query's own.
+ *
+ * THE INTERIOR VALUE IS EXACT IN FOLDED COORDINATES AND EXACTLY TRANSPORTED
+ * OUT, so this adds no new arithmetic and no new approximation:
+ *
+ *   - `K ∩ F` is an intersection of generalized balls whose member SDFs are
+ *     exact, and inside an intersection the distance to the complement is
+ *     `min_i(−sdf_i) = −max_i(sdf_i)` — which is exactly `−d`, the value the
+ *     unsigned estimator already computed.
+ *   - Inversion carries a ball to a ball EXACTLY (`inversion.ts`'s identity),
+ *     so the folded clearance ball transports to a clearance ball at the
+ *     query. Writing the image out — for folded clearance `rho` at distance
+ *     `s` from the inversion centre, the clearance at the unfolded point (at
+ *     `r = R²/s`) is `R²·rho / (s·(s + rho))` = `r²·rho / (R² + r·rho)` —
+ *     gives `inversionDistanceLowerBound`'s expression TERM FOR TERM. The
+ *     full-ball law and the empty-ball law are the SAME MAP, so the interior
+ *     clearance rides {@link transportSphereInversionBound} unchanged, over
+ *     the same `foldRadius`/`foldRadius2` the fold just wrote.
+ *
+ * It is CONSERVATIVE at the seams, deliberately: the clearance is the
+ * containing PIECE's, and the union may reach further past a generator
+ * sphere where the next copy continues. A march understeps there; it never
+ * oversteps (the closed-solid backend's own "the deepest containing part's
+ * certified depth" reading).
+ *
+ * THE SIGN AGREES WITH {@link sphereInversionContains} BY CONSTRUCTION, not
+ * by measurement, and the argument is the fold's: at DOMAIN the folded point
+ * lies outside EVERY generator ball — the fold inverts through any ball but
+ * the parent, and inversion through the parent put the point outside it — so
+ * every `copies[j]` term (each contained in its own ball) is positive and the
+ * only term that can be non-positive is the domain seed, which is exactly
+ * what membership tests. At EXHAUSTED the point is inside some non-parent
+ * ball, which the seed's `ext(B_i)` members make positive, and that ball's
+ * own copy term is skipped for want of budget. A POLE returns 0. The status
+ * guard below is therefore unreachable, and is kept because a silent sign
+ * disagreement is the one defect this field must not have.
+ *
+ * THE SIGN IS CUTOFF-INDEPENDENT, which is worth stating because the obvious
+ * worry is that it is not: the cutoff's early exit returns a small POSITIVE
+ * decision value, so an exit taken before a negative term was reached would
+ * invert the sign. It cannot happen. A member's negative term is the DOMAIN
+ * SEED, which is the FIRST term evaluated, and it short-circuits (`done`)
+ * ahead of every cutoff test; and at DOMAIN no other term can be negative
+ * anyway, by the fold argument above. A member therefore returns the same
+ * value at every cutoff, pinned in the tests.
+ *
+ * THIS ENTRY STILL TAKES NO CUTOFF, because one would buy nothing: the
+ * interior branch is a single table scan with no search to shorten, and the
+ * exterior branch IS {@link estimateSphereInversionDistance}, which a caller
+ * wanting the early exit should call directly.
+ */
+export function sphereInversionSignedDistance(
+  de: SphereInversionDE,
+  p: Vec3,
+): number {
+  const d = evaluate3(de, p, 0, null);
+  if (d >= 0) return d;
+  if (foldStatus !== SPHERE_INVERSION_FOLD_DOMAIN) return d;
+  const clearance = transportSphereInversionBound(
+    de.foldRadius,
+    de.foldRadius2,
+    foldK,
+    -d,
+  );
+  return clearance > 0 ? -clearance : 0;
+}
+
 /** MEMBERSHIP in `O_D`: the fold reaches `F` and the folded point lies in
  * `K ∩ F`. Never a threshold on a distance. */
 export function sphereInversionContains(

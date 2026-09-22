@@ -309,6 +309,37 @@ export function explicitOrbitDistance(
   return best;
 }
 
+/**
+ * The explicit INTERIOR CLEARANCE reference: the largest inscribed radius
+ * among the pieces that contain `p`, or a negative value when none does.
+ *
+ * A piece is an intersection of generalized balls, so the distance from an
+ * interior point to ITS complement is `min_i(−sdf_i)` exactly. The union's
+ * clearance is at least the best containing piece's — a union only ever
+ * reaches further — so this is a sound LOWER bound on the true clearance and
+ * the right side to test a conservative field against: a field that reads
+ * MORE clearance than this has overshot something real.
+ *
+ * It is not the true clearance of the union, and must not be read as one: at
+ * a seam where two pieces meet, both pieces' inscribed radii are small while
+ * the union continues past the shared boundary. That gap is the slack a
+ * conservative estimator is allowed, not an error in either.
+ */
+export function explicitOrbitClearance(
+  pieces: readonly OrbitPiece[],
+  p: readonly number[],
+): number {
+  let best = -1;
+  for (const piece of pieces) {
+    if (!pieceContains(piece, p)) continue;
+    let inner = Infinity;
+    for (const b of piece.members)
+      inner = Math.min(inner, -oracleMemberSdf(b, p));
+    if (inner > best) best = inner;
+  }
+  return best;
+}
+
 /** Explicit membership in the union of `pieces`. */
 export function explicitOrbitContains(
   pieces: readonly OrbitPiece[],

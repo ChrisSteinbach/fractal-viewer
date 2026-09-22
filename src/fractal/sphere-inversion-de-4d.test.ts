@@ -14,15 +14,18 @@ import {
   estimateSphereInversionDistance,
   sphereInversionContains,
   sphereInversionHitInfo,
+  sphereInversionSignedDistance,
 } from "./sphere-inversion-de";
 import {
   buildSphereInversionDE4,
   estimateSphereInversionDistance4,
   sphereInversionContains4,
   sphereInversionHitInfo4,
+  sphereInversionSignedDistance4,
 } from "./sphere-inversion-de-4d";
 import {
   enumerateSeedOrbit,
+  explicitOrbitClearance,
   explicitOrbitDistance,
   invertPoint,
   nearestPointOnPiece,
@@ -248,6 +251,20 @@ describe("the flat embedding reduces to the 3D estimator", () => {
         estimateSphereInversionDistance(de3, p),
       );
     }
+  });
+
+  it("matches the 3D SIGNED field bit for bit at w = 0", () => {
+    // The interior half has to carry the flat reduction too, or a 4D scene
+    // that is a lift of a 3D one would render a different optical solid.
+    const de3 = buildSphereInversionDE(threeD);
+    const de4 = buildSphereInversionDE4(flat);
+    let interior = 0;
+    for (const p of points()) {
+      const f3 = sphereInversionSignedDistance(de3, p);
+      if (f3 < 0) interior++;
+      expect(sphereInversionSignedDistance4(de4, [...p, 0] as Vec4)).toBe(f3);
+    }
+    expect(interior).toBeGreaterThan(50);
   });
 
   it("matches 3D membership and attribution at w = 0", () => {
@@ -569,5 +586,191 @@ describe("the cutoff contract and attribution (4D)", () => {
       lastGenerator: 2,
       seedMember: 0,
     });
+  });
+});
+
+/** A random unit 3-vector, for the displayed-slice arm below. */
+function randomUnit3(rng: () => number): Vec3 {
+  for (;;) {
+    const v: Vec3 = [2 * rng() - 1, 2 * rng() - 1, 2 * rng() - 1];
+    const l = Math.hypot(...v);
+    if (l > 1e-3 && l <= 1) return [v[0] / l, v[1] / l, v[2] / l];
+  }
+}
+
+/** 4D points INSIDE the orbit, near-boundary ones included. Uniform
+ * rejection over the bounding ball is hopeless here — a 4D ball's volume
+ * falls off as the fourth power and the orbit is thin — so this samples
+ * inside each PIECE's own smallest bounding member and tests membership,
+ * then walks most of the way to that piece's nearest wall, which is where a
+ * clearance claim is worth testing at all. */
+function interiorQueries4(
+  c: SphereInversionConstruction,
+  count: number,
+  seed: number,
+): Vec4[] {
+  const de = buildSphereInversionDE4(c);
+  const pieces = enumerateSeedOrbit(c);
+  const rng = mulberry32(seed);
+  const out: Vec4[] = [];
+  for (let i = 0; i < 400000 && out.length < count; i++) {
+    const piece = pieces[Math.floor(rng() * pieces.length)];
+    let centre: number[] | null = null;
+    let radius = Infinity;
+    for (const b of piece.members) {
+      if (!b.complement && b.radius < radius) {
+        radius = b.radius;
+        centre = b.center;
+      }
+    }
+    if (!centre || !Number.isFinite(radius)) continue;
+    const hull = centre;
+    const u = randomUnit4(rng);
+    const r = radius * Math.pow(rng(), 0.25);
+    const p = [0, 1, 2, 3].map((a) => hull[a] + u[a] * r) as Vec4;
+    if (!sphereInversionContains4(de, p)) continue;
+    out.push(p);
+    if (out.length >= count) break;
+    const near = nearestPointOnPiece(piece, p);
+    const wall = near.point;
+    if (!wall || !(near.distance > 0)) continue;
+    const t = 0.02 + 0.96 * rng();
+    const q = [0, 1, 2, 3].map((a) => p[a] + t * (wall[a] - p[a])) as Vec4;
+    if (sphereInversionContains4(de, q)) out.push(q);
+  }
+  return out.slice(0, count);
+}
+
+const SIGNED_FIXTURES_4D: [string, SphereInversionAuthored][] = [
+  [
+    "cross8 KISSING ball .28, depth 3",
+    {
+      arrangement: "cross8",
+      radiusFraction: 1,
+      seed: { size: 0.28 },
+      depth: 3,
+    },
+  ],
+  [
+    "tess16 near-kissing ball .5, depth 2",
+    {
+      arrangement: "tess16",
+      radiusFraction: 0.99,
+      seed: { size: 0.5 },
+      depth: 2,
+    },
+  ],
+  [
+    "cross8 shell, depth 2",
+    { arrangement: "cross8", seed: { kind: "shell" }, depth: 2 },
+  ],
+];
+
+describe("sphereInversionSignedDistance4", () => {
+  for (const [label, authored] of SIGNED_FIXTURES_4D) {
+    it(`${label}: is the shipped 4D estimator BIT FOR BIT outside`, () => {
+      const c = construction(authored);
+      const de = buildSphereInversionDE4(c);
+      let outside = 0;
+      for (const p of queries4(c, 400, 0x51a)) {
+        const unsigned = estimateSphereInversionDistance4(de, p, 0);
+        if (!(unsigned > 0)) continue;
+        outside++;
+        expect(Object.is(sphereInversionSignedDistance4(de, p), unsigned)).toBe(
+          true,
+        );
+      }
+      expect(outside).toBeGreaterThan(80);
+    });
+
+    it(`${label}: its sign agrees with 4D membership`, () => {
+      const c = construction(authored);
+      const de = buildSphereInversionDE4(c);
+      const sample = [
+        ...queries4(c, 400, 0x51b),
+        ...interiorQueries4(c, 150, 0x51c),
+      ];
+      let interior = 0;
+      for (const p of sample) {
+        const f = sphereInversionSignedDistance4(de, p);
+        const member = sphereInversionContains4(de, p);
+        if (f < 0) interior++;
+        if (f !== 0) expect(f < 0).toBe(member);
+      }
+      expect(interior).toBeGreaterThan(40);
+    });
+
+    it(`${label}: never claims more interior clearance than the explicit orbit`, () => {
+      const c = construction(authored);
+      const de = buildSphereInversionDE4(c);
+      const pieces = enumerateSeedOrbit(c);
+      let checked = 0;
+      for (const p of interiorQueries4(c, 200, 0x51d)) {
+        const f = sphereInversionSignedDistance4(de, p);
+        if (!(f < 0)) continue;
+        checked++;
+        expect(-f).toBeLessThanOrEqual(
+          explicitOrbitClearance(pieces, p) + 1e-12,
+        );
+      }
+      expect(checked).toBeGreaterThan(80);
+    });
+
+    it(`${label}: its interior value is a STEPPING bound in 4D`, () => {
+      const c = construction(authored);
+      const de = buildSphereInversionDE4(c);
+      const rng = mulberry32(0x51e);
+      let stepped = 0;
+      for (const p of interiorQueries4(c, 150, 0x51f)) {
+        const f = sphereInversionSignedDistance4(de, p);
+        if (!(f < 0)) continue;
+        const d = randomUnit4(rng);
+        const q = [0, 1, 2, 3].map((a) => p[a] + d[a] * -f) as Vec4;
+        stepped++;
+        expect(sphereInversionContains4(de, q)).toBe(true);
+      }
+      expect(stepped).toBeGreaterThan(40);
+    });
+  }
+
+  it("the 4D field read through a POSED SLICE bounds the in-slice clearance, at zero slab thickness", () => {
+    // The module's own reason: a slice's distance is at least the 4D
+    // distance, and the same inequality holds for clearance — a 4D
+    // clearance ball meets the slice in a clearance ball OF the slice. So a
+    // host marching the displayed 3D slice reads this field directly. Tested
+    // at the identity slice and at a posed one, against 3D membership of the
+    // displayed point.
+    const c = construction({
+      arrangement: "cross8",
+      radiusFraction: 0.99,
+      seed: { size: 0.32 },
+      depth: 3,
+    });
+    const de = buildSphereInversionDE4(c);
+    const rng = mulberry32(0x521);
+    for (const [angle, w0] of [
+      [0, 0],
+      [0.3, 0.1],
+    ] as const) {
+      let interior = 0;
+      for (let i = 0; i < 200000 && interior < 60; i++) {
+        const u = randomUnit3(rng);
+        const p = u.map(
+          (x) => x * de.boundingRadius * Math.cbrt(rng()),
+        ) as Vec3;
+        const q = liftXW(p, angle, w0);
+        const f = sphereInversionSignedDistance4(de, q);
+        if (!(f < 0)) continue;
+        interior++;
+        // Step |f| WITHIN THE SLICE: the displayed point stays a member, so
+        // the 4D clearance is a sound in-slice clearance.
+        const d = randomUnit3(rng);
+        const stepped = [0, 1, 2].map((a) => p[a] + d[a] * -f) as Vec3;
+        expect(sphereInversionContains4(de, liftXW(stepped, angle, w0))).toBe(
+          true,
+        );
+      }
+      expect(interior).toBeGreaterThan(40);
+    }
   });
 });

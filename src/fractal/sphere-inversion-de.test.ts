@@ -15,13 +15,16 @@ import {
   estimateSphereInversionDistance,
   sphereInversionContains,
   sphereInversionHitInfo,
+  sphereInversionSignedDistance,
 } from "./sphere-inversion-de";
 import {
   enumerateSeedOrbit,
+  explicitOrbitClearance,
   explicitOrbitContains,
   explicitOrbitDistance,
   invertPoint,
   nearestPointOnPiece,
+  pieceContains,
 } from "./sphere-inversion-oracle";
 import type { Vec3 } from "./types";
 
@@ -499,5 +502,176 @@ describe("boundingRadius", () => {
         }
       }
     }
+  });
+});
+
+/** Points INSIDE the orbit, deliberately including near-boundary ones: the
+ * interior is a small fraction of the bounding ball, so rejection sampling
+ * alone lands almost nowhere near a wall — which is exactly where a
+ * clearance claim is worth testing. Each accepted member also contributes a
+ * point walked most of the way toward the nearest wall of the piece that
+ * CONTAINS it. */
+function interiorQueries(
+  c: SphereInversionConstruction,
+  count: number,
+  seed: number,
+): Vec3[] {
+  const de = buildSphereInversionDE(c);
+  const pieces = enumerateSeedOrbit(c);
+  const rng = mulberry32(seed);
+  const out: Vec3[] = [];
+  for (let i = 0; i < 400000 && out.length < count; i++) {
+    const u = randomUnit(rng);
+    const p = u.map((x) => x * de.boundingRadius * Math.cbrt(rng())) as Vec3;
+    if (!sphereInversionContains(de, p)) continue;
+    out.push(p);
+    if (out.length >= count) break;
+    const holder = pieces.find((piece) => pieceContains(piece, p));
+    if (!holder) continue;
+    const near = nearestPointOnPiece(holder, p);
+    const wall = near.point;
+    if (!wall || !(near.distance > 0)) continue;
+    const t = 0.02 + 0.96 * rng();
+    const q = [0, 1, 2].map((a) => p[a] + t * (wall[a] - p[a])) as Vec3;
+    if (sphereInversionContains(de, q)) out.push(q);
+  }
+  return out.slice(0, count);
+}
+
+describe("sphereInversionSignedDistance", () => {
+  for (const [label, authored] of ORACLE_FIXTURES) {
+    it(`${label}: is the shipped estimator BIT FOR BIT outside`, () => {
+      const c = construction(authored);
+      const de = buildSphereInversionDE(c);
+      let outside = 0;
+      for (const p of queries(c, 600, 11)) {
+        const unsigned = estimateSphereInversionDistance(de, p, 0);
+        if (!(unsigned > 0)) continue;
+        outside++;
+        expect(Object.is(sphereInversionSignedDistance(de, p), unsigned)).toBe(
+          true,
+        );
+      }
+      expect(outside).toBeGreaterThan(100);
+    });
+
+    it(`${label}: its sign agrees with membership, never a threshold`, () => {
+      const c = construction(authored);
+      const de = buildSphereInversionDE(c);
+      const sample = [...queries(c, 600, 12), ...interiorQueries(c, 200, 13)];
+      let interior = 0;
+      for (const p of sample) {
+        const f = sphereInversionSignedDistance(de, p);
+        const member = sphereInversionContains(de, p);
+        if (f < 0) interior++;
+        // The zero itself belongs to neither side (a pole, a cusp, a wall).
+        if (f !== 0) expect(f < 0).toBe(member);
+      }
+      expect(interior).toBeGreaterThan(50);
+    });
+
+    it(`${label}: never claims more interior clearance than the explicit orbit`, () => {
+      const c = construction(authored);
+      const de = buildSphereInversionDE(c);
+      const pieces = enumerateSeedOrbit(c);
+      let checked = 0;
+      for (const p of interiorQueries(c, 300, 14)) {
+        const f = sphereInversionSignedDistance(de, p);
+        if (!(f < 0)) continue;
+        checked++;
+        // The reference is the best CONTAINING piece's inscribed radius, a
+        // sound lower bound on the union's own clearance; a field reading
+        // more than the union can offer would overstep a real wall.
+        expect(-f).toBeLessThanOrEqual(
+          explicitOrbitClearance(pieces, p) + 1e-12,
+        );
+      }
+      expect(checked).toBeGreaterThan(100);
+    });
+
+    it(`${label}: its interior value is a STEPPING bound — a step of |f| stays inside`, () => {
+      const c = construction(authored);
+      const de = buildSphereInversionDE(c);
+      const rng = mulberry32(15);
+      let stepped = 0;
+      for (const p of interiorQueries(c, 200, 16)) {
+        const f = sphereInversionSignedDistance(de, p);
+        if (!(f < 0)) continue;
+        const d = randomUnit(rng);
+        const q = [0, 1, 2].map((a) => p[a] + d[a] * -f) as Vec3;
+        stepped++;
+        expect(sphereInversionContains(de, q)).toBe(true);
+      }
+      expect(stepped).toBeGreaterThan(50);
+    });
+  }
+
+  it("a member's value is the same at every cutoff: the sign cannot be shortened away", () => {
+    const c = construction({
+      arrangement: "oct6",
+      seed: { size: 0.28 },
+      depth: 3,
+    });
+    const de = buildSphereInversionDE(c);
+    let members = 0;
+    for (const p of interiorQueries(c, 200, 17)) {
+      const zero = estimateSphereInversionDistance(de, p, 0);
+      expect(zero).toBeLessThanOrEqual(0);
+      members++;
+      for (const cutoff of [1e-6, 1e-3, 0.1, 1]) {
+        expect(
+          Object.is(estimateSphereInversionDistance(de, p, cutoff), zero),
+        ).toBe(true);
+      }
+    }
+    expect(members).toBeGreaterThan(100);
+  });
+
+  it("returns 0 at a pole and a positive bound where the budget ran out: neither is interior", () => {
+    const c = construction({
+      arrangement: "oct6",
+      seed: { size: 0.28 },
+      depth: 1,
+    });
+    const de = buildSphereInversionDE(c);
+    const centre = c.generators[0].center as unknown as Vec3;
+    expect(sphereInversionSignedDistance(de, [...centre] as Vec3)).toBe(0);
+    expect(sphereInversionContains(de, [...centre] as Vec3)).toBe(false);
+    // Spend the budget: a point deep inside a second ball after one fold.
+    let exhausted = 0;
+    for (const p of queries(c, 2000, 18)) {
+      const hit = sphereInversionHitInfo(de, p, 0);
+      if (hit.status !== SPHERE_INVERSION_FOLD_EXHAUSTED) continue;
+      exhausted++;
+      expect(sphereInversionSignedDistance(de, p)).toBeGreaterThan(0);
+      expect(sphereInversionContains(de, p)).toBe(false);
+    }
+    expect(exhausted).toBeGreaterThan(0);
+  });
+
+  it("carries a clearance ball through an inversion that SWALLOWS the centre, without inventing one", () => {
+    // A seed grown across the generators puts interior points close to a
+    // generator centre, so the folded clearance ball reaches it and
+    // `inversion.ts`'s signed Mobius factor is the degenerate case. The
+    // transport must stay finite, stay conservative, and keep the sign.
+    const c = construction({
+      arrangement: "oct6",
+      radiusFraction: 0.93,
+      seed: { size: 1.15 },
+      depth: 2,
+    });
+    const de = buildSphereInversionDE(c);
+    const pieces = enumerateSeedOrbit(c);
+    let deep = 0;
+    for (const p of interiorQueries(c, 400, 19)) {
+      const f = sphereInversionSignedDistance(de, p);
+      if (!(f < 0)) continue;
+      const hit = sphereInversionHitInfo(de, p, 0);
+      if (hit.foldDepth < 1) continue;
+      deep++;
+      expect(Number.isFinite(f)).toBe(true);
+      expect(-f).toBeLessThanOrEqual(explicitOrbitClearance(pieces, p) + 1e-12);
+    }
+    expect(deep).toBeGreaterThan(10);
   });
 });

@@ -345,6 +345,42 @@ export function sphereInversionHitInfo4(
   return out;
 }
 
+/**
+ * The SIGNED field, one dimension up — `sphere-inversion-de.ts`'s
+ * {@link sphereInversionSignedDistance} with `R^4` for `R^3`. Every part of
+ * that entry's argument is dimension-free and is NOT restated here: the
+ * folded clearance is the same exact `−max_i(sdf_i)` over an intersection of
+ * generalized balls, the transport out is the same empty-ball law (which IS
+ * the full-ball law), the sign agrees with membership by the same fold
+ * argument, and the sign is cutoff-independent for the same reason (this
+ * entry takes no cutoff for the same reason either).
+ *
+ * WHAT THE DIMENSION ADDS IS ONE SENTENCE, and it is the module doc's own:
+ * "A slice's distance is at least the 4D distance, so this certified 4D
+ * bound is a certified in-slice bound at every rotor and offset." The
+ * identical inequality holds for the interior — a 4D clearance ball
+ * intersected with the slice is a clearance ball IN the slice — so a host
+ * marching the displayed 3D slice may read this field directly, with no
+ * slice-aware correction and no new geometry. The slab stays REFUSED at any
+ * thickness (module doc): the host holds `halfExtent` at zero for this
+ * family, in the signed arm exactly as in the unsigned one.
+ */
+export function sphereInversionSignedDistance4(
+  de: SphereInversionDE,
+  p: Vec4,
+): number {
+  const d = evaluate4(de, p, 0, null);
+  if (d >= 0) return d;
+  if (foldStatus !== SPHERE_INVERSION_FOLD_DOMAIN) return d;
+  const clearance = transportSphereInversionBound(
+    de.foldRadius,
+    de.foldRadius2,
+    foldK,
+    -d,
+  );
+  return clearance > 0 ? -clearance : 0;
+}
+
 /** MEMBERSHIP in `O_D`: the fold reaches `F` and the folded point lies in
  * `K ∩ F`. Never a threshold on a distance. */
 export function sphereInversionContains4(
