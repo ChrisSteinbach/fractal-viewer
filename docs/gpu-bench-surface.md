@@ -368,7 +368,8 @@ What gates:
 - **Compile matrix.** Both cores in eval, the app's unproject march with
   `statusOut`, and shade in four forms: plain, finish, ground plane + finish, and
   lighting rig.
-- **Eval agreement**, eleven rows of 700 queries each:
+- **Eval agreement**, twelve rows of 700 queries each (the twelfth appended
+  2026-09-22):
   - The query mix is 300 points uniform in the row's query-space ball, 250
     deep-word points (a point just off a seed sphere, carried through a random
     reduced word of length up to six) and 150 points a CPU sphere tracer
@@ -422,6 +423,32 @@ MEASURED on 2026-09-15:
 | `si600Medallion4@WKISS`        | 4D   | 1.10e-6 | 1.25e-7 (675)                            |         0 | 41 / 122 / 324 (20 / 61 / 162)   | 0 of 675               |
 | `si600Medallion4@XW.4YW.3ZW.2` | 4D   | 1.13e-6 | 2.14e-7 (681)                            |         0 | 24 / 132 / 371 (12 / 66 / 185)   | 0 of 681               |
 | `si600Snowflake4@W.06`         | 4D   | 1.09e-6 | 5.87e-8 (694)                            |         0 | 50 / 0 / 662 (25 / 0 / 331)      | 0 of 694               |
+
+**Appended 2026-09-22: `siIcosidodec30Star3`**, the Icosidodecahedral Star
+preset's construction (icosidodec30, rf .99, ball .64, D8): 30 generators,
+past both the old 12-generator 3D cap and the WebGL fragment arm's 29. The
+first 3D row at a generator count no earlier row reached, so it is the one
+that exercises the kernel's per-eval `gd` scratch and the unit-arrangement
+search at 30. Measured on the AMD box (RX 7900 XTX, `:0`, radeonsi, WebGPU
+`amd rdna-3`, `software=false`), `quiet=YES`,
+`--surface-sphere-inversion-only=1`, build on the preset branch:
+
+| Row                   | Core | maxAbs  | f32 overshoot before the slack (queries) | signFlips | k≥3 / copy / gap (floors)    | attribution mismatches |
+| --------------------- | ---- | ------- | ---------------------------------------- | --------: | ---------------------------- | ---------------------- |
+| `siIcosidodec30Star3` | 3D   | 1.08e-6 | 5.90e-8 (463)                            |        79 | 172 / 1 / 337 (86 / 0 / 168) | 0 of 463               |
+
+`fail = 0`, no one-sided failures, 0 generation or seed mismatches. Its 79
+sign flips are three times any earlier row's (26 at most). They are disclosed
+and never gate: a flip is a sign disagreement on a query at or below zero,
+the folded-coordinate member signal, not a distance. This row has the fewest queries both sides call positive (463, against
+547–694; 542 are CPU-positive), so more of its 700 queries sit at the member
+boundary, where f32 and f64 can split on the sign.
+The copy floor is 0, the ball rows' convention, where the row measures a
+single copy win. Eval costs 0.037 µs/query against the 6-generator pearls'
+0.036 in the same run, so 30 generators do not cost more per query here. The
+generator-count cost sweep is a separate measurement and not this row's.
+The other eleven rows reran on the same device with `fail = 0`, 0 one-sided
+failures and 0 attribution mismatches.
 
 All rows have `fail = 0` and no one-sided failures. On every CPU-positive query
 `gpu − cpu64 <= 0`, so the plan's stricter form of the gate holds as well as
