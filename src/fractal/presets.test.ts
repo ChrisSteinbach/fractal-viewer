@@ -842,9 +842,13 @@ describe("PRESET_SPHERE_INVERSIONS", () => {
   it("carries a block only for the sphere-inversion showcases", () => {
     expect(blockPresets.sort()).toEqual([
       "inversionCubePearls",
+      "inversionDodecaWindows",
+      "inversionIcosidodecaStar",
       "inversionLace",
       "inversionMedallions4",
       "inversionPearls",
+      "inversionRhombiLace",
+      "inversionTetraFrame",
       "inversionVault",
       "inversionVault4",
     ]);

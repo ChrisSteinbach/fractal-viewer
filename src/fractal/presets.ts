@@ -2528,6 +2528,10 @@ const PRESETS = {
   inversionCubePearls: sierpinskiTetrahedron,
   inversionVault: sierpinskiTetrahedron,
   inversionLace: sierpinskiTetrahedron,
+  inversionTetraFrame: sierpinskiTetrahedron,
+  inversionDodecaWindows: sierpinskiTetrahedron,
+  inversionRhombiLace: sierpinskiTetrahedron,
+  inversionIcosidodecaStar: sierpinskiTetrahedron,
   inversionVault4: sierpinskiTetrahedron,
   inversionMedallions4: sierpinskiTetrahedron,
   // The finite-solid family's GLASS showcases — the dielectric study's
@@ -2677,6 +2681,10 @@ export const PRESET_RENDER_HINTS: Partial<
   inversionCubePearls: "surface",
   inversionVault: "surface",
   inversionLace: "surface",
+  inversionTetraFrame: "surface",
+  inversionDodecaWindows: "surface",
+  inversionRhombiLace: "surface",
+  inversionIcosidodecaStar: "surface",
   inversionVault4: "surface",
   inversionMedallions4: "surface",
 };
@@ -3042,6 +3050,45 @@ export const PRESET_SPHERE_INVERSIONS: Partial<
     seed: { kind: "shell", size: 1, thickness: 0.03 },
     depth: 6,
   }),
+  // THE AUTHORED-SETS LOOK STUDY'S FOUR (docs/sphere-inversion-family.md).
+  // Each ball seed is the study's sizing rule, 0.93 of the central void
+  // `1 − 0.99·tangentRadius` (the rule that reproduces Kissing Pearls' .28),
+  // rounded to the panel's hundredths.
+  // The tetrahedron's four large generators: a ball in the narrow void,
+  // pearled into a triangular Sierpinski frame of lace, the registry's one
+  // new silhouette, seen down a vertex axis.
+  inversionTetraFrame: () => ({
+    arrangement: "tetra4",
+    radiusFraction: 0.99,
+    seed: { kind: "ball", size: 0.18 },
+    depth: 8,
+  }),
+  // The dodecahedral lace shell: the unit shell cut by twenty near-kissing
+  // generators into pentagonal windows, each holding a three-fold rosette.
+  inversionDodecaWindows: () => ({
+    arrangement: "dodec20",
+    radiusFraction: 0.99,
+    seed: { kind: "shell", size: 1, thickness: 0.03 },
+    depth: 6,
+  }),
+  // The rhombicuboctahedron's twenty-four generators around a large ball:
+  // four-fold lace crosses in the square windows, down a three-fold axis.
+  inversionRhombiLace: () => ({
+    arrangement: "rhombicuboct24",
+    radiusFraction: 0.99,
+    seed: { kind: "ball", size: 0.6 },
+    depth: 8,
+  }),
+  // The icosidodecahedron's thirty generators (ico12's edge midpoints): a
+  // pentagonal lace frame down a five-fold axis. Thirty is one past the
+  // WebGL fragment arm's block ceiling, so this is the family's one 3D
+  // showcase that renders on WebGPU compute only.
+  inversionIcosidodecaStar: () => ({
+    arrangement: "icosidodec30",
+    radiusFraction: 0.99,
+    seed: { kind: "ball", size: 0.64 },
+    depth: 8,
+  }),
   // The native 4D subject: the 600-cell's 120 hyperspheres cutting a
   // hypershell, seen from inside at an off-centre slice.
   inversionVault4: () => ({
@@ -3113,6 +3160,22 @@ export const PRESET_VIEWS: Partial<Record<Preset, PresetView>> = {
   },
   inversionLace: {
     camera: { eye: [1.2, 0.87, 1.42], target: [0, 0, 0], fov: 62 },
+  },
+  // The look study's four, chosen from 32 settled real-driver frames (three
+  // symmetry axes and an oblique, two radii each; the family doc's Presets
+  // section). Axis views where the symmetry IS the subject, the oblique
+  // where it shows more windows.
+  inversionTetraFrame: {
+    camera: { eye: [0.78, 0.78, 0.78], target: [0, 0, 0], fov: 62 },
+  },
+  inversionDodecaWindows: {
+    camera: { eye: [1.4, 1.02, 1.66], target: [0, 0, 0], fov: 62 },
+  },
+  inversionRhombiLace: {
+    camera: { eye: [1.21, 1.21, 1.21], target: [0, 0, 0], fov: 62 },
+  },
+  inversionIcosidodecaStar: {
+    camera: { eye: [0, 1.1, 1.79], target: [0, 0, 0], fov: 62 },
   },
   inversionVault4: {
     // From outside, obliquely over the cut: the rim, the bowl's curvature
