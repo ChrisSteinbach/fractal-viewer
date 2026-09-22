@@ -2304,3 +2304,44 @@ and the posed-slice arm at zero slab thickness, where a step of `|f|` taken
 WITHIN the slice keeps the displayed point a member — the in-slice reading the
 module doc's inequality licenses. The degenerate Möbius case (a clearance ball
 that swallows an inversion centre) has its own fixture.
+
+### The f64 transport twin (2026-09-22)
+
+The twin's boundary query, medium cross-check and shadow visibility read the
+signed field in both dimensions, through ONE addition to
+`surface-transport-fixture.ts` rather than a second copy of either march:
+`TransportFixtureSystem.contains`, the family's exact membership predicate.
+Absent — every closed-solid and estimator caller — both marches run their
+existing path, and the twenty pre-existing transport tests are unchanged.
+
+THE MEMBERSHIP GATE is what the predicate buys, and it is the look gate's
+finding made production. A band test `|f| < eps` is a boundary test for a
+signed DISTANCE; for a certified BOUND it fires wherever the bound is merely
+loose, and a near-kissing arrangement puts a near-cusp at every tangency where
+the bound reaches ~0 with no surface there. So a crossing is accepted only
+where membership actually FLIPS across the landing; a phantom costs steps on
+the same budget, never a crossing. The medium cross-check asks the predicate
+too, rather than the sign of a loose bound, and the shadow march's
+stride-crossed-the-band branch likewise.
+
+THE BAND'S WIDTH IN SPACE IS THE MEASURED FIGURE the sub-step guard is
+qualified against, and it is a different regime from the closed-solid field's.
+That field is SAFETY-scaled, so its gradient at a face is 0.9 and its declared
+band is 1.11·eps wide — comfortably inside four 2·eps sub-steps. This field's
+gradient falls where the transport compresses: measured over 400 band samples
+on `oct6` at radius fraction 0.99, seed 0.28, depth 6, the band is **3.10·eps
+wide on average and 42.63·eps at worst** — five times the guard's whole reach
+at the mean-worst end, and thirty-eight times the closed-solid width. Raising
+the count is not the fix and the constant stays at four: what ends the advance
+honestly is the exact-membership exit beside it, and the march's own budget
+behind that. `TRANSPORT_SHADOW_BAND_SUBSTEPS` carries the reasoning.
+
+THE ANALYTIC CONTROL is independent of both the twin and the field: a depth-0
+construction on `oct6` whose generators reach in to 0.3 and never touch a seed
+of radius 0.28, so `K ∩ F` is the seed ball alone and a normal-incidence
+shadow ray pays exactly `(1 − F0)²` and Beer over the diameter. The three
+singular outcomes have a test each — a ray at a generator centre, a kissing
+tangency cusp, an exhausted fold — and each asserts the same thing: whatever
+the query returns, it never invents a crossing membership does not agree with.
+The 4D arm runs the same query over the 4D field through the app's own posed
+lift at zero slab thickness, and checks the flip on the DISPLAYED point.

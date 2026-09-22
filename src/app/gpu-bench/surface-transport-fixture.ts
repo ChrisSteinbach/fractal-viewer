@@ -58,7 +58,24 @@ export {
  * plain systems — wrappers are pinned by their own legs.
  */
 
-/** One fixture system: the composed estimator and its march step scale. */
+/** One fixture system: the composed estimator and its march step scale.
+ *
+ * `contains` is the OPTIONAL exact membership predicate, and it exists for
+ * one family: the sphere-inversion seed orbit, whose field is a certified
+ * LOWER BOUND rather than a signed distance. A band test `|f| < eps` is a
+ * boundary test for a distance; for a bound it fires wherever the bound is
+ * merely LOOSE, and a near-kissing arrangement puts a near-cusp at every
+ * tangency where the bound reaches ~0 with no surface there at all. Those
+ * phantom crossings flip the caller's medium, and a path marked inside while
+ * sitting in empty space marches out of the domain and fails the whole trace
+ * `inside-miss` (measured on the look gate: 65-98% of pixels, every panel
+ * black — `scripts/sphere-inversion-glass.harness.ts`).
+ *
+ * The family settles it EXACTLY: `sphereInversionContains` is real
+ * membership, not a threshold on a distance, so a crossing is real only if
+ * membership actually FLIPS across it. Absent — every closed-solid and
+ * estimator caller — the queries below run their existing path, and the
+ * gate's branches are not reached. */
 export interface TransportFixtureSystem {
   /** The composed PUBLIC estimator at cutoff 0 — the exact call the
    * kernel's `surfaceDE(p, 0.0, li)` spells per core. */
@@ -68,6 +85,9 @@ export interface TransportFixtureSystem {
   stepScale: number;
   /** The domain radius (`params.visibleRadius`). */
   visibleRadius: number;
+  /** Exact membership in the displayed solid, for a field that is a
+   * certified bound rather than a signed distance (interface doc). */
+  contains?: (p: Vec3) => boolean;
 }
 
 export const TRANSPORT_QUERY_MAX_STEPS = 192;
@@ -227,11 +247,13 @@ export function transportSolidBoundaryQueryCPU(
   system: TransportFixtureSystem,
   origin: Vec3,
   dir: Vec3,
-  anchorPresent: boolean,
-  anchorPoint: Vec3,
+  anchorPresentIn: boolean,
+  anchorPointIn: Vec3,
   inside: boolean,
   eps: number,
 ): TransportBoundaryResult {
+  let anchorPresent = anchorPresentIn;
+  let anchorPoint = anchorPointIn;
   let px = origin[0];
   let py = origin[1];
   let pz = origin[2];
@@ -246,7 +268,12 @@ export function transportSolidBoundaryQueryCPU(
     if (
       Number.isFinite(f0) &&
       ((inside && f0 > DIELECTRIC_ANCHOR_ENVELOPE_REL * eps) ||
-        (!inside && f0 < -DIELECTRIC_ANCHOR_ENVELOPE_REL * eps))
+        (!inside && f0 < -DIELECTRIC_ANCHOR_ENVELOPE_REL * eps)) &&
+      // With an exact predicate the cross-check asks IT rather than the
+      // sign of a bound: outside the anchor envelope a loose bound reads
+      // the wrong side often enough to refuse honest children, and this
+      // family's own membership never does.
+      (!system.contains || system.contains([px, py, pz]) !== inside)
     ) {
       return { kind: "refused", reason: 3, t, normal: [0, 0, 0] };
     }
@@ -289,6 +316,25 @@ export function transportSolidBoundaryQueryCPU(
       // within the anchor envelope, and the distance test alone ate an
       // honest exit crossing there.
       let suppress = false;
+      const beyond: Vec3 = [
+        hx + dir[0] * 2 * eps,
+        hy + dir[1] * 2 * eps,
+        hz + dir[2] * 2 * eps,
+      ];
+      if (system.contains && system.contains(beyond) === inside) {
+        // THE MEMBERSHIP GATE (interface doc): the band fired where the
+        // certified bound is loose, not at a surface — membership does not
+        // flip across this landing, so there is no interface here. Step
+        // past it and keep marching on the SAME budget; a phantom costs
+        // steps, never a crossing.
+        px = beyond[0];
+        py = beyond[1];
+        pz = beyond[2];
+        t = tc + 2 * eps;
+        anchorPresent = true;
+        anchorPoint = [hx, hy, hz];
+        continue;
+      }
       if (
         anchorPresent &&
         Math.hypot(
@@ -298,11 +344,7 @@ export function transportSolidBoundaryQueryCPU(
         ) <=
           DIELECTRIC_ANCHOR_ENVELOPE_REL * eps
       ) {
-        const fBeyond = system.estimate([
-          hx + dir[0] * 2 * eps,
-          hy + dir[1] * 2 * eps,
-          hz + dir[2] * 2 * eps,
-        ]);
+        const fBeyond = system.estimate(beyond);
         suppress = (inside && fBeyond < 0) || (!inside && fBeyond > 0);
       }
       if (suppress) {
@@ -885,6 +927,20 @@ export function transportShadowCorridorGate(
  * opticsMaps lanes; the leg packs that one-slot wire with the same
  * numbers), and the ball/step parameters mirror the packed params.
  */
+/**
+ * The shadow band's bounded sub-step advance. FOUR was qualified against the
+ * closed-solid field, whose SAFETY-scaled gradient at a face is 0.9, making
+ * the declared band 1.11·eps wide in space — comfortably inside four 2·eps
+ * sub-steps. A certified BOUND is a different regime: its gradient falls
+ * where the transport compresses, so the same band can be many times wider,
+ * and the measured figure for the sphere-inversion field is in
+ * `docs/sphere-inversion-family.md`'s transport section. The bound stays a
+ * bound in both regimes — a graze along a wall can hold `|f| < eps`
+ * indefinitely and the guard must surrender to the march's own budget —
+ * which is why the exact-membership exit above matters more than the count.
+ */
+export const TRANSPORT_SHADOW_BAND_SUBSTEPS = 4;
+
 export function transportShadowVisibilityCPU(
   system: TransportFixtureSystem,
   origin: Vec3,
@@ -933,7 +989,18 @@ export function transportShadowVisibilityCPU(
     ];
     const f = solidField(sp);
     if (!(f > -1e30)) break;
-    if (Math.abs(f) < eps) {
+    if (
+      Math.abs(f) < eps &&
+      // The membership gate (TransportFixtureSystem's doc): with a
+      // certified BOUND rather than a signed distance, a band fire is an
+      // interface only where membership actually flips across it.
+      (!system.contains ||
+        system.contains([
+          sp[0] + dir[0] * 2 * eps,
+          sp[1] + dir[1] * 2 * eps,
+          sp[2] + dir[2] * 2 * eps,
+        ]) !== inside)
+    ) {
       // The declared crossing band: the boundary is here, within the
       // declared resolution. Fire the state's crossing, then step past
       // the band (below — a bounded advance, since the band's width in
@@ -993,19 +1060,29 @@ export function transportShadowVisibilityCPU(
       // can hold |f| < eps indefinitely — the guard surrenders to the
       // march, whose own budget paces it.
       let guard = 0;
-      while (guard < 4) {
-        const fq = solidField([
+      while (guard < TRANSPORT_SHADOW_BAND_SUBSTEPS) {
+        const q: Vec3 = [
           origin[0] + dir[0] * ts,
           origin[1] + dir[1] * ts,
           origin[2] + dir[2] * ts,
-        ]);
+        ];
+        const fq = solidField(q);
         if (!(fq > -1e30) || Math.abs(fq) >= eps) break;
+        // An exact predicate ends the advance as soon as the sample agrees
+        // with the medium the crossing just established: the band's width
+        // in SPACE is set by the field's gradient, which for a transported
+        // BOUND falls with the fold depth, so "is the value out of the
+        // band" alone can walk much further than the interface is wide.
+        if (system.contains && system.contains(q) === inside) break;
         ts += 2 * eps;
         guard += 1;
       }
       continue;
     }
-    if ((f < 0 ? 1 : 0) !== (inside ? 1 : 0)) {
+    if (
+      (f < 0 ? 1 : 0) !== (inside ? 1 : 0) &&
+      (!system.contains || system.contains(sp) !== inside)
+    ) {
       // A stride jumped clean across the band: the crossing happened
       // between the samples; report it here.
       if (inside) {
