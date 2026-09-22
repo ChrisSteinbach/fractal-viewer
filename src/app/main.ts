@@ -124,7 +124,7 @@ import type { SurfaceNativeCalibration } from "../fractal/surface-pattern";
 import {
   deriveSurfaceDocumentEligibility,
   deriveSurfaceEligibility,
-  sphereInversionHasFragmentArm,
+  sphereInversionComputeOnlySubject,
   sphereInversionRenderModeRefusal,
   sphereInversionSessionRefusal,
   surfaceEligibilityHasRoute,
@@ -6066,6 +6066,11 @@ async function main(): Promise<void> {
           }
           const construction = resolution.construction;
           const fourD = construction.dim === 4;
+          // null exactly when the WebGL arm can draw this construction: 4D
+          // and any block past the arm's caps are compute-only, and the
+          // phrase is the gate's own so the toast below cannot restate it.
+          const computeOnlySubject =
+            sphereInversionComputeOnlySubject(construction);
           // CONSTRUCTION FIXED AT CREATE: the kernel tables pack from this
           // DE once, and a block edit restarts the session
           // (syncSphereInversionSurfaceSession).
@@ -6107,20 +6112,22 @@ async function main(): Promise<void> {
             if (fourD) {
               scene.setSurface4View(fourDView.matrix(), liveSliceCenter(), 0);
             }
-          } else if (!sphereInversionHasFragmentArm(construction.dim)) {
+          } else if (computeOnlySubject) {
             // Reachable only through mid-session compute loss: the gate
-            // refuses ENTRY without compute while no fragment arm exists.
-            // Never hand the session to a WebGL tracer — it would draw the
-            // transform system instead of the block.
+            // refuses ENTRY without compute while this construction has no
+            // fragment arm. Never hand the session to a WebGL tracer — it
+            // would draw the transform system instead of the block.
             ui.flashToast(
-              "Surface render stopped: sphere-inversion scenes need WebGPU compute, which just became unavailable.",
+              `Surface render stopped: ${computeOnlySubject} need WebGPU compute, which just became unavailable.`,
             );
             queueMicrotask(() => surfaceSession.exit());
           } else {
             // ?surfacegl, no adapter or a device loss in 3D: the
             // SURFACE_SPHERE_INVERSION fragment arm, the WGSL core's GLSL
-            // twin over the same table wire and generation slots. The
-            // gate admits no other dimension here.
+            // twin over the same table wire and generation slots. The branch
+            // above already sent every construction the arm cannot hold, so
+            // what arrives here fits its block by that one decision; the
+            // guard states the half of it a reader checks first.
             if (fourD) {
               throw new Error(
                 "sphere-inversion fragment arm is 3D only; 4D is compute-only",

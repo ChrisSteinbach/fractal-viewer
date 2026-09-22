@@ -749,7 +749,10 @@ other reads the tables back off the material and runs them through
 `sphereInversionF32` against the CPU oracle (one-sided on positive queries,
 identical generation and seed member, on oct6/cube8/ico12).
 
-**Admitted constructions: every 3D one.** The std140 block holds 183 table
+**Admitted constructions: every 3D one.** (SUPERSEDED on 2026-09-22 by the
+last section: the caps are now the guaranteed block's ceiling, 29 generators
+and 931 table vec4, and "3D" is no longer the routing question.) The std140
+block holds 183 table
 vec4 at the caps `n = 12`, `s = 3` — the 3D registry's largest arrangement
 (`ico12`) and seed (`cutShell`). It also holds 35 generation colours
 (`D = 32`), 3,488 B in all against WebGL2's guaranteed 16 KiB. The table
@@ -812,10 +815,106 @@ the D + 3 = 11 generation slots decision 6 calls for. The vault
 0.012/255. FIXED in the compute packer, both dimensions: offset 48 is now
 `sphereInversionGenerationSlots(depth)`. The emitted sphereInv/sphereInv4
 sources read `mapCount` only in that clamp (the estimator reads `siCounts`), so
-the kernel text is unchanged. The 3.52/255 row above predates the fix and was
-not re-measured.
+the kernel text is unchanged. The 3.52/255 row above predates the fix; it was
+re-measured after it by the cap section below, which reads the pearls at IoU
+1.0000 and 0.040/255 on AMD RDNA-3.
 
 **Open:** the 4D data-texture lift (section 6's recorded shape) and a
 committed `scripts/sphere-inversion-surface.verify.mjs` browser gate
 (section 9 step 4). The measurements above came from throwaway scripts
 under `scripts/out/`.
+
+## The caps become the block's ceiling, and the routing becomes per-construction (2026-09-22)
+
+The section above is why a per-DIMENSION routing predicate looked correct:
+with the generator cap set at `ico12`'s 12, "every 3D construction fits"
+and "3D has a fragment arm" were the same sentence. They are not the same
+sentence, and the first authored arrangement past 12 separates them.
+
+**The defect.** `surface-eligibility.ts` exported
+`sphereInversionHasFragmentArm(dim)`, a fixed `{3: true, 4: false}`, while
+the capacity question it stood for was `sphereInversionFitsFragmentArm`'s
+over the table counts. A 3D construction past the caps would pass the gate,
+take main.ts's WebGL branch and throw a `RangeError` inside
+`setSphereInversionSystem` — into a render already promised. Replaced by
+`sphereInversionComputeOnlySubject(construction)`, which returns the SUBJECT
+PHRASE of the family's standing refusal idiom (`X render on WebGPU compute,
+which is unavailable here`) or null when the arm can draw it. The 4D
+sentence is unchanged; a capacity refusal names the cap rather than the
+dimension, which in 3D would be a non-explanation. main.ts's mid-session
+compute-loss toast embeds the same phrase, so the two moments cannot
+disagree about the reason. The capacity answer itself moved to
+`fractal/surface-sphere-inversion-gpu.ts` — beside the table wire that
+determines it, and pure, because the gate imports no Three.js — and returns
+WHICH limit bound (`"dimension" | "generators" | "seedMembers"`) so the
+caller that words the refusal switches exhaustively: a cap added without a
+sentence beside it fails to compile.
+
+**The caps.** `n` is now the ceiling
+`sphereInversionGlslGeneratorCeiling(3) = 29`, kept executable rather than
+re-derived: 931 table vec4 plus 35 colour vec4 = 15,456 B against the
+guaranteed 16,384, where `n = 30` needs 16,448. A dodecahedron's 20 vertices
+and a rhombicuboctahedron's 24 would therefore fall back; an
+icosidodecahedron's 30 would not, at any cap this block can hold. `s` stays
+3 — the largest seed kind — and 29 is also the ceiling at `s = 4`, so a
+fourth seed member would not move it.
+
+**Measured before raising**, because the cost lands on the shipped presets
+and the beneficiary does not exist yet: the block grows 4.4x and the
+per-eval `float gd[]` scratch from 12 floats to 29. Two runs per
+configuration of `sphere-inversion-family.verify.mjs
+--only=inversionPearls,inversionCubePearls --phases=presets,gl --scale=1`,
+`--mode=x11::0` on a quiet AMD Radeon RX 7900 XTX (radeonsi navi31, ANGLE /
+OpenGL 4.6), `quiet=YES` before each:
+
+| Leg                                | WebGL settle, cap 12 | cap 29       | Coverage IoU | Mean covered diff |
+| ---------------------------------- | -------------------- | ------------ | ------------ | ----------------- |
+| `inversionPearls` `?surfacegl`     | 4.5 s, 3.9 s         | 4.6 s, 3.8 s | 1.0000       | 0.040/255         |
+| `inversionCubePearls` `?surfacegl` | 3.8 s, 3.8 s         | 3.8 s, 3.8 s | 1.0000       | 0.040/255         |
+| `inversionLace` `?surfacegl`       | 3.8 s                | 3.8 s        | 1.0000       | 0.041/255         |
+| `inversionVault` `?surfacegl`      | 3.7 s                | 3.8 s        | 0.9997†      | 0.022/255†        |
+
+The last two legs were added for this measurement — the gate's shipped `--gl`
+set is the two pearls presets — because `inversionVault` is `ico12` with a
+`cutShell`, the construction that sat EXACTLY at the old caps (`n = 12`,
+`s = 3`) and so the one a cap raise could most plausibly disturb. It does
+not: at both caps the vault and the lace agree to every digit printed,
+coverage masks and censuses included.
+
+† THE VAULT'S `gl` LEG CANNOT BE MEASURED BY THIS GATE, at either cap, and
+that is an instrument limit rather than a disagreement. The leg masks
+backdrop with a per-row channel-delta-16 test and then requires that mask to
+agree with each engine's own ray census to `MASK_CENSUS_TOLERANCE` (2%)
+before an IoU counts. On the vault the mask reads 90.32% where both censuses
+read 95.89% — a 5.6% gap — so the leg reports `IoU unmeasured` and fails.
+The gap is on the COMPUTE frame too, which no GLSL cap can reach, and every
+figure is identical at cap 12 and cap 29, so it is the mask undercounting a
+frame that is nearly all geometry (the vault is an interior camera; 95.9%
+covered leaves almost no true backdrop for a per-row test to calibrate on).
+The two pearls presets are ~22% covered, which is why the shipped set works.
+Recorded as owed work rather than repaired here: the fix is an instrument
+question for the gate, not a routing or capacity one.
+
+Settle moves within run-to-run noise and the rendering is unchanged, so the
+register-pressure concern did not materialize on RDNA-3. That is ONE
+machine's verdict: the arm exists for machines WITHOUT WebGPU, and a weak
+GPU — the fallback's actual population — stays unmeasured. The settle here
+includes compile and link, so a link regression from the larger block would
+have shown.
+
+These rows are also the re-measurement the generation-slot fix left owed: the
+GLSL-arm table's `3.52/255` pearls row predates that fix, and after it, on
+this machine, the pearls agree at IoU 1.0000 and 0.040/255.
+
+**The emitted GLSL is byte-identical in length** at both caps (41,695 B
+plain resolved and emitted; 60,006 B resolved and 23,903 B emitted with
+plane + finish + lighting) — `uSiTable[183]` → `[931]` and `gd[12]` →
+`gd[29]` happen to keep their digit widths. Those four figures are now
+pinned by a test rather than quoted, so the file's measure-before-adding
+rule is executable for this arm.
+
+**The WGSL cap stays 120**, the registry maximum, and the asymmetry is
+deliberate: that one is per-invocation scratch in a compute kernel, where a
+raise buys only a construction that does not exist, and the next regular 4D
+candidate (the 120-cell's 600 vertices) is five times it and would need its
+own cost argument long before its scratch mattered.

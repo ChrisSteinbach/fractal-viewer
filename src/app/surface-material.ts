@@ -52,9 +52,14 @@ import {
   type SphereInversionTables,
 } from "../fractal/sphere-inversion";
 import {
+  SPHERE_INVERSION_GLSL_COLOR_SLOTS as SURFACE_SPHERE_INVERSION_COLOR_SLOTS,
+  SPHERE_INVERSION_GLSL_MAX_GENERATORS as SURFACE_SPHERE_INVERSION_MAX_GENERATORS,
+  SPHERE_INVERSION_GLSL_MAX_SEED_MEMBERS as SURFACE_SPHERE_INVERSION_MAX_SEED_MEMBERS,
+  SPHERE_INVERSION_GLSL_TABLE_ENTRIES as SURFACE_SPHERE_INVERSION_TABLE_ENTRIES,
   SPHERE_INVERSION_GPU_POLE_FLOOR,
   SPHERE_INVERSION_GPU_SLACK,
   packSphereInversionGpuTables,
+  sphereInversionFitsFragmentArm,
 } from "../fractal/surface-sphere-inversion-gpu";
 import {
   SWIRL_BALLOON_STRIDE_TRANSITION,
@@ -879,44 +884,20 @@ function stripGlslSource(glsl: string): string {
 }
 
 /**
- * The sphere-inversion generator cap the 3D fragment arm's uniform block is
- * sized to: the largest 3D registry arrangement (`ico12`). A construction
- * past it would route compute-only; none does today.
+ * The 3D fragment arm's block caps and their capacity arithmetic live in
+ * `fractal/surface-sphere-inversion-gpu.ts`, beside the table wire they size
+ * and the WGSL kernel's own cap, because `surface-eligibility.ts` has to read
+ * them to decide whether a construction has a WebGL fallback at all and it
+ * imports only pure modules. Re-exported here under the arm's own names for
+ * the source below and its tests.
  */
-export const SURFACE_SPHERE_INVERSION_MAX_GENERATORS = 12;
-
-/** The seed-member cap: the largest seed kind (`cutShell`'s outer ball,
- * inner complement and cutting complement). */
-export const SURFACE_SPHERE_INVERSION_MAX_SEED_MEMBERS = 3;
-
-/** Table entries at both caps, in `packSphereInversionGpuTables`' 3D wire
- * (one vec4 `(c.xyz, ±r)` per entry): `n + s + n·(s + n − 1)` = 183 vec4 =
- * 2,928 B of the std140 block. The count is monotone in `n` and `s`, so
- * every construction under both caps fits. */
-export const SURFACE_SPHERE_INVERSION_TABLE_ENTRIES =
-  SURFACE_SPHERE_INVERSION_MAX_GENERATORS +
-  SURFACE_SPHERE_INVERSION_MAX_SEED_MEMBERS +
-  SURFACE_SPHERE_INVERSION_MAX_GENERATORS *
-    (SURFACE_SPHERE_INVERSION_MAX_SEED_MEMBERS +
-      SURFACE_SPHERE_INVERSION_MAX_GENERATORS -
-      1);
-
-/** One "By Transform" colour per generation at the deepest legal depth
- * (`sphereInversionGenerationSlots`): 35 vec4 = 560 B. Past the 24
- * `uMapColor` slots, which is why the colours ride the block too. */
-export const SURFACE_SPHERE_INVERSION_COLOR_SLOTS =
-  sphereInversionGenerationSlots(SPHERE_INVERSION_MAX_DEPTH);
-
-/** Whether the 3D fragment arm's block can carry these tables. */
-export function sphereInversionFitsFragmentArm(
-  tables: Pick<SphereInversionTables, "dim" | "generatorCount" | "seedCount">,
-): boolean {
-  return (
-    tables.dim === 3 &&
-    tables.generatorCount <= SURFACE_SPHERE_INVERSION_MAX_GENERATORS &&
-    tables.seedCount <= SURFACE_SPHERE_INVERSION_MAX_SEED_MEMBERS
-  );
-}
+export {
+  SURFACE_SPHERE_INVERSION_COLOR_SLOTS,
+  SURFACE_SPHERE_INVERSION_MAX_GENERATORS,
+  SURFACE_SPHERE_INVERSION_MAX_SEED_MEMBERS,
+  SURFACE_SPHERE_INVERSION_TABLE_ENTRIES,
+  sphereInversionFitsFragmentArm,
+};
 
 /** The WGSL kernel's acceptance clamp (`packSphereInversionGpuParams`'
  * `max(R·hitFloor, slack)`) in the fragment tracer's form: the hit floor is

@@ -852,10 +852,17 @@ expresses. Its route kinds are `"sphereInversion"` (3D) and
 
 - **Refused block:** ineligible, note `Sphere-inversion scene refused:
 <resolver reasons>`.
-- **Admissible block, no compute adapter:** ineligible, note `3D|native 4D
-sphere-inversion scenes render on WebGPU compute, which is unavailable
-here`. Neither dimension has a fragment arm yet
-  (`sphereInversionHasFragmentArm`).
+- **Admissible block, no compute adapter:** ineligible when this
+  construction has no WebGL fallback, note `<subject> render on WebGPU
+compute, which is unavailable here`. The subject is
+  `sphereInversionComputeOnlySubject`'s, asked of the CONSTRUCTION and not
+  of its dimension (2026-09-22; before that a fixed per-dimension answer,
+  correct only while the fragment arm's generator cap happened to equal the
+  largest 3D arrangement — `docs/sphere-inversion-gpu.md`'s last section).
+  It is `native 4D sphere-inversion scenes`, or a named cap for a 3D
+  construction the arm's block cannot hold; null — a plain fallback — for
+  every 3D construction inside it, which today is every one the resolver can
+  build.
 - **Admissible block with compute:** `eligible`, or `degraded` whenever the
   note carries a disclosure (tangency cusps, dormant settings, the 4D slab
   clamp), with the kind carrying the dimension. The WGSL route and its session
