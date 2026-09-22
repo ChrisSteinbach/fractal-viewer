@@ -15,8 +15,12 @@ import { pollSurfaceState } from "./surface-browser-runner.mjs";
 /**
  * The Sphere inversion menu group's presets, read from the checkout's own
  * `presets.ts` rather than copied: `PRESET_SPHERE_INVERSIONS` in table order,
- * each with its block and the block's dimension
- * (`sphereInversionAuthoredDimension`). Bundled in memory with esbuild (the
+ * each with its block, the block's dimension
+ * (`sphereInversionAuthoredDimension`) and `computeOnly`, the app's own
+ * `sphereInversionComputeOnlySubject` phrase for the resolved construction
+ * (null when the WebGL fragment arm can draw it). The gate asks the same
+ * per-construction predicate the Surface gate does, so a new preset past the
+ * arm's capacity joins the refusal leg without being listed. Bundled in memory with esbuild (the
  * surface-light-guides gate's idiom), from the repository this module lives
  * in, so a gate run from a worktree reads that worktree's table, the one its
  * build was made from.
@@ -25,10 +29,18 @@ export async function loadSiPresets() {
   const result = await build({
     stdin: {
       contents: `import { PRESET_SPHERE_INVERSIONS } from "./src/fractal/presets.ts";
-import { sphereInversionAuthoredDimension } from "./src/fractal/sphere-inversion.ts";
+import { resolveSphereInversion, sphereInversionAuthoredDimension } from "./src/fractal/sphere-inversion.ts";
+import { sphereInversionComputeOnlySubject } from "./src/app/surface-eligibility.ts";
 export default Object.entries(PRESET_SPHERE_INVERSIONS).map(([key, make]) => {
   const block = make();
-  return { key, dim: sphereInversionAuthoredDimension(block), block };
+  const resolution = resolveSphereInversion(block);
+  if (!resolution.ok) throw new Error(key + ": " + resolution.reasons.join("; "));
+  return {
+    key,
+    dim: sphereInversionAuthoredDimension(block),
+    block,
+    computeOnly: sphereInversionComputeOnlySubject(resolution.construction),
+  };
 });`,
       resolveDir: REPO_ROOT,
       loader: "ts",

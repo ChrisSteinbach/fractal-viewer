@@ -60,8 +60,15 @@
  *            leaves for Points before the restored document refreshes the
  *            panel, so there is no live session left to refuse; the toasts
  *            shown are recorded.
- *   refusal  Under `?surfacegl` a 4D preset refuses Surface entry, with the
- *            compute-only note on the Surface button.
+ *   refusal  Under `?surfacegl` every COMPUTE-ONLY preset refuses Surface
+ *            entry, with its own compute-only note on the Surface button.
+ *            Compute-only is the app's per-construction answer
+ *            (`sphereInversionComputeOnlySubject`, read by `loadSiPresets`),
+ *            not the dimension: the 4D pair ("native 4D sphere-inversion
+ *            scenes") and a 3D preset past the fragment arm's generator
+ *            block ("sphere-inversion scenes with more than 29
+ *            generators") take the same door, and each note must name its
+ *            own subject.
  *
  * The teardown sweep is `scripts/surface-teardown.verify.mjs --document=`,
  * run separately (Firefox, dev server); this gate writes the documents it
@@ -129,9 +136,10 @@ const MASK_CENSUS_TOLERANCE = 0.02;
 const GL_MIN_IOU = 0.99;
 const BLANK_TOAST = /rendered almost nothing/i;
 const REFUSAL_TOAST =
-  /Flame and Sampled Solid are unavailable for a sphere-inversion scene/;
-const COMPUTE_ONLY_NOTE =
-  /native 4D sphere-inversion scenes render on WebGPU compute/;
+  /Flame and Solid are unavailable for a sphere-inversion scene/;
+/** The Surface button's compute-only note for one subject phrase. */
+const computeOnlyNote = (subject) =>
+  `${subject} render on WebGPU compute, which is unavailable here`;
 
 function parseArgs(argv) {
   const args = {
@@ -980,10 +988,19 @@ async function main() {
       }
     }
 
-    // ------------------------------------- 4D compute-only refusal (WebGL)
+    // --------------------------------- compute-only refusal (WebGL forced)
     if (phases.has("refusal")) {
-      for (const preset of SI_PRESETS.filter((p) => p.dim === 4)) {
-        const r = (results.refusal[preset.key] = {});
+      const computeOnly = SI_PRESETS.filter((p) => p.computeOnly);
+      // The capacity door is the leg's reason to exist beyond the 4D pair:
+      // without a 3D subject it would pass while gating nothing new.
+      if (!computeOnly.some((p) => p.dim === 3) && !only)
+        fail(
+          "refusal: no 3D preset is compute-only, so the fragment arm's capacity refusal is ungated",
+        );
+      for (const preset of computeOnly) {
+        const r = (results.refusal[preset.key] = {
+          subject: preset.computeOnly,
+        });
         const app = await openApp(browser, {
           url: args.url,
           query: "surfacegl",
@@ -1016,7 +1033,7 @@ async function main() {
             fail(
               `refusal ${preset.key}: Surface button enabled under ?surfacegl`,
             );
-          if (!COMPUTE_ONLY_NOTE.test(state.title))
+          if (!state.title.includes(computeOnlyNote(preset.computeOnly)))
             fail(
               `refusal ${preset.key}: the compute-only note is missing (${JSON.stringify(state.title)})`,
             );
