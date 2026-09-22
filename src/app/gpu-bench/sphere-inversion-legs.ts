@@ -97,6 +97,8 @@ const TIMING_ROWS = [
   "si600Vault4@XW.3W.1",
   "si600Medallion4@XW.4YW.3ZW.2",
   "si600Snowflake4@W.06",
+  // Appended: the 30-generator 3D row, timed beside the 12-generator ones.
+  "siIcosidodec30Star3",
 ];
 const TIMING_PILOT = 64;
 /** The smallest submission a slow core may shrink to. */

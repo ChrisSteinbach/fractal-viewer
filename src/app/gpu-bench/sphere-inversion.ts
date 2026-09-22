@@ -255,6 +255,23 @@ export function sphereInversionBenchFixtures(): SiBenchFixture[] {
       camera: ORBIT,
       floors: { foldK3: 25, copyWins: 0, gapWins: 331 },
     },
+    // APPENDED, so no earlier row's run order moves. The high-generator-count
+    // 3D row: the Icosidodecahedral Star preset's own construction, 30
+    // generators, past both the old 12-generator cap and the fragment arm's
+    // 29. It exercises the WGSL kernel's per-eval `gd` scratch and the
+    // unit-arrangement search at a generator count no earlier 3D row reached.
+    {
+      name: "siIcosidodec30Star3",
+      construction: resolved({
+        arrangement: "icosidodec30",
+        seed: { kind: "ball", size: 0.64 },
+        depth: 8,
+      }),
+      camera: ORBIT,
+      // Measured 172 / 1 / 337 (docs/gpu-bench-surface.md); the ball rows'
+      // convention of a 0 copy floor where the row measures essentially none.
+      floors: { foldK3: 86, copyWins: 0, gapWins: 168 },
+    },
   ];
 }
 
