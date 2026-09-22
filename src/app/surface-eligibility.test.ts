@@ -20,6 +20,15 @@ import type { ShapeSpec } from "../fractal/shapes";
 import type { TilingSpec } from "../fractal/tiling";
 import type { SymmetryParams, Transform } from "../fractal/types";
 import {
+  SPHERE_INVERSION_ARRANGEMENTS,
+  SPHERE_INVERSION_SEED_KINDS,
+  resolveSphereInversion,
+} from "../fractal/sphere-inversion";
+import {
+  SPHERE_INVERSION_GLSL_MAX_GENERATORS,
+  SPHERE_INVERSION_GLSL_MAX_SEED_MEMBERS,
+} from "../fractal/surface-sphere-inversion-gpu";
+import {
   SPHERE_INVERSION_DORMANT_FINISHES,
   SPHERE_INVERSION_DORMANT_KALEIDOSCOPE,
   SPHERE_INVERSION_DORMANT_LENS,
@@ -28,7 +37,7 @@ import {
   deriveSurfaceDocumentEligibility,
   deriveSurfaceEligibility,
   sphereInversionDormantDisclosures,
-  sphereInversionHasFragmentArm,
+  sphereInversionComputeOnlySubject,
   sphereInversionRenderModeRefusal,
   sphereInversionSessionRefusal,
   surfaceEligibilityHasRoute,
@@ -1591,9 +1600,74 @@ describe("the sphere-inversion route", () => {
     expect(result.note).toBe(SPHERE_INVERSION_SLAB_REFUSAL);
   });
 
-  it("has a fragment arm in 3D only", () => {
-    expect(sphereInversionHasFragmentArm(3)).toBe(true);
-    expect(sphereInversionHasFragmentArm(4)).toBe(false);
+  it("gives every construction the resolver can build today the arm it had", () => {
+    // The per-construction answer replaced a per-DIMENSION one, so the first
+    // thing it owes is that nothing shippable moved: every 3D registry
+    // arrangement still falls back, every 4D one is still compute-only.
+    let checked = 0;
+    for (const [id, arr] of Object.entries(SPHERE_INVERSION_ARRANGEMENTS)) {
+      for (const kind of SPHERE_INVERSION_SEED_KINDS) {
+        const resolution = resolveSphereInversion({
+          arrangement: id,
+          seed: { kind },
+        });
+        if (!resolution.ok) throw new Error(resolution.reasons.join("; "));
+        expect(sphereInversionComputeOnlySubject(resolution.construction)).toBe(
+          arr.dim === 3 ? null : "native 4D sphere-inversion scenes",
+        );
+        checked++;
+      }
+    }
+    expect(checked).toBe(21);
+  });
+
+  it("sends a 3D construction past the arm's generator cap to compute", () => {
+    // Unreachable from the authored form today — no 3D registry arrangement
+    // carries more than ico12's 12 generators — and that is exactly why the
+    // per-dimension reading survived: it was right by coincidence. The first
+    // arrangement past the cap would have passed the gate, taken the WebGL
+    // branch and thrown inside setSphereInversionSystem.
+    const overCap = {
+      dim: 3 as const,
+      generators: Array.from(
+        { length: SPHERE_INVERSION_GLSL_MAX_GENERATORS + 1 },
+        (_, i) => ({ center: [i, 0, 0], radius: 0.25 }),
+      ),
+      seed: [{ center: [0, 0, 0], radius: 0.28, complement: false }],
+      depth: 8,
+    };
+    expect(sphereInversionComputeOnlySubject(overCap)).toBe(
+      `sphere-inversion scenes with more than ${SPHERE_INVERSION_GLSL_MAX_GENERATORS} generators`,
+    );
+  });
+
+  it("sends a 3D construction past the arm's seed-member cap to compute", () => {
+    const overSeed = {
+      dim: 3 as const,
+      generators: [{ center: [1, 0, 0], radius: 0.25 }],
+      seed: Array.from(
+        { length: SPHERE_INVERSION_GLSL_MAX_SEED_MEMBERS + 1 },
+        (_, i) => ({ center: [0, 0, 0], radius: 1 + i, complement: i > 0 }),
+      ),
+      depth: 4,
+    };
+    expect(sphereInversionComputeOnlySubject(overSeed)).toBe(
+      `sphere-inversion scenes with more than ${SPHERE_INVERSION_GLSL_MAX_SEED_MEMBERS} seed members`,
+    );
+  });
+
+  it("names the cap rather than the dimension, so the gate sentence stays one idiom", () => {
+    // The refusal the user reads is `${subject} render on WebGPU compute,
+    // which is unavailable here` for every subject, so a capacity refusal
+    // has to be a plural noun phrase like the 4D one.
+    const subjects = [
+      "native 4D sphere-inversion scenes",
+      `sphere-inversion scenes with more than ${SPHERE_INVERSION_GLSL_MAX_GENERATORS} generators`,
+    ];
+    for (const subject of subjects) {
+      const note = `${subject} render on WebGPU compute, which is unavailable here`;
+      expect(note.split(/\s+/).length).toBeLessThanOrEqual(60);
+    }
   });
 
   it("routes a 3D block without compute to its fragment arm", () => {

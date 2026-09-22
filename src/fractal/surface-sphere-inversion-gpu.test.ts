@@ -22,7 +22,16 @@ import {
 import {
   packSphereInversionGpuTables,
   SPHERE_INVERSION_GPU_SLACK,
+  SPHERE_INVERSION_GLSL_BLOCK_BYTES,
+  SPHERE_INVERSION_GLSL_COLOR_SLOTS,
+  SPHERE_INVERSION_GLSL_MAX_GENERATORS,
+  SPHERE_INVERSION_GLSL_MAX_SEED_MEMBERS,
+  SPHERE_INVERSION_GLSL_TABLE_ENTRIES,
   sphereInversionF32,
+  sphereInversionFragmentArmLimit,
+  sphereInversionGlslBlockBytes,
+  sphereInversionGlslGeneratorCeiling,
+  sphereInversionTableEntries,
   sphereInversionWgslSource,
 } from "./surface-sphere-inversion-gpu";
 import type { Vec3, Vec4 } from "./types";
@@ -47,6 +56,114 @@ function sampleQueries(
   }
   return out;
 }
+
+describe("the 3D fragment arm's block capacity", () => {
+  it("sizes the shipped block from the one table-entry arithmetic", () => {
+    // The packer allocates from `sphereInversionTableEntries` and the arm
+    // sizes `uSiTable` from it, so a construction the packer can fill is a
+    // construction the block can hold — the property the caps rest on.
+    expect(SPHERE_INVERSION_GLSL_TABLE_ENTRIES).toBe(931);
+    expect(SPHERE_INVERSION_GLSL_COLOR_SLOTS).toBe(35);
+    expect(
+      sphereInversionGlslBlockBytes(
+        SPHERE_INVERSION_GLSL_MAX_GENERATORS,
+        SPHERE_INVERSION_GLSL_MAX_SEED_MEMBERS,
+      ),
+    ).toBe(15456);
+    expect(
+      sphereInversionGlslBlockBytes(
+        SPHERE_INVERSION_GLSL_MAX_GENERATORS,
+        SPHERE_INVERSION_GLSL_MAX_SEED_MEMBERS,
+      ),
+    ).toBeLessThanOrEqual(SPHERE_INVERSION_GLSL_BLOCK_BYTES);
+  });
+
+  it("caps generators at the block's ceiling, not at the registry's largest", () => {
+    // The distinction the per-construction routing rests on: the cap is a
+    // property of WebGL2's guaranteed block, so a 3D arrangement past it is
+    // an ordinary compute-only construction rather than an impossibility.
+    expect(SPHERE_INVERSION_GLSL_MAX_GENERATORS).toBe(
+      sphereInversionGlslGeneratorCeiling(
+        SPHERE_INVERSION_GLSL_MAX_SEED_MEMBERS,
+      ),
+    );
+    const largest3D = Math.max(
+      ...Object.values(SPHERE_INVERSION_ARRANGEMENTS)
+        .filter((a) => a.dim === 3)
+        .map((a) => a.centers.length),
+    );
+    expect(largest3D).toBe(12);
+    expect(SPHERE_INVERSION_GLSL_MAX_GENERATORS).toBeGreaterThan(largest3D);
+  });
+
+  it("is monotone in both counts, so one check at the caps covers everything beneath", () => {
+    for (let n = 1; n <= 40; n++) {
+      for (let s = 1; s <= 5; s++) {
+        expect(sphereInversionTableEntries(n + 1, s)).toBeGreaterThan(
+          sphereInversionTableEntries(n, s),
+        );
+        expect(sphereInversionTableEntries(n, s + 1)).toBeGreaterThan(
+          sphereInversionTableEntries(n, s),
+        );
+      }
+    }
+  });
+
+  it("records where WebGL2's guaranteed block runs out: 29 generators at the three-member seed", () => {
+    // The number a cap raise is a decision ABOUT, kept executable so the
+    // next session measures rather than re-derives it. The table is
+    // quadratic in n, so the ceiling moves little with the seed count.
+    expect(sphereInversionGlslGeneratorCeiling(3)).toBe(29);
+    expect(sphereInversionGlslBlockBytes(29, 3)).toBe(15456);
+    expect(sphereInversionGlslBlockBytes(30, 3)).toBe(16448);
+    expect(sphereInversionGlslGeneratorCeiling(1)).toBe(30);
+    expect(sphereInversionGlslGeneratorCeiling(4)).toBe(29);
+    // A dodecahedron's 20 vertices and a rhombicuboctahedron's 24 would fit
+    // the arm; an icosidodecahedron's 30 would not, whatever the cap is
+    // raised to.
+    expect(sphereInversionGlslBlockBytes(20, 3)).toBe(7968);
+    expect(sphereInversionGlslBlockBytes(24, 3)).toBe(10976);
+    expect(sphereInversionGlslBlockBytes(30, 3)).toBeGreaterThan(
+      SPHERE_INVERSION_GLSL_BLOCK_BYTES,
+    );
+  });
+
+  it("names which limit a construction exceeds, and holds for every shipped arrangement", () => {
+    for (const [id, arr] of Object.entries(SPHERE_INVERSION_ARRANGEMENTS)) {
+      const tables = {
+        dim: arr.dim,
+        generatorCount: arr.centers.length,
+        seedCount: SPHERE_INVERSION_GLSL_MAX_SEED_MEMBERS,
+      };
+      expect(sphereInversionFragmentArmLimit(tables)).toBe(
+        arr.dim === 3 ? null : "dimension",
+      );
+      expect(id).toBeTruthy();
+    }
+    expect(
+      sphereInversionFragmentArmLimit({
+        dim: 3,
+        generatorCount: SPHERE_INVERSION_GLSL_MAX_GENERATORS + 1,
+        seedCount: 1,
+      }),
+    ).toBe("generators");
+    expect(
+      sphereInversionFragmentArmLimit({
+        dim: 3,
+        generatorCount: 1,
+        seedCount: SPHERE_INVERSION_GLSL_MAX_SEED_MEMBERS + 1,
+      }),
+    ).toBe("seedMembers");
+    // 4D wins over a capacity reason: there is no arm to have capacity in.
+    expect(
+      sphereInversionFragmentArmLimit({
+        dim: 4,
+        generatorCount: 120,
+        seedCount: 3,
+      }),
+    ).toBe("dimension");
+  });
+});
 
 describe("packSphereInversionGpuTables", () => {
   it("packs the plan's sizes: oct6 ball 43 vec4, ico12 cut shell 183 vec4, the 600-cell cut shell 472,416 B", () => {

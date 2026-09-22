@@ -51,6 +51,7 @@ import {
   SPHERE_INVERSION_FOLD_EXHAUSTED,
   SPHERE_INVERSION_FOLD_POLE,
   SPHERE_INVERSION_MAX_DEPTH,
+  sphereInversionGenerationSlots,
 } from "./sphere-inversion";
 import type {
   SphereInversionFoldStatus,
@@ -67,13 +68,151 @@ export const SPHERE_INVERSION_GPU_SLACK = 1e-6;
  * counts as AT the centre and returns 0. */
 export const SPHERE_INVERSION_GPU_POLE_FLOOR = 2 ** -20;
 
-/** The generator cap the kernel's per-eval distance scratch is sized to —
- * the registry maximum (the 600-cell). */
+/**
+ * The generator cap the WGSL kernel's per-eval distance scratch
+ * (`var gd: array<f32, N>`) is sized to — the registry maximum, the
+ * 600-cell's 120 vertices.
+ *
+ * HELD AT THE REGISTRY MAXIMUM, deliberately, while the fragment arm's cap
+ * moved off it. The two caps answer different questions: the fragment arm's
+ * is a uniform BLOCK's capacity, a fixed external budget with a ceiling
+ * worth taking in full, whereas this one is per-invocation scratch in a
+ * compute kernel, where the only thing a raise buys is a construction that
+ * does not exist. Nothing plausible sits between 120 and the next regular
+ * 4D candidate (the 120-cell's 600 vertices), which is five times this and
+ * would need its own cost argument long before its scratch mattered. The
+ * look study is what would name a set past it; raise this then, with that
+ * set to measure against, and not before.
+ */
 export const SPHERE_INVERSION_GPU_MAX_GENERATORS = 120;
 
 /** How close to 1 every centre distance must be (and how exactly the radii
  * must agree) for the tables to take the unit-arrangement search. */
 export const SPHERE_INVERSION_GPU_UNIT_TOLERANCE = 1e-9;
+
+// ------------------------------------------ table size and the two caps
+
+/**
+ * How many generalized balls the table wire holds for `n` generators and `s`
+ * seed members: the `n` generators, the `s` seed members, then per generator
+ * its `s` seed images and `n − 1` gap balls. THE ONE DEFINITION — the packer
+ * allocates from it and the fragment arm sizes its uniform block from it, so
+ * the two cannot disagree about what fits. Monotone in both arguments, which
+ * is what lets a single check at the caps stand for every construction
+ * beneath them.
+ */
+export function sphereInversionTableEntries(n: number, s: number): number {
+  return n + s + n * (s + n - 1);
+}
+
+/**
+ * THE 3D FRAGMENT ARM'S CAPS, and why they live in this module rather than
+ * beside the GLSL that reads them: the Surface gate must decide whether a
+ * construction has a WebGL fallback BEFORE anything Three.js-tied loads, and
+ * `surface-eligibility.ts` imports only pure modules. The arm reads this
+ * file's table wire, so what fits its block is a fact about the wire.
+ *
+ * Distinguish them from {@link SPHERE_INVERSION_GPU_MAX_GENERATORS}, which
+ * caps the WGSL kernel's per-eval distance scratch at the registry maximum:
+ * these cap a std140 UNIFORM BLOCK, a far smaller budget.
+ *
+ * THE GENERATOR CAP IS THE BLOCK'S CEILING, NOT THE REGISTRY'S. It shipped
+ * at 12 — `ico12`, the largest 3D arrangement — which made "3D always has a
+ * fragment arm" true by COINCIDENCE rather than by construction, and that
+ * coincidence is what let a per-dimension routing predicate look correct
+ * (`surface-eligibility.ts`'s `sphereInversionComputeOnlySubject` records
+ * the defect). It is now what {@link sphereInversionGlslGeneratorCeiling}
+ * admits at the three-member seed: 931 table vec4 plus 35 colour vec4 =
+ * 15,456 B against WebGL2's guaranteed 16,384, where 30 generators would
+ * need 16,448. MEASURED before raising it, because the cost is real and
+ * lands on the shipped presets rather than on a beneficiary: the block grows
+ * 4.4x and the per-eval `float gd[]` scratch from 12 floats to 29.
+ * `sphere-inversion-family.verify.mjs --phases=presets,gl` on a quiet AMD
+ * RDNA-3 (`:0`, ANGLE/OpenGL 4.6, two runs each) read the WebGL settle for
+ * `inversionPearls` at 4.5/3.9 s before and 4.6/3.8 s after, and
+ * `inversionCubePearls` at 3.8 s in all four, with coverage IoU 1.0000 and
+ * mean covered difference 0.040/255 against compute unmoved: no cost above
+ * run-to-run noise, and the rendering identical. That is ONE machine's
+ * verdict, and a weak GPU — the fallback's actual population, since the arm
+ * exists for machines without WebGPU — stays unmeasured.
+ */
+export const SPHERE_INVERSION_GLSL_MAX_GENERATORS = 29;
+
+/** The seed-member cap: the largest seed kind (`cutShell`'s outer ball,
+ * inner complement and cutting complement). */
+export const SPHERE_INVERSION_GLSL_MAX_SEED_MEMBERS = 3;
+
+/** WebGL2's guaranteed `MAX_FRAGMENT_UNIFORM_BLOCK_SIZE`. The arm's block
+ * must fit this, not the driver's actual limit: the fallback exists for the
+ * machines least likely to exceed a guarantee. */
+export const SPHERE_INVERSION_GLSL_BLOCK_BYTES = 16384;
+
+/** Table entries at both caps, in the 3D wire's one vec4 per entry. */
+export const SPHERE_INVERSION_GLSL_TABLE_ENTRIES = sphereInversionTableEntries(
+  SPHERE_INVERSION_GLSL_MAX_GENERATORS,
+  SPHERE_INVERSION_GLSL_MAX_SEED_MEMBERS,
+);
+
+/** One "By Transform" colour per generation at the deepest legal depth. Past
+ * the 24 `uMapColor` slots, which is why the colours ride the block too. */
+export const SPHERE_INVERSION_GLSL_COLOR_SLOTS = sphereInversionGenerationSlots(
+  SPHERE_INVERSION_MAX_DEPTH,
+);
+
+/** What the arm's std140 block costs at `n` generators and `s` seed members:
+ * the table plus the generation colours, one vec4 (16 B) each. */
+export function sphereInversionGlslBlockBytes(n: number, s: number): number {
+  return (
+    (sphereInversionTableEntries(n, s) + SPHERE_INVERSION_GLSL_COLOR_SLOTS) * 16
+  );
+}
+
+/** The largest generator count whose block still fits
+ * {@link SPHERE_INVERSION_GLSL_BLOCK_BYTES} at `s` seed members — the
+ * arithmetic the caps above are chosen against, kept executable so raising
+ * one is a measurement rather than a re-derivation. */
+export function sphereInversionGlslGeneratorCeiling(s: number): number {
+  let n = 0;
+  while (
+    sphereInversionGlslBlockBytes(n + 1, s) <= SPHERE_INVERSION_GLSL_BLOCK_BYTES
+  ) {
+    n++;
+  }
+  return n;
+}
+
+/** Which of the fragment arm's limits a construction's shape exceeds. A
+ * UNION rather than a boolean so the caller that must WORD the refusal
+ * switches exhaustively: a cap added here without a sentence beside it fails
+ * to compile rather than shipping a wrong reason. */
+export type SphereInversionFragmentArmLimit =
+  "dimension" | "generators" | "seedMembers";
+
+/**
+ * WHY the 3D fragment arm cannot carry these tables, or null when it can —
+ * the ONE capacity answer the Surface gate, main.ts's routing and the
+ * material's own guard share. `"dimension"` is 4D, which has no fragment arm
+ * at all; the other two are the std140 block's caps.
+ */
+export function sphereInversionFragmentArmLimit(
+  tables: Pick<SphereInversionTables, "dim" | "generatorCount" | "seedCount">,
+): SphereInversionFragmentArmLimit | null {
+  if (tables.dim !== 3) return "dimension";
+  if (tables.generatorCount > SPHERE_INVERSION_GLSL_MAX_GENERATORS) {
+    return "generators";
+  }
+  if (tables.seedCount > SPHERE_INVERSION_GLSL_MAX_SEED_MEMBERS) {
+    return "seedMembers";
+  }
+  return null;
+}
+
+/** {@link sphereInversionFragmentArmLimit} as the guard's boolean. */
+export function sphereInversionFitsFragmentArm(
+  tables: Pick<SphereInversionTables, "dim" | "generatorCount" | "seedCount">,
+): boolean {
+  return sphereInversionFragmentArmLimit(tables) === null;
+}
 
 /** The packed table wire plus the header scalars the params packers write. */
 export interface SphereInversionGpuTables {
@@ -115,7 +254,7 @@ export function packSphereInversionGpuTables(
     throw new RangeError(`sphere-inversion GPU: bad depth ${depth}`);
   }
   const stride = s + n - 1;
-  const entries = n + s + n * stride;
+  const entries = sphereInversionTableEntries(n, s);
   const vecPer = dim === 3 ? 1 : 2;
   const data = new Float32Array(entries * vecPer * 4);
   const put = (

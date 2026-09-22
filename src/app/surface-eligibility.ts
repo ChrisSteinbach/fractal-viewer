@@ -47,7 +47,15 @@ import {
 } from "../fractal/chaos-game";
 import { shapeMeshIds, shapeSdfSource } from "../fractal/shapes";
 import { resolveSphereInversion } from "../fractal/sphere-inversion";
-import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
+import type {
+  SphereInversionAuthored,
+  SphereInversionConstruction,
+} from "../fractal/sphere-inversion";
+import {
+  SPHERE_INVERSION_GLSL_MAX_GENERATORS,
+  SPHERE_INVERSION_GLSL_MAX_SEED_MEMBERS,
+  sphereInversionFragmentArmLimit,
+} from "../fractal/surface-sphere-inversion-gpu";
 import { SPHERE_INVERSION_POINTS_MAX } from "../fractal/sphere-inversion-sample";
 import type { ShapeSpec } from "../fractal/shapes";
 import { TILING_GROUP_INFO, isLatticeTilingSpec } from "../fractal/tiling";
@@ -154,9 +162,10 @@ export interface SurfaceEligibilityDocument {
  * disclosed on an "eligible" result would never reach the user.
  *
  * ENGINE: WebGPU compute (`core: "sphereInv"` / `"sphereInv4"`), preferred.
- * 3D falls back to the SURFACE_SPHERE_INVERSION fragment arm
- * (`surface-material.ts`, the WGSL core's GLSL twin); 4D has no fragment arm
- * ({@link sphereInversionHasFragmentArm}), so without compute a 4D route is
+ * A 3D construction inside the SURFACE_SPHERE_INVERSION fragment arm's block
+ * caps falls back to it (`surface-material.ts`, the WGSL core's GLSL twin);
+ * every 4D construction and any 3D one past those caps is COMPUTE-ONLY
+ * ({@link sphereInversionComputeOnlySubject}), so without compute it is
  * refused with that reason — never handed to a WebGL tracer, which would draw
  * the transform system instead.
  */
@@ -196,10 +205,13 @@ function deriveSphereInversionEligibility(
     };
   }
   const dim = resolution.construction.dim;
-  if (!opts.computeAvailable && !sphereInversionHasFragmentArm(dim)) {
+  const computeOnly = sphereInversionComputeOnlySubject(
+    resolution.construction,
+  );
+  if (!opts.computeAvailable && computeOnly) {
     return {
       status: "ineligible",
-      note: `${dim === 4 ? "native 4D" : "3D"} sphere-inversion scenes render on WebGPU compute, which is unavailable here`,
+      note: `${computeOnly} render on WebGPU compute, which is unavailable here`,
       kind: null,
     };
   }
@@ -219,23 +231,53 @@ function deriveSphereInversionEligibility(
 }
 
 /**
- * The ONE routing predicate a sphere-inversion fragment arm flips: whether
- * the WebGL tracers can draw a block of dimension `dim`. TRUE in 3D: the
- * SURFACE_SPHERE_INVERSION arm's uniform block holds every 3D registry
- * construction (`sphereInversionFitsFragmentArm`), so `?surfacegl`, no
- * adapter and a device loss fall back to it. FALSE in 4D — COMPUTE-ONLY,
- * refused at the gate without compute and exited with a toast on a
- * mid-session device loss (the 600-cell's tables fit no uniform block;
- * `docs/sphere-inversion-gpu.md` records the data-texture lift's shape).
+ * The ONE routing answer a sphere-inversion fragment arm turns on: the
+ * SUBJECT PHRASE of the family's "renders on WebGPU compute" refusal when
+ * the WebGL tracers cannot draw this construction, and null when they can.
+ * `?surfacegl`, a missing adapter and a device loss fall back to the
+ * SURFACE_SPHERE_INVERSION arm exactly when this returns null; otherwise the
+ * route is COMPUTE-ONLY — refused at the gate without compute, and exited
+ * with a toast on a mid-session loss. Never handed to a WebGL tracer
+ * regardless, which would draw the transform system instead of the block.
+ *
+ * PER CONSTRUCTION, NOT PER DIMENSION, and the distinction is load-bearing
+ * rather than pedantic. The arm's std140 block is sized to fixed caps
+ * (`sphereInversionFragmentArmLimit`), and while every 3D registry
+ * arrangement fits them the two readings agree — so a per-dimension "3D
+ * always has an arm" was true by coincidence, not by construction. One 3D
+ * arrangement past the generator cap separates them: the gate would admit
+ * the session, main.ts would take the WebGL branch, and
+ * `setSphereInversionSystem` would throw a RangeError into a render that had
+ * already been promised. Asking the construction closes that door before it
+ * can open.
+ *
+ * The wording keeps the gate's family idiom ("X render on WebGPU compute,
+ * which is unavailable here") and varies only X, so the 4D sentence is
+ * unchanged and a capacity refusal names the CAP the user can act on rather
+ * than the dimension, which in 3D would be a non-explanation.
  */
-export function sphereInversionHasFragmentArm(dim: 3 | 4): boolean {
-  return SPHERE_INVERSION_FRAGMENT_ARMS[dim];
+export function sphereInversionComputeOnlySubject(
+  construction: Pick<
+    SphereInversionConstruction,
+    "dim" | "generators" | "seed"
+  >,
+): string | null {
+  const limit = sphereInversionFragmentArmLimit({
+    dim: construction.dim,
+    generatorCount: construction.generators.length,
+    seedCount: construction.seed.length,
+  });
+  switch (limit) {
+    case null:
+      return null;
+    case "dimension":
+      return "native 4D sphere-inversion scenes";
+    case "generators":
+      return `sphere-inversion scenes with more than ${SPHERE_INVERSION_GLSL_MAX_GENERATORS} generators`;
+    case "seedMembers":
+      return `sphere-inversion scenes with more than ${SPHERE_INVERSION_GLSL_MAX_SEED_MEMBERS} seed members`;
+  }
 }
-
-const SPHERE_INVERSION_FRAGMENT_ARMS: Readonly<Record<3 | 4, boolean>> = {
-  3: true,
-  4: false,
-};
 
 /**
  * The DORMANT half of the ownership split: which replaced-system settings

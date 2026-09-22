@@ -519,25 +519,25 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     bound degrades conservatively — when the region swallows the centre.
     `signedInversionBallScale` keeps the sign for generalized balls (a ball
     holding the centre maps to a complement).
-  - `sphere-inversion.ts` — the family's ONE shared vocabulary: an authored
-    form (registry arrangement id, radius fraction of tangency in (0, 1],
-    ball/shell/cutShell seed, depth <= 32) resolved into the explicit
-    `{dim, generators, seed, depth}` construction. Out-of-domain values and
-    unknown keys REFUSE, never clamp. The scene's optional `sphereInversion`
-    block persists VERBATIM (refused included), REPLACES the transform
-    system as the subject, and its arrangement decides the scene's dimension
-    (`scene-dimension.ts`). `sphere-inversion-de.ts`/`-de-4d.ts` are the
-    twins: the TRANSPORTED CERTIFIED BOUND on the depth-D SEED ORBIT (never
-    the limit set), step scale 1, `<= 0` a member signal, the cutoff
-    contract, hit-info attribution; f64 only, pinned by
-    `sphere-inversion-oracle.ts`. SURFACE routes to WGSL
-    `sphereInv`/`sphereInv4` (bench-pinned; the 1e-6 f32 slack caps zoom
-    near 10R), `SURFACE_SPHERE_INVERSION` is the 3D GLSL fallback, 4D
-    COMPUTE-ONLY. Kaleidoscope/lens/finishes DORMANT+disclosed; tiling,
-    balloon, trap and slab REFUSE. POINTS draws the same set exactly
-    (`sphere-inversion-sample.ts`); Flame and Solid REFUSE. Cost is flat in
-    depth. CONTROLS: Scene / Look after Transforms over the measured ranges
-    (`sphere-inversion-controls.ts`); the replaced sections DISABLE. Record:
+  - `sphere-inversion.ts` — the family's ONE shared vocabulary: a compact
+    authored form (arrangement, radius fraction, seed, depth; domains in the
+    doc) resolved into the explicit `{dim, generators, seed, depth}`
+    construction; out-of-domain values and unknown keys REFUSE, never clamp.
+    The optional `sphereInversion` block persists VERBATIM (refused
+    included), REPLACES the transform system as the subject, and its
+    arrangement decides the scene's dimension (`scene-dimension.ts`).
+    `sphere-inversion-de.ts`/`-de-4d.ts` are the twins: the TRANSPORTED
+    CERTIFIED BOUND on the depth-D SEED ORBIT (never the limit set), step
+    scale 1, the cutoff contract; f64 only, pinned by
+    `sphere-inversion-oracle.ts`. SURFACE routes to bench-pinned WGSL
+    `sphereInv`/`sphereInv4`; `SURFACE_SPHERE_INVERSION` is the 3D GLSL
+    fallback, admitted PER CONSTRUCTION, never per dimension: its caps are
+    WebGL2's guaranteed block ceiling, and 4D or a block past them is
+    COMPUTE-ONLY under one shared subject phrase. Kaleidoscope/lens/finishes
+    DORMANT+disclosed; tiling, balloon, trap, slab REFUSE. POINTS draws the
+    same set exactly (`sphere-inversion-sample.ts`); Flame/Solid REFUSE.
+    Cost is flat in depth. CONTROLS: Scene / Look after Transforms
+    (`sphere-inversion-controls.ts`); replaced sections DISABLE. Record:
     `docs/sphere-inversion-family.md`, `docs/sphere-inversion-gpu.md`.
   - `morph.ts` — pure interpolation (`lerpSystem`): endpoint-exact at t=0/1,
     rotation lerped nearest-turn, transform-count mismatches fade surplus by

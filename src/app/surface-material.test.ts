@@ -3947,6 +3947,65 @@ describe("SURFACE_SPHERE_INVERSION variant", () => {
     }
   });
 
+  it("measures its resolved and emitted source against the strip threshold", () => {
+    // `surface-material.ts`'s measure-before-adding rule, made executable
+    // for this arm: the STRIP decision is on the RESOLVED source against
+    // SURFACE_GLSL_STRIP_BYTES, and the ~80 KB Mesa link cliff is on what
+    // is actually EMITTED. Both numbers are the ones the family's GLSL-arm
+    // record carries, so a paragraph added to the arm moves a figure here
+    // before it can surprise a driver.
+    const resolved = (plane: number, finish: number, lighting: number) =>
+      surfaceFragmentResolvedFor(
+        0,
+        0,
+        0,
+        plane,
+        0,
+        finish,
+        0,
+        undefined,
+        null,
+        null,
+        false,
+        0,
+        0,
+        0,
+        null,
+        0,
+        lighting,
+        1,
+      );
+    const emitted = (plane: number, finish: number, lighting: number) =>
+      surfaceFragmentFor(
+        0,
+        0,
+        0,
+        plane,
+        0,
+        finish,
+        0,
+        undefined,
+        null,
+        null,
+        false,
+        0,
+        0,
+        0,
+        null,
+        0,
+        lighting,
+        1,
+      );
+    // Plain: under the threshold, so it reaches the driver unstripped.
+    expect(resolved(0, 0, 0).length).toBe(41695);
+    expect(emitted(0, 0, 0).length).toBe(41695);
+    expect(resolved(0, 0, 0).length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+    // Plane + finish + lighting crosses the threshold and strips.
+    expect(resolved(1, 1, 1).length).toBe(60006);
+    expect(emitted(1, 1, 1).length).toBe(23903);
+    expect(emitted(1, 1, 1).length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+  });
+
   it("sizes its block to every 3D registry construction at the deepest legal depth, and to no 4D one", () => {
     let fitted = 0;
     for (const [id, arrangement] of Object.entries(
@@ -3971,9 +4030,10 @@ describe("SURFACE_SPHERE_INVERSION variant", () => {
       }
     }
     expect(fitted).toBe(9);
-    // ico12 cut shell is the worst case, exactly at the caps; the block is
-    // 3,488 B against WebGL2's guaranteed 16,384 B.
-    expect(SURFACE_SPHERE_INVERSION_TABLE_ENTRIES).toBe(183);
+    // ico12 cut shell is the largest SHIPPED construction (183 table vec4),
+    // well inside caps that are now the guaranteed block's ceiling rather
+    // than the registry's largest: 931 + 35 vec4 = 15,456 B against 16,384.
+    expect(SURFACE_SPHERE_INVERSION_TABLE_ENTRIES).toBe(931);
     expect(SURFACE_SPHERE_INVERSION_COLOR_SLOTS).toBe(35);
     expect(
       (SURFACE_SPHERE_INVERSION_TABLE_ENTRIES +
