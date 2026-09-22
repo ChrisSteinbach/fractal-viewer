@@ -1250,8 +1250,10 @@ lengths move 3D cost by at most 25% and 4D cost by at most 40%. The 600-cell bal
 
 ## Presets (2026-09-15, delegated)
 
-Six Surface showcases sit in their own **Sphere inversion** menu group: four
-3D, two native 4D. The group holds both dimensions, as Space tiling does, and
+Ten Surface showcases sit in their own **Sphere inversion** menu group: eight
+3D, two native 4D. The first six are this section's; the four after
+Icosahedral Lace are the look study's registry growth, recorded in "The look
+study's four" below. The group holds both dimensions, as Space tiling does, and
 marks the 4D pair with `(4D)` in the label. The family is what a reader looks
 for, so the pair is not split off into the 4D group. Every call in this
 section is DELEGATED (lead agent, owner to ratify).
@@ -1402,6 +1404,64 @@ being baked into the table.
 - **Zoom floor.** Every view keeps its closest detail well inside the
   compute cores' f32 floor (about 10R magnification). No settled frame shows
   thickening at its nearest pearls or window rims.
+
+### The look study's four (2026-09-22)
+
+One preset per id the owner selected from the look study (its section below),
+placed in the menu after Icosahedral Lace and before the 4D pair. The owner
+chose all four to ship; the constructions and poses are delegated (lead
+agent, owner to ratify). The mechanism is this section's, unchanged: a
+`PRESET_SPHERE_INVERSIONS` block over the Sierpinski placeholder, render hint
+`surface`, and a `PRESET_VIEWS` camera.
+
+**Constructions.** Radius fraction .99. A ball seed is the study's own
+sizing rule, 0.93 of the central void `1 − 0.99·tangentRadius`, rounded to
+the panel's hundredths; that rule gives Kissing Pearls' .28 (0.279), so the
+four are sized the way the shipped ball presets were. D8 for the balls, D6
+for the shell, the shipped pearls' and lace's depths.
+
+**Poses.** Auditioned as minted `#v1=` documents in the built app, 32
+settled frames: three symmetry axes and one oblique per subject (two for the
+tetrahedral shell), each at two radii, target the origin, fov 62. Every
+candidate settled on compute with 0 exhausted rays in 5.7–14.4 s. The chosen
+four were then re-rendered at their final radii before baking.
+
+| Preset (menu label)                                 | Construction                | View                                      | Reading                                                                               |
+| --------------------------------------------------- | --------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------- |
+| `inversionTetraFrame` (Tetrahedral Frame)           | tetra4, ball .18, D8        | eye (.78, .78, .78), a vertex axis        | A triangular Sierpinski frame of lace round the seed; the registry's new silhouette   |
+| `inversionDodecaWindows` (Dodecahedral Windows)     | dodec20, shell 1 ± .03, D6  | eye (1.4, 1.02, 1.66), oblique            | Pentagonal windows, each holding a three-fold rosette; six windows in view            |
+| `inversionRhombiLace` (Rhombicuboctahedral Lace)    | rhombicuboct24, ball .6, D8 | eye (1.21, 1.21, 1.21), a three-fold axis | Four-fold lace crosses in the square windows round a large seed ball                  |
+| `inversionIcosidodecaStar` (Icosidodecahedral Star) | icosidodec30, ball .64, D8  | eye (0, 1.1, 1.79), a five-fold axis      | A pentagonal lace frame; compute-only (30 generators, one past the fragment arm's 29) |
+
+Choices and rejections:
+
+- **The tetrahedron's BALL, not its shell.** The study named both: the ball
+  as the one new silhouette, the shell as "a ball with three clean eyes".
+  In the app the shell reads, from every audited direction, as a disc or a
+  truncated cone with three recessed eyes: clean, but a simpler image than
+  the Icosahedral Lace it resembles. One preset per id, so the ball.
+- **The tetrahedral frame down a VERTEX axis.** The edge, face and oblique
+  views lose the triangle: the three lace arms fan out from the red seed and
+  overlap. Radius 1.35 frames it; 1.1 clips the top vertex and 1.8 leaves
+  the frame small (5.9% covered).
+- **The dodecahedral shell OBLIQUE, not down a face or vertex axis.** The
+  axis views show the same windows in a symmetric ring; the oblique shows
+  more of them at more angles, the way Icosahedral Lace was posed.
+- **The rhombicuboctahedral and icosidodecahedral balls on an axis, at
+  r 2.1.** At r 1.5 the large seed ball fills the centre and the lace is
+  cropped; at 2.2 the whole cage is in frame. The rhombicuboctahedron's
+  three-fold axis sets three four-fold crosses round the seed, its square
+  axis only frames them at the edges. The icosidodecahedron's five-fold
+  axis turns its thirty generators into a pentagonal frame; the three-fold
+  view reads as a less ordered cage.
+- **The seed balls are LARGE (.6 and .64).** Those voids are wide (the
+  generators are small), and the sizing rule fills them. A smaller seed was
+  not tried: the rule is what made the four comparable with the shipped
+  pearls, and the lace, not the seed, is the subject.
+- **No palette, lighting or finish**, as for the six.
+
+Measured settles are in the qualification's 2026-09-22 rerun below: 5.9–9.0 s
+on the AMD box, every one under the ~30 s preset target.
 
 ## Controls (2026-09-15, delegated)
 
@@ -1662,6 +1722,85 @@ contact sheet `scripts/out/si-qual-sheet.png`; raw figures
   (`w4 s2=on`, `shared`), not gating rows. A full green section still needs a
   machine that holds the device through it (the AMD box), and its real-driver
   sphere-inversion rows stay owed.
+
+### Rerun with the look study's four (2026-09-22, delegated)
+
+The ten-preset table: the six above plus `inversionTetraFrame`,
+`inversionDodecaWindows`, `inversionRhombiLace` and
+`inversionIcosidodecaStar`. Measured on the preset branch's build (base
+`a98072d`, the registry growth merged) on the AMD box: RX 7900 XTX on `:0`
+(radeonsi, navi31), WebGPU `amd rdna-3` (software = false), Playwright
+Chromium headed, 1600×900 at DSF 1, 8 antialiasing passes, reduced motion,
+`quiet=YES` before every launch. The settle seconds are this machine's and
+sit beside the Iris run above, not in place of it. Verdict: pass.
+
+| Preset                     | Settle | Covered | Exhausted | Export 3200×1800 (bands) | Link reload | Second hop |
+| -------------------------- | -----: | ------: | --------: | ------------------------ | ----------- | ---------- |
+| `inversionPearls`          |  7.4 s |   22.0% |         0 | 21.6 s (2)               | byte-exact  | byte-exact |
+| `inversionCubePearls`      |  7.2 s |   22.3% |         0 | 19.4 s (2)               | byte-exact  | byte-exact |
+| `inversionVault`           | 14.5 s |   95.9% |         0 | 48.9 s (2)               | byte-exact  | byte-exact |
+| `inversionLace`            |  9.7 s |   39.9% |         0 | 28.9 s (2)               | byte-exact  | byte-exact |
+| `inversionTetraFrame`      |  5.9 s |   10.2% |         0 | 16.9 s (2)               | byte-exact  | byte-exact |
+| `inversionDodecaWindows`   |  7.5 s |   27.2% |         0 | 22.8 s (2)               | byte-exact  | byte-exact |
+| `inversionRhombiLace`      |  8.5 s |   24.8% |         0 | 25.9 s (2)               | byte-exact  | byte-exact |
+| `inversionIcosidodecaStar` |  9.0 s |   25.7% |         0 | 26.7 s (2)               | byte-exact  | byte-exact |
+| `inversionVault4`          | 15.0 s |   29.0% |         0 | 44.2 s (2)               | byte-exact  | byte-exact |
+| `inversionMedallions4`     | 13.4 s |   40.5% |         0 | 42.2 s (2)               | byte-exact  | byte-exact |
+
+- **Distinct objects.** All 45 pairs differ; the closest pair is Kissing
+  Pearls against the Tetrahedral Frame, at 24.1% of pixels.
+- **The six shipped presets are unmoved.** Their documents are unchanged, and
+  the four 3D menu frames are byte-identical to an earlier same-day
+  `presets,gl` run of this gate on the same box (the fragment-arm cap
+  measurement's), made before any of the four existed. The 4D pair has no
+  same-machine frame from before, so for them the evidence is the diff: this
+  change touches the preset tables, the menu and the gates, and no renderer
+  code.
+- **Tiled export.** Pearls and medallions under `?surfacemaxrays=600000`
+  traced in 10 bands, byte-identical to their untiled exports.
+- **WebGL arm (3D).** `?surfacegl` against compute: the two pearl presets
+  (the gate's default) and the three new presets that fit the arm. IoU
+  1.0000 for all but the Tetrahedral Frame (0.9999), mean difference on
+  jointly covered pixels 0.040–0.044/255, each engine's census agreeing with
+  its mask.
+- **Compute-only refusal, now per construction.** The leg no longer selects
+  `dim === 4`: `loadSiPresets` asks the app's own
+  `sphereInversionComputeOnlySubject` of each preset's resolved
+  construction, and the leg runs on every preset that returns a subject,
+  checking the Surface button's note names THAT subject. The Icosidodecahedral
+  Star, 30 generators and one past the fragment arm's 29, stays in Points
+  under `?surfacegl` with the Surface button disabled on "sphere-inversion
+  scenes with more than 29 generators render on WebGPU compute, which is
+  unavailable here". The 4D pair's note is unchanged. The leg fails if the
+  table ever holds no 3D compute-only preset, so the capacity door cannot
+  pass while gating nothing.
+- **Flame/Solid refusal.** Both doors pass, after a gate fix: the toast regex
+  still expected "Flame and Sampled Solid", and the app's copy has read
+  "Flame and Solid" since the UI's Solid rename. The app was right and the
+  gate was stale; the first run failed both handoff checks on wording alone,
+  with the toast shown.
+- **Teardown.** `scripts/surface-teardown.verify.mjs --document=` on the
+  gate's share documents for the four new presets, `--toggleId=__modeExit
+--toggles=20 --toggleGapMs=900`: 20/20 mode exits each in Firefox on the
+  compute engine (dev server, same tree), no crash or page error.
+- **Presets gate.** `scripts/sphere-inversion-presets.verify.mjs
+--mode=x11::0` passes on all ten (menu entry, compute, coverage, the landed
+  4D slice and its nudge, the clearing preset).
+- **SwiftShader subset** (`--mode=sw`): passes on all ten.
+
+**Bench** (`:0`, the same box, `quiet=YES` before each run).
+
+- `npm run bench:surface -- --display=:0 --surface-sphere-inversion-only=1`:
+  every leg passed, now twelve eval rows with the appended
+  `siIcosidodec30Star3` (`docs/gpu-bench-surface.md` has its row).
+- `npm run bench:surface -- --display=:0` (full section): **verdict
+  `pass`**. This is the family's first full green section; the Iris lost the
+  device before the sphere-inversion legs could run, and this box holds it
+  through them. `escChainKaleido`, the known SwiftShader-only false failure,
+  agrees here (`fail=0`).
+- The brief's NON-UNIT or mixed-radius row is NOT added: no document can
+  express a non-unit construction under the registry arm the look study
+  chose, so the `uniformUnit` else-arm has no reachable consumer to pin.
 
 ## Authored generator sets: the look study (2026-09-22)
 
