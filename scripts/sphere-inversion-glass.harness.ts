@@ -40,11 +40,21 @@
  * probe below checks it numerically against the explicit orbit rather than
  * trusting the algebra.
  *
- * WHAT THIS SHEET IS. A prototype field built ENTIRELY here out of public
- * calls (`sphereInversionHitInfo` plus the DE's own fold scratch), driven
- * through `surface-dielectric.ts` — the ONE transport oracle — over the
- * closed-solid boundary query's f64 twin. No production module changes; no
- * new optical model; no displacement. Both dimensions in the same sheet.
+ * WHAT THIS SHEET IS. The look evidence for the SHIPPED signed field —
+ * `sphereInversionSignedDistance`/`...4` — driven through
+ * `surface-dielectric.ts`, the ONE transport oracle, over the closed-solid
+ * boundary query's f64 twin. No new optical model; no displacement. Both
+ * dimensions in the same sheet.
+ *
+ * It was written the other way round: the gate ran first, against a
+ * prototype field assembled here from public calls alone, so that no
+ * production module existed before the look was seen. The field then landed
+ * in `sphere-inversion-de.ts` unchanged, and the sheet now CALLS it rather
+ * than keeping a second copy — so these panels are evidence about the code
+ * that ships, not about a lookalike. The swap was checked the only way that
+ * settles it: re-rendered through the shipped entry, the 3D panel is
+ * BYTE-IDENTICAL to the prototype's (same PNG hash, same resolved/residual/
+ * unresolved counts, same paths and phantoms per trace).
  *
  * WHAT IT IS NOT. Not a certification of the field (the production form owes
  * its own module, tests and f32 argument), not a performance claim (a CPU
@@ -54,12 +64,12 @@
  * ---------------------------------------------------------------- FINDINGS
  *
  * 1. THE FIELD IS SOUND, IN ALL THREE SENSES THE MARCH NEEDS, and the
- *    interior half cost no new arithmetic. Measured by the first three
- *    tests: zero membership disagreements between `field < 0` and
- *    `sphereInversionContains` over 200k samples at depths 2/4/6/8; zero
- *    clearance overshoot against the explicit orbit; zero oversteps in 8k
- *    interior samples stepping `|f|` in random directions. The sign is
- *    EXACT, not approximate.
+ *    interior half cost no new arithmetic. The gate measured that here
+ *    first — zero membership disagreements, zero clearance overshoot
+ *    against the explicit orbit, zero oversteps — and the claims now live
+ *    where they belong, as per-fixture pins in
+ *    `sphere-inversion-de.test.ts` and its 4D twin, against
+ *    `explicitOrbitClearance`. This sheet keeps the LOOK.
  *
  * 2. THE LOOK IS REAL, AND IT IS A CURVED-GLASS LOOK. The opaque controls
  *    and the glass panels share a pose and a studio, so the panels differ
@@ -123,31 +133,21 @@ import {
 } from "./de-preview";
 import { lift4, type RotorPlane } from "./sphere-inversion-orbit";
 import {
-  SPHERE_INVERSION_FOLD_POLE,
-  makeSphereInversionHit,
   resolveSphereInversion,
-  transportSphereInversionBound,
   type SphereInversionAuthored,
   type SphereInversionConstruction,
   type SphereInversionDE,
-  type SphereInversionHit,
 } from "../src/fractal/sphere-inversion";
 import {
   buildSphereInversionDE,
   sphereInversionContains,
-  sphereInversionHitInfo,
+  sphereInversionSignedDistance,
 } from "../src/fractal/sphere-inversion-de";
 import {
   buildSphereInversionDE4,
   sphereInversionContains4,
-  sphereInversionHitInfo4,
+  sphereInversionSignedDistance4,
 } from "../src/fractal/sphere-inversion-de-4d";
-import {
-  enumerateSeedOrbit,
-  oracleMemberSdf,
-  pieceContains,
-  type OrbitPiece,
-} from "../src/fractal/sphere-inversion-oracle";
 import {
   DIELECTRIC_ABSORPTION,
   DIELECTRIC_CROSSING_EPS_REL,
@@ -181,59 +181,29 @@ const SIZE_4D = Number(process.env.SIG_SIZE_4D ?? 96);
  * already says a ray aimed at one creeps.
  */
 interface OpticalSolid {
-  /** The prototype signed field. */
+  /** The SHIPPED signed field. */
   field(p: Vec3): number;
   /** EXACT membership in the displayed solid — the family's own predicate,
    * never a threshold on a distance. */
   contains(p: Vec3): boolean;
 }
 
-function signedField3(de: SphereInversionDE): (p: Vec3) => number {
-  const hit: SphereInversionHit = makeSphereInversionHit();
-  return (p) => {
-    sphereInversionHitInfo(de, p, 0, hit);
-    if (hit.status === SPHERE_INVERSION_FOLD_POLE) return 0;
-    if (hit.d > 0) return hit.d;
-    return -transportSphereInversionBound(
-      de.foldRadius,
-      de.foldRadius2,
-      hit.foldDepth,
-      -hit.d,
-    );
-  };
-}
-
-/** The same field one dimension up, over the app's own posed lift
- * `q = rotorInv · (p, w0)` (`lift4`). The 4D module's own header carries
- * the reason no new geometry is needed: "A slice's distance is at least the
- * 4D distance, so this certified 4D bound is a certified in-slice bound" —
- * and the identical inequality makes a 4D interior clearance a conservative
- * IN-SLICE clearance. Zero slab thickness, which this family already
- * refuses to widen. */
+/** The 4D field read through the app's own posed lift. */
 function signedField4(
   de: SphereInversionDE,
   planes: [RotorPlane, number][],
   w0: number,
 ): (p: Vec3) => number {
-  const hit: SphereInversionHit = makeSphereInversionHit();
   const lift = lift4(planes, w0);
   return (p) => {
     const q = lift(p);
-    sphereInversionHitInfo4(de, [q[0], q[1], q[2], q[3]], 0, hit);
-    if (hit.status === SPHERE_INVERSION_FOLD_POLE) return 0;
-    if (hit.d > 0) return hit.d;
-    return -transportSphereInversionBound(
-      de.foldRadius,
-      de.foldRadius2,
-      hit.foldDepth,
-      -hit.d,
-    );
+    return sphereInversionSignedDistance4(de, [q[0], q[1], q[2], q[3]]);
   };
 }
 
 function solid3(de: SphereInversionDE): OpticalSolid {
   return {
-    field: signedField3(de),
+    field: (p) => sphereInversionSignedDistance(de, p),
     contains: (p) => sphereInversionContains(de, p),
   };
 }
@@ -530,27 +500,6 @@ function panel(
 
 // --------------------------------------------------------- the soundness probe
 
-/** The reference interior clearance: the largest inscribed radius among the
- * explicit orbit's pieces that contain `p`. A piece is an intersection of
- * generalized balls, so its own clearance is the min over members of each
- * member's exact interior distance; the union's clearance is at least the
- * best containing piece's. A sound field never reads MORE clearance than
- * this, and must agree on membership. */
-function referenceClearance(
-  pieces: readonly OrbitPiece[],
-  p: readonly number[],
-): number {
-  let best = -1;
-  for (const piece of pieces) {
-    if (!pieceContains(piece, p)) continue;
-    let inner = Infinity;
-    for (const m of piece.members)
-      inner = Math.min(inner, -oracleMemberSdf(m, p));
-    if (inner > best) best = inner;
-  }
-  return best;
-}
-
 interface SceneSpec {
   name: string;
   construction: SphereInversionConstruction;
@@ -620,161 +569,6 @@ function report(label: string, stats: PanelStats, counters: GlassCounters) {
 }
 
 describe("sphere-inversion glass (the look gate)", () => {
-  it("checks the prototype signed field against the explicit orbit", () => {
-    const rows: string[] = [];
-    for (const name of ["inversionPearls", "inversionLace"] as const) {
-      const spec = build(name);
-      // A shallow depth keeps the explicit enumeration affordable; the
-      // transport law being checked is the fold's, not the depth's.
-      const construction = atDepth(spec.construction, 3);
-      const de = buildSphereInversionDE(construction);
-      const field = signedField3(de);
-      const pieces = enumerateSeedOrbit(construction);
-      let inside = 0;
-      let worstOver = 0;
-      let membershipMismatch = 0;
-      let samples = 0;
-      let seed = 12345;
-      const rand = () => {
-        seed = (seed * 1664525 + 1013904223) >>> 0;
-        return seed / 4294967296;
-      };
-      const R = spec.radius;
-      for (let i = 0; i < 40000; i++) {
-        const p: Vec3 = [
-          (rand() * 2 - 1) * R,
-          (rand() * 2 - 1) * R,
-          (rand() * 2 - 1) * R,
-        ];
-        const f = field(p);
-        const member = referenceClearance(pieces, p) >= 0;
-        samples++;
-        if (member !== f < 0) {
-          // The band where the field reads exactly 0 (a pole, a tangency
-          // cusp, the surface itself) is not a disagreement.
-          if (Math.abs(f) > 1e-12) membershipMismatch++;
-          continue;
-        }
-        if (f < 0) {
-          inside++;
-          const reference = referenceClearance(pieces, p);
-          const over = -f - reference;
-          if (over > worstOver) worstOver = over;
-        }
-      }
-      rows.push(
-        `  ${spec.name.padEnd(16)} samples ${samples}  interior ${inside}` +
-          `  membership mismatches ${membershipMismatch}` +
-          `  worst clearance overshoot ${(worstOver / R).toExponential(3)} R`,
-      );
-    }
-    console.log("\nPrototype signed field against the explicit orbit:");
-    for (const row of rows) console.log(row);
-  });
-
-  it("pins the field's SIGN against the family's exact membership", () => {
-    const spec = build("inversionPearls");
-    for (const depth of [2, 4, 6, 8]) {
-      const de = buildSphereInversionDE(atDepth(spec.construction, depth));
-      const shape = solid3(de);
-      const hit = makeSphereInversionHit();
-      const R = de.boundingRadius;
-      let seed = 987654321;
-      const rand = () => {
-        seed = (seed * 1664525 + 1013904223) >>> 0;
-        return seed / 4294967296;
-      };
-      let negNotMember = 0;
-      let posMember = 0;
-      let neg = 0;
-      let member = 0;
-      let exhaustedNeg = 0;
-      for (let i = 0; i < 200000; i++) {
-        const p: Vec3 = [
-          (rand() * 2 - 1) * R,
-          (rand() * 2 - 1) * R,
-          (rand() * 2 - 1) * R,
-        ];
-        const f = shape.field(p);
-        const inSolid = shape.contains(p);
-        if (f < 0) neg++;
-        if (inSolid) member++;
-        if (f < 0 && !inSolid) {
-          negNotMember++;
-          sphereInversionHitInfo(de, p, 0, hit);
-          if (hit.status !== 0) exhaustedNeg++;
-        }
-        if (f >= 0 && inSolid) posMember++;
-      }
-      console.log(
-        `  depth ${depth}: negative ${neg}  member ${member}` +
-          `  negative-but-not-member ${negNotMember} (fold not DOMAIN: ${exhaustedNeg})` +
-          `  member-but-not-negative ${posMember}`,
-      );
-    }
-  });
-
-  it("pins the interior value as a STEPPING bound", () => {
-    const spec = build("inversionPearls");
-    for (const depth of [2, 8]) {
-      const de = buildSphereInversionDE(atDepth(spec.construction, depth));
-      const shape = solid3(de);
-      const R = de.boundingRadius;
-      const eps = DIELECTRIC_CROSSING_EPS_REL * R;
-      let seed = 24680;
-      const rand = () => {
-        seed = (seed * 1664525 + 1013904223) >>> 0;
-        return seed / 4294967296;
-      };
-      let interior = 0;
-      let overstepped = 0;
-      let worstRatio = 0;
-      let bandWouldCatch = 0;
-      for (let i = 0; i < 4000000 && interior < 4000; i++) {
-        const p: Vec3 = [
-          (rand() * 2 - 1) * R,
-          (rand() * 2 - 1) * R,
-          (rand() * 2 - 1) * R,
-        ];
-        if (!shape.contains(p)) continue;
-        interior++;
-        const f = shape.field(p);
-        if (!(f < 0)) continue;
-        const h = -f;
-        // A random unit direction.
-        let dx = rand() * 2 - 1;
-        let dy = rand() * 2 - 1;
-        let dz = rand() * 2 - 1;
-        const n = Math.hypot(dx, dy, dz) || 1;
-        dx /= n;
-        dy /= n;
-        dz /= n;
-        const q: Vec3 = [p[0] + dx * h, p[1] + dy * h, p[2] + dz * h];
-        if (!shape.contains(q)) {
-          overstepped++;
-          // How far past the true boundary did it land? Bisect for the exit.
-          let lo = 0;
-          let hi = h;
-          for (let k = 0; k < 40; k++) {
-            const mid = (lo + hi) / 2;
-            const m: Vec3 = [p[0] + dx * mid, p[1] + dy * mid, p[2] + dz * mid];
-            if (shape.contains(m)) lo = mid;
-            else hi = mid;
-          }
-          const ratio = h / Math.max(lo, 1e-18);
-          if (ratio > worstRatio) worstRatio = ratio;
-          if (Math.abs(shape.field(q)) < eps) bandWouldCatch++;
-        }
-      }
-      console.log(
-        `  depth ${depth}: interior samples ${interior}` +
-          `  oversteps ${overstepped}` +
-          `  worst step/true-clearance ${worstRatio.toFixed(2)}x` +
-          `  band would still catch ${bandWouldCatch}`,
-      );
-    }
-  });
-
   it("renders the 3D subjects as glass beside their opaque controls", () => {
     const panels: PanelStats[] = [];
     console.log("\n3D subjects (glass through the transport oracle):");
