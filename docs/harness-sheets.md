@@ -1186,6 +1186,23 @@ samples. The policy that follows is `SPHERE_INVERSION_POINTS_MAX` = 500,000
 samples per cloud (about 2.1 s of worker time at the worst subject) and a
 cached sampler per block, so a colour or count edit skips the pilot.
 
+### sphere-inversion-gencount
+
+The family's CPU cost AGAINST GENERATOR COUNT
+(`scripts/sphere-inversion-gencount.harness.ts`): every registry arrangement,
+4 to 120 generators, at the cost probe's representative seeds. Per row it
+times one estimator query uniform in the bounding ball and 0.005 off the set
+(Points boundary samples pushed out), and the Points sampler's prepare and
+per-point cost over 200k, each the median of three runs on one core.
+
+Verdict: the covering tables grow quadratically (21 to 993 balls across 3D)
+and the cost does not follow them. Near-set eval is close to linear in `n`
+(about 0.16 + 0.011·n µs in 3D, 1.6–1.9 µs at 120); uniform queries grow
+about 3× across 3D; Points prepare grows linearly for shells and the
+per-point cost follows the seed kind, not `n`. It is the CPU half of
+`docs/sphere-inversion-family.md`'s "Cost against generator count"; the GPU
+half is the cost probe's `gencount` plan and the bench's timing rows.
+
 ## The space-tiling sheet
 
 ### tiling

@@ -99,6 +99,11 @@ const TIMING_ROWS = [
   "si600Snowflake4@W.06",
   // Appended: the 30-generator 3D row, timed beside the 12-generator ones.
   "siIcosidodec30Star3",
+  // Appended: the rest of the 3D shipped band, so µs/query reads against
+  // generator count 6/8/12/30 in 3D and 24/120 in 4D.
+  "siCube8Shell3",
+  "siIco12Vault3",
+  "siCell24Shell4",
 ];
 const TIMING_PILOT = 64;
 /** The smallest submission a slow core may shrink to. */
@@ -1132,6 +1137,25 @@ async function runTiming(
           row.queries,
         ),
       );
+      // THE uniformUnit-OFF PENALTY: the same row, tables and queries with
+      // the flag cleared, so the kernel takes the linear first-containing
+      // scan instead of the unit arrangement's radial reject and nearest-
+      // centre pick. The linear arm is correct for ANY construction, which is
+      // what makes it the fair control; no shipped document reaches it.
+      if (tables.uniformUnit) {
+        const linear = { ...tables, uniformUnit: false, uniformRadius: 0 };
+        out.timing.push(
+          await timeEval(
+            ctx,
+            `${name} linear`,
+            coreOf(row),
+            surfaceDeKernelWgsl(kernelOptions(coreOf(row), {})),
+            (count) => packParams(row, linear, { itemCount: count, cutoff: 0 }),
+            linear.data,
+            row.queries,
+          ),
+        );
+      }
     } catch (e) {
       out.notes.push(
         `sphere-inversion timing ${name}: ${describe(e)} (informational)`,
