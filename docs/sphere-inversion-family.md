@@ -1643,3 +1643,234 @@ contact sheet `scripts/out/si-qual-sheet.png`; raw figures
   (`w4 s2=on`, `shared`), not gating rows. A full green section still needs a
   machine that holds the device through it (the AMD box), and its real-driver
   sphere-inversion rows stay owed.
+
+## Authored generator sets: the look study (2026-09-22)
+
+The gating study for authoring beyond the seven registry arrangements. The
+document's AUTHORED form names an arrangement by id and gives every generator
+one radius as a fraction of that arrangement's kissing radius; the RESOLVED
+form underneath has always taken an arbitrary `{center, radius}` list. The
+question is what the document should be allowed to say, and it is answered on
+rendered panels rather than on expectation.
+
+Nothing here reopens the construction, the certified bound, the cutoff
+contract or the covering argument. Only the arrangements move.
+
+**Run** (`scripts/sphere-inversion-authored-sets.harness.ts`; panels at
+256 px, depth 6, generators at 0.99 × kissing throughout, so a row differs
+from its neighbour by its CENTRES and by nothing else):
+
+```bash
+SIA_ROUND=r3d npx vitest run --config scripts/vitest.harness.config.ts scripts/sphere-inversion-authored-sets.harness.ts
+SIA_ROUND=par ...   SIA_ROUND=jit3 ...   SIA_ROUND=jit4 ...
+```
+
+It writes `scripts/out/sphere-inversion-authored-{r3d,par,jit3,jit4}.png`.
+`SIA_FIELD=N` re-draws the jitter displacement field, which is how the
+draw-dependence below was measured.
+
+### Instruments
+
+`de-preview.ts` renders every panel and `set-extent.ts` gives fill and reach
+against the fold's MEMBERSHIP oracle, as everywhere else in this family. The
+slice columns (`off`, `word0`, `vs3D`) are the native 4D search's, now shared
+rather than copied: `scripts/sphere-inversion-slice.ts` holds the
+sub-arrangement and the fold-word columns both sheets read, and the 4D
+search's numbers are unchanged by the move.
+
+One column is new. **`deep`** is the share of HIT pixels whose fold word is at
+least TWO inversions long — a copy inside a copy, which is what NESTING means
+at the pixel level. It exists because `copy` cannot answer the study's
+question: a set whose generators have drifted apart still draws
+first-generation copies long after the second generation has left the
+picture, and `copy` reads those as structure. `word` (the mean word length
+over hit pixels) is the same quantity read as an average rather than a
+threshold.
+
+Every panel of every round was **0.0% exhausted** at the 600-step budget, as
+the 4D rounds were.
+
+### The two radius rules
+
+Validity needs pairwise-disjoint interiors, and the family refuses overlap
+rather than clamping it, so an authoring gesture that can refuse mid-drag is
+not acceptable. Both rules below are valid BY CONSTRUCTION at every fraction
+in `(0, 1]`, so neither can refuse:
+
+- **SHARED** (`SHR`), what the registry does today: one radius
+  `f · d_min/2`, off the smallest centre-to-centre distance in the whole set.
+- **OWN**, per generator: `r_i = f · d_i/2` off generator `i`'s OWN
+  nearest-neighbour distance. Sound because `r_i + r_j = f(d_i + d_j)/2 <=
+f |c_i − c_j|`, since `d_i` and `d_j` are both at most that distance. It
+  costs the kernels' `uniformUnit` radial-reject fast path by definition.
+
+The two coincide exactly on every vertex-transitive set, which is why only the
+derived, parametric and jittered rows below carry both. No `OWN` panel in any
+round was refused by `buildInversionScene`'s overlap check, which is that
+inequality's executable check.
+
+### 3D arrangements beyond the registry (`-r3d.png`)
+
+Eleven centre sets, each with the pearls ball seed (93% of the central void,
+which reproduces the shipped panels' hand-picked sizes to within a few
+hundredths) and the unit lace shell. `n` is the generator count, `r` the
+resolved radius, `copy`/`deep`/`word` the fold-word columns on the BALL panel.
+
+| Set              |   n |     r | copy | deep | word | Reading                                                                                                                                                    |
+| ---------------- | --: | ----: | ---: | ---: | ---: | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TETRA4`         |   4 | 0.808 | 0.97 | 0.71 | 2.94 | A triangular Sierpinski frame of lace with pearls inside it — the one NEW silhouette in the round, and the shell is a ball with three clean eyes           |
+| `OCT6`           |   6 | 0.700 | 0.83 | 0.56 | 2.28 | Shipped bar                                                                                                                                                |
+| `CUBE8`          |   8 | 0.572 | 0.83 | 0.47 | 1.77 | Shipped bar                                                                                                                                                |
+| `CUBOCT12`       |  12 | 0.495 | 0.74 | 0.47 | 1.77 | Reads between `cube8` and `ico12`; nothing the two shipped ids do not already say                                                                          |
+| `ICO12`          |  12 | 0.520 | 0.77 | 0.55 | 2.13 | Shipped bar                                                                                                                                                |
+| `RHOMBDODEC14`   |  14 | 0.455 | 0.75 | 0.44 | 1.63 | `oct6 ∪ cube8`: an intermediate, weaker than either parent                                                                                                 |
+| `DODEC20`        |  20 | 0.353 | 0.61 | 0.30 | 1.14 | Twelve pentagonal windows with rosettes in them — visibly denser than `ico12`'s and not a restatement of it                                                |
+| `RHOMBICUBOCT24` |  24 | 0.354 | 0.70 | 0.43 | 1.55 | A strong four-fold lace cross; 24 windows in the shell. The densest set that still fits the fragment arm                                                   |
+| `DISDYAK26`      |  26 | 0.300 | 0.53 | 0.24 | 0.92 | `oct6 ∪ cube8 ∪ cuboct12`: muddier than its parents, and its uneven neighbour distances already start the shared radius collapsing (`OWN` reads 0.59/0.33) |
+| `ICOSIDODEC30`   |  30 | 0.306 | 0.64 | 0.38 | 1.37 | A four-pointed lace star; 30 windows. Past the fragment arm's 29-generator block capacity, so the first COMPUTE-ONLY 3D construction                       |
+| `RHOMBTRIA32`    |  32 | 0.093 | 0.05 | 0.01 | 0.06 | COLLAPSED — a bare ball with a handful of dots                                                                                                             |
+
+`RHOMBTRIA32` is the authoring hazard the epic predicted, measured on a
+REGULAR set rather than a random one: `ico12 ∪ dodec20` puts two shells of
+centres 0.19 apart, the shared kissing radius follows that one pair down to
+0.093, and every generator shrinks with it. Fill reads 46% because what fills
+the ball is the SEED, not its copies. The `OWN` rule recovers part of it
+(`copy` 0.05 → 0.26, `deep` 0.01 → 0.06) and does not rescue it.
+
+**Verdict.** 3D registry growth is worth having, and `TETRA4` is the clearest
+case: the tetrahedron is the one arrangement here whose symmetry class is not
+already in the registry, and it draws a silhouette the shipped three cannot.
+`DODEC20`, `RHOMBICUBOCT24` and `ICOSIDODEC30` each buy a denser window
+count that reads as its own object. The derived unions (`RHOMBDODEC14`,
+`DISDYAK26`, `RHOMBTRIA32`) buy nothing: they read as intermediates at best
+and as collapse at worst, and the derivation RULE that produced the good
+dense sets — edge midpoints — is a build-time expression, not a document
+field (`CUBOCT12` and `ICOSIDODEC30` are one function applied to `oct6` and
+`ico12`).
+
+### Parametric families (`-par.png`)
+
+Rings, bipyramids, prisms, antiprisms with an authored aspect, and two
+concentric shells — the tier that would buy freedom with a parameter schema
+rather than a longer registry.
+
+| Family                   |    n |        copy |        deep | Reading                                                                                                                                                                                                                                                        |
+| ------------------------ | ---: | ----------: | ----------: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RING5` / `RING8`        |  5/8 | 0.58 / 0.36 | 0.23 / 0.12 | A bare seed ball with a necklace of pearls, thinning as `n` grows                                                                                                                                                                                              |
+| `BIPYR6` / `BIPYR8`      | 8/10 | 0.56 / 0.40 | 0.22 / 0.13 | The same necklace with two poles added; `OWN` lifts `BIPYR6` to 0.74/0.45 by giving the poles their own radius, and it is still a necklace                                                                                                                     |
+| `PRISM6 H.5`             |   12 |        0.60 |        0.27 | Reads well — and reads as a polyhedron, because at that aspect it nearly is one                                                                                                                                                                                |
+| `ANTIPRISM6 H.5`         |   12 |        0.64 |        0.28 | Same                                                                                                                                                                                                                                                           |
+| `ANTIPRISM8 H.35`        |   16 |        0.53 |        0.25 | Same, thinner                                                                                                                                                                                                                                                  |
+| `SHELL2 O6+C8 D1.9/D2.6` |   14 | 0.91 / 0.84 | 0.79 / 0.57 | Genuinely unlike anything shipped — a sparse high-contrast constellation of clustered pearls — but at 0.16–0.37% fill and 11–17% hits it is scattered dust, and its centres are not at one distance, which costs the convention that seed lengths are absolute |
+
+**Verdict: no.** Rings and bipyramids reproduce one dimension down exactly
+what the native 4D search already read as "a bare seed ball with a few
+pearls". Prisms and antiprisms read well only where their aspect makes them
+approximately a regular polyhedron, which is to say they are worth exactly
+the registry id they approximate. The two-shell sets are the only genuinely
+new look in the round and they are sparse dust with a broken length
+convention. A parameter schema and its refusal domain buy no object this
+study would author.
+
+### The jitter sweep (`-jit3.png`, `-jit4.png`)
+
+The real form of the aesthetic question. Regular-versus-random is the two
+ENDPOINTS of this sweep; the middle is what says whether explicit centres are
+worth several KB of share link. Each base set gets ONE displacement field —
+uniform directions, lengths uniform in `[0, 1]` — drawn once and SCALED, so
+consecutive rows are the same perturbation seen harder rather than unrelated
+draws. The amplitude `J` is a fraction of the base set's own edge.
+
+3D, `deep` at 256 px (`oct6` with the pearls ball, `ico12` with the lace
+shell), and the 4D 600-cell shell at its identity (passive) slice:
+
+| J    | `oct6` SHR | `oct6` OWN | `ico12` SHR | `ico12` OWN | `cell600` SHR | `cell600` OWN |
+| ---- | ---------: | ---------: | ----------: | ----------: | ------------: | ------------: |
+| 0.00 |       0.56 |       0.56 |        0.39 |        0.39 |          0.29 |          0.29 |
+| 0.05 |       0.42 |       0.48 |        0.28 |        0.35 |          0.16 |          0.23 |
+| 0.10 |       0.32 |       0.42 |        0.20 |        0.31 |          0.09 |          0.18 |
+| 0.20 |       0.20 |       0.33 |        0.10 |        0.24 |          0.02 |          0.11 |
+| 0.35 |       0.10 |       0.25 |        0.03 |        0.17 |          0.00 |          0.04 |
+| 0.50 |       0.08 |       0.19 |        0.01 |        0.11 |          0.00 |          0.00 |
+
+What the panels show beside those numbers: at `J.05` the symmetry is visibly
+broken but the object still reads as a nested cluster; at `J.10` about half
+the lace is gone; at `J.20` the shared rule leaves a sphere with a few
+satellites and the ico12 shell loses half its rosette windows; `J.35` and
+`J.50` are a ball with dust. The 4D shell goes EARLIER — its windows are
+empty dimples by `J.20` — and the reason is structural rather than
+dimensional: the shared radius is a MINIMUM over pairs, the 600-cell has
+~360 neighbour pairs to the octahedron's 12, and a minimum over more pairs
+falls faster under the same per-centre displacement.
+
+**THE AMPLITUDE BREAKPOINT IS DRAW-DEPENDENT, so it is quoted as a range.**
+Three draws of the `oct6` field (`SIA_FIELD=0,1,2`, 64 px) put the shared
+rule's `deep` at `J.50` at 0.12, 0.28 and 0.08 — a 3.5× spread at one
+amplitude — because one unlucky pair sets the shared radius for the whole
+set. The same three draws agree closely at `J.05` (0.52 / 0.59 / 0.55) and
+`J.10` (0.43 / 0.57 / 0.48). Read the sweep as: **a regular set tolerates
+about 5–10% of an edge with its structure essentially intact, is visibly
+degraded by 20%, and is dust by 35–50%, with the exact crossing depending on
+the draw.**
+
+`OWN` is higher than `SHR` in every one of the 36 jitter rows measured, by
+1.3× at small amplitudes and up to 2.7× at large ones, and the gap widens
+exactly where the shared rule's radius collapses.
+
+One 4D column is worth recording: `off` reads **1.00 at every jittered pose,
+including the identity**. A jittered arrangement has no centre exactly in any
+slice hyperplane, so it has no passive slices at all — 4D genuineness comes
+free with perturbation, and comes with nothing else. (`word0` at the first
+pose compares the reference with itself and is 1.00 by construction; it is
+read on the later poses.)
+
+### Verdict and the tiers
+
+1. **More registry ids — YES, in 3D only.** Recommended: `tetra4` (a
+   symmetry class the registry does not have), `dodec20` and
+   `rhombicuboct24` (both inside the fragment arm's 29-generator block
+   capacity), and `icosidodec30` as the first compute-only 3D construction if
+   a densest id is wanted. Each is one entry in
+   `SPHERE_INVERSION_ARRANGEMENTS`; the wire stays one string, validity is by
+   construction, the dimension derivation is unchanged and `uniformUnit`
+   holds. In 4D nothing is added: the native 4D beauty search already
+   surveyed the plausible growth — 20 random S³ centres, the dual 24-cell at
+   mixed radii, Hopf-linked necklaces, both Clifford-torus duoprisms and the
+   96-centre snub 24-cell — and nothing beat the 600-cell.
+2. **Parametric families — NO**, on the `par` round above.
+3. **Explicit centres — NO.** The jitter sweep is the evidence: the
+   interesting neighbourhood of a regular set is a few percent of an edge
+   wide, so what explicit centres buy is either a set a registry id already
+   names or dust. That is not worth several KB of `#v1=` hash per document,
+   and it is the one tier whose cost is real.
+4. **Per-generator radii — NOT NOW, and this is the rule to use IF tier 3 is
+   ever reopened.** The DERIVED `OWN` rule beat the shared rule on every
+   non-vertex-transitive set measured here, which is a different question
+   from the 4D search's refusal of AUTHORED mixed radii (`.6/.4` on the dual
+   24-cell) and does not contradict it. But it only bites on sets that are
+   not vertex-transitive, which is exactly the sets tiers 2 and 3 would
+   author and this study refuses. Every id in tier 1 is vertex-transitive, so
+   the two rules are the same number there and nothing is owed.
+
+So the epic's authoring vocabulary is **the registry arm alone**, which is the
+outcome it was written to allow.
+
+**Selected (owner, 2026-09-22): the registry arm with four ids** — `tetra4`,
+`dodec20`, `rhombicuboct24` and `icosidodec30`. Tiers 2, 3 and 4 are refused
+on the evidence above. `icosidodec30`'s 30 generators are past the 3D
+fragment arm's block capacity, so it is the first shipped construction that
+routes compute-only per CONSTRUCTION rather than per dimension, which is the
+routing predicate that already landed; the other three fit the fragment arm.
+The cost question the four ids leave open is the generator-count range, which
+the epic measures separately — 30 is twice the largest 3D count shipped
+today, and the covering tables are quadratic.
+
+### What this study does not say
+
+- Panels are CPU previews at depth 6 and one seed per family; a subject
+  authored from a new id would be re-posed and re-seeded the way the shipped
+  presets were.
+- The jitter sweep reads ONE field per base set at each amplitude (three
+  fields on `oct6` for the draw-dependence check above), not a distribution.
+- `deep` is a PIXEL share at one camera, so it measures what the panel shows,
+  not what the object contains — which is the point, and also its limit.
