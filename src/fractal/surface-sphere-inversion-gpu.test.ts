@@ -92,8 +92,19 @@ describe("the 3D fragment arm's block capacity", () => {
         .filter((a) => a.dim === 3)
         .map((a) => a.centers.length),
     );
-    expect(largest3D).toBe(12);
-    expect(SPHERE_INVERSION_GLSL_MAX_GENERATORS).toBeGreaterThan(largest3D);
+    // icosidodec30 is the registry's largest 3D arrangement and sits one
+    // generator past the ceiling: the coincidence the old cap of 12 hid is
+    // now a real compute-only construction, and nothing else crosses it.
+    expect(largest3D).toBe(30);
+    expect(SPHERE_INVERSION_GLSL_MAX_GENERATORS).toBe(29);
+    const past = Object.entries(SPHERE_INVERSION_ARRANGEMENTS)
+      .filter(
+        ([, a]) =>
+          a.dim === 3 &&
+          a.centers.length > SPHERE_INVERSION_GLSL_MAX_GENERATORS,
+      )
+      .map(([id]) => id);
+    expect(past).toEqual(["icosidodec30"]);
   });
 
   it("is monotone in both counts, so one check at the caps covers everything beneath", () => {
@@ -135,10 +146,13 @@ describe("the 3D fragment arm's block capacity", () => {
         generatorCount: arr.centers.length,
         seedCount: SPHERE_INVERSION_GLSL_MAX_SEED_MEMBERS,
       };
-      expect(sphereInversionFragmentArmLimit(tables)).toBe(
-        arr.dim === 3 ? null : "dimension",
+      expect(sphereInversionFragmentArmLimit(tables), id).toBe(
+        arr.dim === 4
+          ? "dimension"
+          : id === "icosidodec30"
+            ? "generators"
+            : null,
       );
-      expect(id).toBeTruthy();
     }
     expect(
       sphereInversionFragmentArmLimit({

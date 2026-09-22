@@ -189,6 +189,93 @@ function ico12Centers(): number[][] {
   return out;
 }
 
+/** Scale every centre onto the unit sphere. */
+function unitize(centers: number[][]): number[][] {
+  return centers.map((c) => {
+    const n = Math.hypot(...c);
+    return c.map((v) => v / n);
+  });
+}
+
+/** The regular tetrahedron's 4 vertices: alternate cube corners
+ * `(1,1,1), (1,−1,−1), (−1,1,−1), (−1,−1,1)`, unitized. Edge `√(8/3)`, so
+ * the kissing radius is `√(2/3) ≈ 0.816` — the largest generators in the
+ * registry, and the only arrangement whose central void (`1 − r`) is
+ * narrower than the default seed ball. */
+function tetra4Centers(): number[][] {
+  return unitize([
+    [1, 1, 1],
+    [1, -1, -1],
+    [-1, 1, -1],
+    [-1, -1, 1],
+  ]);
+}
+
+/** The dodecahedron's 20 vertices: the cube's 8 plus the cyclic
+ * permutations of `(0, ±1/φ, ±φ)`, unitized. Edge `2/(φ√3)`. */
+function dodec20Centers(): number[][] {
+  const out: number[][] = [];
+  for (const x of [1, -1]) {
+    for (const y of [1, -1]) {
+      for (const z of [1, -1]) out.push([x, y, z]);
+    }
+  }
+  for (const a of [1, -1]) {
+    for (const b of [1, -1]) {
+      out.push([0, a / PHI, b * PHI]);
+      out.push([a / PHI, b * PHI, 0]);
+      out.push([b * PHI, 0, a / PHI]);
+    }
+  }
+  return unitize(out);
+}
+
+/** The rhombicuboctahedron's 24 vertices: the permutations of
+ * `(±1, ±1, ±(1+√2))`, unitized. Its two edge classes (square–square and
+ * square–triangle) are the SAME length, so every vertex has four nearest
+ * neighbours and the shared kissing radius is every generator's own. */
+function rhombicuboct24Centers(): number[][] {
+  const t = 1 + Math.SQRT2;
+  const out: number[][] = [];
+  for (const s of [1, -1]) {
+    for (const u of [1, -1]) {
+      for (const v of [1, -1]) {
+        out.push([s * t, u, v], [u, s * t, v], [u, v, s * t]);
+      }
+    }
+  }
+  return unitize(out);
+}
+
+/**
+ * The EDGE MIDPOINTS of a unit centre set — the midpoint of every pair at the
+ * set's smallest centre distance, back on the unit sphere. A BUILD-TIME
+ * derivation, not a document field: `icosidodec30` is this applied to
+ * `ico12` (the icosahedron's 30 edges), and the octahedron's 12 would be the
+ * cuboctahedron. The look study measured the family as a tier and refused it;
+ * what it kept is the one arrangement this expression spells.
+ */
+function edgeMidpointCenters(centers: readonly number[][]): number[][] {
+  let edge = Infinity;
+  for (let i = 0; i < centers.length; i++) {
+    for (let j = i + 1; j < centers.length; j++) {
+      edge = Math.min(
+        edge,
+        Math.hypot(...centers[i].map((v, a) => v - centers[j][a])),
+      );
+    }
+  }
+  const out: number[][] = [];
+  for (let i = 0; i < centers.length; i++) {
+    for (let j = i + 1; j < centers.length; j++) {
+      const d = Math.hypot(...centers[i].map((v, a) => v - centers[j][a]));
+      if (d > edge * (1 + 1e-9)) continue;
+      out.push(centers[i].map((v, a) => (v + centers[j][a]) / 2));
+    }
+  }
+  return unitize(out);
+}
+
 function cross8Centers(): number[][] {
   const out: number[][] = [];
   for (let a = 0; a < 4; a++) {
@@ -266,6 +353,15 @@ function cell600Centers(): number[][] {
  * - `oct6`: `±e_x, ±e_y, ±e_z`.
  * - `cube8`: the cube's vertices.
  * - `ico12`: the icosahedron's vertices.
+ * - `tetra4`: the tetrahedron's vertices — the one NEW silhouette the
+ *   authored-sets look study found (a triangular Sierpinski frame).
+ * - `dodec20`: the dodecahedron's vertices.
+ * - `rhombicuboct24`: the rhombicuboctahedron's vertices.
+ * - `icosidodec30`: the icosidodecahedron's vertices, `ico12`'s edge
+ *   midpoints. 30 generators is past the 3D fragment arm's block ceiling
+ *   (29), so it is the first 3D arrangement that renders COMPUTE-ONLY — per
+ *   construction, through `sphereInversionComputeOnlySubject`, not per
+ *   dimension.
  * - `cross8`: the 16-cell's vertices `±e_k`, k = x,y,z,w.
  * - `cell24`: the 24-cell's vertices, permutations of `(±1,±1,0,0)/√2`.
  * - `tess16`: the tesseract's vertices `(±½,±½,±½,±½)`.
@@ -278,6 +374,10 @@ export const SPHERE_INVERSION_ARRANGEMENTS: Readonly<
   oct6: arrangement(3, oct6Centers()),
   cube8: arrangement(3, cube8Centers()),
   ico12: arrangement(3, ico12Centers()),
+  tetra4: arrangement(3, tetra4Centers()),
+  dodec20: arrangement(3, dodec20Centers()),
+  rhombicuboct24: arrangement(3, rhombicuboct24Centers()),
+  icosidodec30: arrangement(3, edgeMidpointCenters(ico12Centers())),
   cell24: arrangement(4, cell24Centers()),
   tess16: arrangement(4, tess16Centers()),
   cross8: arrangement(4, cross8Centers()),

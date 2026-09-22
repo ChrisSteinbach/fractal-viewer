@@ -1603,7 +1603,9 @@ describe("the sphere-inversion route", () => {
   it("gives every construction the resolver can build today the arm it had", () => {
     // The per-construction answer replaced a per-DIMENSION one, so the first
     // thing it owes is that nothing shippable moved: every 3D registry
-    // arrangement still falls back, every 4D one is still compute-only.
+    // arrangement still falls back, every 4D one is still compute-only — and
+    // the one 3D arrangement past the arm's generator ceiling, icosidodec30,
+    // is compute-only by the cap rather than by the dimension.
     let checked = 0;
     for (const [id, arr] of Object.entries(SPHERE_INVERSION_ARRANGEMENTS)) {
       for (const kind of SPHERE_INVERSION_SEED_KINDS) {
@@ -1613,18 +1615,23 @@ describe("the sphere-inversion route", () => {
         });
         if (!resolution.ok) throw new Error(resolution.reasons.join("; "));
         expect(sphereInversionComputeOnlySubject(resolution.construction)).toBe(
-          arr.dim === 3 ? null : "native 4D sphere-inversion scenes",
+          arr.dim === 4
+            ? "native 4D sphere-inversion scenes"
+            : arr.centers.length > SPHERE_INVERSION_GLSL_MAX_GENERATORS
+              ? `sphere-inversion scenes with more than ${SPHERE_INVERSION_GLSL_MAX_GENERATORS} generators`
+              : null,
         );
         checked++;
       }
     }
-    expect(checked).toBe(21);
+    expect(checked).toBe(33);
   });
 
   it("sends a 3D construction past the arm's generator cap to compute", () => {
-    // Unreachable from the authored form today — no 3D registry arrangement
-    // carries more than ico12's 12 generators — and that is exactly why the
-    // per-dimension reading survived: it was right by coincidence. The first
+    // Reachable from the authored form since icosidodec30 (below); this
+    // synthetic construction keeps the cap's own arithmetic pinned apart from
+    // any one arrangement. While the largest 3D arrangement was ico12's 12,
+    // the per-dimension reading was right by coincidence: the first
     // arrangement past the cap would have passed the gate, taken the WebGL
     // branch and thrown inside setSphereInversionSystem.
     const overCap = {
@@ -1668,6 +1675,20 @@ describe("the sphere-inversion route", () => {
       const note = `${subject} render on WebGPU compute, which is unavailable here`;
       expect(note.split(/\s+/).length).toBeLessThanOrEqual(60);
     }
+  });
+
+  it("refuses icosidodec30 without compute, naming the generator cap rather than the dimension", () => {
+    const block = { arrangement: "icosidodec30" };
+    expect(route(block, withCompute)).toEqual({
+      status: "eligible",
+      note: null,
+      kind: "sphereInversion",
+    });
+    const result = route(block, noCompute);
+    expect(result).toMatchObject({ status: "ineligible", kind: null });
+    expect(result.note).toMatch(
+      `sphere-inversion scenes with more than ${SPHERE_INVERSION_GLSL_MAX_GENERATORS} generators render on WebGPU compute, which is unavailable here`,
+    );
   });
 
   it("routes a 3D block without compute to its fragment arm", () => {

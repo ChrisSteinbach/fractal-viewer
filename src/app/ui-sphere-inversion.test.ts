@@ -3,6 +3,7 @@ import { Ui } from "./ui";
 import { initialState, setSphereInversion } from "./state";
 import type { AppState } from "./state";
 import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
+import { SPHERE_INVERSION_ARRANGEMENTS } from "../fractal/sphere-inversion";
 import { PRESET_SPHERE_INVERSIONS } from "../fractal/presets";
 import { fernSpongeIsolated, pentatope } from "../fractal/presets";
 import indexHtml from "./index.html?raw";
@@ -128,6 +129,22 @@ describe("Sphere inversion section", () => {
     expect(el("sphereInversionDepthNote").textContent).toMatch(
       /^Refused: depth 40 is not an integer in \[0, 32\]/,
     );
+  });
+
+  it("offers every registry arrangement, grouped under its own dimension", () => {
+    const select = el<HTMLSelectElement>("sphereInversionArrangement");
+    const offered = Array.from(select.querySelectorAll("optgroup option")).map(
+      (o) => [
+        (o as HTMLOptionElement).value,
+        (o.parentElement as HTMLOptGroupElement).label,
+      ],
+    );
+    expect(offered.map(([id]) => id).sort()).toEqual(
+      Object.keys(SPHERE_INVERSION_ARRANGEMENTS).sort(),
+    );
+    for (const [id, group] of offered) {
+      expect(group, id).toBe(`${SPHERE_INVERSION_ARRANGEMENTS[id].dim}D`);
+    }
   });
 
   it("names an unknown arrangement in the select's authored option", () => {

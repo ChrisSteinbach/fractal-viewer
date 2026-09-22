@@ -570,15 +570,22 @@ Persistence and Surface eligibility are now wired (section "Persistence, scene d
 
 ### Authored form and resolver
 
-| Field            | Default                                             | Domain (outside it: REFUSED with a reason)                                       |
-| ---------------- | --------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `arrangement`    | none (required)                                     | a registry id: `oct6`, `cube8`, `ico12`, `cell24`, `tess16`, `cross8`, `cell600` |
-| `radiusFraction` | 0.99                                                | `(0, 1]` of the arrangement's tangent radius; 1 is kissing (degraded)            |
-| `depth`          | 8                                                   | integer `[0, 32]` (structural cap, not a public range)                           |
-| `seed.kind`      | `ball`                                              | `ball`, `shell`, `cutShell`                                                      |
-| `seed.size`      | ball .28, shells 1                                  | `> 0`; a ball may cross the generators (its seed is `K ∩ F`)                     |
-| `seed.thickness` | shell .03, cut shell .06                            | `(0, size)`                                                                      |
-| cut fields       | direction (.35, 1, .55), w 0, offset .25, radius 10 | direction nonzero; `w` nonzero only in 4D; radius `> 0`; `                       | offset | < size + thickness` |
+| Field            | Default                                             | Domain (outside it: REFUSED with a reason)                            |
+| ---------------- | --------------------------------------------------- | --------------------------------------------------------------------- |
+| `arrangement`    | none (required)                                     | a registry id (below)                                                 |
+| `radiusFraction` | 0.99                                                | `(0, 1]` of the arrangement's tangent radius; 1 is kissing (degraded) |
+| `depth`          | 8                                                   | integer `[0, 32]` (structural cap, not a public range)                |
+| `seed.kind`      | `ball`                                              | `ball`, `shell`, `cutShell`                                           |
+| `seed.size`      | ball .28, shells 1                                  | `> 0`; a ball may cross the generators (its seed is `K ∩ F`)          |
+| `seed.thickness` | shell .03, cut shell .06                            | `(0, size)`                                                           |
+| cut fields       | direction (.35, 1, .55), w 0, offset .25, radius 10 | direction nonzero; `w` nonzero only in 4D; radius `> 0`; `            | offset | < size + thickness` |
+
+The registry ids are `tetra4`, `oct6`, `cube8`, `ico12`, `dodec20`,
+`rhombicuboct24`, `icosidodec30` (3D) and `cross8`, `tess16`, `cell24`,
+`cell600` (4D). The four 3D ids after the first seven are the authored-sets
+look study's selection (its section below); `icosidodec30` is `ico12`'s edge
+midpoints, derived at build time rather than listed. Every one is
+vertex-transitive, so the shared kissing radius is each generator's own.
 
 Every arrangement puts its centres at distance 1, so lengths are absolute. The
 registry is extensible: a new id is one entry. The resolver collects every
@@ -861,8 +868,11 @@ compute, which is unavailable here`. The subject is
   largest 3D arrangement — `docs/sphere-inversion-gpu.md`'s last section).
   It is `native 4D sphere-inversion scenes`, or a named cap for a 3D
   construction the arm's block cannot hold; null — a plain fallback — for
-  every 3D construction inside it, which today is every one the resolver can
-  build.
+  every 3D construction inside it. That is every 3D arrangement but
+  `icosidodec30`, whose 30 generators are one past the block's ceiling of 29:
+  the first construction that is compute-only by CAPACITY rather than by
+  dimension, refused without an adapter as `sphere-inversion scenes with more
+than 29 generators`.
 - **Admissible block with compute:** `eligible`, or `degraded` whenever the
   note carries a disclosure (tangency cusps, dormant settings, the 4D slab
   clamp), with the kind carrying the dimension. The WGSL route and its session
@@ -904,7 +914,14 @@ their rows describe what a lift would need to make it READ.
   depth or cut direction, and never writes an absent field. Every candidate
   must resolve (8 attempts, then the block itself), and a refused block is
   returned by reference. The `MorphSystem` mutation grid cannot carry a block
-  at all, so it can never materialize one.
+  at all, so it can never materialize one. GENERATOR CENTRES ARE STRUCTURAL
+  and never move, a verdict the look study's jitter sweep decided rather than
+  one left to omission: perturbing a regular set measured as DECAY at every
+  amplitude sampled — intact to ~5–10% of an edge, degraded by 20%, dust by
+  35–50%, with the crossing itself draw-dependent — so a mutation that moved
+  centres could only damage the arrangement it was handed, and
+  irreproducibly. The registry growth changes none of this: the arrangement
+  is still one string the mutation never touches.
 - **Random.** `randomSystem` never rolls a block.
 - **Flame.** No mapping exists (a seed orbit is neither an xform list nor a
   variation). Export writes the preserved transform system byte-identically
@@ -1196,8 +1213,10 @@ lengths move 3D cost by at most 25% and 4D cost by at most 40%. The 600-cell bal
 
 ### Public ranges (delegated)
 
-- **Arrangements.** All seven stay public. No arrangement is refused on
-  cost.
+- **Arrangements.** All eleven are public. No arrangement is refused on
+  cost. The four look-study ids ride the seven's measured radius, seed and
+  depth spans unchanged; their own settle rows against generator count are
+  not yet measured.
 - **Depth.** Public slider `[0, 12]` in both dimensions, the same for every
   arrangement. Cost does not bound it: settle is flat to D32. The cap is
   where the image stops changing at a 1080p pane. The resolver's structural
@@ -1410,7 +1429,7 @@ account: `docs/controls.md`; placement record: `docs/panel-ia.md`.
 
 | Control              | Field(s)         | Public span                    | Notes                                                                                    |
 | -------------------- | ---------------- | ------------------------------ | ---------------------------------------------------------------------------------------- |
-| Arrangement (select) | `arrangement`    | all seven ids, grouped 3D / 4D | decides the dimension; leaving 4D drops a present `cutDirectionW` (no control clears it) |
+| Arrangement (select) | `arrangement`    | all eleven ids, 3D / 4D groups | decides the dimension; leaving 4D drops a present `cutDirectionW` (no control clears it) |
 | Sphere radius        | `radiusFraction` | 0.6–0.99, step .01             | 1.0 stays document-only                                                                  |
 | Seed (select)        | `seed.kind`      | ball / shell / cut shell       | crossing ball <-> shell removes a present `size` (its meaning and default change)        |
 | Ball / Shell radius  | `seed.size`      | ball .15–.8; shell .7–1.3      | the 4D shell uses the 3D span (4D measured at .9 and 1.1 only)                           |
