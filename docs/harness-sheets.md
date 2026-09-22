@@ -1203,6 +1203,18 @@ per-point cost follows the seed kind, not `n`. It is the CPU half of
 `docs/sphere-inversion-family.md`'s "Cost against generator count"; the GPU
 half is the cost probe's `gencount` plan and the bench's timing rows.
 
+### sphere-inversion-glass
+
+`scripts/sphere-inversion-glass.harness.ts` — the CURVED-GLASS look gate.
+Renders dielectric glass on the sphere-inversion seed orbit in both
+dimensions, through `surface-dielectric.ts` over a prototype signed field the
+sheet builds from public calls alone, beside matched opaque controls. Pins the
+field three ways (sign against exact membership, clearance against the
+explicit orbit, interior stepping), sweeps DEPTH and the declared optical
+RESOLUTION, and keeps the refuted `measured`-medium row. Verdict and measured
+rows: `docs/sphere-inversion-family.md`'s glass section. Writes
+`sphere-inversion-glass-{3d,depth,medium,eps,matched,4d}.png`.
+
 ## The space-tiling sheet
 
 ### tiling

@@ -2201,3 +2201,55 @@ not show in the timing.
   past the kernel's 120-generator scratch (`SPHERE_INVERSION_GPU_MAX_GENERATORS`)
   needs its own cost argument. Nothing measured here predicts a cliff before
   either.
+
+## Glass: the curved-solid look gate (2026-09-22)
+
+The finite/simplicial glass solid is flat-faced by construction, so the
+dielectric transport has never had a CURVED fractal to render. This family is
+the cheapest curved candidate, and the look gate asked the only question that
+decides whether to build one: does glass on the depth-D seed orbit read like
+glass. `scripts/sphere-inversion-glass.harness.ts` is that gate — a prototype
+signed field built entirely in the sheet from public calls, driven through
+`surface-dielectric.ts` (the one transport oracle) over the closed-solid
+boundary query's f64 twin, with matched opaque controls and a checkered
+studio. No production module changed.
+
+VERDICT: the look is real in both dimensions, and it is a curved-glass look
+the cell constructions cannot produce at any level — refraction of the floor
+through smooth pearls, with Fresnel rims and Beer tint.
+
+The field needed no new arithmetic. Membership was already exact here (`<= 0`
+is the folded seed SDF), the folded interior clearance is the closed form
+`-sdfIntersection`, and carrying it back out through the fold is the SAME map
+`inversionDistanceLowerBound` already applies to the empty-ball bound: for a
+folded clearance `rho` at distance `s` from the inversion centre, the
+clearance at the unfolded point is `R²·rho / (s·(s + rho))`, which is
+`r²·rho / (R² + r·rho)` — that function term for term. Measured sound in all
+three senses the march needs: zero membership disagreements against
+`sphereInversionContains` over 200k samples at depths 2/4/6/8, zero clearance
+overshoot against the explicit orbit, and zero oversteps in 8k interior
+samples.
+
+What the gate found is a RESOLUTION question, not an estimator one. The
+crossing band fires where the certified lower bound is merely loose — a
+near-kissing arrangement puts a near-cusp at every tangency — and the
+caller-carried medium then drifts, so a path marked inside sits in empty
+space, marches out of the domain and fails the whole trace `inside-miss`. Two
+remedies were measured. A MEMBERSHIP GATE on the crossing (real only if
+`sphereInversionContains` actually flips across it — a test this family can
+afford and the closed-solid backend cannot) takes 65-98% unresolved down to
+23-36%. Refining the declared optical resolution does the rest:
+`inside-miss` falls 3671 → 2162 → 475 → 10 at R/512 → R/2048 → R/8192 →
+R/32768, at 2.3x CPU cost, and what remains is the path budget rather than a
+defect. At R/8192 with a 2048-path budget the depth-6 subjects resolve 92-93%
+of pixels; the 4D posed slices resolve 85-88%. Re-deriving the medium from
+exact membership at every query does NOT help and is kept as a refuted row:
+the flip has to be judged along the child's direction, not the incident one.
+
+The depth sweep is the one a later look decision is spent against: depth 1-3
+render as clean, convincing glass, depth 4 speckles, and 6-8 read as lace —
+so the best glass sits at the CHEAP end of this family's cost curve, the
+opposite of where the estimator's cost concentrates. The 4D arm uses the
+sheet's own cheap arrangements because `cell600` — both shipped 4D presets —
+costs about 20x per evaluation and no glass panel of one finished on the CPU;
+that is a cost finding about the arrangement, not about the dimension.
