@@ -172,8 +172,9 @@ jobs:
     strategy:
       matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
       fail-fast: false
-    # Preserve the measured 20-minute whole-shard script cap and its looser
-    # 40-minute job guard. The selector partitions the actual page roster;
+    # The script's 30-minute whole-shard cap (SHARD_BENCH_TIMEOUT_MS in
+    # src/app/gpu-bench/runner-wait.ts) trips before this looser 40-minute job
+    # guard, so a hang names its active phase. The selector partitions the actual page roster;
     # thresholds, scenario budgets and the ss=1 check remain unchanged.
     timeout-minutes: 40
     steps:

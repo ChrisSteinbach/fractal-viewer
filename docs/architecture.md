@@ -1692,7 +1692,8 @@ agreement thresholds, required-check behavior, partition history and timing
 measurements are documented in [GPU agreement CI](gpu-agreement-ci.md).
 
 The local unsharded runner keeps a 20-minute stall deadline per completed
-scenario; CI retains its 20-minute whole-shard cap and 40-minute job guard.
+scenario; CI shards have a 30-minute whole-shard cap under a 40-minute job
+guard.
 Surface runs retain their separate 30/60-minute waits. Missing WebGPU or an
 empty shard cannot pass. The scenario list includes a
 "variation zoo" (3D and 4D) that enables all twelve classic variation types

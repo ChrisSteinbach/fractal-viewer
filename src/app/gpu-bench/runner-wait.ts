@@ -5,9 +5,9 @@
  * The flame agreement sweep publishes one result only after a whole scenario
  * finishes. For an unsharded local sweep, each increase in that result count
  * proves the page is still making useful progress and re-arms the same stall
- * deadline. CI shards deliberately opt out: their 20-minute deadline remains
- * a cap on the whole shard so the script still trips before the workflow's
- * 40-minute runaway guard. Surface runs also opt out because their progress is
+ * deadline. CI shards deliberately opt out: their 30-minute deadline
+ * ({@link SHARD_BENCH_TIMEOUT_MS}) remains a cap on the whole shard so the
+ * script still trips before the workflow's 40-minute runaway guard. Surface runs also opt out because their progress is
  * published through `surfaceDe`, not the scenario array.
  */
 
@@ -42,6 +42,61 @@ export interface BenchWaitOptions {
   resetOnScenarioCompletion: boolean;
   expectedUrl?: string;
   onScenarioCompleted?: (state: BenchWaitState) => void;
+}
+
+/**
+ * Flame HANG detector, not an agreement budget. An unsharded local sweep
+ * re-arms this deadline whenever a scenario finishes, so roster growth can
+ * lengthen a healthy run without making a genuinely stuck scenario take
+ * longer to name. Raised from 10 to 20 minutes when a fourteenth scenario
+ * (`xform-color`) landed; the rolling local policy arrived at 23 scenarios.
+ */
+export const BENCH_TIMEOUT_MS = 20 * 60_000;
+
+/**
+ * The sharded (CI) flame run's whole-shard cap. Since the roster went to one
+ * scenario per shard, this caps ONE scenario plus the standalone ss=1 and
+ * adaptive-display checks, so it is still a hang detector and not an
+ * agreement budget. Split off {@link BENCH_TIMEOUT_MS} at 30 minutes because
+ * the 20 it inherited was being tripped by a HEALTHY shard:
+ * `tiling-multisystem-3d` runs its 50,331,648-iteration GPU equal-N pass at
+ * about 54.5K iterations/s on SwiftShader (923 s on its own), and three of
+ * its last five CI runs hit 20 minutes with the scenario already complete
+ * and the standalone checks active; the passing ones measured 17m50s of page
+ * work (`docs/gpu-agreement-ci.md`). 30 leaves that shard about 10 minutes of
+ * margin and stays under the workflow's 40-minute job guard with setup, so
+ * the script still trips first and names the active phase.
+ */
+export const SHARD_BENCH_TIMEOUT_MS = 30 * 60_000;
+
+/** Wait cap when a surface flag is present: the surface timing matrix (many
+ * kernel configs, multi-pass marches, a per-config wall cap of its own) can
+ * legitimately run far past the flame sweep's own wait. */
+export const SURFACE_BENCH_TIMEOUT_MS = 30 * 60_000;
+
+/** Wait cap when the shade A/B leg (or the 4D kernel-cost sweep) is requested
+ * on top: its full-width BASELINE arms are the whole point of the comparison
+ * and measured up to ~10-15 minutes EACH on Iris (two poses), on top of leg
+ * B's own budget; a 30-minute ceiling measured a timeout mid-leg. */
+export const SURFACE_SHADE_AB_TIMEOUT_MS = 60 * 60_000;
+
+/** The backend smoke's cap: one tiny accumulation, so anything longer is a
+ * hang. */
+export const BACKEND_SMOKE_TIMEOUT_MS = 5 * 60_000;
+
+/** The runner's wait cap for one invocation, picked from what was asked. */
+export function benchWaitTimeoutMs(run: {
+  backendSmoke: boolean;
+  surfaceRequested: boolean;
+  surfaceHeavyLeg: boolean;
+  shard: string | undefined;
+}): number {
+  if (run.backendSmoke) return BACKEND_SMOKE_TIMEOUT_MS;
+  if (run.surfaceRequested)
+    return run.surfaceHeavyLeg
+      ? SURFACE_SHADE_AB_TIMEOUT_MS
+      : SURFACE_BENCH_TIMEOUT_MS;
+  return run.shard !== undefined ? SHARD_BENCH_TIMEOUT_MS : BENCH_TIMEOUT_MS;
 }
 
 /** Only the local flame-only sweep has an open-ended healthy total runtime. */

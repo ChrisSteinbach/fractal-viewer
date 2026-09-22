@@ -88,6 +88,7 @@ import { chromium } from "playwright-core";
 import { startBenchDiagnostics } from "./gpu-bench-diagnostics.ts";
 import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 import {
+  benchWaitTimeoutMs,
   shouldResetWaitOnScenarioCompletion,
   waitForBenchCompletion,
 } from "../src/app/gpu-bench/runner-wait.ts";
@@ -100,25 +101,6 @@ const REPO_ROOT = path.resolve(__dirname, "..");
  * doc); the normal case uses whatever port Vite actually reports. */
 const DEV_SERVER_PORT = 5173;
 const DEV_SERVER_TIMEOUT_MS = 60_000;
-/**
- * Flame HANG detector, not an agreement budget. An unsharded local sweep
- * re-arms this deadline whenever a scenario finishes, so roster growth can
- * lengthen a healthy run without making a genuinely stuck scenario take
- * longer to name. Sharded runs (CI) retain the original whole-sweep cap: the
- * workflow's 40-minute guard therefore stays looser and the script still
- * trips first. Raised from 10 to 20 minutes when a fourteenth scenario
- * (`xform-color`) landed; the rolling local policy arrived at 23 scenarios.
- */
-const BENCH_TIMEOUT_MS = 20 * 60_000;
-/** Wait cap when a surface flag is present — the surface timing matrix
- * (many kernel configs, multi-pass marches, a per-config wall cap of its
- * own) can legitimately run far past the flame sweep's own wait. */
-const SURFACE_BENCH_TIMEOUT_MS = 30 * 60_000;
-/** Wait cap when the shade A/B leg is requested on top: its
- * full-width BASELINE arms are the whole point of the comparison and
- * measured up to ~10-15 minutes EACH on Iris (two poses), on top of leg
- * B's own budget — a 30-minute ceiling measured a timeout mid-leg. */
-const SURFACE_SHADE_AB_TIMEOUT_MS = 60 * 60_000;
 const DEFAULT_CHROME = "/usr/bin/google-chrome";
 
 /** `--surface-*` passthrough flags → the page's URL params (defaults and
@@ -650,13 +632,12 @@ async function main() {
   // kernel's cost curve) — so it earns the same wider wait cap.
   const surfaceHeavyLeg =
     args.surfaceParams.surfaceShadeWidth || args.surfaceParams.surfaceAff4Sweep;
-  const benchTimeoutMs = args.backendSmoke
-    ? 5 * 60_000
-    : surfaceRequested
-      ? surfaceHeavyLeg
-        ? SURFACE_SHADE_AB_TIMEOUT_MS
-        : SURFACE_BENCH_TIMEOUT_MS
-      : BENCH_TIMEOUT_MS;
+  const benchTimeoutMs = benchWaitTimeoutMs({
+    backendSmoke: args.backendSmoke,
+    surfaceRequested,
+    surfaceHeavyLeg: Boolean(surfaceHeavyLeg),
+    shard: args.shard,
+  });
   // Only the unsharded flame sweep scales its wait with completed
   // scenarios. CI's `--shard` contract and the surface section's separately
   // calibrated 30/60-minute caps stay byte-for-byte in their old total-wait

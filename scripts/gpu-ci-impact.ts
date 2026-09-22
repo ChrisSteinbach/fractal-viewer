@@ -311,8 +311,8 @@ export function scenarioRoster(
 }
 
 // Give each scenario its own job. A fixed shard count silently re-pairs heavy
-// scenarios when the roster grows or changes order, risking the unchanged
-// 20-minute whole-shard cap. The browser's round-robin partition at this count
+// scenarios when the roster grows or changes order, risking the whole-shard
+// cap (30 minutes since a single healthy scenario outgrew 20). The browser's round-robin partition at this count
 // selects exactly the scenario named in each row.
 export function fullMatrix(
   roster: { name: string }[],
