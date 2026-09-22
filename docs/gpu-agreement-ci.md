@@ -83,9 +83,10 @@ existing round-robin partition with the roster length as its denominator; no
 scenario list is copied into YAML. Tests compare every generated shard with
 the browser's partition and check the exact union, including roster growth
 beyond the former 27-shard ceiling. An added scenario gets its own job instead
-of changing which expensive cases must share a deadline. The 20-minute
-whole-shard cap and 40-minute job guard remain unchanged; each individual
-scenario still has to fit. The standalone ss=1 check runs in every job.
+of changing which expensive cases must share a deadline. Each individual
+scenario still has to fit the whole-shard cap, 30 minutes since 2026-09-22
+("The whole-shard cap outgrown by one scenario" below), under the unchanged
+40-minute job guard. The standalone ss=1 check runs in every job.
 
 The full union runs:
 
@@ -844,6 +845,40 @@ cap changes.
 tests artifact survival and failure attribution, not GPU agreement. Outputs
 live under
 `scripts/out/gpu-bench-diagnostics/`.
+
+## The whole-shard cap outgrown by one scenario (2026-09-22)
+
+With one scenario per shard, the CI script's whole-shard cap bounds a single
+scenario plus the standalone ss=1 and adaptive-display checks. It is a hang
+detector, not an agreement budget. It inherited the local runner's 20 minutes,
+and `tiling-multisystem-3d` (shard 8) outgrew it while healthy.
+
+- **Symptom.** Three of shard 8's last five runs failed with `benchmark did not
+finish within 1200000ms; active=adaptive-display; completed=1`: the scenario
+  had COMPLETED and the trailing standalone check was running when the cap
+  fired. The PRs involved touched no flame code. Each timeout cleared on a
+  rerun, so it was blocking merges intermittently.
+- **Where the time goes.** The passing rerun spent 17m50s in page work
+  (shard 7, `tiling-empty-3d`: 4m44s). Its recorded timings are small (GPU
+  timed phase 19.2 s, CPU 1.0 s, adaptive-display 2.4 s), so the time is in
+  what `results.json` does not time: the equal-N comparison. Every scenario
+  runs `EQUAL_N_ITERATIONS` = 50,331,648 on each backend, and this scenario's
+  GPU rate on SwiftShader is 54,527 iterations/s: **923 s, 15.4 minutes**, for
+  the GPU pass alone (the CPU pass is 25 s). The partition history below
+  recorded the same leg at about 12 minutes and 70K iterations/s, so its
+  runner throughput has drifted down about a fifth since.
+- **Fix.** `SHARD_BENCH_TIMEOUT_MS` = 30 minutes for `--shard` runs
+  (`src/app/gpu-bench/runner-wait.ts`, which now owns every wait cap and the
+  pure `benchWaitTimeoutMs` that picks one, unit-tested). That leaves shard 8
+  about 10 minutes of margin. The script plus about 2 minutes of setup still
+  sits under the 40-minute job guard, so the script trips first and names the
+  active phase. The local unsharded runner keeps its 20-minute per-scenario
+  stall deadline; surface caps and the backend smoke are unchanged.
+- **Not changed, deliberately.** The equal-N budget stays 50.3M for every
+  scenario: the agreement thresholds were measured against that budget's
+  noise floors, so shrinking it for one scenario would mean re-measuring its
+  floor. Shard 28 (`emitter-menagerie-4d`, about 17 minutes) is the next
+  longest; at 30 it has the same headroom.
 
 ## Earlier partition evidence
 

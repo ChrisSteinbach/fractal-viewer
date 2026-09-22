@@ -1,7 +1,13 @@
 import {
+  BACKEND_SMOKE_TIMEOUT_MS,
+  BENCH_TIMEOUT_MS,
   type BenchWaitPage,
   type BenchWaitState,
+  benchWaitTimeoutMs,
+  SHARD_BENCH_TIMEOUT_MS,
   shouldResetWaitOnScenarioCompletion,
+  SURFACE_BENCH_TIMEOUT_MS,
+  SURFACE_SHADE_AB_TIMEOUT_MS,
   waitForBenchCompletion,
 } from "./runner-wait";
 
@@ -155,5 +161,54 @@ describe("shouldResetWaitOnScenarioCompletion", () => {
     expect(shouldResetWaitOnScenarioCompletion(false, "1/12")).toBe(false);
     expect(shouldResetWaitOnScenarioCompletion(true, undefined)).toBe(false);
     expect(shouldResetWaitOnScenarioCompletion(true, "1/12")).toBe(false);
+  });
+});
+
+describe("benchWaitTimeoutMs", () => {
+  const flame = {
+    backendSmoke: false,
+    surfaceRequested: false,
+    surfaceHeavyLeg: false,
+  };
+
+  it("keeps the local unsharded flame sweep's 20-minute per-scenario stall deadline", () => {
+    expect(benchWaitTimeoutMs({ ...flame, shard: undefined })).toBe(
+      BENCH_TIMEOUT_MS,
+    );
+    expect(BENCH_TIMEOUT_MS).toBe(20 * 60_000);
+  });
+
+  it("gives a CI shard its own 30-minute whole-shard cap", () => {
+    expect(benchWaitTimeoutMs({ ...flame, shard: "8/34" })).toBe(
+      SHARD_BENCH_TIMEOUT_MS,
+    );
+    expect(SHARD_BENCH_TIMEOUT_MS).toBe(30 * 60_000);
+  });
+
+  it("keeps the shard cap under the workflow's 40-minute job guard with room for setup", () => {
+    // Setup (checkout, npm ci, browser install, dev server) measured about
+    // two minutes; the script must trip first so it names the active phase.
+    expect(SHARD_BENCH_TIMEOUT_MS + 5 * 60_000).toBeLessThanOrEqual(
+      40 * 60_000,
+    );
+  });
+
+  it("leaves the surface caps and the backend smoke untouched by sharding", () => {
+    for (const shard of [undefined, "1/34"]) {
+      expect(
+        benchWaitTimeoutMs({ ...flame, surfaceRequested: true, shard }),
+      ).toBe(SURFACE_BENCH_TIMEOUT_MS);
+      expect(
+        benchWaitTimeoutMs({
+          ...flame,
+          surfaceRequested: true,
+          surfaceHeavyLeg: true,
+          shard,
+        }),
+      ).toBe(SURFACE_SHADE_AB_TIMEOUT_MS);
+      expect(benchWaitTimeoutMs({ ...flame, backendSmoke: true, shard })).toBe(
+        BACKEND_SMOKE_TIMEOUT_MS,
+      );
+    }
   });
 });
