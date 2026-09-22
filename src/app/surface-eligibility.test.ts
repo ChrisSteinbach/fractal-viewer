@@ -383,6 +383,10 @@ describe("deriveSurfaceEligibility over the shipped presets", () => {
       ["inversionCubePearls", "sphereInversion"],
       ["inversionVault", "sphereInversion"],
       ["inversionLace", "sphereInversion"],
+      ["inversionTetraFrame", "sphereInversion"],
+      ["inversionDodecaWindows", "sphereInversion"],
+      ["inversionRhombiLace", "sphereInversion"],
+      ["inversionIcosidodecaStar", "sphereInversion"],
       ["inversionVault4", "sphereInversion4"],
       ["inversionMedallions4", "sphereInversion4"],
     ] as const) {
