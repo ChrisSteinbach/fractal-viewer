@@ -58,7 +58,7 @@
  * Usage (production build served first):
  *   npm run build && npm run preview &
  *   node scripts/sphere-inversion-cost.probe.mjs [url] --display=:0
- *     [--plans=3d-depth,3d-rf,4d-depth,4d-rf,4d-pose,gl,supp,supp-raster,seed]
+ *     [--plans=3d-depth,3d-rf,4d-depth,4d-rf,4d-pose,gl,supp,supp-raster,seed,gencount]
  *     [--viewport=1920x1080]
  *     [--timeout-s=90] [--prune-s=60] [--out=scripts/out/sphere-inversion-cost.json]
  *     [--only=<substring of a cell key>] [--lock=/tmp/claude-1000/si-bench.lock]
@@ -229,6 +229,29 @@ const SEED_VARIANTS4 = {
   "cutO.8": { kind: "cutShell", size: 0.9, thickness: 0.04, cutOffset: 0.8 },
 };
 const ARR3 = ["oct6", "cube8", "ico12"];
+/** Every 3D registry id in generator-count order, for the `gencount` plan:
+ * the look study's four land in the 12-to-30 band no earlier row measured. */
+const ARR3_BY_COUNT = [
+  "tetra4",
+  "oct6",
+  "cube8",
+  "ico12",
+  "dodec20",
+  "rhombicuboct24",
+  "icosidodec30",
+];
+/** The fragment arm's generator ceiling (`SPHERE_INVERSION_GLSL_MAX_GENERATORS`,
+ * pinned in its own tests): the WebGL cells stop below it. */
+const GLSL_MAX_GENERATORS = 29;
+const GENERATOR_COUNT = {
+  tetra4: 4,
+  oct6: 6,
+  cube8: 8,
+  ico12: 12,
+  dodec20: 20,
+  rhombicuboct24: 24,
+  icosidodec30: 30,
+};
 const ARR4 = ["tess16", "cross8", "cell24", "cell600"];
 
 /** Rows: a row is one (engine, arrangement, fraction, seed, pose) walked in
@@ -286,6 +309,21 @@ function plannedRows() {
       for (const a of ["cell24", "cell600"])
         for (const v of Object.keys(SEED_VARIANTS4))
           row(plan, "compute", 4, a, 0.99, v, "id", [5]);
+    }
+    // COST AGAINST GENERATOR COUNT: every arrangement at the family's
+    // representative seeds, one depth per dimension (settle is flat in depth,
+    // the 3d-depth/4d-depth verdict), both engines in 3D up to the fragment
+    // arm's ceiling, so one table reads across 4..120 generators.
+    if (plan === "gencount") {
+      for (const a of ARR3_BY_COUNT)
+        for (const s of Object.keys(SEEDS3)) {
+          row(plan, "compute", 3, a, 0.99, s, "id", [8]);
+          if (GENERATOR_COUNT[a] <= GLSL_MAX_GENERATORS)
+            row(plan, "webgl", 3, a, 0.99, s, "id", [8]);
+        }
+      for (const a of ARR4)
+        for (const s of Object.keys(SEEDS4))
+          row(plan, "compute", 4, a, 0.99, s, "id", [5]);
     }
     if (plan === "supp-raster")
       for (const s of Object.keys(SEEDS4))
