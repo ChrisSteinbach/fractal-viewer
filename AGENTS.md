@@ -533,7 +533,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     are COMPUTE-ONLY under one subject phrase. GLASS: per-GENERATION
     `materials`; backend `sphereInversion` (signed field + membership gate),
     ball/shell seeds to depth 8, any generator count (resumable trace):
-    safe, NOT interactive (preview/settle/export MISS).
+    safe; 4D meets every envelope line, 3D only export.
     Kaleidoscope/lens/per-transform finishes DORMANT; tiling, balloon, trap,
     slab REFUSE. POINTS draws the same set; Flame/Solid REFUSE. Cost flat in
     depth/generator count; ids all public. CONTROLS: Scene / Look
