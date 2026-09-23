@@ -1655,6 +1655,12 @@ export const SURFACE_GPU_TRANSPORT_SKIPPED = 5;
 
 /** Failure kinds riding the record's second word (the oracle's
  * `DielectricTraceFailureKind`, enumerated for the f32 wire). */
+/** Bisection steps of the sphere-inversion glass query's membership-crossed
+ * branch (the query's doc): the bracket starts at one march stride and halves
+ * each step, locating the crossing to a stride/4096 — far below the crossing
+ * scale. Shared with the f64 twin, which imports it. */
+export const SURFACE_GPU_TRANSPORT_MEMBERSHIP_BISECT_STEPS = 12;
+
 export const SURFACE_GPU_TRANSPORT_FAILURE_NONE = 0;
 export const SURFACE_GPU_TRANSPORT_FAILURE_PROCESSED = 1;
 export const SURFACE_GPU_TRANSPORT_FAILURE_INTERFACES = 2;
@@ -9639,7 +9645,13 @@ fn transportNextBoundary(
       return result;
     }
   }
-  let tFar = transportDomainExit(origin, dir);
+  let tFar = transportDomainExit(origin, dir);${
+    siGlass
+      ? `
+  // The last sample's t, for the membership-crossed branch's bisection.
+  var tPrev = t;`
+      : ""
+  }
   for (var i = 0u; i < TRANSPORT_QUERY_MAX_STEPS; i++) {
     if (tFar < 0.0 || t >= tFar) {
       result.kind = 2u;
@@ -9652,6 +9664,39 @@ fn transportNextBoundary(
       result.kind = 3u;
       result.reason = TRANSPORT_REASON_INVALID_INPUT;
       return result;
+    }${
+      siGlass
+        ? `
+    if (select((f < 0.0), (f > 0.0), inside == 1u) &&
+        (anchorOn == 0u ||
+          distance(p, anchorAt) > TRANSPORT_ANCHOR_ENVELOPE_REL * eps) &&
+        transportSolidContains(p) != (inside == 1u)) {
+      // THE MEMBERSHIP-CROSSED BRANCH (the twin's): the march has LEFT the
+      // claimed medium without a band landing — the field's sign and
+      // exact membership both contradict the claim. A transported bound's
+      // gradient degenerates near a tangency cusp, so the landing's "is
+      // the zero ahead" test can read backwards and step past a real exit;
+      // unrecovered, the path fails its trace inside-miss. Bisect exact
+      // membership between the previous sample and this one and report
+      // the crossing at the bracket's claimed-medium end.
+      var lo = tPrev;
+      var hi = t;
+      for (var k = 0u; k < ${SURFACE_GPU_TRANSPORT_MEMBERSHIP_BISECT_STEPS}u; k++) {
+        let mid = 0.5 * (lo + hi);
+        if (transportSolidContains(origin + dir * mid) == (inside == 1u)) {
+          lo = mid;
+        } else {
+          hi = mid;
+        }
+      }
+      result.kind = 1u;
+      result.reason = 0u;
+      result.t = lo;
+      result.normal = transportSolidNormal(origin + dir * lo, dir, eps);
+      return result;
+    }
+    tPrev = t;`
+        : ""
     }
     if (abs(f) < eps) {
       // Land the crossing ON the surface: one secant step along the ray
@@ -9913,8 +9958,18 @@ ${
   // outside their solid entirely) and a secant re-landing of the child
   // origin (at an edge the smoothed normal faces away from the approach
   // and the landing cannot fire; re-sampling the split normal at the
-  // landing re-drew the corner normals for a net loss).
-  let n0 = transportOpticalNormal(origin, dir, eps, li);
+  // landing re-drew the corner normals for a net loss).${
+    siGlass
+      ? `
+  // The sphere-inversion backend taps its SIGNED field here, as the twin
+  // does: this core's surfaceDE is the unsigned estimator, whose interior
+  // values are folded member signals at the wrong scale, so its taps across
+  // the surface drew a garbage split normal (the orbit leg's near-cusp
+  // probe traced straight through as backdrop).
+  let n0 = transportSolidNormal(origin, dir, eps);`
+      : `
+  let n0 = transportOpticalNormal(origin, dir, eps, li);`
+  }
   let cosI0 = abs(dot(dir, n0));
   let f0 = dielectricFresnel(cosI0, 1.0, ior);
   let bend0 = dielectricRefract(dir[0], dir[1], dir[2], n0[0], n0[1], n0[2], 1.0, ior);

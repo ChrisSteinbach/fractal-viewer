@@ -2515,3 +2515,54 @@ the look gate's transport measured against. The declared crossing scale is
 therefore `R/512`, the shipped relative constant. The look gate measured that
 scale leaving `inside-miss` mass that `R/8192` resolves, so it is the envelope
 work's first question, not a routing one.
+
+### Agreement on the real driver, and the two defects it found (2026-09-23)
+
+The WGSL half now has agreement legs in the transport runner, pinned against the
+f64 twin on the RX 7900 XTX: an analytic ball and a near-kissing orbit in each
+dimension, with named pole, cusp and graze probes. Their record is
+`docs/gpu-bench-surface.md`'s glass section. Getting them green found two real
+defects, and both were fixed in the kernel and the twin together.
+
+THE PRIMARY SPLIT TAPPED THE WRONG FIELD (kernel only). `transportTrace`'s split
+at the march's own hit took its normal from `transportOpticalNormal`, whose taps
+read `surfaceDE`. For these cores that is the UNSIGNED estimator, whose interior
+values are folded member signals at the wrong scale, so a split straddling the
+surface drew a garbage normal. The twin taps the signed field. The closed-solid
+backend never showed it because there the two fields coincide. On the orbit's
+near-cusp probe the kernel traced straight through, returning the backdrop,
+where the twin trapped the light. The glass backend now splits on
+`transportSolidNormal`, and every other backend's text is unchanged.
+
+THE QUERY COULD STEP PAST A REAL EXIT (both engines). Near a tangency cusp the
+transported bound's gradient degenerates. The band landing's "is the zero
+ahead" test then read backwards and stepped past the band, and the march
+continued outside under the inside claim until the domain edge: inside-miss.
+The twin replay showed the field going from −0.018 to +0.008 across a real exit
+the query never reported.
+
+The fix is a MEMBERSHIP-CROSSED branch. When a sample's field sign and exact
+membership both contradict the claimed medium, beyond the anchor envelope, the
+crossing lies between the previous sample and this one. The branch bisects
+exact membership there (`SURFACE_GPU_TRANSPORT_MEMBERSHIP_BISECT_STEPS` = 12,
+a stride/4096) and reports it. It is the shadow march's stride-crossed rule with
+the crossing located rather than approximated, and it costs extra evaluations
+only when it fires.
+
+MEASURED on the f64 twin over 200 camera rays each on near-kissing oct6, at the
+shipped R/512 crossing scale:
+
+| Depth | Resolved before → after | Inside-miss before → after | CPU cost per ray |
+| ----- | ----------------------- | -------------------------- | ---------------- |
+| 3     | 180 → 187               | 12 → 0                     | 1.9 → 2.0 ms     |
+| 6     | 109 → 179               | 81 → 0                     | 1.3 → 2.6 ms     |
+
+The cost rises because traces now run to completion instead of failing early.
+The remaining failures are the path cap and traversal refusals. This is the
+look gate's "RESOLUTION question": the inside-miss mass it traced to R/512 was
+this defect, and finer resolution had been hiding it rather than curing it. The
+envelope work should re-measure the speckle before reaching for a finer
+crossing scale.
+
+The real-driver interior excess the f32 argument owed is 1.03e-7 at worst (the
+4D orbit), about 10× under the slack.
