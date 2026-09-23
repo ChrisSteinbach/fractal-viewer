@@ -53,6 +53,7 @@ import type {
   SphereInversionSeedKind,
 } from "../fractal/sphere-inversion";
 import { PRESET_SPHERE_INVERSIONS } from "../fractal/presets";
+import { sphereInversionGlassAdmission } from "./surface-optics-backend";
 
 /** The numeric fields the panel exposes. The cut DIRECTION stays
  * document-only: no public range was measured for it. */
@@ -64,7 +65,12 @@ export type SphereInversionNumericField =
  * as a shell sphere through a generator centre), and the block itself
  * (unknown fields, a non-object block). */
 export type SphereInversionNoteRow =
-  SphereInversionNumericField | "arrangement" | "kind" | "seed" | "block";
+  | SphereInversionNumericField
+  | "arrangement"
+  | "kind"
+  | "seed"
+  | "material"
+  | "block";
 
 export interface SphereInversionFieldRange {
   min: number;
@@ -330,6 +336,7 @@ const REASON_ROWS: readonly [RegExp, SphereInversionNoteRow][] = [
   [/^cut radius/, "cutRadius"],
   [/^cut offset/, "cutOffset"],
   [/^(cut direction|seed member|the seed has)/, "seed"],
+  [/^(materials |material \d|unknown material)/, "material"],
 ];
 
 function formatNumber(value: number, precision: number): string {
@@ -365,6 +372,7 @@ export function sphereInversionControlNotes(
     arrangement: "",
     kind: "",
     seed: "",
+    material: "",
     block: "",
   };
   const repair: Record<SphereInversionNoteRow, string> = {
@@ -377,12 +385,15 @@ export function sphereInversionControlNotes(
     arrangement: "Choose an arrangement to replace it.",
     kind: "Choose a seed kind to replace it.",
     seed: "Change the seed lengths to repair it.",
+    material: "Choose a material to replace it.",
     block:
       "This version cannot read it; turn Sphere inversion off and on to start from a valid scene.",
   };
   for (const [row, reasons] of refused) {
     notes[row] = `Refused: ${reasons.join("; ")}. ${repair[row]}`;
   }
+  if (notes.material === "")
+    notes.material = sphereInversionMaterialNote(block);
   const numericFields: SphereInversionNumericField[] = [
     "radiusFraction",
     "depth",
@@ -399,4 +410,72 @@ export function sphereInversionControlNotes(
       `${String(range.min)} to ${String(range.max)}; kept as authored.`;
   }
   return notes;
+}
+
+// ------------------------------------------------------------ the material
+
+/** The Material select's two offered values. The document's vocabulary is
+ * wider (per-generation lists, authored finishes): anything else reads as
+ * {@link SPHERE_INVERSION_AUTHORED_OPTION} and is kept verbatim. */
+export type SphereInversionMaterialChoice = "classic" | "glass";
+
+/** The ONE block the Glass choice writes: a single material for every
+ * generation (the last entry covers deeper ones), the dielectric model at
+ * its resolver defaults. */
+function glassMaterials(): SphereInversionAuthored["materials"] {
+  return [{ optics: { model: "dielectric" } }];
+}
+
+/** The Material select's value for a block. */
+export function sphereInversionMaterialValue(
+  block: SphereInversionAuthored,
+): string {
+  const raw: unknown = (block as Record<string, unknown>).materials;
+  if (raw === undefined) return "classic";
+  return JSON.stringify(raw) === JSON.stringify(glassMaterials())
+    ? "glass"
+    : SPHERE_INVERSION_AUTHORED_OPTION;
+}
+
+/**
+ * Write the Material choice, absent-means-classic: Classic REMOVES the
+ * `materials` field (so the block is byte-identical to one that never
+ * carried it), Glass writes {@link glassMaterials}. A fresh object; the
+ * input is not mutated. Anything else returns the block unchanged.
+ */
+export function withSphereInversionMaterial(
+  block: SphereInversionAuthored,
+  choice: string,
+): SphereInversionAuthored {
+  if (choice === sphereInversionMaterialValue(block)) return block;
+  if (choice === "classic") {
+    const { materials: _dropped, ...rest } = block;
+    void _dropped;
+    return rest;
+  }
+  if (choice === "glass") return { ...block, materials: glassMaterials() };
+  return block;
+}
+
+/**
+ * The note beside the Material row: what an authored glass material does
+ * here, or why this block renders opaque instead — the routing admission's
+ * own answer (`surface-optics-backend.ts`), asked with compute assumed; a
+ * device without it is the Surface gate's refusal, disclosed there. Empty
+ * when the block authors no glass.
+ */
+export function sphereInversionMaterialNote(
+  block: SphereInversionAuthored,
+): string {
+  const resolution = resolveSphereInversion(block);
+  if (!resolution.ok) return "";
+  const admission = sphereInversionGlassAdmission(
+    block,
+    resolution.construction,
+    true,
+  );
+  if (!admission) return "";
+  return admission.admitted
+    ? "Surface refracts light through the set, on WebGPU compute only. Points draws it opaque."
+    : `Surface renders it opaque: ${admission.reason}.`;
 }

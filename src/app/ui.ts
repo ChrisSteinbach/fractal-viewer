@@ -3639,6 +3639,7 @@ export class Ui {
       cutOffset: this.byId("sphereInversionCutOffsetNote"),
       seed: this.byId("sphereInversionSeedNote"),
       depth: this.byId("sphereInversionDepthNote"),
+      material: this.byId("sphereInversionMaterialNote"),
     };
     this.finalLensNote = this.byId("finalLensNote");
     this.sphereInversionDormantSections = [
@@ -5185,6 +5186,7 @@ export class Ui {
       "sphereInversionCutRadiusSlider",
       "sphereInversionCutOffsetSlider",
       "sphereInversionDepthSlider",
+      "sphereInversionMaterial",
     ]) {
       this.setScalarDisabled(id, refusedMode);
     }

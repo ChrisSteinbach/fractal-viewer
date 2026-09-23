@@ -4,7 +4,13 @@ import { buildSurfaceDE4 } from "../fractal/surface-de-4d";
 import type { Transform } from "../fractal/types";
 import { identityRotorPair, rotorMatrix } from "./rotor4";
 import { createSurfaceTransmissionStarter } from "./surface-transmission-starters";
+import { PRESET_SPHERE_INVERSIONS } from "../fractal/presets";
+import { resolveSphereInversion } from "../fractal/sphere-inversion";
+import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
 import {
+  SPHERE_INVERSION_GLASS_MAX_DEPTH,
+  SPHERE_INVERSION_GLASS_MAX_GENERATORS,
+  sphereInversionGlassAdmission,
   surfaceClosedSolidAdmitted,
   surfaceOpticsOutlook,
   type Surface4OpticsPose,
@@ -322,5 +328,84 @@ describe("surfaceOpticsOutlook — the panel note's document mirror", () => {
       });
       expect(surfaceClosedSolidAdmitted(de, {})).toBe(true);
     }
+  });
+});
+
+describe("sphereInversionGlassAdmission (the sphere-inversion glass routing)", () => {
+  const glass = [{ optics: { model: "dielectric" as const } }];
+  const admit = (block: SphereInversionAuthored, compute = true) => {
+    const r = resolveSphereInversion(block);
+    if (!r.ok) throw new Error(r.reasons.join("; "));
+    return sphereInversionGlassAdmission(block, r.construction, compute);
+  };
+
+  it("has nothing to decide for a block that authors no glass", () => {
+    expect(admit({ arrangement: "oct6" })).toBeUndefined();
+    expect(
+      admit({ arrangement: "oct6", materials: [{ finish: { metalness: 1 } }] }),
+    ).toBeUndefined();
+  });
+
+  it("pins every shipped preset's leaf: 3D ball and shell seeds admit, the cut-shell vaults and the 600-cell refuse", () => {
+    const leaves: Record<string, string | true> = {};
+    for (const [name, factory] of Object.entries(PRESET_SPHERE_INVERSIONS)) {
+      const verdict = admit({ ...factory(), materials: glass });
+      leaves[name] = verdict!.admitted ? true : verdict!.reason;
+    }
+    const seeds = "glass is available for ball and shell seeds";
+    expect(leaves).toEqual({
+      inversionPearls: true,
+      inversionCubePearls: true,
+      inversionVault: seeds,
+      inversionLace: true,
+      inversionTetraFrame: true,
+      inversionDodecaWindows: true,
+      inversionRhombiLace: true,
+      inversionIcosidodecaStar: true,
+      inversionVault4: seeds,
+      inversionMedallions4: `glass is available up to ${SPHERE_INVERSION_GLASS_MAX_GENERATORS} generators`,
+    });
+  });
+
+  it("admits every 4D arrangement below the generator cap", () => {
+    for (const arrangement of ["cross8", "tess16", "cell24"]) {
+      expect(
+        admit({
+          arrangement,
+          seed: { kind: "shell" },
+          depth: 2,
+          materials: glass,
+        }),
+      ).toEqual({ admitted: true });
+    }
+  });
+
+  it("admits up to the depth the look gate swept, and not past it", () => {
+    const at = (depth: number) =>
+      admit({ arrangement: "oct6", depth, materials: glass });
+    expect(at(SPHERE_INVERSION_GLASS_MAX_DEPTH)).toEqual({ admitted: true });
+    expect(at(0)).toEqual({ admitted: true });
+    expect(at(SPHERE_INVERSION_GLASS_MAX_DEPTH + 1)).toEqual({
+      admitted: false,
+      reason: `glass is available up to depth ${SPHERE_INVERSION_GLASS_MAX_DEPTH}`,
+    });
+  });
+
+  it("refuses without compute: the backend has no fragment twin in either dimension", () => {
+    for (const arrangement of ["oct6", "cross8"]) {
+      expect(admit({ arrangement, materials: glass }, false)).toEqual({
+        admitted: false,
+        reason: "glass needs WebGPU compute, which is unavailable here",
+      });
+    }
+  });
+
+  it("reads glass on any generation's material, not only the first", () => {
+    expect(
+      admit({
+        arrangement: "oct6",
+        materials: [{}, { optics: { model: "dielectric" } }],
+      }),
+    ).toEqual({ admitted: true });
   });
 });

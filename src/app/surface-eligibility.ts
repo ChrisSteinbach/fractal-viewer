@@ -67,6 +67,7 @@ import type {
   Transform,
 } from "../fractal/types";
 import { MAX_AUTHORED_SHAPE_SOURCE_BYTES } from "./authored-shape";
+import { sphereInversionGlassAdmission } from "./surface-optics-backend";
 import type { RenderMode } from "./state";
 import { SURFACE_MAX_MAPS, SURFACE_MAX_RECORDS } from "./surface-material";
 import { SURFACE4_MAX_MAPS } from "./surface-material-4d";
@@ -207,6 +208,7 @@ function deriveSphereInversionEligibility(
   const dim = resolution.construction.dim;
   const computeOnly = sphereInversionComputeOnlySubject(
     resolution.construction,
+    block,
   );
   if (!opts.computeAvailable && computeOnly) {
     return {
@@ -220,6 +222,17 @@ function deriveSphereInversionEligibility(
     ...sphereInversionDormantDisclosures(transforms, finalTransform, symmetry),
   );
   if (dim === 4) disclosures.push(SPHERE_INVERSION_SLAB_REFUSAL);
+  // Authored glass the routing will not admit renders OPAQUE; say so here,
+  // in the admission's own words (the panel's note beside the Material row
+  // reads the same answer).
+  const glass = sphereInversionGlassAdmission(
+    block,
+    resolution.construction,
+    opts.computeAvailable,
+  );
+  if (glass && !glass.admitted) {
+    disclosures.push(`the scene renders opaque: ${glass.reason}`);
+  }
   return {
     status:
       disclosures.length > 0 || resolution.eligibility.status === "degraded"
@@ -259,9 +272,20 @@ function deriveSphereInversionEligibility(
 export function sphereInversionComputeOnlySubject(
   construction: Pick<
     SphereInversionConstruction,
-    "dim" | "generators" | "seed"
+    "dim" | "generators" | "seed" | "depth"
   >,
+  authored?: SphereInversionAuthored,
 ): string | null {
+  // GLASS the routing would admit is compute-only whatever the construction:
+  // the fragment arm draws the family opaque, so falling back to it would
+  // render a different object than the one the document authors. Asked with
+  // compute ASSUMED, so the answer names the subject rather than the device.
+  if (
+    authored &&
+    sphereInversionGlassAdmission(authored, construction, true)?.admitted
+  ) {
+    return "sphere-inversion glass scenes";
+  }
   const limit = sphereInversionFragmentArmLimit({
     dim: construction.dim,
     generatorCount: construction.generators.length,

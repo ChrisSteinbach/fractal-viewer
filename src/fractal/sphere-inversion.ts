@@ -54,6 +54,8 @@ import {
   inversionDistanceLowerBound,
   signedInversionBallScale,
 } from "./inversion";
+import { SURFACE_OPTICS_MODELS } from "./types";
+import type { SurfaceFinish, SurfaceOptics } from "./types";
 
 // ------------------------------------------------------------- constants
 
@@ -422,8 +424,46 @@ export interface SphereInversionAuthoredSeed {
   cutRadius?: number;
 }
 
+/**
+ * One authored MATERIAL of the replaced subject — the transform system's
+ * per-slot `finish`/`optics` vocabulary (`types.ts`), with the SAME absent
+ * meanings and the same resolve-time domains (`surface-finish.ts`,
+ * `surface-optics.ts`): one material vocabulary across both subjects, never a
+ * second reading of what a finish or a glass block means.
+ */
+export interface SphereInversionMaterial {
+  finish?: SurfaceFinish;
+  optics?: SurfaceOptics;
+}
+
 /** The authored compact parametric form (module doc). */
 export interface SphereInversionAuthored {
+  /**
+   * The subject's materials, KEYED ON THE HIT ATTRIBUTION: entry `g` shades
+   * generation `g` (the word length the kernels report as the hit's slot),
+   * and the LAST entry covers every deeper generation — the shade entry's
+   * own slot clamp, so a one-entry list is one material for the whole set.
+   * Absent is the classic material, byte-identically for every document
+   * predating it.
+   *
+   * WHY THE ATTRIBUTION AND NOT ONE BLOCK-LEVEL FIELD (decided 2026-09-23,
+   * `docs/sphere-inversion-family.md`'s routing section): the transform
+   * system's materials are keyed on the slot a hit reports, and this family's
+   * slot IS its generation, so keying here keeps one rule for "which material
+   * shades this hit" across both subjects. It lifts the dormant-finish
+   * question with the glass one, and per-generation glass costs no new wire
+   * later. A future per-seed-member key would be a sibling field, not a
+   * reinterpretation of this one.
+   *
+   * Validated by {@link resolveSphereInversion}: a non-empty array of at most
+   * `sphereInversionGenerationSlots(SPHERE_INVERSION_MAX_DEPTH)` plain
+   * objects; unknown keys REFUSE at every level (the family's key rule), an
+   * optics `model` must be one of `SURFACE_OPTICS_MODELS`, and every numeric
+   * leaf must be a finite number. Ranges are NOT refused here: they belong
+   * to the material resolvers, exactly as for a transform's material, so a
+   * value means the same thing on either subject.
+   */
+  materials?: readonly SphereInversionMaterial[];
   arrangement?: string;
   /** Generator radius as a fraction of the arrangement's tangent radius, in
    * `(0, 1]`; 1 is kissing. */
@@ -438,7 +478,13 @@ export interface SphereInversionAuthored {
  * a field this version cannot read, and ignoring it would render a different
  * object than the document names (the no-clamp rule applied to keys). */
 export const SPHERE_INVERSION_AUTHORED_FIELDS: readonly string[] =
-  Object.freeze(["arrangement", "radiusFraction", "seed", "depth"]);
+  Object.freeze([
+    "arrangement",
+    "radiusFraction",
+    "seed",
+    "depth",
+    "materials",
+  ]);
 export const SPHERE_INVERSION_SEED_FIELDS: readonly string[] = Object.freeze([
   "kind",
   "size",
@@ -451,6 +497,122 @@ export const SPHERE_INVERSION_SEED_FIELDS: readonly string[] = Object.freeze([
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** The keys a material entry, its finish and its optics may carry — typed
+ * against the vocabulary, so a field added there fails to compile here until
+ * the resolver reads it. */
+const MATERIAL_FIELDS: Record<keyof SphereInversionMaterial, true> = {
+  finish: true,
+  optics: true,
+};
+const FINISH_FIELDS: Record<keyof SurfaceFinish, true> = {
+  specular: true,
+  shininess: true,
+  metalness: true,
+  reflect: true,
+  transmit: true,
+  reflectionTint: true,
+};
+const OPTICS_FIELDS: Record<keyof SurfaceOptics, true> = {
+  model: true,
+  scale: true,
+  distortion: true,
+};
+
+/** Most material entries a block may carry: one per generation slot at the
+ * deepest legal depth. */
+export const SPHERE_INVERSION_MAX_MATERIALS = sphereInversionGenerationSlots(
+  SPHERE_INVERSION_MAX_DEPTH,
+);
+
+/** Every reason the `materials` field is unreadable (empty when it reads). */
+function sphereInversionMaterialReasons(raw: unknown): string[] {
+  const reasons: string[] = [];
+  if (
+    !Array.isArray(raw) ||
+    raw.length < 1 ||
+    raw.length > SPHERE_INVERSION_MAX_MATERIALS
+  ) {
+    return [
+      `materials must be a list of 1 to ${SPHERE_INVERSION_MAX_MATERIALS} entries`,
+    ];
+  }
+  const leaves = (
+    o: Record<string, unknown>,
+    known: Record<string, true>,
+    where: string,
+  ) => {
+    for (const key of Object.keys(o)) {
+      if (!Object.prototype.hasOwnProperty.call(known, key)) {
+        reasons.push(
+          `unknown ${where} field "${key}" (not readable by this version)`,
+        );
+      }
+    }
+  };
+  raw.forEach((entry: unknown, g) => {
+    const where = `material ${g}`;
+    if (!isPlainObject(entry)) {
+      reasons.push(`${where} is not an object`);
+      return;
+    }
+    leaves(entry, MATERIAL_FIELDS, where);
+    const finish = entry.finish;
+    if (finish !== undefined) {
+      if (!isPlainObject(finish)) {
+        reasons.push(`${where} finish is not an object`);
+      } else {
+        leaves(finish, FINISH_FIELDS, `${where} finish`);
+        for (const key of Object.keys(FINISH_FIELDS)) {
+          if (finish[key] !== undefined && !isFiniteNumber(finish[key])) {
+            reasons.push(`${where} finish ${key} is not a finite number`);
+          }
+        }
+      }
+    }
+    const optics = entry.optics;
+    if (optics !== undefined) {
+      if (!isPlainObject(optics)) {
+        reasons.push(`${where} optics is not an object`);
+      } else {
+        leaves(optics, OPTICS_FIELDS, `${where} optics`);
+        if (!SURFACE_OPTICS_MODELS.some((m) => m === optics.model)) {
+          reasons.push(
+            `${where} optics model ${JSON.stringify(optics.model ?? null)} is not one of: ${SURFACE_OPTICS_MODELS.join(", ")}`,
+          );
+        }
+        for (const key of ["scale", "distortion"] as const) {
+          if (optics[key] !== undefined && !isFiniteNumber(optics[key])) {
+            reasons.push(`${where} optics ${key} is not a finite number`);
+          }
+        }
+      }
+    }
+  });
+  return reasons;
+}
+
+/**
+ * The material that shades generation `generation` — entry
+ * `min(generation, length − 1)`, the kernels' slot clamp — or `undefined`
+ * (the classic material) when the block authors none. Reads a block
+ * {@link resolveSphereInversion} accepted; it does not re-validate.
+ */
+export function sphereInversionMaterialFor(
+  authored: SphereInversionAuthored,
+  generation: number,
+): SphereInversionMaterial | undefined {
+  const list = authored.materials;
+  if (!list || list.length === 0) return undefined;
+  return list[Math.min(Math.max(0, Math.floor(generation)), list.length - 1)];
+}
+
+/** Does any material the block authors select an optical model? */
+export function sphereInversionAuthorsOptics(
+  authored: SphereInversionAuthored,
+): boolean {
+  return (authored.materials ?? []).some((m) => m.optics !== undefined);
 }
 
 /**
@@ -711,6 +873,9 @@ export function resolveSphereInversion(
         `unknown seed field "${key}" (not readable by this version)`,
       );
     }
+  }
+  if (block.materials !== undefined) {
+    reasons.push(...sphereInversionMaterialReasons(block.materials));
   }
   const D = SPHERE_INVERSION_DEFAULTS;
   const id = authored.arrangement;

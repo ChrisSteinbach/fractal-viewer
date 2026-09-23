@@ -6,6 +6,8 @@ import {
   surfaceMaterialUsesPattern,
   type SurfaceMaterialSlots,
 } from "../fractal/surface-material-wire";
+import { sphereInversionMaterialFor } from "../fractal/sphere-inversion";
+import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
 import type { SurfaceNativeCalibration } from "../fractal/surface-pattern";
 import type { Transform, Vec3 } from "../fractal/types";
 
@@ -131,15 +133,22 @@ export interface SphereInversionShadeSlots {
  * because the block has no transforms. Each slot's trap coordinate is its
  * generation over `D + 2`, the value the kernel's own trap reports.
  *
- * ONE MATERIAL, replicated into every slot: generations are attribution,
- * not separate surfaces, so a finish never varies by word length. The
- * block has no finish of its own yet and the transform system's
- * per-transform finishes are dormant under it, so today's caller passes
- * none and gets `null` — the classic kernels, byte-identical shade source.
+ * MATERIALS RIDE THE SAME ATTRIBUTION: slot `g` wears the block's material
+ * for generation `g` (`sphereInversionMaterialFor` — the last authored entry
+ * covers every deeper generation, the kernels' own slot clamp), resolved by
+ * the transform system's one material resolver. `admitOptics` is the
+ * routing answer (`surface-optics-backend.ts`'s sphere-inversion admission):
+ * off, an authored glass block is dropped from the wire and the session
+ * shades opaque — never a transport over a backend that was not selected.
+ * `opticsRadius` is the session's derived optical radius, required when
+ * optics is admitted. No authored material returns `null`: the classic
+ * kernels, byte-identical shade source.
  */
 export function sphereInversionShadeSlots(
   generationSlots: number,
-  finish?: Transform["finish"],
+  authored?: SphereInversionAuthored,
+  opticsRadius?: number,
+  admitOptics = false,
 ): SphereInversionShadeSlots {
   const colors = transformColors(generationSlots);
   const denom = Math.max(1, generationSlots - 1);
@@ -147,17 +156,27 @@ export function sphereInversionShadeSlots(
     { length: generationSlots },
     (_, generation) => generation / denom,
   );
-  const material = resolveSurfaceMaterial(finish, undefined);
-  const materials: SurfaceMaterialSlots | null = surfaceMaterialUsesFinish(
-    material,
-  )
-    ? {
-        slots: Array.from({ length: generationSlots }, () => material),
-        finish: true,
-        pattern: false,
-        optics: false,
-      }
-    : null;
+  let finish = false;
+  let optics = false;
+  const slots = Array.from({ length: generationSlots }, (_, generation) => {
+    const m = authored
+      ? sphereInversionMaterialFor(authored, generation)
+      : undefined;
+    const material = resolveSurfaceMaterial(
+      m?.finish,
+      undefined,
+      admitOptics ? m?.optics : undefined,
+      opticsRadius,
+    );
+    finish ||= surfaceMaterialUsesFinish(material);
+    optics ||= surfaceMaterialUsesOptics(material);
+    return material;
+  });
+  const materials: SurfaceMaterialSlots | null = finish
+    ? { slots, finish: true, pattern: false, optics }
+    : optics
+      ? { slots, finish: false, pattern: false, optics: true }
+      : null;
   return { colors, trapIndices, materials };
 }
 

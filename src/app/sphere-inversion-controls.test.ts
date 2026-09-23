@@ -8,10 +8,13 @@ import {
   sphereInversionControlNotes,
   sphereInversionFieldRange,
   sphereInversionFieldValue,
+  sphereInversionMaterialNote,
+  sphereInversionMaterialValue,
   sphereInversionSeedKindValue,
   sphereInversionVisibleRows,
   withSphereInversionArrangement,
   withSphereInversionField,
+  withSphereInversionMaterial,
   withSphereInversionSeedKind,
 } from "./sphere-inversion-controls";
 
@@ -226,7 +229,7 @@ describe("sphere-inversion enable gesture", () => {
 
       expect(resolveSphereInversion(block).ok).toBe(true);
       expect(Object.values(sphereInversionControlNotes(block))).toEqual(
-        Array(10).fill(""),
+        Array(11).fill(""),
       );
     }
   });
@@ -289,5 +292,61 @@ describe("sphere-inversion control notes", () => {
     expect(notes.arrangement).toMatch(
       /^Refused: unknown arrangement "dodeca20".*Choose an arrangement/,
     );
+  });
+});
+
+describe("the Material row", () => {
+  const pearls = { arrangement: "oct6", seed: { size: 0.28 }, depth: 8 };
+
+  it("reads Classic when absent, Glass for the one block Glass writes, and Authored otherwise", () => {
+    expect(sphereInversionMaterialValue(pearls)).toBe("classic");
+    expect(
+      sphereInversionMaterialValue(
+        withSphereInversionMaterial(pearls, "glass"),
+      ),
+    ).toBe("glass");
+    expect(
+      sphereInversionMaterialValue({
+        ...pearls,
+        materials: [{ finish: { metalness: 1 } }],
+      }),
+    ).toBe(SPHERE_INVERSION_AUTHORED_OPTION);
+  });
+
+  it("Classic removes the field, so the block is byte-identical to one that never carried it", () => {
+    const glass = withSphereInversionMaterial(pearls, "glass");
+    expect(glass).not.toBe(pearls);
+    expect(JSON.stringify(withSphereInversionMaterial(glass, "classic"))).toBe(
+      JSON.stringify(pearls),
+    );
+    expect(withSphereInversionMaterial(pearls, "classic")).toBe(pearls);
+    expect(withSphereInversionMaterial(pearls, "chrome")).toBe(pearls);
+  });
+
+  it("discloses what glass does where it resolves and why it renders opaque where it does not", () => {
+    expect(sphereInversionMaterialNote(pearls)).toBe("");
+    expect(
+      sphereInversionMaterialNote(withSphereInversionMaterial(pearls, "glass")),
+    ).toBe(
+      "Surface refracts light through the set, on WebGPU compute only. Points draws it opaque.",
+    );
+    const vault = withSphereInversionMaterial(
+      { arrangement: "oct6", seed: { kind: "cutShell" } },
+      "glass",
+    );
+    expect(sphereInversionControlNotes(vault).material).toBe(
+      "Surface renders it opaque: glass is available for ball and shell seeds.",
+    );
+  });
+
+  it("routes a refused materials field to the Material row with its repair", () => {
+    const notes = sphereInversionControlNotes({
+      ...pearls,
+      materials: [{ optics: { model: "metal" } }],
+    } as unknown as SphereInversionAuthored);
+    expect(notes.material).toBe(
+      'Refused: material 0 optics model "metal" is not one of: dielectric. Choose a material to replace it.',
+    );
+    expect(notes.block).toBe("");
   });
 });

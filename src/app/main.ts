@@ -115,6 +115,7 @@ import {
   surfaceTrapIndices,
 } from "./surface-slots";
 import {
+  sphereInversionGlassAdmission,
   surfaceClosedSolidAdmitted,
   surfaceOpticsOutlook,
   type SurfaceOpticsBackend,
@@ -4863,15 +4864,18 @@ async function main(): Promise<void> {
   /**
    * The session's optical-transport boundary backend, decided ONCE per
    * start() in the routing branches that can carry a live optics gate (the
-   * IFS arms and the finite arm) and consumed by BOTH engines: the compute
-   * create below and the GLSL fallback's setSurfaceMaterials. Initialized
-   * to the estimator — the absent path's meaning — because every branch
-   * that leaves it there (forward, sphere-inversion) derives a wire whose
+   * IFS arms, the finite arm and the sphere-inversion arm) and consumed by
+   * BOTH engines: the compute create below and the GLSL fallback's
+   * setSurfaceMaterials. Initialized to the estimator — the absent path's
+   * meaning — because every branch that leaves it there (forward) derives a
+   * wire whose
    * optics gate is off, so the answer is inert; a future branch that
    * forgets to decide degrades to today's behavior, never to a backend
    * its composition cannot follow. `"finiteSolid"` is the finite arm's
    * COMPUTE-ONLY answer: the GLSL stamp sites narrow it back down because
    * a finite session can never reach them (it goes compute or exits).
+   * `"sphereInversion"` is compute-only the same way: its admission needs
+   * compute, and a glass block is a compute-only subject at the gate.
    */
   let sessionOpticsBackend: SurfaceOpticsBackend = "estimator";
 
@@ -6069,8 +6073,10 @@ async function main(): Promise<void> {
           // null exactly when the WebGL arm can draw this construction: 4D
           // and any block past the arm's caps are compute-only, and the
           // phrase is the gate's own so the toast below cannot restate it.
-          const computeOnlySubject =
-            sphereInversionComputeOnlySubject(construction);
+          const computeOnlySubject = sphereInversionComputeOnlySubject(
+            construction,
+            state.sphereInversion,
+          );
           // CONSTRUCTION FIXED AT CREATE: the kernel tables pack from this
           // DE once, and a block edit restarts the session
           // (syncSphereInversionSurfaceSession).
@@ -6079,11 +6085,27 @@ async function main(): Promise<void> {
             : buildSphereInversionDE(construction);
           surfaceSessionSphereInversion = construction;
           surfaceSessionIs4D = fourD;
-          // One material shared by every generation slot; no block-level
-          // finish exists yet, so today this is the classic kernels.
+          // The block's materials, keyed on GENERATION (the hit
+          // attribution), and the glass backend — decided ONCE here, never
+          // re-routed mid-session (a block edit restarts the session). The
+          // admission is the panel note's own answer; refused glass shades
+          // opaque and the gate note says why. The optical radius is the
+          // estimator's origin-centred bounding radius, the ball the look
+          // gate's transport measured against.
+          const glassAdmitted =
+            sphereInversionGlassAdmission(
+              state.sphereInversion!,
+              construction,
+              surfaceComputeAvailable(),
+            )?.admitted === true;
           sessionMaterials = sphereInversionShadeSlots(
             sphereInversionGenerationSlots(de.depth),
+            state.sphereInversion,
+            de.boundingRadius,
+            glassAdmitted,
           ).materials;
+          sessionOpticsBackend =
+            sessionMaterials?.optics === true ? "sphereInversion" : "estimator";
           ui.setSurfaceSessionKind("sphereInversion");
           surfaceBlankNotice = () => {
             ui.flashToast(

@@ -4,6 +4,9 @@ import {
   analyzeSphereInversionSystem,
   buildSphereInversionTables,
   resolveSphereInversion,
+  SPHERE_INVERSION_MAX_MATERIALS,
+  sphereInversionAuthorsOptics,
+  sphereInversionMaterialFor,
   sphereInversionAuthoredDimension,
 } from "./sphere-inversion";
 import type {
@@ -152,6 +155,102 @@ describe("the look study's registry growth", () => {
         expect(r.eligibility.status).toBe("eligible");
       }
     }
+  });
+});
+
+describe("the materials field", () => {
+  const base = { arrangement: "oct6", depth: 3 };
+  const reasons = (materials: unknown) => {
+    const r = resolveSphereInversion({
+      ...base,
+      materials,
+    } as unknown as SphereInversionAuthored);
+    return r.ok ? [] : r.reasons;
+  };
+
+  it("absent resolves the construction it always did", () => {
+    const plain = resolveSphereInversion(base);
+    const glass = resolveSphereInversion({
+      ...base,
+      materials: [{ optics: { model: "dielectric", scale: 2 } }],
+    });
+    expect(plain.ok && glass.ok).toBe(true);
+    if (plain.ok && glass.ok) {
+      expect(glass.construction).toEqual(plain.construction);
+    }
+  });
+
+  it("reads finishes and optics in the transform system's own vocabulary", () => {
+    expect(
+      reasons([
+        { finish: { metalness: 1, specular: -2 } },
+        { optics: { model: "dielectric", distortion: 0.5 }, finish: {} },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("refuses an empty list, a non-list and one past the deepest generation", () => {
+    const tooMany = Array.from(
+      { length: SPHERE_INVERSION_MAX_MATERIALS + 1 },
+      () => ({}),
+    );
+    for (const bad of [[], {}, "glass", tooMany]) {
+      expect(reasons(bad)).toEqual([
+        `materials must be a list of 1 to ${SPHERE_INVERSION_MAX_MATERIALS} entries`,
+      ]);
+    }
+  });
+
+  it("refuses unknown keys at every level, by name", () => {
+    expect(reasons([{ colour: 1 }])).toEqual([
+      'unknown material 0 field "colour" (not readable by this version)',
+    ]);
+    expect(reasons([{}, { finish: { gloss: 1 } }])).toEqual([
+      'unknown material 1 finish field "gloss" (not readable by this version)',
+    ]);
+    expect(reasons([{ optics: { model: "dielectric", ior: 1.5 } }])).toEqual([
+      'unknown material 0 optics field "ior" (not readable by this version)',
+    ]);
+  });
+
+  it("refuses an unknown optical model and non-finite leaves rather than dropping them", () => {
+    expect(reasons([{ optics: { model: "metal" } }])).toEqual([
+      'material 0 optics model "metal" is not one of: dielectric',
+    ]);
+    expect(reasons([{ optics: {} }])).toEqual([
+      "material 0 optics model null is not one of: dielectric",
+    ]);
+    expect(
+      reasons([
+        {
+          finish: { metalness: "1" },
+          optics: { model: "dielectric", scale: null },
+        },
+      ]),
+    ).toEqual([
+      "material 0 finish metalness is not a finite number",
+      "material 0 optics scale is not a finite number",
+    ]);
+    expect(reasons(["glass"])).toEqual(["material 0 is not an object"]);
+  });
+
+  it("keys materials on generation, the last entry covering every deeper one", () => {
+    const block: SphereInversionAuthored = {
+      ...base,
+      materials: [{ finish: { metalness: 0 } }, { finish: { metalness: 1 } }],
+    };
+    expect(sphereInversionMaterialFor(block, 0)?.finish?.metalness).toBe(0);
+    for (const g of [1, 2, 7]) {
+      expect(sphereInversionMaterialFor(block, g)?.finish?.metalness).toBe(1);
+    }
+    expect(sphereInversionMaterialFor(base, 0)).toBeUndefined();
+    expect(sphereInversionAuthorsOptics(block)).toBe(false);
+    expect(
+      sphereInversionAuthorsOptics({
+        ...base,
+        materials: [{}, { optics: { model: "dielectric" } }],
+      }),
+    ).toBe(true);
   });
 });
 
