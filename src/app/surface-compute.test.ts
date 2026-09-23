@@ -71,6 +71,8 @@ import {
   SURFACE_GPU_RAY_HIT,
   SURFACE_GPU_TRANSPORT_COMPLETE,
   SURFACE_GPU_TRANSPORT_PENDING,
+  SURFACE_GPU_TRANSPORT_INVALID,
+  SURFACE_GPU_TRANSPORT_UNRESOLVED,
   SURFACE_GPU_SHADE_LIGHTING_BYTES,
   SURFACE_GPU_HIT_FLOOR,
   SURFACE_GPU_LENS4_POST_BYTES,
@@ -122,6 +124,8 @@ import {
   SPHERE_INVERSION_POOL_PASS_MASK,
   SPHERE_INVERSION_POOL_RAY_BITS,
   SPHERE_INVERSION_POOL_RAY_MASK,
+  SPHERE_INVERSION_POOL_SPEC_BIT,
+  sphereInversionPoolWord,
   TRANSPORT_PATH_BYTES,
   finiteTransportWorkBytes,
   transportWorkBytes,
@@ -4781,6 +4785,268 @@ describe("SurfaceComputeRenderer sphere-inversion glass continuation", () => {
     } finally {
       h.renderer.destroy();
     }
+  });
+
+  describe("speculative replay passes", () => {
+    const flags =
+      SPHERE_INVERSION_POOL_SPEC_BIT | SPHERE_INVERSION_POOL_FRESH_BIT;
+    const keyOf = (w: number) => (w & ~flags) >>> 0;
+    const key = (ray: number, pass: number) =>
+      sphereInversionPoolWord(ray, pass, false);
+    const isSpec = (w: number) => (w & SPHERE_INVERSION_POOL_SPEC_BIT) !== 0;
+    const isFresh = (w: number) => (w & SPHERE_INVERSION_POOL_FRESH_BIT) !== 0;
+    const R = FINITE_TRANSPORT_RUNNING;
+    const C = SURFACE_GPU_TRANSPORT_COMPLETE;
+    const P = SURFACE_GPU_TRANSPORT_PENDING;
+    const U = SURFACE_GPU_TRANSPORT_UNRESOLVED;
+    /** A pool over glass rays whose kernel answers each dispatched word
+     * from `script(key, n, word)`, `n` counting that key's dispatches
+     * (1-based) within the frame. The parked sentinel answers INVALID, as
+     * the kernel's bounds guard does. `primed` first renders a frame in
+     * which ray 0 goes pending once at pass 0: the prediction the measured
+     * frame at the same raster seeds. */
+    const scripted = async (
+      script: (k: number, n: number, word: number) => number,
+      primed = true,
+      width = 3,
+    ) => {
+      const seen = new Map<number, number>();
+      let priming = primed;
+      const h = finiteContinuationHarness({
+        kind: "sphereInversion",
+        chunkPaths: 32,
+        adaptiveSchedule: true,
+        outcome: (d) => {
+          const statuses = d.rayIds.map((w) => {
+            if (
+              (w & SPHERE_INVERSION_POOL_RAY_MASK) ===
+              SPHERE_INVERSION_POOL_RAY_MASK
+            )
+              return SURFACE_GPU_TRANSPORT_INVALID;
+            const k = keyOf(w);
+            const n = (seen.get(k) ?? 0) + 1;
+            seen.set(k, n);
+            if (priming) return k === key(0, 0) ? P : C;
+            return script(k, n, w);
+          });
+          return {
+            running: statuses.filter((v) => v === R).length,
+            statuses,
+          };
+        },
+      });
+      h.spec.width = width;
+      if (primed) {
+        const primer = await h.renderer.renderFrame(h.spec);
+        expect(primer?.transport?.passes).toBe(2);
+        priming = false;
+        seen.clear();
+      }
+      const before = h.dispatches.length;
+      return { h, measured: () => h.dispatches.slice(before) };
+    };
+    const wordsOf = (dispatches: FiniteHostDispatch[], k: number) =>
+      dispatches.flatMap((d) => d.rayIds.filter((w) => keyOf(w) === k));
+
+    it("seeds a predicted pixel's next pass beside its pass 0, and makes it the real pass when pass 0 goes pending", async () => {
+      const { h, measured } = await scripted((k, n) =>
+        k === key(0, 0)
+          ? n < 4
+            ? R
+            : P
+          : k === key(0, 1)
+            ? n < 6
+              ? R
+              : C
+            : C,
+      );
+      try {
+        const frame = await h.renderer.renderFrame(h.spec);
+        expect(frame?.transport?.resolved).toBe(3);
+        expect(frame?.transport?.passes).toBe(2);
+        const [first] = measured();
+        // The first chunk carries pass 0 and its speculated pass 1 together.
+        expect(first.rayIds.map(keyOf)).toContain(key(0, 1));
+        const pass1 = wordsOf(measured(), key(0, 1));
+        expect(isSpec(pass1[0]) && isFresh(pass1[0])).toBe(true);
+        // Speculative through chunk 4, where pass 0 goes pending; then the
+        // same trace resumes unflagged. Never restarted.
+        expect(pass1.slice(0, 4).every(isSpec)).toBe(true);
+        expect(pass1.slice(4).every((w) => w === key(0, 1))).toBe(true);
+        expect(pass1.filter(isFresh)).toHaveLength(1);
+      } finally {
+        h.renderer.destroy();
+      }
+    });
+
+    it("commits a speculative trace that finished in the same chunk its predecessor went pending", async () => {
+      const { h, measured } = await scripted((k, n, w) =>
+        k === key(0, 0)
+          ? n < 4
+            ? R
+            : P
+          : k === key(0, 1)
+            ? isSpec(w)
+              ? n < 4
+                ? R
+                : C
+              : C // the commit re-reports the stored status
+            : C,
+      );
+      try {
+        const frame = await h.renderer.renderFrame(h.spec);
+        expect(frame?.transport?.resolved).toBe(3);
+        expect(frame?.transport?.passes).toBe(2);
+        const pass1 = wordsOf(measured(), key(0, 1));
+        // Four speculative chunks, then ONE commit: same slot, unflagged.
+        expect(pass1.filter(isSpec)).toHaveLength(4);
+        expect(pass1.at(-1)).toBe(key(0, 1));
+        expect(pass1.filter((w) => !isSpec(w))).toHaveLength(1);
+      } finally {
+        h.renderer.destroy();
+      }
+    });
+
+    it("holds a speculative trace that fails before its predecessor finishes, and commits it when the predecessor goes pending", async () => {
+      // A later pass can fail sooner (its stack fills first).
+      const { h, measured } = await scripted((k, n) =>
+        k === key(0, 0) ? (n < 5 ? R : P) : k === key(0, 1) ? U : C,
+      );
+      try {
+        const frame = await h.renderer.renderFrame(h.spec);
+        expect(frame?.transport?.resolved).toBe(2);
+        expect(frame?.transport?.unresolved).toBe(1);
+        expect(frame?.transport?.passes).toBe(2);
+        const pass1 = wordsOf(measured(), key(0, 1));
+        expect(pass1.filter(isFresh)).toHaveLength(1);
+        expect(pass1.at(-1)).toBe(key(0, 1));
+        expect(pass1.filter((w) => !isSpec(w))).toHaveLength(1);
+      } finally {
+        h.renderer.destroy();
+      }
+    });
+
+    it("drops a held speculative result when its predecessor finishes for good", async () => {
+      const { h, measured } = await scripted((k, n) =>
+        k === key(0, 0) ? (n < 5 ? R : C) : k === key(0, 1) ? U : C,
+      );
+      try {
+        const frame = await h.renderer.renderFrame(h.spec);
+        expect(frame?.transport?.resolved).toBe(3);
+        expect(frame?.transport?.unresolved).toBe(0);
+        expect(frame?.transport?.passes).toBe(1);
+        expect(wordsOf(measured(), key(0, 1)).some((w) => !isSpec(w))).toBe(
+          false,
+        );
+      } finally {
+        h.renderer.destroy();
+      }
+    });
+
+    it("parks a running speculative slot, unwritten, when its predecessor finishes for good", async () => {
+      // Ray 0's pass 0 completes in chunk 3 while its pass 1 still runs;
+      // ray 1 keeps the pool going and the parked slot inside the width.
+      const { h, measured } = await scripted(
+        (k, n) =>
+          k === key(0, 0)
+            ? n < 3
+              ? R
+              : C
+            : k === key(3, 0)
+              ? n < 7
+                ? R
+                : C
+              : k === key(0, 1)
+                ? R
+                : C,
+        true,
+        4,
+      );
+      try {
+        const frame = await h.renderer.renderFrame(h.spec);
+        expect(frame?.transport?.resolved).toBe(4);
+        const after = measured().slice(3);
+        expect(after.length).toBeGreaterThan(0);
+        expect(
+          after.some((d) => d.rayIds.some((w) => keyOf(w) === key(0, 1))),
+        ).toBe(false);
+        expect(after[0].rayIds).toContain(SPHERE_INVERSION_POOL_RAY_MASK);
+      } finally {
+        h.renderer.destroy();
+      }
+    });
+
+    it("never speculates without a prediction, nor across a raster change", async () => {
+      // The 4D starter's shape: long traces, none pending. Every chunk waits
+      // for its slowest lane, so speculating them would only slow them.
+      const cold = await scripted(
+        (k, n) => (k === key(0, 0) ? (n < 6 ? R : C) : C),
+        false,
+      );
+      const moved = await scripted((k, n) =>
+        k === key(0, 0) ? (n < 6 ? R : C) : C,
+      );
+      try {
+        await cold.h.renderer.renderFrame(cold.h.spec);
+        moved.h.spec.width = 4;
+        await moved.h.renderer.renderFrame(moved.h.spec);
+        for (const { measured } of [cold, moved])
+          expect(measured().some((d) => d.rayIds.some((w) => isSpec(w)))).toBe(
+            false,
+          );
+      } finally {
+        cold.h.renderer.destroy();
+        moved.h.renderer.destroy();
+      }
+    });
+
+    it("stops speculating once a prediction fails to come true, and re-arms when the pending set repeats", async () => {
+      // Primer: ray 0 pending. Frame A: ray 0 completes (the guess was
+      // wrong). Frame B: ray 0 pending again, but unspeculated. Frame C:
+      // pending again, and speculated.
+      let frame = "A";
+      const { h, measured } = await scripted((k) =>
+        k === key(0, 0) ? (frame === "A" ? C : P) : C,
+      );
+      try {
+        const spec = () =>
+          measured().some((d) => d.rayIds.some((w) => isSpec(w)));
+        const at = () => h.dispatches.length;
+        await h.renderer.renderFrame(h.spec);
+        expect(spec()).toBe(true); // trusted once
+        let before = at();
+        frame = "B";
+        await h.renderer.renderFrame(h.spec);
+        expect(
+          h.dispatches.slice(before).some((d) => d.rayIds.some(isSpec)),
+        ).toBe(false);
+        before = at();
+        frame = "C";
+        await h.renderer.renderFrame(h.spec);
+        expect(
+          h.dispatches.slice(before).some((d) => d.rayIds.some(isSpec)),
+        ).toBe(true);
+      } finally {
+        h.renderer.destroy();
+      }
+    });
+
+    it("never speculates under ?surfacesispec=0", async () => {
+      const { h, measured } = await scripted((k, n) =>
+        k === key(0, 0) ? (n < 4 ? R : P) : C,
+      );
+      setSurfaceComputeSchedulePins({ siSpecOff: true });
+      try {
+        const frame = await h.renderer.renderFrame(h.spec);
+        expect(frame?.transport?.resolved).toBe(3);
+        expect(measured().some((d) => d.rayIds.some((w) => isSpec(w)))).toBe(
+          false,
+        );
+      } finally {
+        setSurfaceComputeSchedulePins({});
+        h.renderer.destroy();
+      }
+    });
   });
 
   it("keeps a pinned quantum fixed: without the ladder every chunk runs the base", async () => {

@@ -101,6 +101,7 @@ import {
   FINITE_TRANSPORT_RUNNING,
   FINITE_TRANSPORT_RUNNING_OFFSET,
   SPHERE_INVERSION_POOL_FRESH_BIT,
+  SPHERE_INVERSION_POOL_SPEC_BIT,
   SPHERE_INVERSION_POOL_PASS_MASK,
   SPHERE_INVERSION_POOL_RAY_BITS,
   SPHERE_INVERSION_POOL_RAY_MASK,
@@ -368,6 +369,13 @@ let surfaceComputeSiJointOffPin = false;
  * session created while it is set. A codegen A/B only; no pixel moves.
  */
 let surfaceComputeSiShapeOffPin = false;
+/**
+ * `?surfacesispec=0` — no SPECULATIVE replay passes in the sphere-inversion
+ * transport pool ({@link SURFACE_COMPUTE_TRANSPORT_SPEC_AFTER_CHUNKS}): a
+ * pending ray's next pass starts only once the pass before it ends. A
+ * schedule A/B only; no pixel moves. Read per frame, like the trace sink.
+ */
+let surfaceComputeSiSpecOffPin = false;
 
 function positivePin(value: number | null | undefined): number | null {
   return value !== null &&
@@ -390,6 +398,7 @@ export function setSurfaceComputeSchedulePins(pins: {
   siExactNormal?: boolean | null;
   siJointOff?: boolean | null;
   siShapeOff?: boolean | null;
+  siSpecOff?: boolean | null;
 }): void {
   surfaceComputeTimestampsPin = pins.timestamps ?? null;
   surfaceComputeFenceGroupPin = positivePin(pins.fenceGroup);
@@ -400,6 +409,7 @@ export function setSurfaceComputeSchedulePins(pins: {
   surfaceComputeSiExactNormalPin = pins.siExactNormal === true;
   surfaceComputeSiJointOffPin = pins.siJointOff === true;
   surfaceComputeSiShapeOffPin = pins.siShapeOff === true;
+  surfaceComputeSiSpecOffPin = pins.siSpecOff === true;
 }
 
 /** Threads per workgroup — the kernel spike's measured winner (private
@@ -2265,6 +2275,16 @@ export function transportBatchSize(cost: ShadeHitCost, cap: number): number {
  */
 export const SURFACE_COMPUTE_TRANSPORT_POOL_SLOTS = 16384;
 
+/**
+ * The share of a transport pool's predicted pending pixels (the speculative
+ * replay passes' prediction, the pool's doc) that must go pending again for
+ * the next pool at that raster to speculate. A steady view repeats its
+ * pending set exactly; a moving one shifts it, and every wrongly speculated
+ * lane slows the chunks the real rays run in (measured: 64 lanes that never
+ * went pending took a 4D preview 0.57 -> 0.96 s).
+ */
+export const SURFACE_COMPUTE_TRANSPORT_SPEC_MIN_OVERLAP = 0.5;
+
 /** Bytes one ray costs in EACH joint-pool sample arena: states 16 + color
  * 4 + layer 4 + transport record 32 (the four per-ray buffers the
  * transport reads or writes; the joint pool is refused for lit sessions,
@@ -2318,7 +2338,7 @@ export function surfaceComputeJointArenaBytes(
   const arenaRays = samples * sphereInversionJointStride(rays);
   const bytes = arenaRays * SURFACE_COMPUTE_JOINT_RAY_BYTES;
   const widest = arenaRays * SURFACE_COMPUTE_TRANSPORT_RECORD_BYTES;
-  return arenaRays > SPHERE_INVERSION_POOL_RAY_MASK + 1 ||
+  return arenaRays > SPHERE_INVERSION_POOL_RAY_MASK ||
     bytes > SURFACE_COMPUTE_JOINT_ARENA_BYTES ||
     widest > limits.maxStorageBufferBindingSize ||
     widest > limits.maxBufferSize
@@ -4187,6 +4207,17 @@ export class SurfaceComputeRenderer {
   private frameToken = 0;
   /** Monotonic across frames and AA samples; never reused for a new batch. */
   private transportGeneration = 0;
+  /** The speculative replay passes' PREDICTION (the pool's doc): the last
+   * completed transport pool's raster and, per pixel that went pending, the
+   * deepest replay pass it reached. */
+  private transportPendingPrediction: {
+    width: number;
+    height: number;
+    passes: Map<number, number>;
+    /** Whether the prediction before it came true
+     * ({@link SURFACE_COMPUTE_TRANSPORT_SPEC_MIN_OVERLAP}). */
+    stable: boolean;
+  } | null = null;
   /** The session's own fence round-trip in ms, measured once by the first
    * frame's calibration probes and subtracted from every later dispatch
    * before a sizing model sees it — {@link surfaceComputeDispatchWorkMs}
@@ -6996,6 +7027,101 @@ export class SurfaceComputeRenderer {
         const slotWord: number[] = [];
         const slotLive: boolean[] = [];
         const slotChunks: number[] = [];
+        // THE SPECULATIVE REPLAY PASSES (finite-transport-work.ts's SPEC
+        // bit). A pending ray re-traces from scratch, so in order its passes
+        // cost their SUM, and the few rays that go pending are a frame's
+        // longest traces: its critical path (the cost sheet's critical-path
+        // line: 24 of 2,137 glass hits, worst 119,747 evaluations in order
+        // against 52,262 side by side). So a pixel that went pending in the
+        // session's last pool at this raster has its later passes, up to the
+        // deepest it reached, queued right beside its pass 0, and they run
+        // together from the start. A speculative trace writes nothing: it
+        // stores its result in its slot, however early it finishes (a later
+        // pass can FAIL before its predecessor finishes — its stack fills
+        // sooner, or a path only it keeps is refused — which the real
+        // driver showed; only a success needs the whole superset). It is
+        // HELD until its predecessor's outcome: pending promotes it to the
+        // ray's real pass (a finished one commits its stored result on the
+        // next dispatch, a running one writes when it finishes); anything
+        // final kills it, unwritten. A pass's arithmetic is its own, so the
+        // ray ends exactly as in order. Keys are the plain pool word of
+        // (ray, pass).
+        const speculate =
+          !surfaceComputeSiSpecOffPin &&
+          frameBuffers.states.size / SURFACE_COMPUTE_RAY_STATE_BYTES <=
+            SPHERE_INVERSION_POOL_RAY_MASK;
+        const slotSpec: boolean[] = [];
+        /** Per ray, its outstanding speculative passes, ascending. */
+        const specPasses = new Map<number, number[]>();
+        /** Speculative keys waiting in the queue; cancelled keys to skip. */
+        const queuedSpec = new Set<number>();
+        const cancelled = new Set<number>();
+        /** Running speculative keys by slot. */
+        const specSlotOf = new Map<number, number>();
+        /** Speculative traces that finished, held for their predecessor. */
+        const heldSpec = new Set<number>();
+        /** Promoted finished traces whose next dispatch commits them. */
+        const committing = new Set<number>();
+        /** This pool's own record for the next one: per pixel that went
+         * pending, the deepest pass it reached. */
+        const pendingPixels = new Map<number, number>();
+        let specLaunched = 0;
+        let specPromoted = 0;
+        let specKilled = 0;
+        const keyRay = (key: number) => key & SPHERE_INVERSION_POOL_RAY_MASK;
+        const killSpecs = (ray: number): void => {
+          for (const pass of specPasses.get(ray) ?? []) {
+            const k = sphereInversionPoolWord(ray, pass, false);
+            specKilled++;
+            if (queuedSpec.delete(k)) {
+              cancelled.add(k);
+              continue;
+            }
+            const s = specSlotOf.get(k);
+            if (s === undefined) continue;
+            specSlotOf.delete(k);
+            heldSpec.delete(k);
+            // Parked on a word the kernel's bounds guard refuses without
+            // touching any ray, until the refill takes the slot.
+            slotLive[s] = false;
+            slotSpec[s] = false;
+            slotWord[s] = SPHERE_INVERSION_POOL_RAY_MASK;
+          }
+          specPasses.delete(ray);
+        };
+        // Seed the prediction: every predicted ray's later passes follow its
+        // pass 0 in the queue. Only at the raster it was recorded at, and
+        // never where nothing went pending (a 4D starter never does), since
+        // every chunk waits for its slowest lane and a speculated lane
+        // slows each real ray it runs beside (measured: speculating every
+        // long runner took the 4D preview 0.57 -> 0.91 s).
+        const prediction =
+          speculate &&
+          this.transportPendingPrediction?.stable === true &&
+          this.transportPendingPrediction.width === width &&
+          this.transportPendingPrediction.height === height
+            ? this.transportPendingPrediction.passes
+            : null;
+        if (prediction && prediction.size > 0) {
+          for (const word of queue.splice(0)) {
+            queue.push(word);
+            const ray = keyRay(word);
+            const upto = Math.min(
+              prediction.get(jointStride > 0 ? ray % jointStride : ray) ?? 0,
+              DIELECTRIC_REPLAY_PASSES - 1,
+            );
+            if (upto < 1) continue;
+            const specs: number[] = [];
+            for (let pass = 1; pass <= upto; pass++) {
+              const k = sphereInversionPoolWord(ray, pass, false);
+              queue.push(k);
+              queuedSpec.add(k);
+              specs.push(pass);
+              specLaunched++;
+            }
+            specPasses.set(ray, specs);
+          }
+        }
         const generation = ++this.transportGeneration;
         if (generation > 0xffffffff)
           throw new Error(
@@ -7023,10 +7149,21 @@ export class SurfaceComputeRenderer {
           const fresh: boolean[] = [];
           for (let i = 0; i < wanted && queueHead < queue.length; i++) {
             if (slotLive[i]) continue;
-            slotWord[i] = queue[queueHead++];
+            let next = queue[queueHead++];
+            while (cancelled.delete(next)) {
+              if (queueHead >= queue.length) {
+                next = -1;
+                break;
+              }
+              next = queue[queueHead++];
+            }
+            if (next < 0) break;
+            slotWord[i] = next;
             slotLive[i] = true;
             slotChunks[i] = 0;
             fresh[i] = true;
+            slotSpec[i] = queuedSpec.delete(next);
+            if (slotSpec[i]) specSlotOf.set(next, i);
           }
           const width = slotLive.lastIndexOf(true) + 1;
           if (width === 0) break;
@@ -7035,9 +7172,12 @@ export class SurfaceComputeRenderer {
           for (let i = 0; i < width; i++) {
             // A drained slot inside the width is re-dispatched on its old
             // word: the kernel keeps its final status and returns.
-            words[i] = fresh[i]
-              ? (slotWord[i] | SPHERE_INVERSION_POOL_FRESH_BIT) >>> 0
+            const word = slotSpec[i]
+              ? (slotWord[i] | SPHERE_INVERSION_POOL_SPEC_BIT) >>> 0
               : slotWord[i];
+            words[i] = fresh[i]
+              ? (word | SPHERE_INVERSION_POOL_FRESH_BIT) >>> 0
+              : word;
             if (slotLive[i]) live++;
           }
           if (!(await stageDispatch(width, 0, words))) return null;
@@ -7077,6 +7217,17 @@ export class SurfaceComputeRenderer {
           transportBatchMs.push(wallMs);
           const workMs = Math.max(0, wallMs - (this.fenceMs ?? 0));
           let running = 0;
+          // Which slots ran SPECULATIVE in this chunk, and which of those
+          // finished: every one is known before any real slot resolves, so
+          // a promotion sees a same-chunk finish whatever the slot order.
+          const wasSpec = slotSpec.slice(0, width);
+          for (let i = 0; i < width; i++)
+            if (
+              slotLive[i] &&
+              wasSpec[i] &&
+              (statusCopy[i] & 0xff) !== FINITE_TRANSPORT_RUNNING
+            )
+              heldSpec.add(slotWord[i]);
           for (let i = 0; i < width; i++) {
             if (!slotLive[i]) continue;
             const packedStatus = statusCopy[i];
@@ -7089,6 +7240,10 @@ export class SurfaceComputeRenderer {
                 );
               continue;
             }
+            // Finished speculatively, nothing written: held above, decided
+            // by its predecessor.
+            if (wasSpec[i]) continue;
+            committing.delete(slotWord[i]);
             slotLive[i] = false;
             // A joint pool's other samples tally into their own records.
             const other = tallyOf(slotWord[i]);
@@ -7107,13 +7262,32 @@ export class SurfaceComputeRenderer {
                 throw new Error(
                   "Surface compute: a transport trace stayed pending past the last replay pass",
                 );
-              queue.push(
-                sphereInversionPoolWord(
-                  slotWord[i] & SPHERE_INVERSION_POOL_RAY_MASK,
-                  pass + 1,
-                  false,
-                ),
+              const ray = keyRay(slotWord[i]);
+              const pixel = jointStride > 0 ? ray % jointStride : ray;
+              pendingPixels.set(
+                pixel,
+                Math.max(pendingPixels.get(pixel) ?? 0, pass + 1),
               );
+              const nextKey = sphereInversionPoolWord(ray, pass + 1, false);
+              const specs = specPasses.get(ray);
+              if (specs?.[0] === pass + 1) {
+                // The next pass is already speculated: it becomes real.
+                specs.shift();
+                if (specs.length === 0) specPasses.delete(ray);
+                specPromoted++;
+                if (!queuedSpec.delete(nextKey)) {
+                  const s = specSlotOf.get(nextKey);
+                  if (s === undefined)
+                    throw new Error(
+                      "Surface compute: a speculative pass lost its slot",
+                    );
+                  specSlotOf.delete(nextKey);
+                  slotSpec[s] = false;
+                  if (heldSpec.delete(nextKey)) committing.add(nextKey);
+                }
+              } else {
+                queue.push(nextKey);
+              }
               if (other) other.passes = Math.max(other.passes, pass + 2);
               else maxPass = Math.max(maxPass, pass + 1);
             } else if (
@@ -7139,6 +7313,10 @@ export class SurfaceComputeRenderer {
               );
             }
             // SKIPPED: a classic slot — shadeRays owns the pixel.
+            // Anything but pending is the ray's last word: its speculative
+            // successors die unwritten.
+            if (st !== SURFACE_GPU_TRANSPORT_PENDING)
+              killSpecs(keyRay(slotWord[i]));
           }
           if (running > 0) transportContinuationChunks++;
           transportPassesStarted = maxPass + 1;
@@ -7176,8 +7354,11 @@ export class SurfaceComputeRenderer {
           // chunks it learns from (measured: the pool pinned at 256 rays,
           // a few waves on a 96-CU card, and the 3D settle doubled).
           const chunkQuantum = quantum;
+          // Speculative entries are not work the width holds back: counted,
+          // they pinned the quantum at the base through a tail of few lanes
+          // (measured: the 4D preview 0.57 -> 0.96 s at 32-path chunks).
           const widthLimited =
-            queue.length - queueHead > 0 &&
+            queue.length - queueHead - queuedSpec.size - cancelled.size > 0 &&
             Math.min(
               transportBatchSize(transportSizer.cost, transportSizer.cap),
               capacity,
@@ -7186,21 +7367,51 @@ export class SurfaceComputeRenderer {
             ? base
             : nextTransportQuantum(quantum, base, workMs, quantumCap);
           tr(
-            `transport pool width=${width} live=${live} queued=${queue.length - queueHead} running=${running} wallMs=${wallMs.toFixed(1)} workMs=${workMs.toFixed(1)} quantum=${chunkQuantum} maxPass=${maxPass} cost=${transportSizer.cost.interceptUs.toFixed(0)}+n*${transportSizer.cost.marginalUs.toFixed(1)}us`,
+            `transport pool width=${width} live=${live} queued=${queue.length - queueHead} running=${running} wallMs=${wallMs.toFixed(1)} workMs=${workMs.toFixed(1)} quantum=${chunkQuantum} maxPass=${maxPass} spec=${specLaunched}/${specPromoted}/${specKilled} cost=${transportSizer.cost.interceptUs.toFixed(0)}+n*${transportSizer.cost.marginalUs.toFixed(1)}us`,
           );
           transportLastResolved = transportResolved;
           transportLastUnresolved = transportUnresolved;
           if (
             !(await maybePresent(
               poolRays -
-                (queue.length - queueHead) -
-                slotLive.filter(Boolean).length,
+                (queue.length - queueHead - queuedSpec.size - cancelled.size) -
+                (slotLive.filter(Boolean).length - specSlotOf.size),
               joint ? joint.onProgress : opts.onProgress,
               poolRays,
             ))
           )
             return null;
         }
+        // A budget-truncated pool records too: what went pending is true
+        // whatever did not finish, so its evidence merges into the last
+        // pool's at this raster rather than replacing it.
+        // The prediction is kept only while it keeps coming true: a view
+        // that moves shifts which pixels go pending, and a wrong guess is a
+        // slow lane beside real ones. A first record at a raster is trusted
+        // once.
+        const last = this.transportPendingPrediction;
+        const sameRaster = last?.width === width && last.height === height;
+        let stable = true;
+        if (sameRaster && last.passes.size > 0) {
+          let cameTrue = 0;
+          for (const pixel of last.passes.keys())
+            if (pendingPixels.has(pixel)) cameTrue++;
+          stable =
+            cameTrue >=
+            SURFACE_COMPUTE_TRANSPORT_SPEC_MIN_OVERLAP * last.passes.size;
+        }
+        if (truncated && sameRaster)
+          for (const [pixel, pass] of last.passes)
+            pendingPixels.set(
+              pixel,
+              Math.max(pendingPixels.get(pixel) ?? 0, pass),
+            );
+        this.transportPendingPrediction = {
+          width,
+          height,
+          passes: pendingPixels,
+          stable,
+        };
         // Rays still queued or running were truncated mid-schedule: they
         // keep their seed pixels, as the fixed batches' own truncation.
         pending = [];

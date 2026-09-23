@@ -54,6 +54,8 @@ import {
   SPHERE_INVERSION_POOL_PASS_MASK,
   SPHERE_INVERSION_POOL_RAY_BITS,
   SPHERE_INVERSION_POOL_RAY_MASK,
+  SPHERE_INVERSION_POOL_SPEC_BIT,
+  SPHERE_INVERSION_SPEC_STORED,
   FINITE_TRANSPORT_RUNNING,
   FINITE_TRANSPORT_WORK_HEADER_BYTES,
   resolveFiniteTransportChunkPaths,
@@ -10551,13 +10553,18 @@ fn transportRays(
     return;
   }
   // THE POOL'S SLOT WORD (the host's transport pool): the ray in the low
-  // ${SPHERE_INVERSION_POOL_RAY_BITS} bits, its replay pass above them, and a fresh start in
-  // the top bit. A finished slot takes the next queued ray — a later
-  // pass's included — so each slot carries its own theta.
+  // ${SPHERE_INVERSION_POOL_RAY_BITS} bits, its replay pass above them, a speculative trace in bit
+  // 30 and a fresh start in the top bit. A finished slot takes the next
+  // queued ray — a later pass's included — so each slot carries its own
+  // theta. A SPECULATIVE slot (finite-transport-work.ts) never writes the
+  // ray's outputs: it stores its result, and a finished one re-dispatched
+  // with the bit clear commits it.
   let slotWord = activeList[slotI];
   let ray = slotWord & ${SPHERE_INVERSION_POOL_RAY_MASK}u;
   let replayPass = (slotWord >> ${SPHERE_INVERSION_POOL_RAY_BITS}u) & ${SPHERE_INVERSION_POOL_PASS_MASK}u;
   let slotStart = finiteWork.initialize == 1u || (slotWord >> 31u) == 1u;
+  let specSlot = (slotWord & ${SPHERE_INVERSION_POOL_SPEC_BIT}u) != 0u;
+  var commitStored = false;
   // THE JOINT POOL (finite-transport-work.ts): with a nonzero stride the
   // ray is GLOBAL over every supersample's arena, and the pixel and the
   // sample's own sub-pixel offset derive from it. Buffers index by the
@@ -10625,12 +10632,25 @@ fn transportRays(
       if (finiteWork.slots[slotI].sp != 0u ||
           (transportStatusOut[slotI] & 255u) > ${SURFACE_GPU_TRANSPORT_SKIPPED}u) {
         finiteWorkReject(slotI, ray, replayPass);
+        return;
+      }${
+        siGlassChunk
+          ? `
+      // THE COMMIT: a finished speculative trace, re-dispatched with the
+      // speculative bit clear, writes its stored result once, through the
+      // same output lines a trace finishing here would.
+      if (specSlot ||
+          (finiteWork.slots[slotI].pad.x & ${SPHERE_INVERSION_SPEC_STORED}u) == 0u) {
+        return;
       }
-      return;
+      commitStored = true;`
+          : `
+      return;`
+      }
     }
-    if (finiteWork.slots[slotI].sp == 0u ||
+    if (${siGlassChunk ? "!commitStored && (" : ""}finiteWork.slots[slotI].sp == 0u ||
         finiteWork.slots[slotI].processed == 0u ||
-        transportStatusOut[slotI] != TRANSPORT_STATUS_RUNNING) {
+        transportStatusOut[slotI] != TRANSPORT_STATUS_RUNNING${siGlassChunk ? ")" : ""}) {
       finiteWorkReject(slotI, ray, replayPass);
       return;
     }
@@ -10643,10 +10663,12 @@ fn transportRays(
       prevStatus == TRANSPORT_STATUS_INVALID) {${
         transportChunk
           ? `
-    if (${siGlassChunk ? "!slotStart" : "finiteWork.initialize == 0u"}) {
+    if (${siGlassChunk ? "!slotStart && !specSlot" : "finiteWork.initialize == 0u"}) {
       finiteWorkReject(slotI, ray, replayPass);
       return;
     }
+    // A speculative trace whose ray went final under it (possibly within
+    // this very dispatch) stops here without writing: the host drops it.
     finiteWork.slots[slotI].done = 1u;
     transportStatusOut[slotI] = prevStatus;`
           : ""
@@ -10707,8 +10729,25 @@ fn transportRays(
   let radius = lane0[1];
   let absorb = vec3f(lane0[2], lane0[3], lane1[0]);
   let distortion = lane1[1];${transportChunk ? "" : "\n  let replayPass = u32(shade.transport[0]);"}
-  let theta = dielectricReplayTheta(f32(replayPass), TRANSPORT_INITIAL_THETA);
-  let traced = transportTrace(${finiteQuery ? "ro" : "pos"}, rd, theta, ior, radius, absorb, bg, li, distortion${transportChunk ? ", slotI" : ""});${
+  let theta = dielectricReplayTheta(f32(replayPass), TRANSPORT_INITIAL_THETA);${
+    siGlassChunk
+      ? `
+  var traced: TransportTrace;
+  if (commitStored) {
+    // The stored result, exactly as the speculative trace produced it.
+    let packed = finiteWork.slots[slotI].pad.x;
+    traced.radiance = finiteWork.slots[slotI].radiance;
+    traced.residual = finiteWork.slots[slotI].residual;
+    traced.status = packed & 255u;
+    traced.failure = (packed >> 8u) & 255u;
+    traced.reason = (packed >> 16u) & 255u;
+    finiteWork.slots[slotI].pad.x = 0u;
+  } else {
+    traced = transportTrace(pos, rd, theta, ior, radius, absorb, bg, li, distortion, slotI);
+  }`
+      : `
+  let traced = transportTrace(${finiteQuery ? "ro" : "pos"}, rd, theta, ior, radius, absorb, bg, li, distortion${transportChunk ? ", slotI" : ""});`
+  }${
     transportChunk
       ? `
   if (traced.status == TRANSPORT_STATUS_RUNNING) {
@@ -10717,7 +10756,25 @@ fn transportRays(
     transportStatusOut[slotI] = TRANSPORT_STATUS_RUNNING;
     return;
   }
-  finiteWork.slots[slotI].done = 1u;`
+  finiteWork.slots[slotI].done = 1u;${
+    siGlassChunk
+      ? `
+  if (specSlot) {
+    // Finished speculatively: keep the result in the slot, write nothing.
+    // The stored radiance and residual must pass the resume validity check
+    // a commit runs through, so a non-finite value (only an INVALID trace
+    // makes one, whose output lines write black) is stored as zero.
+    let radianceOk = all(abs(traced.radiance) <= vec3f(3.0e38));
+    let residualOk = traced.residual >= 0.0 && traced.residual <= 3.0e38;
+    finiteWork.slots[slotI].radiance = select(vec3f(0.0), traced.radiance, radianceOk);
+    finiteWork.slots[slotI].residual = select(0.0, traced.residual, residualOk);
+    finiteWork.slots[slotI].pad.x = ${SPHERE_INVERSION_SPEC_STORED}u | traced.status |
+      (traced.failure << 8u) | (traced.reason << 16u);
+    transportStatusOut[slotI] = traced.status;
+    return;
+  }`
+      : ""
+  }`
       : ""
   }
   if (traced.status == TRANSPORT_STATUS_INVALID) {

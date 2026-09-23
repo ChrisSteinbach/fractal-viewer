@@ -4,6 +4,8 @@ import {
   FINITE_TRANSPORT_BUFFER_HEADER_BYTES,
   SPHERE_INVERSION_JOINT_SAMPLES_MAX,
   SPHERE_INVERSION_JOINT_STRIDE_OFFSET,
+  SPHERE_INVERSION_POOL_SPEC_BIT,
+  SPHERE_INVERSION_SPEC_STORED,
   FINITE_TRANSPORT_WORK_HEADER_BYTES,
   TRANSPORT_PATH_BYTES,
   transportWorkSlotBytes,
@@ -722,6 +724,51 @@ describe("the sphere-inversion glass continuation (sphereInversionTransportChunk
         glass("sphereInv", { sphereInversionWorkgroupTable: 43 }),
       ),
     ).toThrow(/requires sphereInversionShape/);
+  });
+
+  it("holds a speculative trace's result in its slot, commits it with the bit clear, and stops quietly on a final record, in both cores", () => {
+    for (const core of ["sphereInv", "sphereInv4"] as const) {
+      const src = surfaceDeKernelWgsl(
+        glass(core, { sphereInversionTransportChunkPaths: 32 }),
+      );
+      const entry = src.slice(src.indexOf("fn transportRays("));
+      expect(entry).toContain(
+        `let specSlot = (slotWord & ${String(SPHERE_INVERSION_POOL_SPEC_BIT)}u) != 0u;`,
+      );
+      // A finished speculative trace stores and returns before any output
+      // line; the output lines come after.
+      const store = entry.indexOf("if (specSlot) {");
+      expect(store).toBeGreaterThan(0);
+      expect(store).toBeLessThan(entry.indexOf("colorOut[ray] = pack4x8unorm"));
+      expect(entry).toContain(
+        `siWork.slots[slotI].pad.x = ${String(SPHERE_INVERSION_SPEC_STORED)}u | traced.status |`,
+      );
+      // The commit: a finished slot without the bit replays its stored
+      // result through the ordinary tail instead of tracing.
+      expect(entry).toContain("commitStored = true;");
+      expect(entry).toContain("if (commitStored) {");
+      // A resumed speculative slot never rejects on a final record.
+      expect(entry).toContain("if (!slotStart && !specSlot) {");
+    }
+  });
+
+  it("leaves the finite continuation's entry without any speculative branch", () => {
+    for (const core of ["finite", "finite4"] as const) {
+      const src = surfaceDeKernelWgsl({
+        core,
+        mode: "shade",
+        width: 4,
+        workgroupSize: 16,
+        sharedFrontier: false,
+        bnbStage2: false,
+        finiteSolid: { level: 2 },
+        optics: true,
+        opticsBackend: "finiteSolid",
+        finiteTransportChunkPaths: 2048,
+      });
+      expect(src).toContain("fn transportRays(");
+      expect(src).not.toMatch(/specSlot|commitStored/);
+    }
   });
 
   it("reads the joint pool's pixel and sub-pixel offset off the global ray, in both cores", () => {

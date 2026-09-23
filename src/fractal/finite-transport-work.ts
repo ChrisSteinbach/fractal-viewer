@@ -106,14 +106,34 @@ export function resolveFiniteTransportChunkPaths(value?: number): number {
  * of the frame instead of trailing it. Each slot therefore carries its own
  * replay pass and its own fresh start, in the ray-list word the kernel reads:
  * the ray in the low {@link SPHERE_INVERSION_POOL_RAY_BITS} bits, the pass
- * above them, and a fresh start in bit 31. The finite lane keeps its plain
- * ray list and batch-wide pass.
+ * above them, a SPECULATIVE trace in bit 30 and a fresh start in bit 31. The
+ * finite lane keeps its plain ray list and batch-wide pass.
+ *
+ * 27 ray bits hold 134M rays: past every raster the pool is handed (capture
+ * tiles stop at 4M rays, the joint pool's arenas near 1.2M), and the word
+ * refuses rather than wraps.
  */
-export const SPHERE_INVERSION_POOL_RAY_BITS = 28;
+export const SPHERE_INVERSION_POOL_RAY_BITS = 27;
 export const SPHERE_INVERSION_POOL_RAY_MASK =
   (1 << SPHERE_INVERSION_POOL_RAY_BITS) - 1;
 export const SPHERE_INVERSION_POOL_PASS_MASK = 7;
+/**
+ * A SPECULATIVE replay pass (the host pool's speculation): the trace runs
+ * exactly as its pass would, but a finished one never writes the ray's
+ * pixel, layer or record. It keeps its result in its own continuation slot
+ * (radiance, residual, and status/failure/reason packed in the header's
+ * spare word with {@link SPHERE_INVERSION_SPEC_STORED} set) until the host
+ * decides, however early it finished (a later pass can fail before its
+ * predecessor finishes): re-dispatched with this bit clear, a finished slot
+ * COMMITS its stored result through the ordinary output lines; a running one
+ * simply writes them when it finishes. A resumed speculative slot that finds
+ * the ray already final stops without writing, where a real one would
+ * reject.
+ */
+export const SPHERE_INVERSION_POOL_SPEC_BIT = 0x40000000;
 export const SPHERE_INVERSION_POOL_FRESH_BIT = 0x80000000;
+/** The stored-result flag in a speculative slot's spare header word. */
+export const SPHERE_INVERSION_SPEC_STORED = 0x80000000;
 
 /** One pool slot's word (module doc). Throws on a ray or pass the word
  * cannot carry — never a silently wrapped index. */
