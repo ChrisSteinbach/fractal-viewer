@@ -69,7 +69,10 @@ import {
 } from "./finite-transport-chunks";
 import {
   FINITE_TRANSPORT_CHUNK_PATHS,
+  SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS,
+  TRANSPORT_PATH_BYTES,
   finiteTransportWorkBytes,
+  transportWorkBytes,
 } from "../../fractal/finite-transport-work";
 import { buildSurfaceTilingSymmetryAbiSpecs } from "./tiling-symmetry";
 import {
@@ -159,6 +162,7 @@ import {
   mandelboxKifs,
   pentatope,
   PRESET_SCHEDULES,
+  PRESET_SPHERE_INVERSIONS,
   PRESET_SURFACE_ROOMS,
   PRESET_VIEWS,
   presetTransforms,
@@ -351,8 +355,14 @@ import { FLAME_FILTER_RADIUS } from "../flame-worker-core";
 import { surfaceCondensationKernelSpec } from "./condensation";
 import { runSurfaceEmitterOnlyAgreement } from "./condensation-emitter-only";
 import { runSphereInversionBench } from "./sphere-inversion-legs";
-import { resolveSphereInversion } from "../../fractal/sphere-inversion";
-import type { SphereInversionAuthored } from "../../fractal/sphere-inversion";
+import {
+  resolveSphereInversion,
+  sphereInversionGenerationSlots,
+} from "../../fractal/sphere-inversion";
+import type {
+  SphereInversionAuthored,
+  SphereInversionDE,
+} from "../../fractal/sphere-inversion";
 import {
   buildSphereInversionDE,
   sphereInversionContains,
@@ -388,11 +398,15 @@ import {
   SurfaceComputeRenderer,
 } from "../surface-compute";
 import type {
+  SurfaceComputeAnyTarget,
   SurfaceComputeFrame,
   SurfaceComputeFrameSpec,
   SurfaceComputeTarget,
 } from "../surface-compute";
+import { SPHERE_INVERSION_GLASS_MAX_DEPTH } from "../surface-optics-backend";
+import type { SurfaceMaterialSlots } from "../../fractal/surface-material-wire";
 import {
+  sphereInversionShadeSlots,
   surfaceForwardSlot,
   surfaceSlotColors,
   surfaceSlotMaterials,
@@ -3744,6 +3758,11 @@ interface SurfaceSectionConfig {
    * cost-sweep path. Its verdict is "fail" or "skipped", never "pass": a run
    * that skipped every other leg certifies nothing about the section. */
   sphereInversionOnly: boolean;
+  /** With {@link sphereInversionOnly} (`--surface-si-glass-envelope=1`,
+   * `surfaceSiGlassEnvelope=1`): the curved-glass starters' renderer
+   * envelope and depth curve, real adapters only. MEASURED, NOT GATED — a
+   * line it misses is the envelope's finding, recorded as MISS. */
+  siGlassEnvelope: boolean;
 }
 
 interface SurfaceKernelConfig {
@@ -4527,6 +4546,13 @@ interface SurfaceDeResults {
    * adapters only; software adapters skip with a note). Failures surface
    * through `surfaceTransportEnvelopeRowFailures` and gate the verdict. */
   transportEnvelope?: SurfaceTransportEnvelopeRow[];
+  /** `--surface-si-glass-envelope=1`: the curved-glass starters' rows and
+   * depth curve (measured, not gated). */
+  glassEnvelope?: {
+    rows: SurfaceTransportEnvelopeRow[];
+    lines: { core: string; system: string; misses: string[] }[];
+    depthCurve: SurfaceGlassDepthPoint[];
+  };
   /** Raw per-AA finite continuation equivalence, including intentional
    * processed-limit refusals. Runs on both hardware and software adapters. */
   finiteTransportChunks?: FiniteTransportChunkRow[];
@@ -5616,6 +5642,7 @@ function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
     aff4Sweep: params.get("surfaceAff4Sweep") === "1",
     planeFrame: params.get("surfacePlaneFrame") === "1",
     sphereInversionOnly: params.get("surfaceSphereInversionOnly") === "1",
+    siGlassEnvelope: params.get("surfaceSiGlassEnvelope") === "1",
     canaryTrip:
       Number.isInteger(canaryTripParsed) && canaryTripParsed >= 1
         ? canaryTripParsed
@@ -11638,6 +11665,8 @@ const SURFACE_TRANSPORT_ENVELOPE_PREVIEW_BUDGET_MS = 2000;
  * additional render state ≤ 128 MiB, and the settled 512×288 image ≤ 10 s
  * at the qualified 4-SPP convention. */
 const SURFACE_TRANSPORT_ENVELOPE_PREVIEW_LINE_MS = 1500;
+/** The curved-glass epic's preview line (its envelope child's own limit). */
+const GLASS_ENVELOPE_PREVIEW_LINE_MS = 1000;
 const SURFACE_TRANSPORT_ENVELOPE_CHECKPOINT_LINE_MS = 600;
 const SURFACE_TRANSPORT_ENVELOPE_SETTLE_LINE_MS = 10_000;
 const SURFACE_TRANSPORT_ENVELOPE_RETAINED_LINE_BYTES = 128 * 1024 * 1024;
@@ -11683,18 +11712,19 @@ interface SurfaceTransportEnvelopeFrame {
  * 4D), an optics-authored fixture document driven through the PRODUCTION
  * `SurfaceComputeRenderer` at the delegated rasters. */
 interface SurfaceTransportEnvelopeRow {
-  core: "affine" | "affine4" | "finite" | "finite4";
+  core:
+    "affine" | "affine4" | "finite" | "finite4" | "sphereInv" | "sphereInv4";
   system: string;
   /** The boundary backend the arm drove: `"estimator"` on the IFS
    * fixtures (the vacuous-optics rows), `"closedSolid"` on the
    * emitter-only union fixtures — the arms whose transport samples must
    * RESOLVE (the row-failure gate below). */
-  backend: "estimator" | "closedSolid" | "finiteSolid";
+  backend: "estimator" | "closedSolid" | "finiteSolid" | "sphereInversion";
   adapterLabel: string | undefined;
   /** Actual finite preset material/room with fresh-app lighting defaults;
    * both tier specs are retained to disclose the benchmark convention. */
   finiteScene?: {
-    preset: "glassMenger" | "glassMenger4";
+    preset: "glassMenger" | "glassMenger4" | "glassPearls" | "glassPearls4";
     previewSpec: SurfaceComputeFrameSpec;
     settleSpec: SurfaceComputeFrameSpec;
     conventions: string[];
@@ -11844,8 +11874,12 @@ function surfaceTransportEnvelopeNote(
   // NOTHING while hits existed is a timing row, not an optical
   // qualification — the boundary query's inside-traversal gap (the
   // envelope leg's structural finding, the transport doc's record).
+  // A TRUNCATED preview is not evidence: its budget can expire before the
+  // transport lane runs at all (the curved-glass preview did exactly that).
   const vacuous =
-    row.preview.transport.resolved === 0 && row.preview.counts.hit > 0;
+    !row.preview.truncated &&
+    row.preview.transport.resolved === 0 &&
+    row.preview.counts.hit > 0;
   return (
     `transport envelope ${row.core} × ${row.system} [${row.backend}]: ` +
     `preview ${row.preview.wallMs.toFixed(0)}ms (batch max ${row.preview.maxBatchMs.toFixed(1)}ms, ` +
@@ -11927,173 +11961,239 @@ async function runSurfaceTransportEnvelopeLeg(
    * material and room recipe, without running timing envelopes. */
   chunkAgreementRows?: FiniteTransportChunkRow[],
   chunkAgreementSoftware = false,
+  /** `"sphereInversion"` runs ONLY the curved-glass starters' arms (the
+   * glass envelope, opt-in: its settles are minutes, and its rows are
+   * measured, not gated); absent runs every other arm, unchanged. */
+  only?: "sphereInversion",
+  /** Sphere-inversion arms only: after the envelope, one unbudgeted
+   * 256×144 1-sample frame per depth, the depth-versus-cost curve. */
+  depthCurve?: SurfaceGlassDepthPoint[],
 ): Promise<SurfaceTransportEnvelopeRow[]> {
   const rows: SurfaceTransportEnvelopeRow[] = [];
   const arms: {
-    core: "affine" | "affine4" | "finite" | "finite4";
-    backend: "estimator" | "closedSolid" | "finiteSolid";
+    core:
+      "affine" | "affine4" | "finite" | "finite4" | "sphereInv" | "sphereInv4";
+    backend: "estimator" | "closedSolid" | "finiteSolid" | "sphereInversion";
     sys: SurfaceSystemState | Surface4SystemState;
     view4: SurfaceGpu4View | null;
     camera?: ReturnType<typeof presetCameraPose> & { fov: number };
-    preset?: "glassMenger" | "glassMenger4";
+    preset?: "glassMenger" | "glassMenger4" | "glassPearls" | "glassPearls4";
+    /** Sphere-inversion arms: the starter's authored block. */
+    siBlock?: SphereInversionAuthored;
   }[] = [];
-  const affine3d = descent.find((s) => s.name === "affineTetra");
-  const aff4 = affine4.find((s) => s.name === "aff4Tetra");
-  if (!affine3d)
-    throw new Error("transport envelope: affineTetra did not build");
-  if (!aff4) throw new Error("transport envelope: aff4Tetra did not build");
-  arms.push({
-    core: "affine",
-    backend: "estimator",
-    sys: affine3d,
-    view4: null,
-  });
-  arms.push({
-    core: "affine4",
-    backend: "estimator",
-    sys: aff4,
-    view4: aff4.view4,
-  });
-
-  // The closed-solid arms (both dimensions): the emitter-only union the
-  // closed-solid backend serves — the same fixture recipe the agreement
-  // legs' closed-solid rows pin — at the canonical identity pose in 4D.
-  // These arms' transport samples must RESOLVE (the row-failure gate
-  // reads the settle's resolved count) and the vacuous note flips itself
-  // off when the counts go nonzero.
-  {
-    const solidTransforms: Transform[] = [
-      {
-        id: 0,
-        position: [0.35, -0.1, 0.05],
-        rotation: [0.15, -0.2, 0.1],
-        scale: [0.35, 0.35, 0.35],
-        emitter: {
-          parts: [
-            { primitive: { kind: "sphere", radius: 1 }, combine: "union" },
-          ],
-        },
-      },
-      {
-        id: 1,
-        position: [-0.4, 0.25, -0.05],
-        rotation: [-0.1, 0.12, -0.2],
-        scale: [0.3, 0.3, 0.3],
-        emitter: {
-          parts: [
-            {
-              primitive: { kind: "box", half: [0.7, 0.5, 0.8] },
-              combine: "union",
-            },
-          ],
-        },
-      },
-    ];
-    const solid3 = buildSurfaceDE(
-      solidTransforms,
-      null,
-      { order: 1, plane: "xy" },
-      {},
-    );
-    const solid4 = buildSurfaceDE4(
-      solidTransforms,
-      null,
-      { order: 1, plane: "xy" },
-      {},
-    );
-    if (solid3.maps.length !== 0 || !solid3.condensation) {
-      throw new Error(
-        "transport envelope: the 3D closed-solid fixture did not build its emitter-only union",
-      );
+  if (only === "sphereInversion") {
+    // The curved-glass starters, exactly as the menu loads them: the
+    // authored block (Glass material included), saved view and room. The
+    // IFS DE supplies only shared metadata, as for the finite arms.
+    for (const preset of ["glassPearls", "glassPearls4"] as const) {
+      const transforms = presetTransforms(preset);
+      const view = PRESET_VIEWS[preset];
+      const block = PRESET_SPHERE_INVERSIONS[preset]?.();
+      if (!view || !block)
+        throw new Error(`glass envelope: ${preset} lost its view or block`);
+      const camera = { ...presetCameraPose(view), fov: view.camera.fov };
+      if (view.fourD) {
+        const view4: SurfaceGpu4View = {
+          rotor: rotorMatrix(presetRotorPair(view.fourD)),
+          w0: view.fourD.w0,
+          sliceHalfW: 0,
+        };
+        arms.push({
+          core: "sphereInv4",
+          backend: "sphereInversion",
+          preset,
+          camera,
+          view4,
+          siBlock: block,
+          sys: {
+            name: preset,
+            de: buildSurfaceDE4(transforms, null, { order: 1, plane: "xy" }),
+            view4,
+            transforms,
+            queries: [],
+            cpu: [],
+            stable: [],
+          },
+        });
+      } else {
+        arms.push({
+          core: "sphereInv",
+          backend: "sphereInversion",
+          preset,
+          camera,
+          view4: null,
+          siBlock: block,
+          sys: {
+            name: preset,
+            core: "affine",
+            de: buildSurfaceDE(transforms, null, { order: 1, plane: "xy" }),
+            transforms,
+            queries: [],
+            cpu: [],
+          },
+        });
+      }
     }
-    if (solid4.maps.length !== 0 || !solid4.condensation) {
-      throw new Error(
-        "transport envelope: the 4D closed-solid fixture did not build its emitter-only union",
-      );
-    }
+  }
+  if (!only) {
+    const affine3d = descent.find((s) => s.name === "affineTetra");
+    const aff4 = affine4.find((s) => s.name === "aff4Tetra");
+    if (!affine3d)
+      throw new Error("transport envelope: affineTetra did not build");
+    if (!aff4) throw new Error("transport envelope: aff4Tetra did not build");
     arms.push({
       core: "affine",
-      backend: "closedSolid",
-      sys: {
-        name: "emitterOnlyUnion3",
-        core: "affine",
-        de: solid3,
-        transforms: solidTransforms,
-        queries: [],
-        cpu: [],
-      },
+      backend: "estimator",
+      sys: affine3d,
       view4: null,
     });
     arms.push({
       core: "affine4",
-      backend: "closedSolid",
-      sys: {
-        name: "emitterOnlyUnion4",
-        de: solid4,
+      backend: "estimator",
+      sys: aff4,
+      view4: aff4.view4,
+    });
+
+    // The closed-solid arms (both dimensions): the emitter-only union the
+    // closed-solid backend serves — the same fixture recipe the agreement
+    // legs' closed-solid rows pin — at the canonical identity pose in 4D.
+    // These arms' transport samples must RESOLVE (the row-failure gate
+    // reads the settle's resolved count) and the vacuous note flips itself
+    // off when the counts go nonzero.
+    {
+      const solidTransforms: Transform[] = [
+        {
+          id: 0,
+          position: [0.35, -0.1, 0.05],
+          rotation: [0.15, -0.2, 0.1],
+          scale: [0.35, 0.35, 0.35],
+          emitter: {
+            parts: [
+              { primitive: { kind: "sphere", radius: 1 }, combine: "union" },
+            ],
+          },
+        },
+        {
+          id: 1,
+          position: [-0.4, 0.25, -0.05],
+          rotation: [-0.1, 0.12, -0.2],
+          scale: [0.3, 0.3, 0.3],
+          emitter: {
+            parts: [
+              {
+                primitive: { kind: "box", half: [0.7, 0.5, 0.8] },
+                combine: "union",
+              },
+            ],
+          },
+        },
+      ];
+      const solid3 = buildSurfaceDE(
+        solidTransforms,
+        null,
+        { order: 1, plane: "xy" },
+        {},
+      );
+      const solid4 = buildSurfaceDE4(
+        solidTransforms,
+        null,
+        { order: 1, plane: "xy" },
+        {},
+      );
+      if (solid3.maps.length !== 0 || !solid3.condensation) {
+        throw new Error(
+          "transport envelope: the 3D closed-solid fixture did not build its emitter-only union",
+        );
+      }
+      if (solid4.maps.length !== 0 || !solid4.condensation) {
+        throw new Error(
+          "transport envelope: the 4D closed-solid fixture did not build its emitter-only union",
+        );
+      }
+      arms.push({
+        core: "affine",
+        backend: "closedSolid",
+        sys: {
+          name: "emitterOnlyUnion3",
+          core: "affine",
+          de: solid3,
+          transforms: solidTransforms,
+          queries: [],
+          cpu: [],
+        },
+        view4: null,
+      });
+      arms.push({
+        core: "affine4",
+        backend: "closedSolid",
+        sys: {
+          name: "emitterOnlyUnion4",
+          de: solid4,
+          view4: {
+            rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+            w0: 0,
+            sliceHalfW: 0,
+          },
+          transforms: solidTransforms,
+          queries: [],
+          cpu: [],
+          stable: [],
+        },
         view4: {
           rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
           w0: 0,
           sliceHalfW: 0,
         },
-        transforms: solidTransforms,
-        queries: [],
-        cpu: [],
-        stable: [],
-      },
-      view4: {
-        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
-        w0: 0,
-        sliceHalfW: 0,
-      },
-    });
-  }
+      });
+    }
 
-  // The finite pair uses the actual Glass presets' construction and
-  // authored canonical camera/rotor/slice. The IFS DE below supplies only
-  // shared metadata; the renderer target is the exact finite core.
-  for (const preset of ["glassMenger", "glassMenger4"] as const) {
-    const transforms = presetTransforms(preset);
-    const view = PRESET_VIEWS[preset];
-    if (!view)
-      throw new Error(`transport envelope: ${preset} has no authored view`);
-    if (view.fourD) {
-      const view4: SurfaceGpu4View = {
-        rotor: rotorMatrix(presetRotorPair(view.fourD)),
-        w0: view.fourD.w0,
-        sliceHalfW: 0,
-      };
-      arms.push({
-        core: "finite4",
-        backend: "finiteSolid",
-        preset,
-        camera: { ...presetCameraPose(view), fov: view.camera.fov },
-        view4,
-        sys: {
-          name: preset,
-          de: buildSurfaceDE4(transforms, null, { order: 1, plane: "xy" }),
+    // The finite pair uses the actual Glass presets' construction and
+    // authored canonical camera/rotor/slice. The IFS DE below supplies only
+    // shared metadata; the renderer target is the exact finite core.
+    for (const preset of ["glassMenger", "glassMenger4"] as const) {
+      const transforms = presetTransforms(preset);
+      const view = PRESET_VIEWS[preset];
+      if (!view)
+        throw new Error(`transport envelope: ${preset} has no authored view`);
+      if (view.fourD) {
+        const view4: SurfaceGpu4View = {
+          rotor: rotorMatrix(presetRotorPair(view.fourD)),
+          w0: view.fourD.w0,
+          sliceHalfW: 0,
+        };
+        arms.push({
+          core: "finite4",
+          backend: "finiteSolid",
+          preset,
+          camera: { ...presetCameraPose(view), fov: view.camera.fov },
           view4,
-          transforms,
-          queries: [],
-          cpu: [],
-          stable: [],
-        },
-      });
-    } else {
-      arms.push({
-        core: "finite",
-        backend: "finiteSolid",
-        preset,
-        camera: { ...presetCameraPose(view), fov: view.camera.fov },
-        view4: null,
-        sys: {
-          name: preset,
-          core: "affine",
-          de: buildSurfaceDE(transforms, null, { order: 1, plane: "xy" }),
-          transforms,
-          queries: [],
-          cpu: [],
-        },
-      });
+          sys: {
+            name: preset,
+            de: buildSurfaceDE4(transforms, null, { order: 1, plane: "xy" }),
+            view4,
+            transforms,
+            queries: [],
+            cpu: [],
+            stable: [],
+          },
+        });
+      } else {
+        arms.push({
+          core: "finite",
+          backend: "finiteSolid",
+          preset,
+          camera: { ...presetCameraPose(view), fov: view.camera.fov },
+          view4: null,
+          sys: {
+            name: preset,
+            core: "affine",
+            de: buildSurfaceDE(transforms, null, { order: 1, plane: "xy" }),
+            transforms,
+            queries: [],
+            cpu: [],
+          },
+        });
+      }
     }
   }
 
@@ -12105,10 +12205,29 @@ async function runSurfaceTransportEnvelopeLeg(
     const { core, backend, sys, view4 } = arm;
     const de = sys.de;
     const finite = backend === "finiteSolid";
+    const si = backend === "sphereInversion";
+    // The studio presentation (backdrop, room floor, fresh-app lighting and
+    // fog) the finite glass arms price, which the curved-glass starters
+    // share: both are Glass-menu presets built for the same room.
+    const studioArm = finite || si;
     if (chunkAgreementRows && !finite) continue;
     const room = arm.preset ? PRESET_SURFACE_ROOMS[arm.preset] : undefined;
-    if (finite && !room)
+    if (studioArm && !room)
       throw new Error(`transport envelope ${core}: authored room is missing`);
+    const siBuild = (depth?: number): SphereInversionDE => {
+      const resolution = resolveSphereInversion({
+        ...arm.siBlock!,
+        ...(depth !== undefined ? { depth } : {}),
+      });
+      if (!resolution.ok)
+        throw new Error(
+          `glass envelope ${core}: ${resolution.reasons.join("; ")}`,
+        );
+      return view4
+        ? buildSphereInversionDE4(resolution.construction)
+        : buildSphereInversionDE(resolution.construction);
+    };
+    const siDe = si ? siBuild() : null;
     const finiteLight = lightDirection(
       DEFAULT_SOLID_LIGHT_AZIMUTH,
       DEFAULT_SOLID_LIGHT_ELEVATION,
@@ -12118,7 +12237,12 @@ async function runSurfaceTransportEnvelopeLeg(
           boundingRadius: finiteSolidBoundingRadius(view4 ? 4 : 3),
           visibleBoundingRadius: finiteSolidBoundingRadius(view4 ? 4 : 3),
         }
-      : de;
+      : siDe
+        ? {
+            boundingRadius: siDe.boundingRadius,
+            visibleBoundingRadius: siDe.boundingRadius,
+          }
+        : de;
     const studio = createGlassStudioBackground().custom!;
     // The optics-authored DOCUMENT: every slotted transform dielectric —
     // the whole solid glass, the appearance's own shape and the lane's
@@ -12129,7 +12253,7 @@ async function runSurfaceTransportEnvelopeLeg(
     // Finite arms retain the actual preset optics, including its .08 slab;
     // stripping distortion would price a cheaper material than the app.
     // Other fixture transforms are copied so shared objects stay untouched.
-    const transforms = finite
+    const transforms = studioArm
       ? sys.transforms
       : sys.transforms.map((transform): Transform => ({
           ...transform,
@@ -12160,31 +12284,60 @@ async function runSurfaceTransportEnvelopeLeg(
       }
       return slots as Array<{ baseIndex: number }>;
     };
-    const materials = surfaceSlotMaterials(
-      transforms,
-      shadeSlots(),
-      undefined,
-      // The finite material's selected normalization is its root half
-      // extent. The enclosing sphere above remains the geometric bound.
-      finite ? FINITE_SOLID_HALF_EXTENT : bounds.visibleBoundingRadius,
-      true,
-    );
+    // A sphere-inversion subject has no transforms: its slots are its
+    // GENERATIONS and its material rides that attribution, resolved exactly
+    // as the app's session door resolves it (main.ts, the optical radius
+    // the estimator's bounding radius).
+    const siSlots = siDe
+      ? sphereInversionShadeSlots(
+          sphereInversionGenerationSlots(siDe.depth),
+          arm.siBlock,
+          siDe.boundingRadius,
+          true,
+        )
+      : null;
+    const materials = siSlots
+      ? siSlots.materials
+      : surfaceSlotMaterials(
+          transforms,
+          shadeSlots(),
+          undefined,
+          // The finite material's selected normalization is its root half
+          // extent. The enclosing sphere above remains the geometric bound.
+          finite ? FINITE_SOLID_HALF_EXTENT : bounds.visibleBoundingRadius,
+          true,
+        );
     if (!materials || !materials.optics) {
       throw new Error(
         `transport envelope ${core}: the optics-authored wire resolved ${materials === null ? "null" : "no optics"} — the fixture must compile the transport`,
       );
     }
-    const colors = surfaceSlotColors(sys.transforms, shadeSlots());
-    const trapIndices = surfaceTrapIndices(sys.transforms, shadeSlots());
+    const colors =
+      siSlots?.colors ?? surfaceSlotColors(sys.transforms, shadeSlots());
+    const trapIndices =
+      siSlots?.trapIndices ?? surfaceTrapIndices(sys.transforms, shadeSlots());
     const retainedBytes =
       SURFACE_TRANSPORT_ENVELOPE_SETTLE_WIDTH *
         SURFACE_TRANSPORT_ENVELOPE_SETTLE_HEIGHT *
         (SURFACE_COMPUTE_TRANSPORT_RECORD_BYTES + 8) +
       materials.slots.length * 32 +
-      (finite ? finiteTransportWorkBytes(4096) + 4 : 0);
+      (finite ? finiteTransportWorkBytes(4096) + 4 : 0) +
+      (si ? transportWorkBytes(4096, TRANSPORT_PATH_BYTES) + 4 : 0);
 
     activity.setState("gpu", `Surface transport envelope — ${core}`);
     status(`transport envelope ${core}: creating SurfaceComputeRenderer…`);
+    const siTarget = (target: SphereInversionDE): SurfaceComputeAnyTarget =>
+      view4
+        ? {
+            kind: "sphereInversion4",
+            de: target,
+            groundPlane: room!.groundPlane,
+          }
+        : {
+            kind: "sphereInversion",
+            de: target,
+            groundPlane: room!.groundPlane,
+          };
     const createRenderer = (
       quota?: number,
       maxPaths?: number,
@@ -12197,9 +12350,11 @@ async function runSurfaceTransportEnvelopeLeg(
               level: 2,
               groundPlane: room!.groundPlane,
             }
-          : view4
-            ? { kind: "ifs4", de: de as SurfaceDE4 }
-            : { kind: "ifs", de: de as SurfaceDE },
+          : siDe
+            ? siTarget(siDe)
+            : view4
+              ? { kind: "ifs4", de: de as SurfaceDE4 }
+              : { kind: "ifs", de: de as SurfaceDE },
         colors,
         trapIndices,
         {
@@ -12218,8 +12373,14 @@ async function runSurfaceTransportEnvelopeLeg(
         width: number,
         height: number,
         tier: "preview" | "full" = "full",
+        // The depth curve's per-depth wire: a construction's generation
+        // slot count follows its depth, so its materials do too.
+        override?: {
+          materials: SurfaceMaterialSlots;
+          maxDepth: number;
+        },
       ): SurfaceComputeFrameSpec => {
-        const finitePreview = finite && tier === "preview";
+        const finitePreview = studioArm && tier === "preview";
         const pose = buildSurfacePose(
           bounds,
           width,
@@ -12235,44 +12396,48 @@ async function runSurfaceTransportEnvelopeLeg(
           camForward: pose.fwd,
           focusDepth: surfaceCameraDepth(
             pose,
-            finite || view4 ? [0, 0, 0] : balloonBall(de as SurfaceDE).center,
+            studioArm || view4
+              ? [0, 0, 0]
+              : balloonBall(de as SurfaceDE).center,
           ),
           // Fixed native 512x288 target: a preview reduces sampling, not
           // geometric acceptance. Finite primary DDA has no hit epsilon.
-          acceptPixelEps: finite
+          acceptPixelEps: studioArm
             ? (2 * pose.tanHalf) / SURFACE_TRANSPORT_ENVELOPE_SETTLE_HEIGHT
             : SURFACE_PIXEL_EPS,
           tracePixelEps: (2 * pose.tanHalf) / height,
-          maxDepth: finite ? 2 : de.maxDepth,
-          marchSteps: finite
+          maxDepth:
+            override?.maxDepth ??
+            (finite ? 2 : siDe ? siDe.depth : de.maxDepth),
+          marchSteps: studioArm
             ? finitePreview
               ? SURFACE_PREVIEW_MARCH_STEPS
               : SURFACE_FULL_MARCH_STEPS
             : SURFACE_MARCH_STEPS,
-          shadowSteps: finite
+          shadowSteps: studioArm
             ? finitePreview
               ? SURFACE_PREVIEW_SHADOW_STEPS
               : SURFACE_FULL_SHADOW_STEPS
             : SURFACE_FRAME_SHADOW_STEPS,
-          aoTaps: finite
+          aoTaps: studioArm
             ? finitePreview
               ? SURFACE_PREVIEW_AO_TAPS
               : SURFACE_FULL_AO_TAPS
             : SURFACE_FRAME_AO_TAPS,
-          hitFloor: finite
+          hitFloor: studioArm
             ? finitePreview
               ? SURFACE_PREVIEW_HIT_FLOOR
               : SURFACE_FULL_HIT_FLOOR
             : SURFACE_GPU_HIT_FLOOR,
-          lightDir: finite
+          lightDir: studioArm
             ? [finiteLight.x, finiteLight.y, finiteLight.z]
             : surfaceNormalize([0.5, 0.8, 0.3]),
-          ambient: finite ? DEFAULT_SOLID_AMBIENT : 0.25,
+          ambient: studioArm ? DEFAULT_SOLID_AMBIENT : 0.25,
           // Finite arms carry the preset's bright studio backdrop and
           // checker floor; existing arms retain their original backdrop.
-          bgTop: finite ? [...studio.top] : [0, 0, 0],
-          bgBottom: finite ? [...studio.bottom] : [0, 0, 0],
-          ...(finite
+          bgTop: studioArm ? [...studio.top] : [0, 0, 0],
+          bgBottom: studioArm ? [...studio.bottom] : [0, 0, 0],
+          ...(studioArm
             ? {
                 groundPlane:
                   presentationFloorSpec(
@@ -12291,16 +12456,20 @@ async function runSurfaceTransportEnvelopeLeg(
                 fogTintStrength: DEFAULT_FOG_TINT_STRENGTH,
               }
             : {}),
-          colorSource: finite
+          colorSource: studioArm
             ? SURFACE_COLOR_SOURCES.indexOf("transform")
             : view4
               ? 3
               : 0,
-          colorSpeed: finite ? DEFAULT_SURFACE_COLOR_SPEED : 0.5,
+          colorSpeed: studioArm ? DEFAULT_SURFACE_COLOR_SPEED : 0.5,
           lut: null,
           lutVersion: 0,
           dither: true,
-          ...(materials ? { materials } : {}),
+          ...(override
+            ? { materials: override.materials }
+            : materials
+              ? { materials }
+              : {}),
           ...(view4 ? { view4 } : {}),
         };
       };
@@ -12320,7 +12489,7 @@ async function runSurfaceTransportEnvelopeLeg(
         const spec = specFor(8, 8);
         const row: FiniteTransportChunkRow = {
           core,
-          preset: arm.preset,
+          preset: arm.preset as "glassMenger" | "glassMenger4",
           width: 8,
           height: 8,
           samples: 4,
@@ -12538,13 +12707,21 @@ async function runSurfaceTransportEnvelopeLeg(
                 preset: arm.preset,
                 previewSpec,
                 settleSpec,
-                conventions: [
-                  "Actual preset optics, room and saved view with fresh-app lighting/fog defaults",
-                  "Fixed 16:9 rasters: 256x144 preview at 1 sample; 512x288 settle at 4 samples (app default 8)",
-                  "Native acceptance height 288; app preview/full shadow and AO quality; finite construction level remains 2",
-                  "Renderer work only: no UI, presentation, adaptive preview governor or export encoding",
-                  `Production finite scheduling quantum: ${String(FINITE_TRANSPORT_CHUNK_PATHS)} processed paths per submission; guard and optical tolerances unchanged`,
-                ],
+                conventions: si
+                  ? [
+                      "Actual starter block (Glass material), room and saved view with fresh-app lighting/fog defaults",
+                      "Fixed 16:9 rasters: 256x144 preview at 1 sample; 512x288 settle at 4 samples (app default 8)",
+                      "Native acceptance height 288; app preview/full shadow and AO quality; the starter's own depth",
+                      "Renderer work only: no UI, presentation, adaptive preview governor or export encoding",
+                      `Production sphere-inversion continuation quantum: ${String(SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS)} processed paths per submission`,
+                    ]
+                  : [
+                      "Actual preset optics, room and saved view with fresh-app lighting/fog defaults",
+                      "Fixed 16:9 rasters: 256x144 preview at 1 sample; 512x288 settle at 4 samples (app default 8)",
+                      "Native acceptance height 288; app preview/full shadow and AO quality; finite construction level remains 2",
+                      "Renderer work only: no UI, presentation, adaptive preview governor or export encoding",
+                      `Production finite scheduling quantum: ${String(FINITE_TRANSPORT_CHUNK_PATHS)} processed paths per submission; guard and optical tolerances unchanged`,
+                    ],
               },
             }
           : {}),
@@ -12565,12 +12742,94 @@ async function runSurfaceTransportEnvelopeLeg(
           : {}),
       };
       rows.push(row);
+
+      // THE DEPTH CURVE (sphere-inversion arms, when asked): the starter's
+      // block at every depth the glass admission allows, one unbudgeted
+      // preview-raster frame each, on a fresh renderer per depth (the
+      // construction, its table and its generation slots all follow the
+      // depth). Wall, census and worst submission per point: the curve a
+      // later look decision is spent against.
+      if (siDe && depthCurve) {
+        for (
+          let depth = 1;
+          depth <= SPHERE_INVERSION_GLASS_MAX_DEPTH;
+          depth++
+        ) {
+          const atDepth = siBuild(depth);
+          const slots = sphereInversionShadeSlots(
+            sphereInversionGenerationSlots(atDepth.depth),
+            arm.siBlock,
+            atDepth.boundingRadius,
+            true,
+          );
+          if (!slots.materials?.optics)
+            throw new Error(
+              `glass depth curve ${core} D${String(depth)}: no optics wire`,
+            );
+          status(
+            `glass depth curve ${core}: depth ${String(depth)} at ${String(SURFACE_TRANSPORT_ENVELOPE_PREVIEW_WIDTH)}x${String(SURFACE_TRANSPORT_ENVELOPE_PREVIEW_HEIGHT)}…`,
+          );
+          const curveRenderer = await SurfaceComputeRenderer.create(
+            siTarget(atDepth),
+            slots.colors,
+            slots.trapIndices,
+            { materials: slots.materials, opticsBackend: "sphereInversion" },
+          );
+          try {
+            const frame = await curveRenderer.renderFrame(
+              specFor(
+                SURFACE_TRANSPORT_ENVELOPE_PREVIEW_WIDTH,
+                SURFACE_TRANSPORT_ENVELOPE_PREVIEW_HEIGHT,
+                "preview",
+                { materials: slots.materials, maxDepth: atDepth.depth },
+              ),
+              {},
+            );
+            if (!frame?.transport)
+              throw new Error(
+                `glass depth curve ${core} D${String(depth)}: no frame or no transport tally`,
+              );
+            depthCurve.push({
+              core,
+              preset: arm.preset!,
+              depth,
+              width: frame.width,
+              height: frame.height,
+              wallMs: frame.wallMs,
+              hit: frame.counts.hit,
+              resolved: frame.transport.resolved,
+              unresolved: frame.transport.unresolved,
+              invalid: frame.transport.invalid,
+              maxBatchMs: Math.max(0, ...frame.transport.batchMs),
+            });
+          } finally {
+            curveRenderer.destroy();
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve));
+        }
+      }
     } finally {
       renderer?.destroy();
     }
     await new Promise<void>((resolve) => setTimeout(resolve));
   }
   return rows;
+}
+
+/** One point of the glass depth-versus-cost curve: the starter's block at
+ * one depth, one unbudgeted 256×144 1-sample frame. */
+interface SurfaceGlassDepthPoint {
+  core: string;
+  preset: string;
+  depth: number;
+  width: number;
+  height: number;
+  wallMs: number;
+  hit: number;
+  resolved: number;
+  unresolved: number;
+  invalid: number;
+  maxBatchMs: number;
 }
 
 /** The section's fixed 4-binding interface (surface-de-gpu.ts's contract):
@@ -19772,6 +20031,69 @@ async function runSurfaceDeSection(
       }
       render();
       await canaryCheck("the sphere-inversion transport legs");
+      if (config.siGlassEnvelope) {
+        if (acquired.software) {
+          results.notes.push(
+            "glass envelope: skipped on a software adapter — the lines are real-driver measurements",
+          );
+        } else {
+          const depthCurve: SurfaceGlassDepthPoint[] = [];
+          const envelope: NonNullable<SurfaceDeResults["glassEnvelope"]> = {
+            rows: [],
+            lines: [],
+            depthCurve,
+          };
+          results.glassEnvelope = envelope;
+          try {
+            envelope.rows = await runSurfaceTransportEnvelopeLeg(
+              [],
+              [],
+              dom,
+              status,
+              activity,
+              undefined,
+              false,
+              "sphereInversion",
+              depthCurve,
+            );
+            for (const row of envelope.rows) {
+              // The curved-glass epic's own preview line is 1 s, tighter
+              // than the finite direction's 1.5 s; every other line is
+              // shared.
+              const misses = surfaceTransportEnvelopeRowFailures(row).filter(
+                (miss) => !miss.startsWith("preview wall"),
+              );
+              if (
+                row.preview.truncated ||
+                row.preview.wallMs > GLASS_ENVELOPE_PREVIEW_LINE_MS
+              )
+                misses.unshift(
+                  `preview wall ${row.preview.wallMs.toFixed(0)}ms > ${String(GLASS_ENVELOPE_PREVIEW_LINE_MS)}ms line` +
+                    (row.preview.truncated ? " (truncated)" : ""),
+                );
+              envelope.lines.push({
+                core: row.core,
+                system: row.system,
+                misses,
+              });
+              results.notes.push(surfaceTransportEnvelopeNote(row));
+              results.notes.push(
+                `glass envelope ${row.core} × ${row.system}: ${misses.length === 0 ? "every line PASS" : `MISS — ${misses.join("; ")}`}`,
+              );
+            }
+            for (const p of depthCurve)
+              results.notes.push(
+                `glass depth curve ${p.core} D${String(p.depth)}: ${p.wallMs.toFixed(0)}ms at ${String(p.width)}x${String(p.height)}, hits ${String(p.hit)}, resolved ${String(p.resolved)} unresolved ${String(p.unresolved)} invalid ${String(p.invalid)}, worst submission ${p.maxBatchMs.toFixed(1)}ms`,
+              );
+          } catch (e) {
+            // A thrown leg is not a measured MISS: it is a failure.
+            sphereInversionFailed = true;
+            results.notes.push(`glass envelope: ${describeError(e)}`);
+          }
+          render();
+          await canaryCheck("the glass envelope leg");
+        }
+      }
       results.verdict = sphereInversionFailed ? "fail" : "skipped";
       results.reason = sphereInversionFailed
         ? "sphere-inversion compile/eval/march/frame failure — see sphereInversion and notes"

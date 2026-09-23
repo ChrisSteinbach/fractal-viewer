@@ -138,6 +138,10 @@ const SURFACE_PASSTHROUGH_FLAGS = {
   // Run only the sphere-inversion legs (iteration and cost sweeps); the
   // section verdict is then "fail" or "skipped", never "pass".
   "surface-sphere-inversion-only": "surfaceSphereInversionOnly",
+  // With --surface-sphere-inversion-only: the curved-glass starters'
+  // renderer envelope and depth curve (measured, not gated; minutes of
+  // settles, so it rides the heavy-leg wait cap below).
+  "surface-si-glass-envelope": "surfaceSiGlassEnvelope",
 };
 
 function parseArgs(argv) {
@@ -631,7 +635,9 @@ async function main() {
   // (the sweep's own point is to measure the slow end of the affine4
   // kernel's cost curve) — so it earns the same wider wait cap.
   const surfaceHeavyLeg =
-    args.surfaceParams.surfaceShadeWidth || args.surfaceParams.surfaceAff4Sweep;
+    args.surfaceParams.surfaceShadeWidth ||
+    args.surfaceParams.surfaceAff4Sweep ||
+    args.surfaceParams.surfaceSiGlassEnvelope;
   const benchTimeoutMs = benchWaitTimeoutMs({
     backendSmoke: args.backendSmoke,
     surfaceRequested,
