@@ -559,6 +559,78 @@ lands inside the timing's ~15% run-to-run spread on every row, so on this
 card the unit arrangement's early exit does not show in throughput. The
 `linear` rows are informational like every timing row and never gate.
 
+## The sphere-inversion glass transport rows (`opticsBackend: "sphereInversion"`)
+
+The curved-glass backend's agreement legs ride the transport agreement runner
+beside the closed-solid ones, and `--surface-sphere-inversion-only=1` runs them
+after the family's own legs, so iterating on the family's optics does not need
+the whole section. Four legs, both dimensions:
+
+- **Ball (3D oct6, 4D cross8), the ANALYTIC control.** The depth-0 construction
+  whose orbit IS the seed ball: generators at distance 1 with radius 0.7 reach
+  in to 0.3, and the seed is 0.28. The shadow probe straight up through the
+  origin must pay `(1 − F0)²·Beer` over the 0.56 chord, independent of the
+  kernel and the twin.
+- **Orbit (3D oct6 ball .28, 4D cross8 ball .42; radius fraction 0.99, depth
+  3).** The look gate's near-kissing subject. The canonical grid finds one
+  primary hit on this sparse set, so three NAMED extra probes carry the
+  family's geometry:
+  - the POLE, a ray down a generator's axis onto its centre;
+  - the near-CUSP between two generators, which the unanchored arm marches
+    back through;
+  - a seed-tangent WINDOW ray, a graze along the seed's silhouette in 3D.
+
+What each leg pins, beyond the closed-solid arms it shares (the anchored inside
+traversal, the reversed outside query, the replay trace, the straight shadow
+visibility and the terminal displacement):
+
+- **The chain-replay arm.** The twin's OWN boundary-query chain while it traces
+  each probe, up to the leg's whole path budget, replayed on the GPU query by
+  query. A trace chains dozens of queries, so a trace mismatch names nothing;
+  the first disagreeing chain query names the divergence. Every probe's
+  boundaries are compared BEFORE its trace, for every backend, so the narrowest
+  failure is the one reported.
+- **The membership invariant.** Every boundary the GPU reports must have exact
+  f64 membership flip across its own landing (`t + 2·eps`). This catches a
+  kernel that dropped the gate even where the twin happened to agree with it.
+- **Normals as a function.** A sphere-inversion boundary's GPU normal is
+  compared with the twin's taps AT THE GPU'S OWN LANDING. Near a seam of this
+  union-of-pieces field the normal turns about 4e-3 per 1e-4 of t, so a landing
+  inside the t tolerance still taps a visibly different normal. The landing is
+  pinned separately by the t check.
+- **Misses by position.** A sphere-inversion miss's t is wherever the march
+  first stood past the domain edge. The field reads ~1 there, so an f32 sample a
+  hair short takes one more ~1-wide stride the f64 one did not (measured 2.87
+  vs 1.88, both misses). The pin is that both engines' miss is at or past the
+  domain exit.
+- **The field arm (mode 4).** The GPU's signed field and membership bit at 600
+  sampled members plus 1,200 points bisected toward the boundary, against f64.
+  Hard gates: membership agrees outside a 4-slack band, and the GPU never
+  claims more interior clearance than f64. Disclosed: the worst PRE-SLACK
+  interior excess.
+
+MEASURED on 2026-09-23 on the RX 7900 XTX (`:0`, radeonsi navi31, WebGPU
+`amd rdna-3`, `software=false`), `quiet=YES`, `--surface-sphere-inversion-only=1`.
+All four legs agree, and the family's own legs reran green:
+
+| Leg                          | Queries | Max radiance Δ | Max residual Δ | Max normal Δ | Max shadow Δ | Pre-slack interior excess (interior samples) |
+| ---------------------------- | ------: | -------------- | -------------- | ------------ | ------------ | -------------------------------------------- |
+| `sphereInversionGlassBall3`  |      13 | 2.6e-9         | 4.1e-12        | 2.0e-4       | 2.1e-8       | 3.85e-8 (1196)                               |
+| `sphereInversionGlassBall4`  |      13 | 2.6e-9         | 4.1e-12        | 2.0e-4       | 2.1e-8       | 3.85e-8 (1196)                               |
+| `sphereInversionGlassOrbit3` |     295 | 7.5e-5         | 3.2e-4         | 4.6e-4       | 4.3e-6       | 5.53e-8 (1172)                               |
+| `sphereInversionGlassOrbit4` |      78 | 1.9e-6         | 1.0e-6         | 2.6e-4       | 6.5e-6       | 1.03e-7 (1124)                               |
+
+The real-driver interior excess peaks at 1.03e-7, about 10× under the 1e-6
+slack. That is the figure the f32 argument owed; the CPU emulation's was
+1.39e-7 on a different fixture set.
+
+WHAT THE LEGS FOUND, both fixed in the kernel AND the twin before these rows
+(the record is `docs/sphere-inversion-family.md`'s agreement section):
+
+1. The kernel's primary split tapped the UNSIGNED estimator for its normal.
+2. The query could step past a real exit near a cusp, which is what the look
+   gate's inside-miss mass was.
+
 ## Mutation-testing the f32 twins
 
 A stale f32 twin does not disagree with its f64 CPU oracle — it makes the
