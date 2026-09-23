@@ -12,12 +12,16 @@ import type {
 import {
   buildSphereInversionDE,
   estimateSphereInversionDistance,
+  sphereInversionContains,
   sphereInversionHitInfo,
+  sphereInversionSignedDistance,
 } from "./sphere-inversion-de";
 import {
   buildSphereInversionDE4,
   estimateSphereInversionDistance4,
+  sphereInversionContains4,
   sphereInversionHitInfo4,
+  sphereInversionSignedDistance4,
 } from "./sphere-inversion-de-4d";
 import {
   packSphereInversionGpuTables,
@@ -31,6 +35,7 @@ import {
   sphereInversionFragmentArmLimit,
   sphereInversionGlslBlockBytes,
   sphereInversionGlslGeneratorCeiling,
+  sphereInversionSignedF32,
   sphereInversionTableEntries,
   sphereInversionWgslSource,
 } from "./surface-sphere-inversion-gpu";
@@ -288,6 +293,30 @@ describe("sphereInversionWgslSource", () => {
       "return siTable[2u * i + 1u].x;",
     );
   });
+
+  it("emits the shipped body byte for byte unless the signed half is asked for", () => {
+    for (const dim of [3, 4] as const) {
+      const plain = sphereInversionWgslSource(dim);
+      expect(sphereInversionWgslSource(dim, false)).toBe(plain);
+      expect(plain).not.toContain("clear");
+    }
+  });
+
+  it("the signed body adds only the clearance member and its one transport, leaving d unsigned", () => {
+    for (const dim of [3, 4] as const) {
+      const signed = sphereInversionWgslSource(dim, true);
+      expect(signed).toContain("  clear: f32,");
+      expect(signed).toContain(
+        "var res = SiResult(0.0, x, k, status, parent, first, -1, -1, ring, -1.0);",
+      );
+      expect(signed).toContain("if (status == 0u && best <= 0.0) {");
+      expect(signed).toContain("res.clear = max(0.0, c - slack);");
+      // The exterior value is untouched text: the primary march and the
+      // hit-info read the same d as an opaque session.
+      expect(signed).toContain("v = max(0.0, v - slack);");
+      expect(signed).toContain("  res.d = v;");
+    }
+  });
 });
 
 const FIXTURES_3D: [string, SphereInversionAuthored][] = [
@@ -414,5 +443,155 @@ describe("sphereInversionF32 (the kernel's f32 twin) against the f64 estimator",
     const near = sphereInversionF32(gpu, [1 + r * 0.05, 0, 0]);
     expect(near.status).not.toBe(2);
     expect(near.ring).toBeLessThan(0.06);
+  });
+});
+
+/** Random queries in the bounding ball, plus points pushed toward the set's
+ * boundary from both sides by bisecting between a member and a non-member —
+ * the band where f32 and f64 may honestly disagree, and where an f32
+ * overshoot would matter. */
+function signedQueries(
+  dim: 3 | 4,
+  radius: number,
+  contains: (q: number[]) => boolean,
+  count: number,
+  seed: number,
+): number[][] {
+  const rng = mulberry32(seed);
+  const ball = () => {
+    for (;;) {
+      const q = Array.from({ length: dim }, () => (2 * rng() - 1) * radius);
+      if (Math.hypot(...q) <= radius) return q;
+    }
+  };
+  const members: number[][] = [];
+  const out: number[][] = [];
+  for (let i = 0; i < 200000 && members.length < count; i++) {
+    const q = ball();
+    if (contains(q)) members.push(q);
+    else if (out.length < count) out.push(q);
+  }
+  out.push(...members);
+  for (const m of members) {
+    const o = out[Math.floor(rng() * Math.min(out.length, count))];
+    let a = m;
+    let b = o;
+    const steps = 8 + Math.floor(rng() * 30);
+    for (let it = 0; it < steps; it++) {
+      const mid = a.map((x, i) => 0.5 * (x + b[i]));
+      if (contains(mid)) a = mid;
+      else b = mid;
+    }
+    out.push(a, b);
+  }
+  return out;
+}
+
+const SIGNED_FIXTURES: [string, SphereInversionAuthored][] = [
+  [
+    "oct6 ball .28, depth 3",
+    { arrangement: "oct6", seed: { size: 0.28 }, depth: 3 },
+  ],
+  [
+    "oct6 KISSING, depth 6",
+    { arrangement: "oct6", radiusFraction: 1, depth: 6 },
+  ],
+  [
+    "ico12 near-kissing ball .47, depth 4",
+    {
+      arrangement: "ico12",
+      radiusFraction: 0.99,
+      seed: { size: 0.47 },
+      depth: 4,
+    },
+  ],
+  [
+    "oct6 generator-crossing ball 1.15 (the clearance ball swallows a centre), depth 2",
+    {
+      arrangement: "oct6",
+      radiusFraction: 0.93,
+      seed: { size: 1.15 },
+      depth: 2,
+    },
+  ],
+  [
+    "cell24 ball .3, depth 3 (4D)",
+    { arrangement: "cell24", seed: { size: 0.3 }, depth: 3 },
+  ],
+  [
+    "cell24 near-kissing ball .5, depth 4 (4D)",
+    {
+      arrangement: "cell24",
+      radiusFraction: 0.99,
+      seed: { size: 0.5 },
+      depth: 4,
+    },
+  ],
+];
+
+describe("sphereInversionSignedF32 (the signed kernel's f32 twin) against the f64 signed field", () => {
+  for (const [name, authored] of SIGNED_FIXTURES) {
+    it(`${name}: the exterior is the unsigned twin, membership agrees outside the slack band, and the interior never claims more clearance than f64`, () => {
+      const c = construction(authored);
+      const de =
+        c.dim === 3 ? buildSphereInversionDE(c) : buildSphereInversionDE4(c);
+      const gpu = packSphereInversionGpuTables(de);
+      const signed64 = (q: number[]) =>
+        c.dim === 3
+          ? sphereInversionSignedDistance(de, q as Vec3)
+          : sphereInversionSignedDistance4(de, q as Vec4);
+      const contains64 = (q: number[]) =>
+        c.dim === 3
+          ? sphereInversionContains(de, q as Vec3)
+          : sphereInversionContains4(de, q as Vec4);
+      const qs = signedQueries(
+        c.dim,
+        de.boundingRadius,
+        contains64,
+        c.dim === 3 ? 400 : 150,
+        0x5167,
+      );
+      const band = 4 * SPHERE_INVERSION_GPU_SLACK;
+      let interior = 0;
+      let banded = 0;
+      for (const q of qs) {
+        const twin = sphereInversionSignedF32(gpu, q);
+        const f64 = signed64(q);
+        expect(Number.isFinite(twin.field)).toBe(true);
+        if (!twin.member) {
+          // Outside, the signed field IS the shipped unsigned twin.
+          expect(Object.is(twin.field, sphereInversionF32(gpu, q).d)).toBe(
+            true,
+          );
+          expect(twin.clear).toBe(-1);
+        }
+        if (Math.abs(f64) <= band) {
+          banded++;
+        } else {
+          expect(twin.member).toBe(contains64(q));
+        }
+        if (twin.member && f64 < 0) {
+          interior++;
+          // Conservative: never more clearance than the f64 authority,
+          // which is itself certified against the explicit orbit.
+          expect(twin.clear).toBeLessThanOrEqual(-f64);
+          // And not vacuous: within the slack's own reach of it.
+          expect(twin.clear).toBeGreaterThanOrEqual(-f64 - band);
+          expect(twin.field).toBe(twin.clear === 0 ? 0 : -twin.clear);
+        }
+      }
+      expect(interior).toBeGreaterThan(c.dim === 3 ? 150 : 50);
+      expect(banded).toBeGreaterThan(0);
+    });
+  }
+
+  it("a pole is a non-member at field 0, the family's defined outcome, not an interior", () => {
+    const de = buildSphereInversionDE(
+      construction({ arrangement: "oct6", depth: 8 }),
+    );
+    const gpu = packSphereInversionGpuTables(de);
+    const r = de.generatorRadius[0];
+    const pole = sphereInversionSignedF32(gpu, [1 + r * 2 ** -22, 0, 0]);
+    expect(pole).toEqual({ field: 0, member: false, clear: -1 });
   });
 });

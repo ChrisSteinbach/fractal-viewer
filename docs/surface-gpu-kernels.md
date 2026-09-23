@@ -662,6 +662,14 @@ The composition policy, the f32 argument and the hit attribution (trap =
 generation, rings = closest radial approach, sheets = seed member) are in
 `docs/sphere-inversion-gpu.md`.
 
+CURVED GLASS. `opticsBackend: "sphereInversion"` (shade mode, these two cores
+only) is the optical transport over the family's SIGNED field: the
+`signed` estimator body adds an `SiResult.clear` member, and the closed-solid
+query's text runs over it with an exact-membership crossing gate. Absent, both
+cores' source is unchanged. The field's f32 argument, the measured interior
+excess and the gate's reason are in `docs/sphere-inversion-family.md`'s WGSL
+section.
+
 MEASURED by the bench legs on a certified-quiet Intel Iris Xe on 2026-09-15.
 Both cores compiled and passed every gate on their first device run:
 

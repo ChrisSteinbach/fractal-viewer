@@ -337,8 +337,15 @@ export function packSphereInversionGpuTables(
  * `params.siRadii` (r, r², pole floor², slack), `params.siFlags` (uniformUnit)
  * and `siTable`, the table binding; the host kernel declares all of them and
  * owns the public `surfaceDE`/`surfaceDEHitInfo` wrappers.
+ *
+ * `signed` adds the INTERIOR HALF for the optical transport's
+ * sphere-inversion backend: an `SiResult.clear` member carrying a member's
+ * transported clearance (−1 for a non-member, so it is also the membership
+ * bit) — {@link sphereInversionSignedF32}'s arithmetic. Nothing else moves:
+ * `d` keeps its unsigned meaning, so the primary march and hit-info read the
+ * same value, and absent/false emits the shipped body byte for byte.
  */
-export function sphereInversionWgslSource(dim: 3 | 4): string {
+export function sphereInversionWgslSource(dim: 3 | 4, signed = false): string {
   const V = dim === 3 ? "vec3f" : "vec4f";
   const center = dim === 3 ? "siTable[i].xyz" : "siTable[2u * i]";
   const radius = dim === 3 ? "siTable[i].w" : "siTable[2u * i + 1u].x";
@@ -356,7 +363,15 @@ struct SiResult {
   first: i32,
   termJ: i32,
   termGap: i32,
-  ring: f32,
+  ring: f32,${
+    signed
+      ? `
+  // The SIGNED field's interior half: the transported clearance of a
+  // member, or -1 for a non-member (a pole, an exhausted fold, or a folded
+  // point outside the seed) — so it doubles as the membership bit.
+  clear: f32,`
+      : ""
+  }
 }
 
 fn siCenter(i: u32) -> ${V} {
@@ -463,7 +478,7 @@ fn siEstimate(q: ${V}) -> SiResult {
     k++;
     parent = found;
   }
-  var res = SiResult(0.0, x, k, status, parent, first, -1, -1, ring);
+  var res = SiResult(0.0, x, k, status, parent, first, -1, -1, ring${signed ? ", -1.0" : ""});
   if (status == ${SPHERE_INVERSION_FOLD_POLE}u) {
     return res;
   }
@@ -535,6 +550,22 @@ fn siEstimate(q: ${V}) -> SiResult {
       v = inversionDistanceLowerBound(foldR[i - 1u], foldR2[i - 1u], v);
     }
     v = max(0.0, v - slack);
+  }${
+    signed
+      ? `
+  // THE INTERIOR HALF (sphere-inversion-de${dim === 4 ? "-4d" : ""}.ts's sphereInversionSignedDistance${dim === 4 ? "4" : ""}):
+  // at DOMAIN a non-positive best IS membership, and -best the exact folded
+  // clearance of the seed intersection; the full-ball law is the empty-ball
+  // law, so the same transport carries it out, then the same absolute f32
+  // slack comes off the MAGNITUDE (sphereInversionSignedF32's doc).
+  if (status == ${SPHERE_INVERSION_FOLD_DOMAIN}u && best <= 0.0) {
+    var c = -best;
+    for (var i = k; i > 0u; i--) {
+      c = inversionDistanceLowerBound(foldR[i - 1u], foldR2[i - 1u], c);
+    }
+    res.clear = max(0.0, c - slack);
+  }`
+      : ""
   }
   res.d = v;
   res.termJ = termJ;
@@ -612,6 +643,44 @@ export interface SphereInversionF32Result {
 }
 
 const f = Math.fround;
+
+/** The last {@link sphereInversionF32} evaluation's fold record and folded
+ * decision value — the module-scratch idiom `sphere-inversion-de.ts` uses
+ * for its own fold (`foldStatus`/`foldK`), so the signed twin reads the SAME
+ * evaluation instead of restating it. `best` is NaN at a pole. */
+const f32Last: {
+  status: SphereInversionFoldStatus;
+  k: number;
+  foldR: number[];
+  foldR2: number[];
+  best: number;
+} = {
+  status: SPHERE_INVERSION_FOLD_DOMAIN,
+  k: 0,
+  foldR: [],
+  foldR2: [],
+  best: NaN,
+};
+
+/** `inversionDistanceLowerBound` in f32, innermost first — the WGSL body's
+ * transport loop, margin included. */
+function transportF32(
+  foldR: readonly number[],
+  foldR2: readonly number[],
+  k: number,
+  d: number,
+): number {
+  const margin = f(1 + 2 ** -20);
+  let v = d;
+  for (let i = k; i > 0; i--) {
+    const qr = foldR[i - 1];
+    v =
+      qr <= 0 || v <= 0
+        ? 0
+        : f(f(qr * v) / f(f(f(foldR2[i - 1] / qr) + v) * margin));
+  }
+  return v;
+}
 
 /**
  * The WGSL body re-executed in TypeScript with every arithmetic result
@@ -727,6 +796,11 @@ export function sphereInversionF32(
     seedMember: -1,
     ring,
   };
+  f32Last.status = status;
+  f32Last.k = k;
+  f32Last.foldR = foldR;
+  f32Last.foldR2 = foldR2;
+  f32Last.best = NaN;
   if (status === SPHERE_INVERSION_FOLD_POLE) return out;
   const m = depth - k;
   let best = -3.0e38;
@@ -771,17 +845,10 @@ export function sphereInversionF32(
       }
     }
   }
+  f32Last.best = best;
   let v = best;
   if (best > 0) {
-    const margin = f(1 + 2 ** -20);
-    for (let i = k; i > 0; i--) {
-      const qr = foldR[i - 1];
-      v =
-        qr <= 0 || v <= 0
-          ? 0
-          : f(f(qr * v) / f(f(f(foldR2[i - 1] / qr) + v) * margin));
-    }
-    v = Math.max(0, f(v - slack));
+    v = Math.max(0, f(transportF32(foldR, foldR2, k, best) - slack));
   }
   out.d = v;
   out.termJ = termJ;
@@ -814,4 +881,81 @@ export function sphereInversionF32(
     out.seedMember = seedMax >= rest ? seedArg : -1;
   }
   return out;
+}
+
+/** The signed twin's record: the field value the optical transport marches
+ * and the membership bit its crossing gate asks. */
+export interface SphereInversionSignedF32Result {
+  /** `sphereInversionSignedDistance`'s value in f32: the unsigned `d`
+   * outside, `−clear` for a member, the untransported folded value at a
+   * (by-construction unreachable) negative non-DOMAIN status. */
+  field: number;
+  /** Membership: DOMAIN and a non-positive folded decision value — exactly
+   * `sphereInversionContains`, read off the same evaluation. */
+  member: boolean;
+  /** The member's transported clearance after the slack, −1 otherwise (the
+   * kernel's `SiResult.clear`). */
+  clear: number;
+}
+
+/**
+ * The SIGNED field in f32 — the `signed` WGSL body's interior half re-executed
+ * over the same packed table, the twin the kernel is pinned against. It is
+ * {@link sphereInversionF32}'s evaluation plus one transport of the folded
+ * clearance; the f64 authority is `sphereInversionSignedDistance` /
+ * `sphereInversionSignedDistance4`.
+ *
+ * THE f32 ARGUMENT FOR THE INTERIOR HALF, written out rather than inherited.
+ *
+ * WHICH DENOMINATOR. The worry the interior half raises is the Möbius ball
+ * factor `R²/(|c|² − r²)`, which cancels catastrophically where a ball nearly
+ * swallows the inversion centre. That form is NOT what either half emits. The
+ * transport is `inversionDistanceLowerBound`'s distance form,
+ * `qr·v / ((R²/qr + v)·(1 + 2^-20))`, whose one division is by a SUM of two
+ * positives — no subtraction, so no cancellation at any ratio of `v` to
+ * `R²/qr`, including a clearance ball that swallows the centre (`v >= R²/qr`),
+ * where the image is a ball's complement and the distance form is still the
+ * nearest boundary along the centre line. The only small quantity it divides
+ * by is `qr` itself, inside `R²/qr`, and THAT IS GUARDED: the fold refuses to
+ * invert once `qr² <= 2^-40·R²` (the POLE floor,
+ * {@link SPHERE_INVERSION_GPU_POLE_FLOOR}), so `R²/qr < 2^20·R` is finite and
+ * a pole never reaches the transport — the interior half inherits that guard
+ * rather than adding a second one, and at a pole the record is a non-member
+ * (`clear` −1) with `field` 0, the family's defined outcome.
+ *
+ * WHY THE SAME SLACK SUFFICES. Per step, the transport's own rounding (three
+ * multiplications/divisions and one positive sum, ≲ 4 ulp = 2^-22 relative)
+ * sits under its `1 + 2^-20` margin, so each step is one-sided given exact
+ * inputs, in both halves. The inputs are not exact: the folded point carries
+ * the fold's absolute rounding, magnified by each inversion exactly as the
+ * transport later demagnifies it, so the folded decision value's error comes
+ * back to world space at its own step's scale, unamplified — the argument that
+ * made the exterior's world-space excess FLAT IN DEPTH (measured at most
+ * 3.3e-7). Nothing in it reads the sign of the folded value, so the interior
+ * magnitude carries the same world-space excess and the same absolute
+ * {@link SPHERE_INVERSION_GPU_SLACK} comes off it. Never a relative factor.
+ *
+ * THE DISCLOSED THRESHOLD. A member whose transported clearance is at most the
+ * slack (1e-6 world units) reads `field` 0 — inside the transport's crossing
+ * band, never on the wrong side of it — and so does the exterior's slack-
+ * zeroed rim. The band is the only place f32 and f64 may disagree about the
+ * SIGN of membership, and the crossing gate asks the membership bit, not the
+ * sign of a value in that band. The acceptance floor the packers already clamp
+ * to the slack makes this the same 1e-6 world-space zoom floor the opaque
+ * family has.
+ */
+export function sphereInversionSignedF32(
+  gpu: SphereInversionGpuTables,
+  query: readonly number[],
+): SphereInversionSignedF32Result {
+  const res = sphereInversionF32(gpu, query);
+  const { status, k, foldR, foldR2, best } = f32Last;
+  if (status === SPHERE_INVERSION_FOLD_DOMAIN && best <= 0) {
+    const clear = Math.max(
+      0,
+      f(transportF32(foldR, foldR2, k, -best) - f(SPHERE_INVERSION_GPU_SLACK)),
+    );
+    return { field: clear === 0 ? 0 : -clear, member: true, clear };
+  }
+  return { field: res.d, member: false, clear: -1 };
 }
