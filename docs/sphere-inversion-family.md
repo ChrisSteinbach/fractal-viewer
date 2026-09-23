@@ -2952,6 +2952,13 @@ byte-identical on its adaptive arm:
 | Worst submission (checkpoint ≤ 600 ms) | 50 ms → 77 ms                              | 61 ms → 59 ms                            |
 | Retained additional state ≤ 128 MiB    | 14.8 → 42.4 MiB                            | 14.8 → 42.4 MiB                          |
 
+THE EXPORT LINE, re-measured by the glass gate at `--scale=2 --samples=4`
+(the real Save-PNG, click to download, same card, quiet=YES), with every gate
+leg PASS: 3D 344.8 s → 40.4 s and 4D 197.3 s → 18.5 s, both inside the
+120 s line. The link-reload and tiled-export identities held byte for byte
+(max 0), and the 960×540 4-AA menu settles read 26.9 s (3D, was 123.1 s)
+and 10.2 s (4D, was 68.0 s) at unchanged resolved shares (95.70%, 94.77%).
+
 The 4D starter is now inside every time line. In 3D, depths 1 and 2 preview
 inside the 1 s line; the starters' depth 3 does not. What remains per 3D
 sample (~3.8 s of transport at the settle) is dense work (~2.7 s) plus one
@@ -2963,3 +2970,13 @@ the rest of it looked like waste. The cost sheet's second test traces every
 glass hit both ways under the production schedule. Outcomes agree on all
 2,137 hits, and the stop saves 0.4% of the evaluations: the expensive traces
 FAIL (a refusal or the path guard) rather than overrun the budget. Not taken.
+
+A SECOND REFUTED LEVER: ORDERING THE POOL'S QUEUE. Since nothing about a
+ray's arithmetic depends on when it runs, the queue could put the frame's
+critical path first. It tried a ray re-queued for its next replay pass ahead
+of every fresh one, and the pixels whose traces cost the most on the
+raster's last frame (the previous antialiasing pass) first, so the serial
+long traces would overlap the dense work instead of trailing it. Measured
+on the same card, quiet=YES, censuses identical: the 3D settle read 16.5 s
+against 16.8 s, which is noise, and the 4D settle 5.3 s against 4.0 s, the
+wrong way. Not taken: the drain is not a matter of which rays start first.
