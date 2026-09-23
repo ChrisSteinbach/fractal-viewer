@@ -45,7 +45,9 @@ import {
   sphereInversionArrangementValue,
   sphereInversionFieldRange,
   sphereInversionFieldValue,
+  sphereInversionMaterialValue,
   sphereInversionSeedKindValue,
+  withSphereInversionMaterial,
   withSphereInversionArrangement,
   withSphereInversionField,
   withSphereInversionSeedKind,
@@ -647,6 +649,15 @@ const tilingEffect: ControlEffect = (state, fx) => {
  * sphere-inversion-controls.ts's module doc. */
 const sphereInversionEffect: ControlEffect = (_state, fx) => {
   fx.regenerateIfAutoUpdate();
+  fx.refreshSurfaceEligibility();
+  fx.syncSphereInversion();
+};
+
+/** The Material select: Points draws the set's boundary sample whatever its
+ * material, so nothing regenerates; the gate re-derives (glass is a
+ * compute-only subject) and a live Surface session restarts, since the
+ * backend is decided once per session. */
+const sphereInversionMaterialEffect: ControlEffect = (_state, fx) => {
   fx.refreshSurfaceEligibility();
   fx.syncSphereInversion();
 };
@@ -1811,6 +1822,20 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     "Depth",
     "depth",
   ),
+  {
+    kind: "select",
+    id: "sphereInversionMaterial",
+    read: (s) =>
+      s.sphereInversion
+        ? sphereInversionMaterialValue(s.sphereInversion)
+        : "classic",
+    apply: (s, raw) => {
+      if (!s.sphereInversion) return s;
+      const next = withSphereInversionMaterial(s.sphereInversion, raw);
+      return next === s.sphereInversion ? s : setSphereInversion(s, next);
+    },
+    effect: sphereInversionMaterialEffect,
+  },
   // ——— Glass solid: the finite-solid block the OWNER authors on their own
   // documents (finite-solid.ts's general admission). The checkbox installs
   // the shape-less `{level}` block; the depth select rewrites its level.

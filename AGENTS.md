@@ -519,24 +519,24 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     bound degrades conservatively — when the region swallows the centre.
     `signedInversionBallScale` keeps the sign for generalized balls (a ball
     holding the centre maps to a complement).
-  - `sphere-inversion.ts` — the family's ONE shared vocabulary: an authored
-    form (registry id, radius fraction, seed, depth) resolved into the
-    explicit `{dim, generators, seed, depth}` construction; out-of-domain
-    values and unknown keys REFUSE, never clamp. The optional
+  - `sphere-inversion.ts` — the family's ONE vocabulary: an authored
+    form (registry id, radius fraction, seed, depth, materials) resolved to
+    the explicit `{dim, generators, seed, depth}` construction; bad values and
+    unknown keys REFUSE, never clamp. The optional
     `sphereInversion` block persists VERBATIM (refused included), REPLACES the
-    transform system as the subject, and its arrangement decides the scene's
+    transform system as the subject; its arrangement decides the scene's
     dimension (`scene-dimension.ts`). `-de.ts`/`-de-4d.ts` twins: the
     TRANSPORTED CERTIFIED BOUND on the depth-D SEED ORBIT (never the limit
     set), step scale 1, the cutoff contract; f64 only, pinned by
     `sphere-inversion-oracle.ts`. SURFACE routes to bench-pinned WGSL
-    `sphereInv`/`sphereInv4`; `SURFACE_SPHERE_INVERSION` is the 3D GLSL
-    fallback, admitted PER CONSTRUCTION, never per dimension (caps: WebGL2's
-    guaranteed block); 4D and `icosidodec30`'s 30 generators are COMPUTE-ONLY
-    under one subject phrase the family gate's refusal leg reads.
-    Kaleidoscope/lens/finishes DORMANT+disclosed; tiling, balloon, trap, slab
-    REFUSE. POINTS draws the same set exactly; Flame/Solid REFUSE. Cost is
-    flat in depth and in generator count (tables quadratic); every id is
-    public. CONTROLS: Scene / Look after Transforms
+    `sphereInv`/`sphereInv4`; `SURFACE_SPHERE_INVERSION` (3D GLSL fallback)
+    admits PER CONSTRUCTION (WebGL2's block); 4D, `icosidodec30` and GLASS
+    are COMPUTE-ONLY under one subject phrase. GLASS: `materials` keyed on
+    GENERATION (last entry covers deeper); backend `sphereInversion` (signed
+    field + membership gate) for ball/shell seeds to depth 8.
+    Kaleidoscope/lens/per-transform finishes DORMANT; tiling, balloon, trap,
+    slab REFUSE. POINTS draws the same set; Flame/Solid REFUSE. Cost flat in
+    depth/generator count; ids all public. CONTROLS: Scene / Look
     (`sphere-inversion-controls.ts`); replaced sections DISABLE. Record:
     `docs/sphere-inversion-family.md`, `docs/sphere-inversion-gpu.md`.
   - `morph.ts` — pure interpolation (`lerpSystem`): endpoint-exact at t=0/1,

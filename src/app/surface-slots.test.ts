@@ -452,11 +452,41 @@ describe("sphereInversionShadeSlots", () => {
   });
 
   it("replicates one authored finish into every generation slot", () => {
-    const slots = sphereInversionShadeSlots(5, { metalness: 1 });
+    const slots = sphereInversionShadeSlots(5, {
+      arrangement: "oct6",
+      materials: [{ finish: { metalness: 1 } }],
+    });
     expect(slots.materials?.finish).toBe(true);
     expect(slots.materials?.slots).toHaveLength(5);
     const first = slots.materials!.slots[0];
     for (const slot of slots.materials!.slots) expect(slot).toEqual(first);
     expect(first.finish.metalness).toBe(1);
+  });
+
+  it("keys materials on generation, the last entry covering every deeper one", () => {
+    const slots = sphereInversionShadeSlots(5, {
+      arrangement: "oct6",
+      materials: [
+        { finish: { metalness: 0.25 } },
+        { finish: { metalness: 1 } },
+      ],
+    });
+    expect(slots.materials!.slots.map((m) => m.finish.metalness)).toEqual([
+      0.25, 1, 1, 1, 1,
+    ]);
+  });
+
+  it("drops authored glass unless the routing admits it", () => {
+    const authored = {
+      arrangement: "oct6",
+      materials: [{ optics: { model: "dielectric" as const } }],
+    };
+    expect(sphereInversionShadeSlots(5, authored, 1.7).materials).toBeNull();
+    const admitted = sphereInversionShadeSlots(5, authored, 1.7, true);
+    expect(admitted.materials).toMatchObject({ finish: false, optics: true });
+    expect(admitted.materials!.slots).toHaveLength(5);
+    for (const slot of admitted.materials!.slots) {
+      expect(slot.optics?.radius).toBeCloseTo(1.7);
+    }
   });
 });

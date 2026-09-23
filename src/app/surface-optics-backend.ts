@@ -1,6 +1,14 @@
 import { shapeMeshIds } from "../fractal/shapes";
 import { transformHasEmitter, systemHasChaos } from "../fractal/chaos-game";
 import { composeAffine, isIdentityAffine } from "../fractal/affine";
+import {
+  SPHERE_INVERSION_DEFAULTS,
+  sphereInversionAuthorsOptics,
+} from "../fractal/sphere-inversion";
+import type {
+  SphereInversionAuthored,
+  SphereInversionConstruction,
+} from "../fractal/sphere-inversion";
 import type { Transform } from "../fractal/types";
 import type { SurfaceDE } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
@@ -54,8 +62,11 @@ import type { SurfaceDE4 } from "../fractal/surface-de-4d";
  * fragment mirror, the escape4 verdict one family over): the GLSL material
  * stamp must never receive it — the finite session exits with a toast on a
  * compute loss rather than falling back to a WebGL tracer that would draw
- * the attractor. */
-export type SurfaceOpticsBackend = "estimator" | "closedSolid" | "finiteSolid";
+ * the attractor. `"sphereInversion"` is COMPUTE-ONLY for the same reason
+ * ({@link sphereInversionGlassAdmission}): the family's 3D fragment arm draws
+ * the set opaque, so a glass session never falls back to it. */
+export type SurfaceOpticsBackend =
+  "estimator" | "closedSolid" | "finiteSolid" | "sphereInversion";
 
 /** A 4D session's pose at entry — `SurfaceGpu4View`'s own three fields, the
  * values the app packs into every frame's params (the rotor row-major 4x4,
@@ -268,4 +279,103 @@ export function surfaceOpticsOutlook(
     if (!isIdentityAffine(composeAffine(final))) return { resolves: false };
   }
   return { resolves: "closed-solid", sliceCoupled: routeKind === "ifs4" };
+}
+
+// ------------------------------------------------ the sphere-inversion arm
+
+/** The seed kinds whose glass the look gate RENDERED (the pearls are balls,
+ * the lace is a shell). The signed field is sound for a cut shell too — its
+ * argument never reads the seed kind — but no glass panel of one was ever
+ * reviewed, and admission is a look decision as well as a soundness one. */
+export const SPHERE_INVERSION_GLASS_SEED_KINDS: readonly string[] =
+  Object.freeze(["ball", "shell"]);
+
+/** The deepest depth the look gate swept (1–8): 1–3 clean glass, 4 speckle,
+ * 6–8 lace, every one resolving. Deeper is unreviewed and costlier. */
+export const SPHERE_INVERSION_GLASS_MAX_DEPTH = 8;
+
+/**
+ * The largest generator count glass is admitted at: the largest arrangement
+ * MEASURED to keep every transport submission under the watchdog
+ * (icosidodec30, 3D; RX 7900 XTX, 2026-09-23). The 600-cell (120) is past
+ * it for a reason no host sizing can fix: a single WORKGROUP of its glass
+ * trace ran 2.06 s and lost the device at the ~2.0 s job cut, and the
+ * transport lane cannot dispatch less than one workgroup. Lifting it needs a
+ * resumable trace (the finite backend's chunked continuation) for this
+ * backend, not a larger number here.
+ */
+export const SPHERE_INVERSION_GLASS_MAX_GENERATORS = 30;
+
+/** Why a sphere-inversion block that authors glass renders opaque instead,
+ * or `null` when it resolves (and `undefined` when it authors no glass). */
+export type SphereInversionGlassAdmission =
+  { admitted: true } | { admitted: false; reason: string };
+
+/**
+ * THE ROUTING ADMISSION for the sphere-inversion glass backend — the ONE
+ * decision both the session door (main.ts, once per start) and the panel's
+ * restriction note read, so they cannot disagree. `undefined` when the block
+ * authors no optical material (the classic route; nothing to admit).
+ *
+ * The family's own conditions, NOT the condensation backend's:
+ *
+ *   - Seed kind and depth: the band the look gate reviewed
+ *     ({@link SPHERE_INVERSION_GLASS_SEED_KINDS},
+ *     {@link SPHERE_INVERSION_GLASS_MAX_DEPTH}) and nothing wider.
+ *     The ARRANGEMENT is not restricted for the look — the field's
+ *     soundness argument never reads it, the signed tests span
+ *     oct6/cube8/ico12 and cell24/cross8/tess16, and the look is set by
+ *     seed and depth (pearls versus lace) — but its generator COUNT is, by
+ *     measurement: {@link SPHERE_INVERSION_GLASS_MAX_GENERATORS}.
+ *   - Compute: the backend is compute-only in both dimensions, so a missing
+ *     adapter refuses glass (the gate refuses the SESSION — see
+ *     `surface-eligibility.ts` — rather than silently rendering opaque).
+ *   - The family's existing refusals (tiling, balloon, shape trap, slab)
+ *     ride through unchanged: they refuse the whole session upstream, so a
+ *     session that reaches this predicate already has none of them.
+ *   - Dormant capabilities (kaleidoscope above order 1, the final lens) are
+ *     NOT read by this subject, so they cannot move the solid the field
+ *     describes and need no term here.
+ *
+ * 4D: NO POSE ADMISSION, and the verdict is stated rather than implied. The
+ * object is intrinsically 4D and the slice cuts it; the field lifts the
+ * displayed point through the live rotor/slice every query, exactly as the
+ * primary march does, and a slice's clearance is at least the 4D clearance.
+ * So scrubbing the slice or turning the rotor mid-session moves the
+ * displayed object AND the field together — unlike the closed-solid
+ * backend's flat penalty, nothing decouples. Zero slab thickness is the one
+ * pose condition, and the family already holds it for every session.
+ */
+export function sphereInversionGlassAdmission(
+  authored: SphereInversionAuthored,
+  construction: Pick<SphereInversionConstruction, "depth" | "generators">,
+  computeAvailable: boolean,
+): SphereInversionGlassAdmission | undefined {
+  if (!sphereInversionAuthorsOptics(authored)) return undefined;
+  if (!computeAvailable) {
+    return {
+      admitted: false,
+      reason: "glass needs WebGPU compute, which is unavailable here",
+    };
+  }
+  const kind = authored.seed?.kind ?? SPHERE_INVERSION_DEFAULTS.seedKind;
+  if (!SPHERE_INVERSION_GLASS_SEED_KINDS.includes(kind)) {
+    return {
+      admitted: false,
+      reason: "glass is available for ball and shell seeds",
+    };
+  }
+  if (construction.depth > SPHERE_INVERSION_GLASS_MAX_DEPTH) {
+    return {
+      admitted: false,
+      reason: `glass is available up to depth ${SPHERE_INVERSION_GLASS_MAX_DEPTH}`,
+    };
+  }
+  if (construction.generators.length > SPHERE_INVERSION_GLASS_MAX_GENERATORS) {
+    return {
+      admitted: false,
+      reason: `glass is available up to ${SPHERE_INVERSION_GLASS_MAX_GENERATORS} generators`,
+    };
+  }
+  return { admitted: true };
 }

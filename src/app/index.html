@@ -629,6 +629,21 @@
               />
             </label>
             <p id="sphereInversionDepthNote" class="flame-note hidden"></p>
+            <label class="select-label">
+              Material
+              <select
+                id="sphereInversionMaterial"
+                aria-describedby="sphereInversionMaterialHint sphereInversionMaterialNote"
+              >
+                <option value="classic">Classic</option>
+                <option value="glass">Glass</option>
+                <option value="__authored" hidden>Authored materials</option>
+              </select>
+            </label>
+            <p id="sphereInversionMaterialHint" class="flame-hint">
+              Material edits restart Surface; Points is unchanged.
+            </p>
+            <p id="sphereInversionMaterialNote" class="flame-note hidden"></p>
           </div>
           <p
             id="sphereInversionNote"

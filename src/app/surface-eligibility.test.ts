@@ -1587,6 +1587,41 @@ describe("the sphere-inversion route", () => {
     );
   }
 
+  const glass = [{ optics: { model: "dielectric" } }];
+
+  it("makes admitted GLASS a compute-only subject in both dimensions: refused without compute, never drawn opaque by the fragment arm", () => {
+    for (const [, block] of bothDimensions) {
+      expect(
+        route({ ...block, depth: 3, materials: glass }, noCompute),
+      ).toEqual({
+        status: "ineligible",
+        note: expect.stringMatching(
+          /^(sphere-inversion glass scenes|native 4D sphere-inversion scenes) render on WebGPU compute/,
+        ),
+        kind: null,
+      });
+    }
+    expect(route({ ...pearls3, materials: glass }, noCompute).note).toBe(
+      "sphere-inversion glass scenes render on WebGPU compute, which is unavailable here",
+    );
+    expect(route({ ...pearls3, materials: glass }, withCompute)).toEqual({
+      status: "eligible",
+      note: null,
+      kind: "sphereInversion",
+    });
+  });
+
+  it("discloses glass the routing will not admit, and the scene keeps its WebGL fallback", () => {
+    const deep = { ...pearls3, depth: 9, materials: glass };
+    const result = route(deep, withCompute);
+    expect(result.status).toBe("degraded");
+    expect(result.note).toBe(
+      "the scene renders opaque: glass is available up to depth 8",
+    );
+    // Refused glass renders opaque, so nothing makes it compute-only.
+    expect(route(deep, noCompute).kind).toBe("sphereInversion");
+  });
+
   it("routes a clean 3D block eligible with no note", () => {
     expect(route(pearls3, withCompute)).toEqual({
       status: "eligible",

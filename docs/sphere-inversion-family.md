@@ -2428,3 +2428,90 @@ fragment arm keeps rendering the family opaque, byte-identical. A glass session
 must therefore exit with the disclosed toast on a compute loss rather than fall
 back, which is a routing rule and lands with the routing admission, since
 nothing routes this backend yet.
+
+### Routing admission and the authoring home (2026-09-23)
+
+THE AUTHORING HOME IS THE HIT ATTRIBUTION. The block gains an optional
+`materials` list (`SphereInversionAuthored.materials`). Entry `g` shades
+generation `g`, the word length the kernels report as the hit's slot, and the
+last entry covers every deeper generation, which is the shade entry's own slot
+clamp; a one-entry list is one material for the whole set. Each entry carries
+the transform system's `finish` and `optics` vocabulary with the same absent
+meanings and resolve-time domains, so a material means one thing on either
+subject. It was chosen over a single block-level field for three reasons.
+The transform system's materials are keyed on the slot a hit reports, and
+this family's slot IS its generation, so one rule decides which material
+shades a hit on either subject. It lifts the dormant-finish question together
+with the glass one. And per-generation glass costs no new wire later. A
+per-seed-member material would be a sibling field, not a reinterpretation.
+
+THE WIRE. Persistence already keeps the block verbatim, so no decoder changed;
+the resolver is the validator. Absent is byte-identical for every document
+predating the field. The list must hold 1 to
+`sphereInversionGenerationSlots(32)` = 35 entries. Unknown keys refuse by
+name at every level (entry, finish, optics), an optics `model` must be a
+`SURFACE_OPTICS_MODELS` id, and every numeric leaf must be finite. Ranges are
+not refused: they belong to the material resolvers, as they do for a
+transform's material. A refused list routes to the panel's Material row with
+its repair.
+
+THE ADMISSION (`surface-optics-backend.ts`'s `sphereInversionGlassAdmission`,
+read by the session door once per start and by the panel's note, so the two
+cannot disagree):
+
+- Seed kinds `ball` and `shell`, the ones the look gate rendered (pearls and
+  lace). The field's soundness never reads the seed kind, but no cut-shell
+  glass panel was ever reviewed, so the cut-shell vaults render opaque with the
+  reason disclosed.
+- Depth up to 8, the band the look gate swept. Deeper is unreviewed and
+  costlier.
+- Up to 30 generators, BY MEASUREMENT. The arrangement is not restricted for
+  the look: the soundness argument never reads it, the signed tests span 3D
+  oct6/cube8/ico12 and 4D cell24/cross8/tess16, and the look is set by seed
+  and depth rather than by which polytope places the mirrors. Its generator
+  count is restricted for the watchdog. On the RX 7900 XTX a single WORKGROUP
+  of 600-cell glass trace (120 generators, shell, depth 2) ran 2.06 s and
+  lost the device at the box's ~2.0 s job cut, and the transport lane cannot
+  dispatch less than one workgroup. Every arrangement up to icosidodec30 (30)
+  kept its worst dispatch under 1.5 s. So the shipped 600-cell presets render
+  opaque with the reason disclosed, and lifting the cap needs a resumable
+  trace for this backend (the finite backend's chunked continuation), not a
+  larger number.
+- Compute: the backend is compute-only in both dimensions, so glass the
+  routing would admit is a compute-only SUBJECT (`sphereInversionComputeOnlySubject`
+  names "sphere-inversion glass scenes"). Without compute the Surface gate
+  refuses the session, and a mid-session loss exits with that phrase's toast.
+  It never falls back to the fragment arm, which would draw the set opaque.
+- The family's existing refusals (tiling, balloon, shape trap, slab) refuse the
+  whole session upstream, and the dormant capabilities are not read by this
+  subject, so neither needs a term here.
+
+Refused glass renders opaque, and the Surface gate's degraded note and the
+Material row both say why in the admission's own words.
+
+4D NEEDS NO POSE ADMISSION, and that is a verdict, not an omission. The object
+is intrinsically 4D and the slice cuts it. The field lifts the displayed point
+through the live rotor/slice on every query exactly as the primary march does,
+and a slice's clearance is at least the 4D clearance. So scrubbing the slice or
+turning the rotor mid-session moves the displayed object and the field
+together; nothing decouples, unlike the closed-solid backend's flat penalty.
+Zero slab thickness is the one pose condition, and the family already holds it
+for every session.
+
+THE PANEL. A Material select (Classic, Glass) sits at the foot of the Sphere
+inversion section. Classic removes `materials` outright, so the block is
+byte-identical to one that never carried it. Glass writes one dielectric entry
+at the resolver defaults. Any other list reads "Authored materials" and is
+kept verbatim. The note beside the row states what glass does and where
+(Surface, compute only, Points opaque) or why it renders opaque. A material
+edit refreshes the gate and restarts a live Surface session, because the
+backend is decided once per session and never re-routed mid-session. Points
+does not regenerate, since it samples the boundary whatever the material.
+Finish authoring on the panel is not offered yet: the wire carries it, and the
+per-transform finishes stay disclosed as dormant.
+
+THE OPTICAL RADIUS is the estimator's origin-centred bounding radius, the ball
+the look gate's transport measured against. The declared crossing scale is
+therefore `R/512`, the shipped relative constant. The look gate measured that
+scale leaving `inside-miss` mass that `R/8192` resolves, so it is the envelope
+work's first question, not a routing one.
