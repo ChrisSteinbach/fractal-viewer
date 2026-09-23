@@ -371,8 +371,9 @@ let surfaceComputeSiJointOffPin = false;
 let surfaceComputeSiShapeOffPin = false;
 /**
  * `?surfacesispec=0` — no SPECULATIVE replay passes in the sphere-inversion
- * transport pool ({@link SURFACE_COMPUTE_TRANSPORT_SPEC_AFTER_CHUNKS}): a
- * pending ray's next pass starts only once the pass before it ends. A
+ * transport pool ({@link SURFACE_COMPUTE_TRANSPORT_SPEC_AHEAD},
+ * {@link SURFACE_COMPUTE_TRANSPORT_SPEC_MIN_OVERLAP}): a pending ray's next
+ * pass starts only once the pass before it ends. A
  * schedule A/B only; no pixel moves. Read per frame, like the trace sink.
  */
 let surfaceComputeSiSpecOffPin = false;
@@ -2284,6 +2285,25 @@ export const SURFACE_COMPUTE_TRANSPORT_POOL_SLOTS = 16384;
  * went pending took a 4D preview 0.57 -> 0.96 s).
  */
 export const SURFACE_COMPUTE_TRANSPORT_SPEC_MIN_OVERLAP = 0.5;
+
+/**
+ * How many replay passes a ray that has GONE PENDING keeps speculated ahead
+ * of its real one (the pool's doc), for rays the prediction did not seed: a
+ * session's first frame at a raster has no prediction. The evidence is the
+ * ray's own pending outcome, not a guess about other rays, so a session that
+ * never goes pending (a 4D starter) never speculates. Pass 0 still runs
+ * alone and the rest side by side: the cost sheet's worst critical path is
+ * 119,747 evaluations in order against 79,021 (at 64 px; 142,712 against
+ * 86,850 at 192 px), and no traced ray ran past pass 3, so one pass ahead
+ * reaches nearly all of it and wastes at most one lane per pending ray.
+ * MEASURED (RX 7900 XTX, pixel-identical): the 3D starter's cold 4-spp
+ * settle 4.8-4.9 -> 4.1-4.3 s; its cold PREVIEW unchanged, because that
+ * frame's tail is the path guard's traces, not pending chains ("Cold frames"
+ * in docs/sphere-inversion-family.md). A PREDICTED ray never chains: past
+ * its known depth the extra lane is pure loss, measured as the warm repeat
+ * 0.82 -> 1.02 s before the exclusion.
+ */
+export const SURFACE_COMPUTE_TRANSPORT_SPEC_AHEAD = 1;
 
 /** Bytes one ray costs in EACH joint-pool sample arena: states 16 + color
  * 4 + layer 4 + transport record 32 (the four per-ray buffers the
@@ -7065,6 +7085,9 @@ export class SurfaceComputeRenderer {
         /** This pool's own record for the next one: per pixel that went
          * pending, the deepest pass it reached. */
         const pendingPixels = new Map<number, number>();
+        /** Rays whose passes the prediction seeded: its depth is their
+         * evidence, so they never chain (SPEC_AHEAD's doc). */
+        const predictedRays = new Set<number>();
         let specLaunched = 0;
         let specPromoted = 0;
         let specKilled = 0;
@@ -7111,6 +7134,7 @@ export class SurfaceComputeRenderer {
               DIELECTRIC_REPLAY_PASSES - 1,
             );
             if (upto < 1) continue;
+            predictedRays.add(ray);
             const specs: number[] = [];
             for (let pass = 1; pass <= upto; pass++) {
               const k = sphereInversionPoolWord(ray, pass, false);
@@ -7288,6 +7312,28 @@ export class SurfaceComputeRenderer {
               } else {
                 queue.push(nextKey);
               }
+              // Keep SPEC_AHEAD passes speculated beyond the real one: the
+              // ray's own pending outcome is the evidence (the constant's
+              // doc), so a cold frame's pending rays run their later passes
+              // side by side too.
+              if (speculate && !predictedRays.has(ray)) {
+                const ahead = specPasses.get(ray) ?? [];
+                const lastPass =
+                  ahead.length > 0 ? ahead[ahead.length - 1] : pass + 1;
+                for (
+                  let p = lastPass + 1;
+                  p <= pass + 1 + SURFACE_COMPUTE_TRANSPORT_SPEC_AHEAD &&
+                  p < DIELECTRIC_REPLAY_PASSES;
+                  p++
+                ) {
+                  const k = sphereInversionPoolWord(ray, p, false);
+                  queue.push(k);
+                  queuedSpec.add(k);
+                  ahead.push(p);
+                  specLaunched++;
+                }
+                if (ahead.length > 0) specPasses.set(ray, ahead);
+              }
               if (other) other.passes = Math.max(other.passes, pass + 2);
               else maxPass = Math.max(maxPass, pass + 1);
             } else if (
@@ -7367,7 +7413,7 @@ export class SurfaceComputeRenderer {
             ? base
             : nextTransportQuantum(quantum, base, workMs, quantumCap);
           tr(
-            `transport pool width=${width} live=${live} queued=${queue.length - queueHead} running=${running} wallMs=${wallMs.toFixed(1)} workMs=${workMs.toFixed(1)} quantum=${chunkQuantum} maxPass=${maxPass} spec=${specLaunched}/${specPromoted}/${specKilled} cost=${transportSizer.cost.interceptUs.toFixed(0)}+n*${transportSizer.cost.marginalUs.toFixed(1)}us`,
+            `transport pool width=${width} wanted=${wanted} live=${live} queued=${queue.length - queueHead} running=${running} wallMs=${wallMs.toFixed(1)} workMs=${workMs.toFixed(1)} quantum=${chunkQuantum} maxPass=${maxPass} spec=${specLaunched}/${specPromoted}/${specKilled} cost=${transportSizer.cost.interceptUs.toFixed(0)}+n*${transportSizer.cost.marginalUs.toFixed(1)}us`,
           );
           transportLastResolved = transportResolved;
           transportLastUnresolved = transportUnresolved;

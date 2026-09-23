@@ -87,6 +87,7 @@ import {
   SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_BYTES,
   surfaceDeKernelWgsl,
 } from "../fractal/surface-de-gpu";
+import { DIELECTRIC_REPLAY_PASSES } from "../fractal/surface-dielectric";
 import { SURFACE_FULL_HIT_FLOOR } from "./surface-material";
 import { surface4FragmentFor } from "./surface-material-4d";
 import { identityRotorPair, rotateInPlane, rotorMatrix } from "./rotor4";
@@ -4976,7 +4977,7 @@ describe("SurfaceComputeRenderer sphere-inversion glass continuation", () => {
       }
     });
 
-    it("never speculates without a prediction, nor across a raster change", async () => {
+    it("never speculates a ray that has not gone pending without a prediction, nor across a raster change", async () => {
       // The 4D starter's shape: long traces, none pending. Every chunk waits
       // for its slowest lane, so speculating them would only slow them.
       const cold = await scripted(
@@ -5004,28 +5005,134 @@ describe("SurfaceComputeRenderer sphere-inversion glass continuation", () => {
       // Primer: ray 0 pending. Frame A: ray 0 completes (the guess was
       // wrong). Frame B: ray 0 pending again, but unspeculated. Frame C:
       // pending again, and speculated.
+      // (Frame B's pending pass 0 still chains its pass 2 ahead of the
+      // real pass 1 — SPEC_AHEAD, the ray's own evidence — so the
+      // prediction is read off pass 1 alone.)
       let frame = "A";
       const { h, measured } = await scripted((k) =>
         k === key(0, 0) ? (frame === "A" ? C : P) : C,
       );
       try {
-        const spec = () =>
-          measured().some((d) => d.rayIds.some((w) => isSpec(w)));
+        const specPass1 = (ds: FiniteHostDispatch[]) =>
+          ds.some((d) =>
+            d.rayIds.some((w) => isSpec(w) && keyOf(w) === key(0, 1)),
+          );
         const at = () => h.dispatches.length;
         await h.renderer.renderFrame(h.spec);
-        expect(spec()).toBe(true); // trusted once
+        expect(specPass1(measured())).toBe(true); // trusted once
         let before = at();
         frame = "B";
         await h.renderer.renderFrame(h.spec);
-        expect(
-          h.dispatches.slice(before).some((d) => d.rayIds.some(isSpec)),
-        ).toBe(false);
+        expect(specPass1(h.dispatches.slice(before))).toBe(false);
         before = at();
         frame = "C";
         await h.renderer.renderFrame(h.spec);
+        expect(specPass1(h.dispatches.slice(before))).toBe(true);
+      } finally {
+        h.renderer.destroy();
+      }
+    });
+
+    it("keeps one pass speculated ahead of a cold ray that went pending", async () => {
+      // No prediction: ray 0 goes pending at passes 0 and 1 and completes
+      // at pass 2. Pass 2 runs speculatively beside the real pass 1, and
+      // pass 3 beside the promoted pass 2, killed unwritten at its end.
+      const { h, measured } = await scripted(
+        (k, n) =>
+          k === key(0, 0)
+            ? n < 3
+              ? R
+              : P
+            : k === key(0, 1)
+              ? n < 3
+                ? R
+                : P
+              : k === key(0, 2)
+                ? n < 8
+                  ? R
+                  : C
+                : k === key(0, 3)
+                  ? R
+                  : C,
+        false,
+      );
+      try {
+        const frame = await h.renderer.renderFrame(h.spec);
+        expect(frame?.transport?.resolved).toBe(3);
+        expect(frame?.transport?.passes).toBe(3);
+        const ds = measured();
+        const pass1 = wordsOf(ds, key(0, 1));
+        const pass2 = wordsOf(ds, key(0, 2));
+        const pass3 = wordsOf(ds, key(0, 3));
+        // Pass 1 is real from the start (nothing predicted it).
+        expect(pass1.some(isSpec)).toBe(false);
+        // Pass 2 starts speculatively beside pass 1, once, and becomes real.
+        expect(pass2.filter(isFresh)).toHaveLength(1);
+        expect(isSpec(pass2[0])).toBe(true);
+        expect(pass2.at(-1)).toBe(key(0, 2));
+        // Pass 3 only ever ran speculatively, and never past pass 2's end.
+        expect(pass3.length).toBeGreaterThan(0);
+        expect(pass3.every(isSpec)).toBe(true);
+        let lastPass2 = -1;
+        ds.forEach((d, i) => {
+          if (d.rayIds.some((w) => keyOf(w) === key(0, 2))) lastPass2 = i;
+        });
         expect(
-          h.dispatches.slice(before).some((d) => d.rayIds.some(isSpec)),
-        ).toBe(true);
+          ds
+            .slice(lastPass2 + 1)
+            .some((d) => d.rayIds.some((w) => keyOf(w) === key(0, 3))),
+        ).toBe(false);
+      } finally {
+        h.renderer.destroy();
+      }
+    });
+
+    it("never chains a ray the prediction seeded", async () => {
+      // Primed: ray 0 predicted to pass 1. It goes pending at pass 0 and
+      // completes at pass 1, so its promoted pass 1 is its last: nothing
+      // runs at pass 2.
+      const { h, measured } = await scripted((k, n) =>
+        k === key(0, 0)
+          ? n < 3
+            ? R
+            : P
+          : k === key(0, 1)
+            ? n < 6
+              ? R
+              : C
+            : C,
+      );
+      try {
+        const frame = await h.renderer.renderFrame(h.spec);
+        expect(frame?.transport?.passes).toBe(2);
+        expect(wordsOf(measured(), key(0, 2))).toHaveLength(0);
+      } finally {
+        h.renderer.destroy();
+      }
+    });
+
+    it("never chains past the last replay pass", async () => {
+      const { h, measured } = await scripted(
+        (k) =>
+          (k >>> SPHERE_INVERSION_POOL_RAY_BITS) + 1 <
+            DIELECTRIC_REPLAY_PASSES &&
+          (k & SPHERE_INVERSION_POOL_RAY_MASK) === 0
+            ? P
+            : C,
+        false,
+      );
+      try {
+        const frame = await h.renderer.renderFrame(h.spec);
+        expect(frame?.transport?.passes).toBe(DIELECTRIC_REPLAY_PASSES);
+        const passes = measured()
+          .flatMap((d) => d.rayIds)
+          .filter((w) => (w & SPHERE_INVERSION_POOL_RAY_MASK) === 0)
+          .map(
+            (w) =>
+              (keyOf(w) >>> SPHERE_INVERSION_POOL_RAY_BITS) &
+              SPHERE_INVERSION_POOL_PASS_MASK,
+          );
+        expect(Math.max(...passes)).toBe(DIELECTRIC_REPLAY_PASSES - 1);
       } finally {
         h.renderer.destroy();
       }
