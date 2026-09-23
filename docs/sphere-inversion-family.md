@@ -3129,7 +3129,7 @@ records) become per-sample ARENAS, `sphereInversionJointStride` rays each
 (rounded to 64 rays, so every 4-byte sub-range starts on a 256-byte binding
 offset). Each sample's march, shade and seed bind its own sub-range, sample
 0's at offset 0, so every single-sample path binds exactly what it did. The
-pool word's 28-bit ray field carries the GLOBAL ray, `sample · stride +
+pool word's 27-bit ray field carries the GLOBAL ray, `sample · stride +
 pixel`. In the kernel, the batch header's first pad word (offset 20,
 `sampleStride`, 0 = today's single pool) gives the pixel. The sample's
 sub-pixel offset rides a 64-entry tail appended to the optics lane buffer,
@@ -3280,3 +3280,96 @@ pass is therefore the lever left for the preview. It needs a kernel change:
 a later pass can finish in the same chunk as its predecessor (the quantum
 grows between chunks), so a speculative trace must write to its own slot's
 side region, never the ray's pixel, until the host promotes it.
+
+### Speculative replay passes (2026-09-23)
+
+The critical-path evidence above says a pending ray's passes cost their sum
+in order and their maximum side by side. This change runs them side by
+side, for the rays predicted to need them, without moving a pixel.
+
+THE KERNEL HALF is in the transport entry only
+(`finite-transport-work.ts`'s `SPHERE_INVERSION_POOL_SPEC_BIT`; the ray field
+gives up one bit, 27 bits holding 134M rays). A SPECULATIVE slot traces its
+pass exactly as a real one would but never writes the ray's pixel, layer or
+record: a finished one stores radiance, residual and status/failure/reason
+(the spare header word, flagged `SPHERE_INVERSION_SPEC_STORED`) in its own
+continuation slot. Re-dispatched with the bit clear, a finished slot COMMITS
+the stored result through the same output lines; a running one simply
+writes when it finishes. A resumed speculative slot that finds the ray's
+record already final stops quietly, where a real one would reject, since it
+can read its predecessor's final write within the same dispatch. The finite
+kernels' text is untouched (the digest pins it).
+
+THE HOST HALF (`surface-compute.ts`'s pool) HOLDS every finished speculative
+trace until its predecessor's outcome: pending promotes it (a finished one
+commits next dispatch, a running one continues unflagged); anything final
+kills it unwritten, parking a running slot on the ray-field sentinel the
+kernel's bounds guard refuses without touching a ray. A pass's arithmetic is
+its own, so the ray ends exactly as in order.
+
+A PREMISE THE REAL DRIVER REFUTED. The first design had no hold: a later
+pass processes a superset of its predecessor's paths in the same order, so
+it seemed it could finish no sooner, and an invariant check guarded that.
+It fired on the RX 7900 XTX's first frame. Only a SUCCESS needs the whole
+superset; a later pass can FAIL first (its stack fills sooner, or a path
+only it keeps is refused). Storing instead of writing was already what made
+any finishing order safe, so the hold replaced the check.
+
+WHICH RAYS: THREE POLICIES MEASURED. Every chunk waits for its slowest lane,
+so a speculated lane slows every real ray it runs beside, and the policy is
+the whole question (RX 7900 XTX, depth-curve and envelope rows):
+
+- Speculate any ray still running two chunks after the queue drains: the 3D
+  preview repeat 1.96 → 1.25 s, but the 4D preview 0.57 → 0.91 s. No 4D
+  starter trace ever goes pending, so every speculated lane was pure loss.
+  Refuted.
+- The same, capped at the 64 longest runners until a pending trace is seen:
+  the 4D preview still 0.96 s. It also found a second cost: queued
+  speculative entries read as width-limiting work and pinned the pool's
+  quantum at the base through the tail (fixed: only real queued rays count
+  now). Refuted.
+- Gated on a pending trace seen this frame or last: 4D restored, but a cold
+  3D depth-2 frame slowed 0.63 → 0.84 s. A frame's first pending trace comes
+  late and says nothing about which other rays will be pending. Refuted.
+
+SHIPPED: THE PREDICTION. Each pool records, per pixel that went pending, the
+deepest pass it reached. The next pool AT THE SAME RASTER queues each
+predicted ray's later passes right beside its pass 0, so they run together
+from the start. A budget-truncated pool records too, merged into the last
+record. And the prediction must keep coming true: the next pool speculates
+only if at least half the last prediction's pixels went pending again
+(`SURFACE_COMPUTE_TRANSPORT_SPEC_MIN_OVERLAP`). A first record is trusted
+once, so a steady view speculates, a moving one switches itself off, and a
+session that never goes pending (4D) never speculates. Pixels are keyed
+modulo the joint stride, so a joint pool reads and writes the same record.
+`?surfacesispec=0` / `--surface-si-spec-off=1` is the A/B.
+
+MEASURED, the A/B on one build back to back. UNCERTIFIED: the quiet check
+read NO both times (the owner's Firefox at 76–79 ms/s, as in the
+exact-normal A/B, whose taps arm came within 1% of the quiet record).
+
+| Line (GPU envelope)                   | glassPearls (3D) spec off → on | glassPearls4 (4D) off → on |
+| ------------------------------------- | ------------------------------ | -------------------------- |
+| Preview 256×144, first frame (cold)   | 1.97 → 2.01 s (budget)         | 0.58 → 0.57 s              |
+| Preview repeat, same raster (warm)    | 1.93 → **0.84 s**              | 0.59 → 0.60 s              |
+| Settle 512×288 4-spp                  | 4.90 → 4.84 s                  | 1.84 → 1.87 s              |
+| Depth curve D3 (a fresh session each) | 1.85 → 1.87 s                  | 0.56 → 0.60 s              |
+| Pixels differing, on against off      | 0 (repeat, settle)             | 0                          |
+
+The warm repeat's pixels are the in-order repeat's exactly (0 differing),
+its census unchanged, and both settles still match the original record. The
+cold rows are unchanged: a first frame at a raster has no prediction. The
+glass app gate (`--samples=2`, same load) passes on this build with the
+joint pool and the prediction together: the link reload and the tiled export
+are byte-identical (max 0), censuses as before, the pane settles 9.4 s (3D)
+and 5.0 s (4D).
+
+WHERE THE 3D PREVIEW STANDS. Every preview after a session's first, at a
+steady raster, now lands inside the 1 s line (0.84 s). The first preview
+still takes ~2 s, truncated at its budget, because nothing predicts a cold
+frame's pending rays yet. The app previews one pose many times, but the
+preview governor's rung sets the raster, and a rung change clears the
+prediction for one frame. Carrying a prediction across rasters (scaling
+pixel coordinates) and across small pose changes is the lever left for the
+cold frame, together with the floor shadow (~15%) and the exact normal (an
+owner look decision).

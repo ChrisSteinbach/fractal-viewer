@@ -697,7 +697,10 @@ Record: "The joint pool closes the 3D settle" in the same doc.
 `--surface-si-shape-off=1` builds the renderers without the session-shaped
 estimator (`?surfacesishape=0`: private arrays at the registry maxima, table
 from its storage binding), that change's codegen A/B. Record: "The glass tail
-is latency" in the same doc.
+is latency" in the same doc. `--surface-si-spec-off=1` never speculates a
+replay pass (`?surfacesispec=0`), that schedule's A/B; the rows to read are
+the preview REPEAT (the first preview at a raster has no prediction). Record:
+"Speculative replay passes" in the same doc.
 
 ## Mutation-testing the f32 twins
 
