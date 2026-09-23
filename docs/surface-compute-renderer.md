@@ -2026,6 +2026,38 @@ The Firefox staging note: a 50k-ray dispatch stages a 200 KB active-list
 write, under the 1 MiB group close, whose own rule sends a dispatch whose
 write passes the ceiling out alone.
 
+### The transport lane's own ceiling and ladder (2026-09-23)
+
+The optical transport's `transportRays` lane had borrowed the shade sizer
+whole, including two things that were wrong for it. Both surfaced on the
+sphere-inversion glass backend on the RX 7900 XTX.
+
+- **Its capacity started at the maximum.** An empty model asks for everything,
+  so the lane's first "pilot" was a 4,096-ray dispatch. On the 600-cell glass
+  subject that one submission ran 2.05 s and lost the device. The lane now
+  starts at one workgroup, like the shade lane, and climbs the same
+  `nextShadeBatchSize` ladder. A queue-limited batch may shrink the capacity
+  but never grow it.
+- **Its predicted-total ceiling was the shade lane's 2,000 ms**, which was
+  placed against the i915's ~7.5 s watchdog. The AMD box cuts one submission
+  at ~2.0 s, the ceiling's own value, and a transport ray's cost is its whole
+  optical trace, heavy-tailed by orders of magnitude. Measured at that
+  ceiling, the worst glass dispatches were 848 ms (oct6 D3), 1,436 ms
+  (icosidodec30 D3), 1,456 ms (cell24 D2) and 1,847 ms (tess16 D2), each a
+  ~3,500-ray batch the sizer grew into. `SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS`
+  is 500 ms. After the change the worst dispatches read 813 ms (oct6) and
+  1,169 ms (tess16): the tail still overshoots the prediction, but it lands
+  well inside the cut.
+
+What neither change can fix: a single WORKGROUP whose trace outruns the
+watchdog. 600-cell glass at depth 2 still ran 2.06 s at a one-workgroup batch
+and lost the device, so the routing refuses glass past 30 generators
+(`docs/sphere-inversion-family.md`) until the backend has a resumable trace.
+
+The finite backend's CHUNKED transport keeps its old shape exactly. Each of its
+submissions is bounded by the chunk, and its model prices the whole
+multi-submission batch, which a per-submission ceiling must not judge.
+
 ### A band is bit-exact
 
 The band used to be a `camera.setViewOffset` SUB-FRUSTUM, and its rays

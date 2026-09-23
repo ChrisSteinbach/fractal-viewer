@@ -13,6 +13,8 @@ import {
   nextStepsPerPass,
   resampleSurfacePixels,
   shadeHitBatchSize,
+  SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS,
+  transportBatchSize,
   shadeHitAllowanceUs,
   shadeHitBudgetUs,
   SURFACE_COMPUTE_MARCH_CHUNK_MIN,
@@ -4355,5 +4357,42 @@ describe("nextShadeHitCost over a fence group", () => {
     expect(nextShadeHitCost(before, 512, 300_000, 1)).toEqual(
       nextShadeHitCost(before, 512, 300_000),
     );
+  });
+});
+
+describe("transportBatchSize", () => {
+  it("holds a transport dispatch's predicted total under its own ceiling, far below the shade lane's", () => {
+    // A heavy transport shape: 400 ms fixed, 400 us a ray. The shade
+    // ceiling lets the batch grow until the prediction reaches 2 s — the
+    // AMD box's measured job cut, which a heavy-tailed transport batch
+    // overshoots (tess16 glass landed 1.85 s, the 600-cell lost the
+    // device). The transport lane stops at its own 500 ms.
+    const cost = { interceptUs: 400_000, marginalUs: 400 };
+    expect(shadeHitBatchSize(cost, SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH)).toBe(
+      4000,
+    );
+    const batch = transportBatchSize(cost, SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH);
+    expect(batch).toBe(250);
+    expect(cost.interceptUs + batch * cost.marginalUs).toBeLessThanOrEqual(
+      SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS * 1000,
+    );
+  });
+
+  it("never asks for more than the shade sizer would, so a light lane is unchanged", () => {
+    const light = { interceptUs: 2_000, marginalUs: 5 };
+    expect(transportBatchSize(light, SURFACE_COMPUTE_SHADE_HIT_CAP_START)).toBe(
+      shadeHitBatchSize(light, SURFACE_COMPUTE_SHADE_HIT_CAP_START),
+    );
+  });
+
+  it("floors at one workgroup even when the fixed cost alone passes the ceiling", () => {
+    // Below a workgroup buys no watchdog safety (shadeHitBatchSize's doc);
+    // a single workgroup that outruns the watchdog needs a resumable trace.
+    expect(
+      transportBatchSize(
+        { interceptUs: 900_000, marginalUs: 500 },
+        SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH,
+      ),
+    ).toBe(SURFACE_COMPUTE_WORKGROUP_SIZE);
   });
 });

@@ -2131,6 +2131,45 @@ export function shadeHitBatchSize(cost: ShadeHitCost, cap: number): number {
 }
 
 /**
+ * The TRANSPORT lane's predicted-total ceiling (ms) on one dispatch, far
+ * below the shade lane's {@link SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS}.
+ *
+ * The shade ceiling was placed against the i915's ~7.5 s preemption
+ * watchdog, but the AMD box cuts ONE submission at ~2.0 s — the ceiling's
+ * own value — so a lane whose cost is heavy-tailed can land a batch past
+ * the cut on a prediction the ceiling allowed. The transport lane is that
+ * lane: a ray's cost is its whole optical trace, which varies by orders of
+ * magnitude between rays that exit at once and rays that ride a near-kissing
+ * cusp. Measured on the RX 7900 XTX (2026-09-23), sphere-inversion glass
+ * at the shade ceiling: the worst transport dispatches read 848 ms (oct6
+ * pearls D3), 1436 ms (icosidodec30 D3), 1456 ms (cell24 D2) and 1847 ms
+ * (tess16 D2) — each a ~3,500-ray batch the sizer grew into — and the
+ * 600-cell shell at D2 lost the device (`VK_ERROR_DEVICE_LOST`).
+ *
+ * 500 ms is a quarter of the tightest measured cut. What it costs is more
+ * submissions on the light end, where a batch was already far under it;
+ * what it cannot fix is a single WORKGROUP whose trace alone outruns the
+ * watchdog — only a resumable continuation (the finite backend's chunked
+ * transport) bounds that, and the floor below stays one workgroup.
+ */
+export const SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS = 500;
+
+/** {@link shadeHitBatchSize} for the transport lane: the same model and
+ * floor, with the predicted total held under
+ * {@link SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS}. Pure, tested. */
+export function transportBatchSize(cost: ShadeHitCost, cap: number): number {
+  const room =
+    SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS * 1000 - cost.interceptUs;
+  const byCeiling = Math.floor(
+    Math.max(0, room) / Math.max(1, cost.marginalUs),
+  );
+  return Math.max(
+    SURFACE_COMPUTE_WORKGROUP_SIZE,
+    Math.min(shadeHitBatchSize(cost, cap), byCeiling),
+  );
+}
+
+/**
  * Fold one measured hit dispatch into the cost model.
  *
  * One observation, two unknowns — so the surprise (measured minus
@@ -6254,11 +6293,22 @@ export class SurfaceComputeRenderer {
       };
       // Its OWN two-term model: a transport ray's cost is nothing like a
       // shade hit's, and sharing a sizer would let the two lanes' shapes
-      // fight. Starts zeroed like the shade sizer does — the first batch
-      // is the model's pilot.
+      // fight. Starts zeroed like the shade sizer does, and — like it — at
+      // ONE WORKGROUP of capacity, climbing the shade lane's own ladder
+      // against the transport ceiling: an empty model asks for everything,
+      // so a cap started at the maximum made the "pilot" a 4,096-ray
+      // dispatch, which on the 600-cell glass subject ran 2.05 s and lost
+      // the device on its first submission (AMD, 2026-09-23). The FINITE
+      // backend's chunked transport keeps its own shape unchanged: each of
+      // its submissions is bounded by the chunk, and its model prices the
+      // whole multi-submission batch, which no per-submission ceiling may
+      // judge.
+      const chunkedTransport = this.finiteTransportChunkPaths > 0;
       const transportSizer: ShadeSizerState = {
         cost: initialShadeHitCost(),
-        cap: SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH,
+        cap: chunkedTransport
+          ? SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH
+          : SURFACE_COMPUTE_SHADE_HIT_CAP_START,
       };
       let pending = transportQueue;
       let transportPass = 0;
@@ -6295,8 +6345,11 @@ export class SurfaceComputeRenderer {
             tr("budget truncated (transport batch)");
             break transportLane;
           }
+          const wanted = chunkedTransport
+            ? shadeHitBatchSize(transportSizer.cost, transportSizer.cap)
+            : transportBatchSize(transportSizer.cost, transportSizer.cap);
           const batch = Math.min(
-            shadeHitBatchSize(transportSizer.cost, transportSizer.cap),
+            wanted,
             pending.length - offset,
             maxDispatchRays,
           );
@@ -6403,6 +6456,20 @@ export class SurfaceComputeRenderer {
                 slice.length,
                 batchWorkMs * 1000,
               );
+              // The capacity ladder, judged against the transport ceiling.
+              // A queue-limited batch may shrink it but never grow it (the
+              // shade lane's probe-width rule).
+              if (!chunkedTransport) {
+                const grown = nextShadeBatchSize(
+                  transportSizer.cap,
+                  batchWorkMs,
+                  SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS,
+                );
+                transportSizer.cap =
+                  slice.length < wanted
+                    ? Math.min(transportSizer.cap, grown)
+                    : grown;
+              }
             }
             tr(
               `transport pass=${transportPass} batch=${slice.length} wallMs=${wallMs.toFixed(1)} workMs=${workMs.toFixed(1)} cost=${transportSizer.cost.interceptUs.toFixed(0)}+n*${transportSizer.cost.marginalUs.toFixed(1)}us` +
