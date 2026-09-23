@@ -13125,6 +13125,7 @@ async function main(): Promise<void> {
       siTransportChunk: pin("surfacesichunk"),
       siExactNormal: params.get("surfacesinormal") === "exact",
       siJointOff: params.get("surfacesijoint") === "0",
+      siShapeOff: params.get("surfacesishape") === "0",
       timestamps:
         params.get("surfacets") === null
           ? null

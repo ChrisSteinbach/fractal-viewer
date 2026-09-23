@@ -294,6 +294,77 @@ describe("sphereInversionWgslSource", () => {
     );
   });
 
+  it("sizes the private arrays and the fold bound to one construction only when a shape is given", () => {
+    for (const dim of [3, 4] as const) {
+      for (const signed of [false, true]) {
+        const plain = sphereInversionWgslSource(dim, signed);
+        expect(sphereInversionWgslSource(dim, signed, false, undefined)).toBe(
+          plain,
+        );
+        expect(plain).toContain("var foldR: array<f32, 32>;");
+        expect(plain).toContain("var gd: array<f32, 120>;");
+        const shaped = sphereInversionWgslSource(dim, signed, false, {
+          generators: 6,
+          depth: 3,
+        });
+        expect(shaped).toContain("var foldR: array<f32, 3>;");
+        expect(shaped).toContain("var foldR2: array<f32, 3>;");
+        expect(shaped).toContain("var gd: array<f32, 6>;");
+        expect(shaped).toContain("for (var it = 0u; it <= 3u; it++) {");
+        // Only the declarations and the structural bound move.
+        const strip = (src: string) =>
+          src
+            .replace(/array<f32, \d+>/g, "array<f32, N>")
+            .replace(/it <= \d+u/g, "it <= Nu")
+            .replace(/budget D <= \d+/g, "budget D <= N");
+        expect(strip(shaped)).toBe(strip(plain));
+      }
+      const recorded = sphereInversionWgslSource(dim, true, true, {
+        generators: 6,
+        depth: 3,
+      });
+      expect(recorded).toContain("var<private> siFoldGen: array<u32, 3>;");
+    }
+  });
+
+  it("gives a depth-0 construction a one-slot fold array, and refuses a shape past the registry", () => {
+    expect(
+      sphereInversionWgslSource(3, true, false, { generators: 4, depth: 0 }),
+    ).toContain("var foldR: array<f32, 1>;");
+    for (const shape of [
+      { generators: 0, depth: 3 },
+      { generators: 121, depth: 3 },
+      { generators: 6, depth: -1 },
+      { generators: 6, depth: 33 },
+      { generators: 6.5, depth: 3 },
+    ]) {
+      expect(() => sphereInversionWgslSource(3, true, false, shape)).toThrow(
+        RangeError,
+      );
+    }
+  });
+
+  it("reads the table from a workgroup copy only when asked, through the same two accessors", () => {
+    for (const dim of [3, 4] as const) {
+      const shape = { generators: 6, depth: 3 };
+      const storage = sphereInversionWgslSource(dim, true, false, shape);
+      expect(storage).not.toContain("siTableWg");
+      const wg = sphereInversionWgslSource(dim, true, false, shape, {
+        vec4s: 43,
+        stride: 64,
+      });
+      expect(wg).toContain("var<workgroup> siTableWg: array<vec4f, 43>;");
+      expect(wg).toContain(
+        "for (var e = li; e < 43u; e += 64u) {\n    siTableWg[e] = siTable[e];\n  }\n  workgroupBarrier();",
+      );
+      expect(wg).toContain(
+        dim === 3 ? "return siTableWg[i].xyz;" : "return siTableWg[2u * i];",
+      );
+      // Past the copy, nothing reads the binding.
+      expect(wg.split("siTable[").length - 1).toBe(1);
+    }
+  });
+
   it("emits the shipped body byte for byte unless the signed half is asked for", () => {
     for (const dim of [3, 4] as const) {
       const plain = sphereInversionWgslSource(dim);

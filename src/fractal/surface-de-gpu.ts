@@ -73,7 +73,10 @@ import {
   SPHERE_INVERSION_GPU_SLACK,
   sphereInversionWgslSource,
 } from "./surface-sphere-inversion-gpu";
-import type { SphereInversionGpuTables } from "./surface-sphere-inversion-gpu";
+import type {
+  SphereInversionGpuTables,
+  SphereInversionWgslShape,
+} from "./surface-sphere-inversion-gpu";
 import {
   SPHERE_INVERSION_STEP_SCALE,
   sphereInversionGenerationSlots,
@@ -2059,6 +2062,19 @@ export interface SurfaceGpuKernelOptions {
    * (`docs/sphere-inversion-family.md`, "The exact normal"). Requires
    * `opticsBackend: "sphereInversion"`; absent/false is byte-identical. */
   sphereInversionExactNormal?: boolean;
+  /** The sphere-inversion cores' ONE construction (`sphereInv`/
+   * `sphereInv4` only): its generator count and fold depth size the
+   * estimator's per-evaluation private arrays and the fold's structural
+   * loop bound (`sphereInversionWgslSource`'s `shape`) instead of the
+   * registry maxima. The arithmetic is unchanged; the kernel must be run
+   * only against that construction's table. Absent is byte-identical. */
+  sphereInversionShape?: SphereInversionWgslShape;
+  /** The sphere-inversion cores' table in WORKGROUP memory: its vec4
+   * count, the construction's whole table (`sphereInversionWgslSource`'s
+   * `workgroupTable`). Every entry of the module copies it first, then
+   * reads it from there. Requires `sphereInversionShape` (the same frozen
+   * construction). Absent is byte-identical. */
+  sphereInversionWorkgroupTable?: number;
   /** The finite-solid construction wire (`core: "finite"` / `"finite4"`
    * and `opticsBackend: "finiteSolid"`): the authored level 0..2 of the
    * admitted document (`analyzeFiniteSolidSystem`'s verdict — the gate
@@ -5420,6 +5436,18 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
     throw new Error(
       'surface-de-gpu: sphereInversionExactNormal requires opticsBackend "sphereInversion"',
     );
+  if (
+    (opts.sphereInversionShape || opts.sphereInversionWorkgroupTable) &&
+    core !== "sphereInv" &&
+    core !== "sphereInv4"
+  )
+    throw new Error(
+      "surface-de-gpu: sphereInversionShape/WorkgroupTable are sphere-inversion core options",
+    );
+  if (opts.sphereInversionWorkgroupTable && !opts.sphereInversionShape)
+    throw new Error(
+      "surface-de-gpu: sphereInversionWorkgroupTable requires sphereInversionShape",
+    );
   const material = finish || pattern;
   // The hit-info constructor's pattern member: WGSL value constructors
   // are all-or-none, so under the pattern gate every core's full-member
@@ -8534,7 +8562,7 @@ fn surfaceDEHitInfo(pIn: vec3f, li: u32) -> SurfaceHitInfo {
   return info;
 }`;
   const siDescentText = siCore
-    ? /* wgsl */ `${sphereInversionWgslSource(core4 ? 4 : 3, opticsBackend === "sphereInversion", siExactNormal)}
+    ? /* wgsl */ `${sphereInversionWgslSource(core4 ? 4 : 3, opticsBackend === "sphereInversion", siExactNormal, opts.sphereInversionShape, opts.sphereInversionWorkgroupTable ? { vec4s: opts.sphereInversionWorkgroupTable, stride: workgroupSize } : undefined)}
 ${
   core === "sphereInv4"
     ? `
@@ -10504,7 +10532,7 @@ ${
 fn transportRays(
   @builtin(global_invocation_id) gid: vec3u,
   @builtin(local_invocation_index) li: u32,
-) {
+) {${siCore && opts.sphereInversionWorkgroupTable ? "\n  siLoadTable(li);" : ""}
   let slotI = gid.x;
   if (slotI >= params.itemCount) {
     return;
@@ -10854,7 +10882,7 @@ ${
 fn evalQueries(
   @builtin(global_invocation_id) gid: vec3u,
   @builtin(local_invocation_index) li: u32,
-) {
+) {${siCore && opts.sphereInversionWorkgroupTable ? "\n  siLoadTable(li);" : ""}
   let i = gid.x;
   if (i >= params.itemCount) {
     return;
@@ -10887,7 +10915,7 @@ ${
 fn marchRays(
   @builtin(global_invocation_id) gid: vec3u,
   @builtin(local_invocation_index) li: u32,
-) {
+) {${siCore && opts.sphereInversionWorkgroupTable ? "\n  siLoadTable(li);" : ""}
   let slotI = gid.x;
   if (slotI >= params.itemCount) {
     return;
@@ -11149,7 +11177,7 @@ fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> GroundPlaneShad
 fn shadeRays(
   @builtin(global_invocation_id) gid: vec3u,
   @builtin(local_invocation_index) li: u32,
-) {
+) {${siCore && opts.sphereInversionWorkgroupTable ? "\n  siLoadTable(li);" : ""}
   let slotI = gid.x;
   if (slotI >= params.itemCount) {
     return;
@@ -11423,7 +11451,7 @@ fn cinematicFinite(color: vec3f) -> vec3f {
 fn shadeRays(
   @builtin(global_invocation_id) gid: vec3u,
   @builtin(local_invocation_index) li: u32,
-) {
+) {${siCore && opts.sphereInversionWorkgroupTable ? "\n  siLoadTable(li);" : ""}
   let slotI = gid.x;
   if (slotI >= params.itemCount) { return; }
   let ray = activeList[slotI];

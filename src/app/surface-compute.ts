@@ -360,6 +360,14 @@ let surfaceComputeSiExactNormalPin = false;
  * only; no pixel moves either way. Read per frame, like the trace sink.
  */
 let surfaceComputeSiJointOffPin = false;
+/**
+ * `?surfacesishape=0` — the session-shaped estimator OFF: sphere-inversion
+ * kernels keep the estimator's private arrays at the registry maxima and
+ * read the table from its storage binding (`surface-de-gpu.ts`'s
+ * `sphereInversionShape` and `sphereInversionWorkgroupTable`), for a
+ * session created while it is set. A codegen A/B only; no pixel moves.
+ */
+let surfaceComputeSiShapeOffPin = false;
 
 function positivePin(value: number | null | undefined): number | null {
   return value !== null &&
@@ -381,6 +389,7 @@ export function setSurfaceComputeSchedulePins(pins: {
   siTransportChunk?: number | null;
   siExactNormal?: boolean | null;
   siJointOff?: boolean | null;
+  siShapeOff?: boolean | null;
 }): void {
   surfaceComputeTimestampsPin = pins.timestamps ?? null;
   surfaceComputeFenceGroupPin = positivePin(pins.fenceGroup);
@@ -390,6 +399,7 @@ export function setSurfaceComputeSchedulePins(pins: {
   surfaceComputeSiTransportChunkPin = positivePin(pins.siTransportChunk);
   surfaceComputeSiExactNormalPin = pins.siExactNormal === true;
   surfaceComputeSiJointOffPin = pins.siJointOff === true;
+  surfaceComputeSiShapeOffPin = pins.siShapeOff === true;
 }
 
 /** Threads per workgroup — the kernel spike's measured winner (private
@@ -2276,6 +2286,18 @@ export const SURFACE_COMPUTE_JOINT_RAY_BYTES = 16 + 4 + 4 + 32;
  */
 export const SURFACE_COMPUTE_JOINT_ARENA_BYTES = 64 * 1024 * 1024;
 
+/**
+ * The largest sphere-inversion table a session reads from WORKGROUP memory
+ * (`surface-de-gpu.ts`'s `sphereInversionWorkgroupTable`): 256 vec4, 4 KB,
+ * and never past the device's `maxComputeWorkgroupStorageSize` (the
+ * session requests the default 16 KB). Each workgroup holds a copy for its
+ * lifetime, so a large table would cost the dense phase occupancy, which
+ * is measured only at the two glass starters' tables (43 vec4, 3D oct6;
+ * 146 vec4, 4D cross8). Past the ceiling (a 24-cell's 1,250, the
+ * 600-cell's thousands) the storage binding serves as before.
+ */
+export const SURFACE_COMPUTE_SI_WORKGROUP_TABLE_MAX_VEC4 = 256;
+
 /** The joint pool's arena bytes, all samples together, for a supersampled
  * glass frame of `rays` at `samples` — or 0 where the frame keeps one pool
  * per sample by the size rules: the ceiling above, the device's binding
@@ -3435,6 +3457,30 @@ export class SurfaceComputeRenderer {
             : {}),
           ...(mode === "shade" && siChunkPaths > 0
             ? { sphereInversionTransportChunkPaths: siChunkPaths }
+            : {}),
+          // THE SESSION-SHAPED ESTIMATOR: the sphere-inversion cores size
+          // their per-evaluation private arrays to this session's frozen
+          // construction, and read a small table from workgroup memory
+          // (the two kernel options' docs). `?surfacesishape=0` keeps the
+          // registry maxima and the storage binding.
+          ...(isSphereInversionTarget(target) && !surfaceComputeSiShapeOffPin
+            ? {
+                sphereInversionShape: {
+                  generators: sphereInversionGpuTablesFor(target.de)
+                    .generatorCount,
+                  depth: sphereInversionGpuTablesFor(target.de).depth,
+                },
+                ...(sphereInversionGpuTablesFor(target.de).data.length / 4 <=
+                Math.min(
+                  SURFACE_COMPUTE_SI_WORKGROUP_TABLE_MAX_VEC4,
+                  Math.floor(device.limits.maxComputeWorkgroupStorageSize / 16),
+                )
+                  ? {
+                      sphereInversionWorkgroupTable:
+                        sphereInversionGpuTablesFor(target.de).data.length / 4,
+                    }
+                  : {}),
+              }
             : {}),
           ...(mode === "shade" &&
           sphereInversionExactNormal &&
