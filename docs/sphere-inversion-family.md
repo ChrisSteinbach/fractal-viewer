@@ -2702,6 +2702,30 @@ The same gate at four passes settled at ~17 s a pass. The gate's single-pass
 settle figure moves by more than the quantum does, so treat it as
 observational.
 
+THE QUANTUM, SWEPT (starters at 960×540, one pass, same card; settle time
+from Glass selection to the latch):
+
+| Quantum           |     4 |    8 |   16 |   32 |   64 |  128 |  256 | 100,000 (never pauses) |
+| ----------------- | ----: | ---: | ---: | ---: | ---: | ---: | ---: | ---------------------: |
+| glassPearls (3D)  | 118 s | 75 s | 53 s | 36 s | 36 s | 36 s |    — |   126–130 s (two runs) |
+| glassPearls4 (4D) |  68 s | 42 s | 31 s | 18 s | 21 s | 19 s | 18 s |                   18 s |
+
+Two forces meet at 32. Below it, each submission's fixed cost dominates: the
+counter readback's round trip is about 4 ms, and at quantum 4 the 3D starter
+makes 23,863 submissions. Above it, the 3D starter gets no faster while every
+submission's worst case grows: 0.56 s for the 600-cell at 32, and presumably
+about twice that at 64, closer to the 2.0 s job cut. The never-pausing
+column is the finding the continuation was not built for. In 3D the chunked
+lane is 3.5× FASTER than the uninterrupted one. Judged per worst chunk, a
+32-path lane widens its batches to 4,096 rays. An uninterrupted lane's
+submissions run ~900 ms, over the 500 ms transport ceiling, so the ladder
+keeps its batches narrow and the card idles. In 4D the traces are short and
+the two lanes tie. At quantum 32 that fixed cost is still about a third of
+the 3D settle (3,127 submissions × ~4 ms of a 36 s settle). Queueing several
+chunks per readback would recover it only by giving up the per-chunk timing
+the ladder's safety rests on, so it is left as the transport-cost work's
+decision, not taken here.
+
 The chunked kernel is pinned on the GPU by the sphere-inversion bench's glass
 chunk leg (`docs/gpu-bench-surface.md`): each row renders one small glass
 frame through the production renderer at quantum 0, 1 and 32, and all three
