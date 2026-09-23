@@ -2,6 +2,8 @@ import { resolveSphereInversion } from "./sphere-inversion";
 import { DIELECTRIC_MAX_STACK } from "./surface-dielectric";
 import {
   FINITE_TRANSPORT_BUFFER_HEADER_BYTES,
+  SPHERE_INVERSION_JOINT_SAMPLES_MAX,
+  SPHERE_INVERSION_JOINT_STRIDE_OFFSET,
   FINITE_TRANSPORT_WORK_HEADER_BYTES,
   TRANSPORT_PATH_BYTES,
   transportWorkSlotBytes,
@@ -667,8 +669,32 @@ describe("the sphere-inversion glass continuation (sphereInversionTransportChunk
     expect(layout("SiTransportBatch").offsets.slots).toBe(
       FINITE_TRANSPORT_BUFFER_HEADER_BYTES,
     );
+    expect(layout("SiTransportBatch").offsets.sampleStride).toBe(
+      SPHERE_INVERSION_JOINT_STRIDE_OFFSET,
+    );
     const work = layout("SiTransportWork");
     expect(work.offsets.stack).toBe(FINITE_TRANSPORT_WORK_HEADER_BYTES);
     expect(work.size).toBe(transportWorkSlotBytes(TRANSPORT_PATH_BYTES));
+  });
+
+  it("reads the joint pool's pixel and sub-pixel offset off the global ray, in both cores", () => {
+    for (const core of ["sphereInv", "sphereInv4"] as const) {
+      const src = surfaceDeKernelWgsl(
+        glass(core, { sphereInversionTransportChunkPaths: 32 }),
+      );
+      expect(src).toContain("let sampleStride = siWork.sampleStride;");
+      expect(src).toContain("pixelRay = ray % sampleStride;");
+      expect(src).toContain(
+        `sub = opticsMaps[arrayLength(&opticsMaps) - jitterCount + sampleI].xy;`,
+      );
+      expect(src).toContain(
+        `let jitterCount = ${String(SPHERE_INVERSION_JOINT_SAMPLES_MAX)}u;`,
+      );
+      // The camera ray reads the pixel; every buffer keeps the global ray.
+      expect(src).toContain("let px = pixelRay % params.rasterWidth;");
+      expect(src).toContain("let st = states[ray];");
+      const transport = src.slice(src.indexOf("fn transportRays("));
+      expect(transport).not.toContain("let sub = shade.pixelJitter;");
+    }
   });
 });

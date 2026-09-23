@@ -50,6 +50,7 @@ import {
 } from "./finite-solid";
 import {
   FINITE_TRANSPORT_BUFFER_HEADER_BYTES,
+  SPHERE_INVERSION_JOINT_SAMPLES_MAX,
   SPHERE_INVERSION_POOL_PASS_MASK,
   SPHERE_INVERSION_POOL_RAY_BITS,
   SPHERE_INVERSION_POOL_RAY_MASK,
@@ -9455,8 +9456,14 @@ struct FiniteTransportBatch {
   rayCount: u32,
   // This submission's scheduling quantum (processed paths before a pause):
   // the host's per-chunk choice, never a path or energy limit.
-  quantum: u32,
-  pad0: u32,
+  quantum: u32,${
+    siGlass
+      ? `
+  // The joint pool's per-sample arena stride in rays; 0 is one sample.
+  sampleStride: u32,`
+      : `
+  pad0: u32,`
+  }
   pad1: u32,
   pad2: u32,
   slots: array<FiniteTransportWork>,
@@ -10522,7 +10529,24 @@ fn transportRays(
   let slotWord = activeList[slotI];
   let ray = slotWord & ${SPHERE_INVERSION_POOL_RAY_MASK}u;
   let replayPass = (slotWord >> ${SPHERE_INVERSION_POOL_RAY_BITS}u) & ${SPHERE_INVERSION_POOL_PASS_MASK}u;
-  let slotStart = finiteWork.initialize == 1u || (slotWord >> 31u) == 1u;`
+  let slotStart = finiteWork.initialize == 1u || (slotWord >> 31u) == 1u;
+  // THE JOINT POOL (finite-transport-work.ts): with a nonzero stride the
+  // ray is GLOBAL over every supersample's arena, and the pixel and the
+  // sample's own sub-pixel offset derive from it. Buffers index by the
+  // global ray; only the camera ray reads the pixel.
+  let sampleStride = finiteWork.sampleStride;
+  var pixelRay = ray;
+  var sub = shade.pixelJitter;
+  if (sampleStride > 0u) {
+    let jitterCount = ${SPHERE_INVERSION_JOINT_SAMPLES_MAX}u;
+    let sampleI = ray / sampleStride;
+    if (sampleI >= jitterCount || arrayLength(&opticsMaps) < jitterCount) {
+      finiteWorkReject(slotI, 0xffffffffu, 0u);
+      return;
+    }
+    pixelRay = ray % sampleStride;
+    sub = opticsMaps[arrayLength(&opticsMaps) - jitterCount + sampleI].xy;
+  }`
       : `
   let replayPass = u32(shade.transport[0]);
   if (slotI >= arrayLength(&activeList)) {
@@ -10615,9 +10639,14 @@ fn transportRays(
   }
     return;
   }
-  let px = ray % params.rasterWidth;
+  ${
+    siGlassChunk
+      ? `let px = pixelRay % params.rasterWidth;
+  let py = pixelRay / params.rasterWidth;`
+      : `let px = ray % params.rasterWidth;
   let py = ray / params.rasterWidth;
-  let sub = shade.pixelJitter;
+  let sub = shade.pixelJitter;`
+  }
   ${backdropImageUvWgsl("full")}
   let bg = ${BACKDROP_GRADIENT_WGSL};
   let ndcX = ((full.x + sub.x) / shade.bgExtent.x) * 2.0 - 1.0;

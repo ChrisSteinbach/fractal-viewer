@@ -3,6 +3,8 @@ import {
   setSurfaceComputeSchedulePins,
   surfaceComputeLightingVisibility,
   fitSurfaceComputeRaster,
+  surfaceComputeJointArenaBytes,
+  SURFACE_COMPUTE_JOINT_ARENA_BYTES,
   foldSurfaceComputeLayerSample,
   encodeSurfaceComputeLayerMean,
   initialShadeHitCost,
@@ -4806,5 +4808,46 @@ describe("SurfaceComputeRenderer sphere-inversion glass continuation", () => {
     } finally {
       h.renderer.destroy();
     }
+  });
+});
+
+describe("surfaceComputeJointArenaBytes (the glass joint pool's size rules)", () => {
+  const roomy = {
+    maxStorageBufferBindingSize: 2 ** 31,
+    maxBufferSize: 2 ** 31,
+  };
+
+  it("takes the envelope's 4-sample settle and the app's 8-sample settle at 512x288", () => {
+    expect(surfaceComputeJointArenaBytes(512 * 288, 4, roomy)).toBe(
+      4 * 512 * 288 * 56,
+    );
+    expect(surfaceComputeJointArenaBytes(512 * 288, 8, roomy)).toBe(
+      8 * 512 * 288 * 56,
+    );
+  });
+
+  it("keeps one pool per sample past the arena ceiling, at one sample, and under the pin", () => {
+    expect(surfaceComputeJointArenaBytes(1920 * 1080, 4, roomy)).toBe(0);
+    expect(4 * 1920 * 1080 * 56).toBeGreaterThan(
+      SURFACE_COMPUTE_JOINT_ARENA_BYTES,
+    );
+    expect(surfaceComputeJointArenaBytes(512 * 288, 1, roomy)).toBe(0);
+    setSurfaceComputeSchedulePins({ siJointOff: true });
+    try {
+      expect(surfaceComputeJointArenaBytes(512 * 288, 4, roomy)).toBe(0);
+    } finally {
+      setSurfaceComputeSchedulePins({});
+    }
+  });
+
+  it("refuses an arena whose transport records outgrow one storage binding", () => {
+    const small = {
+      maxStorageBufferBindingSize: 2 ** 24,
+      maxBufferSize: 2 ** 31,
+    };
+    expect(512 * 288 * 4 * 32).toBeGreaterThan(
+      small.maxStorageBufferBindingSize,
+    );
+    expect(surfaceComputeJointArenaBytes(512 * 288, 4, small)).toBe(0);
   });
 });

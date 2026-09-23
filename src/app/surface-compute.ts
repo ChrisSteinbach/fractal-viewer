@@ -105,6 +105,9 @@ import {
   SPHERE_INVERSION_POOL_RAY_BITS,
   SPHERE_INVERSION_POOL_RAY_MASK,
   sphereInversionPoolWord,
+  sphereInversionJointStride,
+  SPHERE_INVERSION_JOINT_SAMPLES_MAX,
+  SPHERE_INVERSION_JOINT_STRIDE_OFFSET,
   FINITE_TRANSPORT_PATH_BYTES,
   TRANSPORT_PATH_BYTES,
   resolveFiniteTransportChunkPaths,
@@ -350,6 +353,13 @@ let surfaceComputeSiTransportChunkPin: number | null = null;
  * decides (`docs/sphere-inversion-family.md`, "The exact normal").
  */
 let surfaceComputeSiExactNormalPin = false;
+/**
+ * `?surfacesijoint=0` — the sphere-inversion glass JOINT POOL off
+ * ({@link SURFACE_COMPUTE_JOINT_ARENA_BYTES}): each supersample runs its
+ * own pool and drain, the schedule before the joint pool. A schedule A/B
+ * only; no pixel moves either way. Read per frame, like the trace sink.
+ */
+let surfaceComputeSiJointOffPin = false;
 
 function positivePin(value: number | null | undefined): number | null {
   return value !== null &&
@@ -370,6 +380,7 @@ export function setSurfaceComputeSchedulePins(pins: {
   timestamps?: boolean | null;
   siTransportChunk?: number | null;
   siExactNormal?: boolean | null;
+  siJointOff?: boolean | null;
 }): void {
   surfaceComputeTimestampsPin = pins.timestamps ?? null;
   surfaceComputeFenceGroupPin = positivePin(pins.fenceGroup);
@@ -378,6 +389,7 @@ export function setSurfaceComputeSchedulePins(pins: {
   surfaceComputeShadeHitsPin = positivePin(pins.shadeHits);
   surfaceComputeSiTransportChunkPin = positivePin(pins.siTransportChunk);
   surfaceComputeSiExactNormalPin = pins.siExactNormal === true;
+  surfaceComputeSiJointOffPin = pins.siJointOff === true;
 }
 
 /** Threads per workgroup — the kernel spike's measured winner (private
@@ -1317,6 +1329,37 @@ export interface SurfaceComputeFrame {
  * radiance, never reconstructed from the clipped presentation pixels. */
 interface SurfaceComputeSample extends SurfaceComputeFrame {
   linearPixels?: Float32Array;
+  /** A joint frame's earlier sample: its glass rays went to the joint pool
+   * and its pixels, layers and transport tally are filled in afterwards. */
+  deferred?: boolean;
+}
+
+/** One sample's transport tally from the joint pool. */
+interface JointTransportTally {
+  resolved: number;
+  unresolved: number;
+  invalid: number;
+  passes: number;
+  /** Unresolved traces by failure/reason class, the trace feed's detail. */
+  failures: Map<string, number>;
+}
+
+/** A joint frame's shared transport state (finite-transport-work.ts's
+ * joint pool), owned by {@link SurfaceComputeRenderer.renderFrame}: every
+ * sample but the last queues its glass rays here, and the last runs ONE
+ * pool over all of them. */
+interface JointTransportJob {
+  /** Samples in the job — every sample of the frame. */
+  slots: number;
+  /** Each sample's sub-pixel offset, index = sample. */
+  jitters: [number, number][];
+  /** Pool words queued by the samples before the last (global rays). */
+  words: number[];
+  /** Per-sample tallies the last sample's pool fills for the others. */
+  tallies: JointTransportTally[];
+  /** The joint pool's progress sink: it presents sample 0's arena, with
+   * `done` and `total` counted over every sample's rays. */
+  onProgress?: SurfaceComputeFrameOptions["onProgress"];
 }
 
 /** One dispatch of the frame seed: the pixel its workgroup (0, 0) starts at
@@ -2212,6 +2255,55 @@ export function transportBatchSize(cost: ShadeHitCost, cap: number): number {
  */
 export const SURFACE_COMPUTE_TRANSPORT_POOL_SLOTS = 16384;
 
+/** Bytes one ray costs in EACH joint-pool sample arena: states 16 + color
+ * 4 + layer 4 + transport record 32 (the four per-ray buffers the
+ * transport reads or writes; the joint pool is refused for lit sessions,
+ * whose color is 16). */
+export const SURFACE_COMPUTE_JOINT_RAY_BYTES = 16 + 4 + 4 + 32;
+
+/**
+ * THE JOINT POOL'S ARENA CEILING: the most bytes a frame's per-sample
+ * arenas may hold, all samples together. A sphere-inversion glass sample's
+ * transport is paced by its longest serial traces, not by the device's
+ * width, so a supersampled frame queues every sample's glass rays into ONE
+ * pool (finite-transport-work.ts's joint pool) and their drains overlap —
+ * but only where every sample's per-ray state fits beside the pool's own
+ * slots. 64 MiB holds the 8-sample app settle at 512x288 (66 MB with the
+ * stride's rounding) and the envelope's 4-sample settle with room; with
+ * the pool's 36.8 MiB it stays inside the envelope's 128 MiB of
+ * additional state. An export raster past it keeps one pool per sample —
+ * its line already passes that way.
+ */
+export const SURFACE_COMPUTE_JOINT_ARENA_BYTES = 64 * 1024 * 1024;
+
+/** The joint pool's arena bytes, all samples together, for a supersampled
+ * glass frame of `rays` at `samples` — or 0 where the frame keeps one pool
+ * per sample by the size rules: the ceiling above, the device's binding
+ * and buffer limits (the transport records are the widest arena) and the
+ * pool word's ray field. The session-kind rules (adaptive glass, unlit,
+ * unbudgeted) are the renderer's. Pure apart from `?surfacesijoint=0`. */
+export function surfaceComputeJointArenaBytes(
+  rays: number,
+  samples: number,
+  limits: { maxStorageBufferBindingSize: number; maxBufferSize: number },
+): number {
+  if (
+    surfaceComputeSiJointOffPin ||
+    samples <= 1 ||
+    samples > SPHERE_INVERSION_JOINT_SAMPLES_MAX
+  )
+    return 0;
+  const arenaRays = samples * sphereInversionJointStride(rays);
+  const bytes = arenaRays * SURFACE_COMPUTE_JOINT_RAY_BYTES;
+  const widest = arenaRays * SURFACE_COMPUTE_TRANSPORT_RECORD_BYTES;
+  return arenaRays > SPHERE_INVERSION_POOL_RAY_MASK + 1 ||
+    bytes > SURFACE_COMPUTE_JOINT_ARENA_BYTES ||
+    widest > limits.maxStorageBufferBindingSize ||
+    widest > limits.maxBufferSize
+    ? 0
+    : bytes;
+}
+
 /**
  * The sphere-inversion continuation's per-submission TARGET (ms) for a
  * chunk whose quantum the ladder has grown — an eighth of
@@ -2878,8 +2970,53 @@ export interface SurfaceComputeTimestampInstrument {
   readBuf: GPUBuffer;
 }
 
-interface FrameBuffers {
+/** A per-ray arena's sub-range, in rays. */
+interface ArenaRange {
+  offset: number;
+  size: number;
+}
+
+/** A buffer binding over `range` of `buffer`, whose rays are
+ * `bytesPerRay` wide; no range binds the whole buffer. */
+function arenaResource(
+  buffer: GPUBuffer,
+  bytesPerRay: number,
+  range?: ArenaRange,
+): GPUBufferBinding {
+  return range
+    ? {
+        buffer,
+        offset: range.offset * bytesPerRay,
+        size: range.size * bytesPerRay,
+      }
+    : { buffer };
+}
+
+interface SampleBindGroups {
+  marchBindGroup: GPUBindGroup;
+  shadeBindGroup: GPUBindGroup;
+  /** The frame seed's bind group: rebuilt with the shade one, since both
+   * bind the lighting background texture. */
+  seedBindGroup: GPUBindGroup;
+}
+
+interface FrameBindGroups extends SampleBindGroups {
+  /** A joint frame's per-sample groups (index = sample); empty for one
+   * sample slot, whose groups are the frame's own. */
+  sampleGroups: SampleBindGroups[];
+  /** A joint frame's transport group over the WHOLE arenas. */
+  jointShadeBindGroup?: GPUBindGroup;
+}
+
+type FrameBufferSet = Omit<FrameBuffers, keyof FrameBindGroups>;
+
+interface FrameBuffers extends FrameBindGroups {
   rays: number;
+  /** Supersamples the per-ray arenas hold (the joint pool's; 1 = one). */
+  sampleSlots: number;
+  /** Rays per sample in the arenas: `rays` for one slot, else rounded up
+   * to the joint stride alignment. */
+  sampleStride: number;
   states: GPUBuffer;
   active: GPUBuffer;
   color: GPUBuffer;
@@ -2903,11 +3040,6 @@ interface FrameBuffers {
   /** One reusable finite continuation batch, never a full-image stack. */
   transportWork?: GPUBuffer;
   stagingTransportRunning?: GPUBuffer;
-  marchBindGroup: GPUBindGroup;
-  shadeBindGroup: GPUBindGroup;
-  /** The frame seed's bind group: rebuilt with the shade one, since both
-   * bind the lighting background texture. */
-  seedBindGroup: GPUBindGroup;
 }
 
 export class SurfaceComputeRenderer {
@@ -3749,8 +3881,22 @@ export class SurfaceComputeRenderer {
     // the wire's optics gate — a classic session allocates nothing and
     // binds nothing at 13/14/15 (the invariant "packer presence == codegen
     // gates", the shadeMaps gate's own rule one buffer over).
-    const opticsMapsData = materials?.optics
-      ? new Float32Array(packSurfaceGpuOpticsMaps(materials.slots))
+    // The sphere-inversion glass sessions append the joint pool's
+    // per-sample jitter tail (finite-transport-work.ts), zero until a joint
+    // frame writes it; the lanes above it keep their frozen offsets.
+    const opticsLanes = materials?.optics
+      ? packSurfaceGpuOpticsMaps(materials.slots)
+      : null;
+    const opticsMapsData = opticsLanes
+      ? siChunkPaths > 0
+        ? (() => {
+            const out = new Float32Array(
+              opticsLanes.length + SPHERE_INVERSION_JOINT_SAMPLES_MAX * 4,
+            );
+            out.set(opticsLanes);
+            return out;
+          })()
+        : new Float32Array(opticsLanes)
       : null;
     const opticsMapsBuf = opticsMapsData
       ? device.createBuffer({
@@ -4278,35 +4424,13 @@ export class SurfaceComputeRenderer {
       cost: initialShadeHitCost(),
       cap: SURFACE_COMPUTE_SHADE_HIT_CAP_START,
     };
-    for (let s = 0; s < samples; s++) {
-      const frame = await this.runFrame(
-        token,
-        spec,
-        {
-          ...opts,
-          // Sample 0 presents its partials exactly as a single-sample
-          // frame does — the image has to develop the way it always has —
-          // and its ray tallies are stretched over the whole job so the
-          // progress row stays monotone across every sample. Later samples
-          // present only their finished mean: a partial pass would repaint
-          // aliased pixels over the smoothed ones and read as the render
-          // getting worse.
-          onProgress:
-            s === 0 && opts.onProgress
-              ? (pixels, layers, done, total) => {
-                  opts.onProgress?.(pixels, layers, done, total * samples);
-                }
-              : undefined,
-        },
-        subPixelSample(s),
-        jobSizer,
-        s,
-      );
-      if (!frame) break;
+    const joint = this.jointTransportJob(spec, opts, samples);
+    /** Fold one completed sample into the job; false ends the job. */
+    const take = (frame: SurfaceComputeSample, s: number): boolean => {
       if (!frame.truncated) opts.onSample?.(frame, s);
       wallMs += frame.wallMs;
       gpuMs += frame.gpuMs;
-      if (s > 0 && frame.truncated) break;
+      if (s > 0 && frame.truncated) return false;
       lightingExhausted += frame.lightingVisibility?.exhausted ?? 0;
       lightingInvalid += frame.lightingVisibility?.invalid ?? 0;
       const px = frame.pixels;
@@ -4343,7 +4467,57 @@ export class SurfaceComputeRenderer {
           exhausted: lightingExhausted,
           invalid: lightingInvalid,
         };
-      if (frame.truncated) break;
+      return !frame.truncated;
+    };
+    // A joint job's earlier samples, waiting on the last one's pool.
+    const deferred: SurfaceComputeSample[] = [];
+    for (let s = 0; s < samples; s++) {
+      const frame = await this.runFrame(
+        token,
+        spec,
+        {
+          ...opts,
+          // Sample 0 presents its partials exactly as a single-sample
+          // frame does — the image has to develop the way it always has —
+          // and its ray tallies are stretched over the whole job so the
+          // progress row stays monotone across every sample. Later samples
+          // present only their finished mean: a partial pass would repaint
+          // aliased pixels over the smoothed ones and read as the render
+          // getting worse. (A joint job's pool presents sample 0's arena
+          // through its own sink.)
+          onProgress:
+            s === 0 && opts.onProgress
+              ? (pixels, layers, done, total) => {
+                  opts.onProgress?.(pixels, layers, done, total * samples);
+                }
+              : undefined,
+        },
+        subPixelSample(s),
+        jobSizer,
+        s,
+        joint,
+      );
+      if (!frame) break;
+      if (frame.deferred) {
+        deferred.push(frame);
+        continue;
+      }
+      if (joint) {
+        // The pool has finished every sample: read each earlier one's
+        // arena and tally, then fold them in order before this one.
+        for (let d = 0; d < deferred.length; d++) {
+          const filled = await this.readJointSample(
+            token,
+            deferred[d],
+            d,
+            joint,
+            rays,
+          );
+          if (!filled) return out;
+          if (!take(filled, d)) return out;
+        }
+      }
+      if (!take(frame, s)) break;
     }
     if (
       opts.transportReadback &&
@@ -4351,6 +4525,87 @@ export class SurfaceComputeRenderer {
     )
       return null;
     return out;
+  }
+
+  /**
+   * The joint pool for this supersampled frame, or undefined for one pool
+   * per sample. Joint only where it is a schedule and nothing else: an
+   * adaptive sphere-inversion glass session, unlit (the arenas carry RGBA8
+   * color), unbudgeted (a budget cut would strand every sample at once,
+   * where one sample at a time keeps the finished ones), no diagnostic
+   * record readback, and every sample's arena inside
+   * {@link SURFACE_COMPUTE_JOINT_ARENA_BYTES}, the device's binding limit
+   * and the pool word's ray field.
+   */
+  private jointTransportJob(
+    spec: SurfaceComputeFrameSpec,
+    opts: SurfaceComputeFrameOptions,
+    samples: number,
+  ): JointTransportJob | undefined {
+    if (
+      !this.transportAdaptiveSchedule ||
+      this.lighting ||
+      Number.isFinite(opts.budgetMs ?? Infinity) ||
+      opts.transportReadback ||
+      surfaceComputeJointArenaBytes(
+        spec.width * spec.height,
+        samples,
+        this.device.limits,
+      ) === 0
+    )
+      return undefined;
+    const onProgress = opts.onProgress;
+    return {
+      slots: samples,
+      jitters: Array.from({ length: samples }, (_, s) => subPixelSample(s)),
+      words: [],
+      tallies: Array.from({ length: samples }, () => ({
+        resolved: 0,
+        unresolved: 0,
+        invalid: 0,
+        passes: 0,
+        failures: new Map<string, number>(),
+      })),
+      ...(onProgress ? { onProgress } : {}),
+    };
+  }
+
+  /** A joint frame's earlier sample, completed from its arena and its
+   * tally once the last sample's pool has run; null when superseded. */
+  private async readJointSample(
+    token: number,
+    frame: SurfaceComputeSample,
+    sample: number,
+    joint: JointTransportJob,
+    rays: number,
+  ): Promise<SurfaceComputeSample | null> {
+    const buffers = this.frame;
+    if (!buffers || buffers.sampleSlots < joint.slots)
+      throw new Error("Surface compute: joint arenas were released mid-job");
+    const [pixelBytes, layerBytes] = await this.readbackFrame(
+      buffers.color,
+      buffers.stagingColor,
+      buffers.layer,
+      buffers.stagingLayer,
+      rays * 4,
+      rays * 4,
+      sample * buffers.sampleStride,
+    );
+    if (token !== this.frameToken || this.isLost || this.destroyed) return null;
+    const tally = joint.tallies[sample];
+    const { deferred: _deferred, ...rest } = frame;
+    return {
+      ...rest,
+      pixels: new Uint8Array(pixelBytes),
+      layers: new Uint8Array(layerBytes),
+      transport: {
+        ...(frame.transport ?? { batchMs: [] }),
+        resolved: tally.resolved,
+        unresolved: tally.unresolved,
+        invalid: tally.invalid,
+        passes: tally.passes,
+      },
+    };
   }
 
   /** Supersede any in-flight and queued frames — they resolve null at
@@ -4442,8 +4697,16 @@ export class SurfaceComputeRenderer {
    * at a steady raster) returns before the scopes are pushed, so the
    * `popErrorScope` round-trip never lands in the per-frame path.
    */
-  private async allocateFrameBuffers(rays: number): Promise<FrameBuffers> {
-    if (this.frame && this.frame.rays >= rays) return this.frame;
+  private async allocateFrameBuffers(
+    rays: number,
+    sampleSlots = 1,
+  ): Promise<FrameBuffers> {
+    if (
+      this.frame &&
+      this.frame.rays >= rays &&
+      this.frame.sampleSlots >= sampleSlots
+    )
+      return this.frame;
     const cap = this.maxFrameRays;
     if (rays > cap) {
       const limits = this.device.limits;
@@ -4457,7 +4720,7 @@ export class SurfaceComputeRenderer {
     }
     this.device.pushErrorScope("validation");
     this.device.pushErrorScope("out-of-memory");
-    const buffers = this.ensureFrameBuffers(rays);
+    const buffers = this.ensureFrameBuffers(rays, sampleSlots);
     const oom = await this.device.popErrorScope();
     const validation = await this.device.popErrorScope();
     const error = oom ?? validation;
@@ -4497,15 +4760,26 @@ export class SurfaceComputeRenderer {
     this.frame = null;
   }
 
-  private ensureFrameBuffers(rays: number): FrameBuffers {
-    if (this.frame && this.frame.rays >= rays) return this.frame;
+  private ensureFrameBuffers(rays: number, sampleSlots = 1): FrameBuffers {
+    if (
+      this.frame &&
+      this.frame.rays >= rays &&
+      this.frame.sampleSlots >= sampleSlots
+    )
+      return this.frame;
     this.releaseFrameBuffers();
     const device = this.device;
+    // The joint pool's arenas (finite-transport-work.ts): the four per-ray
+    // buffers the transport reads or writes hold `sampleSlots` samples at a
+    // 256-byte-aligned stride. One slot is today's exact allocation.
+    const sampleStride =
+      sampleSlots > 1 ? sphereInversionJointStride(rays) : rays;
+    const arenaRays = sampleSlots * sampleStride;
     // The states buffer is no longer a COPY_SRC — nothing reads it back.
     // The host's per-sweep question is one field of it, and the march
     // answers that directly through `status`.
     const states = device.createBuffer({
-      size: rays * SURFACE_COMPUTE_RAY_STATE_BYTES,
+      size: arenaRays * SURFACE_COMPUTE_RAY_STATE_BYTES,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
     const active = device.createBuffer({
@@ -4513,14 +4787,14 @@ export class SurfaceComputeRenderer {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
     const color = device.createBuffer({
-      size: rays * (this.lighting ? 16 : 4),
+      size: arenaRays * (this.lighting ? 16 : 4),
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
     });
     const layer = device.createBuffer({
-      size: rays * 4,
+      size: arenaRays * 4,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -4553,7 +4827,7 @@ export class SurfaceComputeRenderer {
     let stagingTransportRunning: GPUBuffer | undefined;
     if (this.optics) {
       transportState = device.createBuffer({
-        size: rays * SURFACE_COMPUTE_TRANSPORT_RECORD_BYTES,
+        size: arenaRays * SURFACE_COMPUTE_TRANSPORT_RECORD_BYTES,
         usage:
           GPUBufferUsage.STORAGE |
           GPUBufferUsage.COPY_DST |
@@ -4597,43 +4871,10 @@ export class SurfaceComputeRenderer {
         });
       }
     }
-    const marchBindGroup = device.createBindGroup({
-      layout: this.marchLayout,
-      entries: [
-        { binding: 0, resource: { buffer: this.paramsBuf } },
-        { binding: 1, resource: { buffer: this.mapsBuf } },
-        { binding: 2, resource: { buffer: active } },
-        { binding: 3, resource: { buffer: states } },
-        { binding: 4, resource: { buffer: this.shadeBuf } },
-        { binding: 5, resource: { buffer: status } },
-        ...(this.meshSdfTex
-          ? [
-              {
-                binding: 11,
-                resource: this.meshSdfTex.createView({ dimension: "3d" }),
-              },
-            ]
-          : []),
-      ],
-    });
-    const shadeBindGroup = this.createShadeBindGroup(
-      active,
-      states,
-      color,
-      layer,
-      transportState,
-      transportStatus,
-      transportWork,
-    );
-    // After the march and shade groups, so their creation order is unchanged.
-    const seedBindGroup = this.createSeedBindGroup(
-      states,
-      color,
-      layer,
-      transportState,
-    );
-    this.frame = {
+    const frame: FrameBufferSet = {
       rays,
+      sampleSlots,
+      sampleStride,
       states,
       active,
       color,
@@ -4647,22 +4888,76 @@ export class SurfaceComputeRenderer {
       stagingTransportStatus,
       transportWork,
       stagingTransportRunning,
-      marchBindGroup,
-      shadeBindGroup,
-      seedBindGroup,
     };
+    this.frame = { ...frame, ...this.frameBindGroups(frame) };
     return this.frame;
   }
 
+  /** Every bind group over a frame's buffers. One sample slot binds the
+   * whole buffers, the pre-joint groups exactly. A joint frame binds each
+   * sample's arena sub-range for its march, shade and seed (sample 0's as
+   * the frame's own groups, so every single-sample path is unchanged) and
+   * the WHOLE arenas for the joint pool's transport. */
+  private frameBindGroups(frame: FrameBufferSet): FrameBindGroups {
+    const groupsFor = (range?: ArenaRange): SampleBindGroups => ({
+      marchBindGroup: this.device.createBindGroup({
+        layout: this.marchLayout,
+        entries: [
+          { binding: 0, resource: { buffer: this.paramsBuf } },
+          { binding: 1, resource: { buffer: this.mapsBuf } },
+          { binding: 2, resource: { buffer: frame.active } },
+          {
+            binding: 3,
+            resource: arenaResource(
+              frame.states,
+              SURFACE_COMPUTE_RAY_STATE_BYTES,
+              range,
+            ),
+          },
+          { binding: 4, resource: { buffer: this.shadeBuf } },
+          { binding: 5, resource: { buffer: frame.status } },
+          ...(this.meshSdfTex
+            ? [
+                {
+                  binding: 11,
+                  resource: this.meshSdfTex.createView({ dimension: "3d" }),
+                },
+              ]
+            : []),
+        ],
+      }),
+      shadeBindGroup: this.createShadeBindGroup(frame, range),
+      // After the march and shade groups, so their creation order is
+      // unchanged.
+      seedBindGroup: this.createSeedBindGroup(frame, range),
+    });
+    if (frame.sampleSlots <= 1) return { ...groupsFor(), sampleGroups: [] };
+    const sampleGroups: SampleBindGroups[] = [];
+    for (let s = 0; s < frame.sampleSlots; s++)
+      sampleGroups.push(
+        groupsFor({ offset: s * frame.sampleStride, size: frame.sampleStride }),
+      );
+    return {
+      ...sampleGroups[0],
+      sampleGroups,
+      jointShadeBindGroup: this.createShadeBindGroup(frame),
+    };
+  }
+
   private createShadeBindGroup(
-    active: GPUBuffer,
-    states: GPUBuffer,
-    color: GPUBuffer,
-    layer: GPUBuffer,
-    transportState?: GPUBuffer,
-    transportStatus?: GPUBuffer,
-    transportWork?: GPUBuffer,
+    frame: FrameBufferSet,
+    range?: ArenaRange,
   ): GPUBindGroup {
+    const {
+      active,
+      states,
+      color,
+      layer,
+      transportState,
+      transportStatus,
+      transportWork,
+    } = frame;
+    const colorStride = this.lighting ? 16 : 4;
     // The finite cores have no maps, so their continuation reuses binding
     // 1; the sphere-inversion cores keep their table there and take 16.
     const finiteWork =
@@ -4680,13 +4975,20 @@ export class SurfaceComputeRenderer {
           resource: { buffer: finiteWork ?? this.mapsBuf },
         },
         { binding: 2, resource: { buffer: active } },
-        { binding: 3, resource: { buffer: states } },
+        {
+          binding: 3,
+          resource: arenaResource(
+            states,
+            SURFACE_COMPUTE_RAY_STATE_BYTES,
+            range,
+          ),
+        },
         { binding: 4, resource: { buffer: this.shadeBuf } },
         { binding: 5, resource: { buffer: this.shadeMapsBuf } },
-        { binding: 6, resource: { buffer: color } },
+        { binding: 6, resource: arenaResource(color, colorStride, range) },
         { binding: 7, resource: this.lutTex.createView() },
         { binding: 8, resource: this.lutSamp },
-        { binding: 9, resource: { buffer: layer } },
+        { binding: 9, resource: arenaResource(layer, 4, range) },
         ...(this.lightingBackgroundTex
           ? [{ binding: 12, resource: this.lightingBackgroundTex.createView() }]
           : []),
@@ -4712,7 +5014,14 @@ export class SurfaceComputeRenderer {
                 binding: 13,
                 resource: { buffer: this.opticsMapsBuf },
               },
-              { binding: 14, resource: { buffer: transportState } },
+              {
+                binding: 14,
+                resource: arenaResource(
+                  transportState,
+                  SURFACE_COMPUTE_TRANSPORT_RECORD_BYTES,
+                  range,
+                ),
+              },
               { binding: 15, resource: { buffer: transportStatus } },
               ...(siWork
                 ? [{ binding: 16, resource: { buffer: siWork } }]
@@ -4763,18 +5072,10 @@ export class SurfaceComputeRenderer {
       });
       this.lightingBackgroundSize = [image.width, image.height];
       if (this.frame) {
-        const frame = this.frame;
-        frame.shadeBindGroup = this.createShadeBindGroup(
-          frame.active,
-          frame.states,
-          frame.color,
-          frame.layer,
-        );
-        frame.seedBindGroup = this.createSeedBindGroup(
-          frame.states,
-          frame.color,
-          frame.layer,
-        );
+        // Every group binding the texture, rebuilt over the SAME buffers —
+        // the transport bindings and every sample's sub-range included.
+        // In place: a frame span already holding this object reads them.
+        Object.assign(this.frame, this.frameBindGroups(this.frame));
       }
     }
     if (!this.lightingBackgroundTex)
@@ -4796,21 +5097,39 @@ export class SurfaceComputeRenderer {
    * uniform, and — lit — the same backdrop texture and sampler the shade
    * group does, so {@link prepareLightingBackground} rebuilds both. */
   private createSeedBindGroup(
-    states: GPUBuffer,
-    color: GPUBuffer,
-    layer: GPUBuffer,
-    transportState?: GPUBuffer,
+    frame: FrameBufferSet,
+    range?: ArenaRange,
   ): GPUBindGroup {
+    const { states, color, layer, transportState } = frame;
     return this.device.createBindGroup({
       layout: this.seedLayout,
       entries: [
         { binding: 0, resource: { buffer: this.seedBuf } },
-        { binding: 3, resource: { buffer: states } },
+        {
+          binding: 3,
+          resource: arenaResource(
+            states,
+            SURFACE_COMPUTE_RAY_STATE_BYTES,
+            range,
+          ),
+        },
         { binding: 4, resource: { buffer: this.shadeBuf } },
-        { binding: 6, resource: { buffer: color } },
-        { binding: 9, resource: { buffer: layer } },
+        {
+          binding: 6,
+          resource: arenaResource(color, this.lighting ? 16 : 4, range),
+        },
+        { binding: 9, resource: arenaResource(layer, 4, range) },
         ...(transportState
-          ? [{ binding: 14, resource: { buffer: transportState } }]
+          ? [
+              {
+                binding: 14,
+                resource: arenaResource(
+                  transportState,
+                  SURFACE_COMPUTE_TRANSPORT_RECORD_BYTES,
+                  range,
+                ),
+              },
+            ]
           : []),
         ...(this.lightingBackgroundTex
           ? [
@@ -4835,10 +5154,18 @@ export class SurfaceComputeRenderer {
     stagingLayer: GPUBuffer,
     bytes: number,
     colorBytes = bytes,
+    /** The first ray read: a joint frame's sample arena offset. */
+    fromRay = 0,
   ): Promise<[ArrayBuffer, ArrayBuffer]> {
     const encoder = this.device.createCommandEncoder();
-    encoder.copyBufferToBuffer(color, 0, stagingColor, 0, colorBytes);
-    encoder.copyBufferToBuffer(layer, 0, stagingLayer, 0, bytes);
+    encoder.copyBufferToBuffer(
+      color,
+      fromRay * (this.lighting ? 16 : 4),
+      stagingColor,
+      0,
+      colorBytes,
+    );
+    encoder.copyBufferToBuffer(layer, fromRay * 4, stagingLayer, 0, bytes);
     this.device.queue.submit([encoder.finish()]);
     return Promise.all([
       this.drainStaging(stagingColor, colorBytes),
@@ -4923,6 +5250,8 @@ export class SurfaceComputeRenderer {
      * Absent = a fresh model and a one-workgroup capacity. */
     jobSizer?: ShadeSizerState,
     sampleIndex = 0,
+    /** A joint frame's shared pool; absent is a frame with its own. */
+    joint?: JointTransportJob,
   ): Promise<SurfaceComputeSample | null> {
     const trace = surfaceComputeTrace;
     // Read once per frame beside the trace sink, so a pin can never change
@@ -4998,8 +5327,18 @@ export class SurfaceComputeRenderer {
       device.queue.writeBuffer(buffer, 0, data);
       stagedBytes += data.byteLength;
     };
-    const buffers = await this.allocateFrameBuffers(rays);
+    const frameBuffers = await this.allocateFrameBuffers(
+      rays,
+      joint?.slots ?? 1,
+    );
     if (token !== this.frameToken || this.isLost || this.destroyed) return null;
+    // A joint sample traces into its own arena sub-range; everything else
+    // binds the frame's own groups, sample 0's.
+    const buffers = joint
+      ? { ...frameBuffers, ...frameBuffers.sampleGroups[sampleIndex] }
+      : frameBuffers;
+    const jointStride = joint ? frameBuffers.sampleStride : 0;
+    const deferTransport = joint !== undefined && sampleIndex < joint.slots - 1;
 
     // An absent bgOffset/bgExtent means an ordinary frame — this raster
     // IS the full image (module doc on SurfaceComputeFrameSpec).
@@ -6114,8 +6453,12 @@ export class SurfaceComputeRenderer {
     // and shade queues are empty there, so the formula would read
     // complete while the replay passes still have pending rays; the
     // lane reports rays-minus-pending instead.
-    const maybePresent = async (doneOverride?: number): Promise<boolean> => {
-      if (!opts.onProgress) return true;
+    const maybePresent = async (
+      doneOverride?: number,
+      sink = opts.onProgress,
+      total = rays,
+    ): Promise<boolean> => {
+      if (!sink) return true;
       if (performance.now() - lastProgress < progressMs) return true;
       tr("present readback BEGIN");
       const [partialBytes, partialLayerBytes] = await this.readbackFrame(
@@ -6138,7 +6481,7 @@ export class SurfaceComputeRenderer {
       // March credit accrues per consumed step, shade credit on shaded
       // pixels — surfaceComputeProgressDone owns the formula and the
       // monotonicity argument.
-      opts.onProgress(
+      sink(
         partial,
         partialLayers,
         doneOverride ??
@@ -6151,7 +6494,7 @@ export class SurfaceComputeRenderer {
             stepsThisPass,
             marchSteps: spec.marchSteps,
           }),
-        rays,
+        total,
       );
       return true;
     };
@@ -6497,10 +6840,18 @@ export class SurfaceComputeRenderer {
     const transportBatchMs: number[] = [];
     let transportPassesStarted = 0;
     let transportContinuationChunks = 0;
+    // A joint frame's earlier samples queue their glass rays for the last
+    // sample's pool, as global rays over the arenas.
+    if (deferTransport)
+      for (const ray of transportQueue)
+        joint.words.push(
+          sphereInversionPoolWord(sampleIndex * jointStride + ray, 0, false),
+        );
     if (
       this.optics &&
       transportPipeline !== null &&
-      transportQueue.length > 0 &&
+      !deferTransport &&
+      (transportQueue.length > 0 || (joint?.words.length ?? 0) > 0) &&
       buffers.transportStatus !== undefined &&
       buffers.stagingTransportStatus !== undefined
     ) {
@@ -6559,9 +6910,42 @@ export class SurfaceComputeRenderer {
           SURFACE_COMPUTE_TRANSPORT_POOL_SLOTS,
           maxDispatchRays,
         );
-        const queue: number[] = transportQueue.map((ray) =>
-          sphereInversionPoolWord(ray, 0, false),
-        );
+        const queue: number[] = [
+          ...(joint?.words ?? []),
+          ...transportQueue.map((ray) =>
+            sphereInversionPoolWord(sampleIndex * jointStride + ray, 0, false),
+          ),
+        ];
+        // The rays still owed a pool slot or running in one, over every
+        // sample of a joint frame: its progress counts them all.
+        const poolRays = (joint?.slots ?? 1) * rays;
+        if (joint) {
+          const opticsMaps = this.opticsMapsBuf;
+          if (!opticsMaps)
+            throw new Error(
+              "Surface compute: joint pool lost its optics lanes",
+            );
+          const jitters = new Float32Array(
+            SPHERE_INVERSION_JOINT_SAMPLES_MAX * 4,
+          );
+          joint.jitters.forEach(([x, y], i) => {
+            jitters[i * 4] = x;
+            jitters[i * 4 + 1] = y;
+          });
+          device.queue.writeBuffer(
+            opticsMaps,
+            opticsMaps.size - jitters.byteLength,
+            jitters,
+          );
+          stagedBytes += jitters.byteLength;
+        }
+        const tallyOf = (word: number): JointTransportTally | undefined => {
+          if (!joint) return undefined;
+          const sample = Math.floor(
+            (word & SPHERE_INVERSION_POOL_RAY_MASK) / jointStride,
+          );
+          return sample === sampleIndex ? undefined : joint.tallies[sample];
+        };
         let queueHead = 0;
         const slotWord: number[] = [];
         const slotLive: boolean[] = [];
@@ -6611,13 +6995,23 @@ export class SurfaceComputeRenderer {
             if (slotLive[i]) live++;
           }
           if (!(await stageDispatch(width, 0, words))) return null;
-          stage(
-            work,
-            new Uint32Array([0, 0, generation, width, quantum, 0, 0, 0]),
-          );
+          const header = new Uint32Array([
+            0,
+            0,
+            generation,
+            width,
+            quantum,
+            0,
+            0,
+            0,
+          ]);
+          header[SPHERE_INVERSION_JOINT_STRIDE_OFFSET / 4] = jointStride;
+          stage(work, header);
           const { t0 } = submitDispatch(
             transportPipeline,
-            buffers.shadeBindGroup,
+            joint
+              ? (frameBuffers.jointShadeBindGroup ?? buffers.shadeBindGroup)
+              : buffers.shadeBindGroup,
             width,
             {
               src: transportBuffers.status,
@@ -6650,6 +7044,15 @@ export class SurfaceComputeRenderer {
               continue;
             }
             slotLive[i] = false;
+            // A joint pool's other samples tally into their own records.
+            const other = tallyOf(slotWord[i]);
+            if (other)
+              other.passes = Math.max(
+                other.passes,
+                ((slotWord[i] >>> SPHERE_INVERSION_POOL_RAY_BITS) &
+                  SPHERE_INVERSION_POOL_PASS_MASK) +
+                  1,
+              );
             if (st === SURFACE_GPU_TRANSPORT_PENDING) {
               const pass =
                 (slotWord[i] >>> SPHERE_INVERSION_POOL_RAY_BITS) &
@@ -6665,20 +7068,25 @@ export class SurfaceComputeRenderer {
                   false,
                 ),
               );
-              maxPass = Math.max(maxPass, pass + 1);
+              if (other) other.passes = Math.max(other.passes, pass + 2);
+              else maxPass = Math.max(maxPass, pass + 1);
             } else if (
               st === SURFACE_GPU_TRANSPORT_COMPLETE ||
               st === SURFACE_GPU_TRANSPORT_RESIDUAL
             ) {
-              transportResolved++;
+              if (other) other.resolved++;
+              else transportResolved++;
             } else if (st === SURFACE_GPU_TRANSPORT_UNRESOLVED) {
-              transportUnresolved++;
+              if (other) other.unresolved++;
+              else transportUnresolved++;
               const failure = (packedStatus >>> 8) & 0xff;
               const reason = (packedStatus >>> 16) & 0xff;
               const key = `f${failure}/r${reason}`;
-              transportFailures.set(key, (transportFailures.get(key) ?? 0) + 1);
+              const failures = other ? other.failures : transportFailures;
+              failures.set(key, (failures.get(key) ?? 0) + 1);
             } else if (st === SURFACE_GPU_TRANSPORT_INVALID) {
-              transportInvalid++;
+              if (other) other.invalid++;
+              else transportInvalid++;
             } else if (st !== SURFACE_GPU_TRANSPORT_SKIPPED) {
               throw new Error(
                 "Surface compute: unknown chunked transport status",
@@ -6738,9 +7146,11 @@ export class SurfaceComputeRenderer {
           transportLastUnresolved = transportUnresolved;
           if (
             !(await maybePresent(
-              rays -
+              poolRays -
                 (queue.length - queueHead) -
                 slotLive.filter(Boolean).length,
+              joint ? joint.onProgress : opts.onProgress,
+              poolRays,
             ))
           )
             return null;
@@ -6993,7 +7403,7 @@ export class SurfaceComputeRenderer {
       // write leaves no PENDING status behind.
     }
 
-    if (this.optics && transportPipeline !== null) {
+    if (this.optics && transportPipeline !== null && !deferTransport) {
       // The transport lane's own per-frame tally — the failure-mode
       // diagnostic the field-qualification work reads (resolved /
       // unresolved / invalid split the black-pixel question three ways:
@@ -7007,6 +7417,22 @@ export class SurfaceComputeRenderer {
       tr(
         `transport failures ${[...transportFailures].map(([key, count]) => `${key}=${count}`).join(" ")}`,
       );
+    }
+    if (joint && !deferTransport) {
+      // The joint pool finished every earlier sample too. Their tallies
+      // are tagged with the sample they belong to, so a reader of the feed
+      // files each under that sample's own frame (finite-glass-trace.mjs).
+      for (let k = 0; k < joint.slots; k++) {
+        if (k === sampleIndex) continue;
+        const t = joint.tallies[k];
+        tr(
+          `transport done final sample=${k} resolved=${t.resolved} unresolved=${t.unresolved} (cumulative resolved=${t.resolved} unresolved=${t.unresolved} invalid=${t.invalid}) passes=${t.passes}`,
+        );
+        if (t.failures.size > 0)
+          tr(
+            `transport failures sample=${k} ${[...t.failures].map(([key, count]) => `${key}=${count}`).join(" ")}`,
+          );
+      }
     }
 
     let rawTransportState: Uint32Array | undefined;
@@ -7039,6 +7465,41 @@ export class SurfaceComputeRenderer {
       }
     }
 
+    if (deferTransport) {
+      // The joint pool has not run yet: renderFrame reads this sample's
+      // arena, and its tally, once the last sample's pool finishes.
+      counts.active =
+        rays - counts.hit - counts.miss - counts.exhausted - counts.plane;
+      // Its march is done; its transport tally arrives, tagged, with the
+      // last sample's pool.
+      tr("transport deferred (joint pool)");
+      tr(
+        `frame done passes=${passes} fences=${fences} truncated=${truncated} hit=${counts.hit} miss=${counts.miss} exhausted=${counts.exhausted} active=${counts.active} plane=${counts.plane}`,
+      );
+      return {
+        pixels: new Uint8Array(0),
+        layers: new Uint8Array(0),
+        deferred: true,
+        width,
+        height,
+        wallMs: performance.now() - wallStart,
+        gpuMs,
+        marchMs: marchGpuMs,
+        shadeMs: shadeGpuMs,
+        passes,
+        truncated,
+        counts,
+        exhaustedIndices,
+        transport: {
+          resolved: 0,
+          unresolved: 0,
+          invalid: 0,
+          passes: 0,
+          batchMs: [],
+          continuationChunks: 0,
+        },
+      };
+    }
     tr("final readback BEGIN");
     const [pixelBytes, layerBytes] = await this.readbackFrame(
       buffers.color,
@@ -7047,6 +7508,7 @@ export class SurfaceComputeRenderer {
       buffers.stagingLayer,
       rays * 4,
       colorBytes,
+      sampleIndex * jointStride,
     );
     const linearPixels = this.lighting
       ? new Float32Array(pixelBytes)
