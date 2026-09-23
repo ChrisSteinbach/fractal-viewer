@@ -100,6 +100,11 @@ import { finiteSolidBoundingRadius } from "../fractal/finite-solid";
 import {
   FINITE_TRANSPORT_RUNNING,
   FINITE_TRANSPORT_RUNNING_OFFSET,
+  SPHERE_INVERSION_POOL_FRESH_BIT,
+  SPHERE_INVERSION_POOL_PASS_MASK,
+  SPHERE_INVERSION_POOL_RAY_BITS,
+  SPHERE_INVERSION_POOL_RAY_MASK,
+  sphereInversionPoolWord,
   FINITE_TRANSPORT_PATH_BYTES,
   TRANSPORT_PATH_BYTES,
   resolveFiniteTransportChunkPaths,
@@ -2109,9 +2114,10 @@ export function nextShadeBatchSize(
   current: number,
   lastBatchMs: number,
   budgetMs: number,
+  max = SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH,
 ): number {
-  if (lastBatchMs < budgetMs && current < SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH) {
-    return Math.min(current * 2, SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH);
+  if (lastBatchMs < budgetMs && current < max) {
+    return Math.min(current * 2, max);
   }
   if (lastBatchMs > budgetMs * 2) {
     return Math.max(SURFACE_COMPUTE_WORKGROUP_SIZE, Math.floor(current / 4));
@@ -2185,19 +2191,32 @@ export function transportBatchSize(cost: ShadeHitCost, cap: number): number {
 }
 
 /**
+ * The sphere-inversion transport POOL's slot capacity: its continuation
+ * buffer's slots and the most rays one pool chunk dispatches. Larger than
+ * {@link SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH}, which is where the pool
+ * pinned on the RX 7900 XTX: 4,096 rays is well under one wave per compute
+ * unit, and every chunk's width still climbs the lane's own ladder against
+ * {@link SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS}. At 2,352 B a slot
+ * the buffer is 36.8 MiB, inside the envelope's 128 MiB of additional state
+ * with the export raster's transport records.
+ */
+export const SURFACE_COMPUTE_TRANSPORT_POOL_SLOTS = 16384;
+
+/**
  * The sphere-inversion continuation's per-submission TARGET (ms) for a
  * chunk whose quantum the ladder has grown — an eighth of
  * {@link SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS}, a thirtieth of the
  * AMD box's ~2.0 s job cut.
  *
- * WHY A LADDER. A batch runs chunk after chunk until its slowest trace
- * finishes, and every batch has one that rides the processed-path guard
- * (2,048 paths, 64 chunks at the base quantum of 32). Measured on the
- * curved-glass starter's settle (RX 7900 XTX), chunks entered with under a
- * tenth of the batch still running were ~45% of the transport's wall time:
- * each is a few rays' worth of work behind a ~4 ms counter round trip. The
- * base quantum exists to bound the FULL-width first chunk, and a draining
- * batch no longer needs it.
+ * WHY A LADDER. A trace that rides the processed-path guard is 2,048
+ * paths, 64 chunks at the base quantum of 32, and once the pool's queue has
+ * drained those few traces are all that run: each chunk is a few rays'
+ * worth of work behind a ~4 ms status round trip (measured under fixed
+ * batches on the curved-glass starter's settle, RX 7900 XTX: chunks entered
+ * with under a tenth of the batch still running were ~45% of the
+ * transport's wall time). The base quantum exists to bound a FULL-width
+ * chunk, and a draining pool no longer needs it. It grows only while the
+ * pool cannot widen (the pool loop's width-first rule).
  *
  * WHY IT IS SAFE: TWO INDEPENDENT GUARDS. A chunk's rays are a subset of
  * the previous chunk's (a finished slot never restarts inside its batch),
@@ -2208,39 +2227,40 @@ export function transportBatchSize(cost: ShadeHitCost, cap: number): number {
  * paths, and one path's cost spans its march's whole step budget, so a
  * lane that turns from cheap paths to a streak of expensive ones could
  * outrun any average. Hence the second guard, {@link transportQuantumCap}:
- * each batch's FIRST chunk runs every ray at the base quantum, so its time
- * is the slowest of thousands of lanes' base-quantum paths, and the quantum
- * may never grow past the multiple of the base at which that chunk's
- * per-path price would reach half the transport ceiling. A subject whose
- * full-width chunk is already heavy (the 600-cell, ~0.5 s) never grows.
+ * a FULL-width base chunk runs thousands of lanes at the base quantum, so
+ * its time is the slowest of their base-quantum paths, and the quantum may
+ * never grow past the multiple of the base at which the latest such
+ * chunk's per-path price would reach half the transport ceiling. A subject
+ * whose full-width chunk is already heavy (the 600-cell, ~0.5 s) never
+ * grows.
  * Every chunk stays its own submission, so the watchdog's unit is
  * unchanged. A pause moves no pixel at any quantum
  * (`finite-transport-work.ts`), which the bench's chunk-identity rows pin.
  */
 export const SURFACE_COMPUTE_TRANSPORT_QUANTUM_TARGET_MS = 64;
 
-/** The batch's quantum ceiling from its full-width first chunk (the
- * target's doc, second guard): the largest multiple of `base` at which the
- * first chunk's per-path price stays under half
+/** The pool's quantum ceiling from its latest full-width base chunk (the
+ * target's doc, second guard): the largest multiple of `base` at which that
+ * chunk's per-path price stays under half
  * {@link SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS}, never below `base`
  * and never above `maxProcessed`, past which no trace can pause. Pure,
  * tested. */
 export function transportQuantumCap(
   base: number,
-  firstChunkMs: number,
+  fullChunkMs: number,
   maxProcessed: number,
 ): number {
   const multiple = Math.floor(
     SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS /
       2 /
-      Math.max(1, Number.isFinite(firstChunkMs) ? firstChunkMs : Infinity),
+      Math.max(1, Number.isFinite(fullChunkMs) ? fullChunkMs : Infinity),
   );
   return Math.max(base, Math.min(maxProcessed, base * Math.max(1, multiple)));
 }
 
 /** The next chunk's quantum from the last chunk's measured work (the
  * target's doc, first guard). Never below `base`, never above `max` — the
- * batch's {@link transportQuantumCap}. Pure, tested. */
+ * pool's {@link transportQuantumCap}. Pure, tested. */
 export function nextTransportQuantum(
   current: number,
   base: number,
@@ -2783,12 +2803,13 @@ export interface SurfaceComputeRendererInit {
    * path stride, on binding 16. Omitted selects the production quantum;
    * zero is the uninterrupted equivalence control. */
   sphereInversionTransportChunkPaths?: number;
-  /** Sphere-inversion glass only: grow the continuation's per-submission
-   * quantum from `sphereInversionTransportChunkPaths` as the batch drains
-   * ({@link nextTransportQuantum}). True exactly when no caller or pin
+  /** Sphere-inversion glass only: the ADAPTIVE transport schedule — the
+   * refill pool (`finite-transport-work.ts`'s slot word) with its
+   * per-submission quantum ladder ({@link nextTransportQuantum}) — in place
+   * of fixed batches at a fixed quantum. True exactly when no caller or pin
    * chose the quantum, so a pinned quantum stays the fixed schedule it
-   * names. */
-  sphereInversionQuantumLadder?: boolean;
+   * names (the A/B arm). */
+  sphereInversionAdaptiveSchedule?: boolean;
   /** Diagnostic override of the shader's existing coupled path/interface cap. */
   transportMaxPaths?: number;
   /** The frozen `opticsMaps` lane buffer (packSurfaceGpuOpticsMaps) —
@@ -3102,7 +3123,7 @@ export class SurfaceComputeRenderer {
             sphereInversionTransportChunkPaths,
           )
         : 0;
-    const siQuantumLadder =
+    const siAdaptiveSchedule =
       siChunkPaths > 0 && sphereInversionTransportChunkPaths === undefined;
 
     // TWO pipelines (the measured v2 split — see the module doc): the
@@ -3853,7 +3874,7 @@ export class SurfaceComputeRenderer {
       transportPipelineNoSlab,
       finiteTransportChunkPaths: finiteChunkPaths,
       sphereInversionTransportChunkPaths: siChunkPaths,
-      sphereInversionQuantumLadder: siQuantumLadder,
+      sphereInversionAdaptiveSchedule: siAdaptiveSchedule,
       transportMaxPaths,
       opticsMapsBuf,
       seedPipeline,
@@ -4021,8 +4042,8 @@ export class SurfaceComputeRenderer {
   /** Processed paths per continuation submission (0: uninterrupted), the
    * backend whose continuation it is, and that backend's stack stride. */
   private readonly transportChunkPaths: number;
-  /** The per-submission quantum ladder is live (the init field's doc). */
-  private readonly transportQuantumLadder: boolean;
+  /** The adaptive transport schedule is live (the init field's doc). */
+  private readonly transportAdaptiveSchedule: boolean;
   private readonly transportChunkBackend:
     "finiteSolid" | "sphereInversion" | null;
   private readonly transportWorkPathBytes: number;
@@ -4080,10 +4101,10 @@ export class SurfaceComputeRenderer {
             init.sphereInversionTransportChunkPaths,
           )
         : 0;
-    this.transportQuantumLadder =
+    this.transportAdaptiveSchedule =
       siChunk &&
       this.transportChunkPaths > 0 &&
-      init.sphereInversionQuantumLadder === true;
+      init.sphereInversionAdaptiveSchedule === true;
     this.transportChunkBackend =
       this.transportChunkPaths === 0
         ? null
@@ -4534,7 +4555,12 @@ export class SurfaceComputeRenderer {
               ? "finite-transport-work"
               : "si-transport-work",
           size: transportWorkBytes(
-            Math.min(rays, SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH),
+            Math.min(
+              rays,
+              this.transportAdaptiveSchedule
+                ? SURFACE_COMPUTE_TRANSPORT_POOL_SLOTS
+                : SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH,
+            ),
             this.transportWorkPathBytes,
           ),
           usage:
@@ -6490,6 +6516,220 @@ export class SurfaceComputeRenderer {
       };
       let pending = transportQueue;
       let transportPass = 0;
+      if (this.transportAdaptiveSchedule) {
+        // THE REFILL POOL (the sphere-inversion lane's adaptive schedule,
+        // `finite-transport-work.ts`'s slot word): a fixed batch ran chunk
+        // after chunk until its slowest trace finished and every pass
+        // waited for its slowest ray, so one serial ~1 s trace trailed
+        // every batch and every pass. Here a slot that finishes takes the
+        // next queued ray at once, and a ray whose trace came back PENDING
+        // re-enters the queue at its next replay pass, so those traces run
+        // BESIDE the rest of the frame and the only drain is the frame's
+        // own end. A ray's arithmetic is its own at every schedule, so no
+        // pixel moves. Every chunk is still one submission, sized as the
+        // fixed batches were: its width by the lane's two-term model on
+        // base-quantum chunks, its quantum by the ladder under its
+        // per-width cap.
+        const base = this.transportChunkPaths;
+        const guardChunks = Math.ceil(this.transportMaxProcessed / base) + 1;
+        const work = buffers.transportWork;
+        if (!work)
+          throw new Error("Surface compute: transport pool buffers missing");
+        const capacity = Math.min(
+          rays,
+          SURFACE_COMPUTE_TRANSPORT_POOL_SLOTS,
+          maxDispatchRays,
+        );
+        const queue: number[] = transportQueue.map((ray) =>
+          sphereInversionPoolWord(ray, 0, false),
+        );
+        let queueHead = 0;
+        const slotWord: number[] = [];
+        const slotLive: boolean[] = [];
+        const slotChunks: number[] = [];
+        const generation = ++this.transportGeneration;
+        if (generation > 0xffffffff)
+          throw new Error(
+            "Surface compute: finite continuation generation exhausted",
+          );
+        let quantum = base;
+        let quantumCap = base;
+        let maxPass = 0;
+        let poolChunks = 0;
+        transportPassesStarted = 1;
+        for (;;) {
+          if (token !== this.frameToken || this.isLost || this.destroyed)
+            return null;
+          if (performance.now() - wallStart > budgetMs) {
+            truncated = true;
+            tr("budget truncated (transport pool)");
+            break;
+          }
+          // Refill up to the width the model asks for; a slot past it
+          // drains without a successor.
+          const wanted = Math.min(
+            transportBatchSize(transportSizer.cost, transportSizer.cap),
+            capacity,
+          );
+          const fresh: boolean[] = [];
+          for (let i = 0; i < wanted && queueHead < queue.length; i++) {
+            if (slotLive[i]) continue;
+            slotWord[i] = queue[queueHead++];
+            slotLive[i] = true;
+            slotChunks[i] = 0;
+            fresh[i] = true;
+          }
+          const width = slotLive.lastIndexOf(true) + 1;
+          if (width === 0) break;
+          let live = 0;
+          const words = new Uint32Array(width);
+          for (let i = 0; i < width; i++) {
+            // A drained slot inside the width is re-dispatched on its old
+            // word: the kernel keeps its final status and returns.
+            words[i] = fresh[i]
+              ? (slotWord[i] | SPHERE_INVERSION_POOL_FRESH_BIT) >>> 0
+              : slotWord[i];
+            if (slotLive[i]) live++;
+          }
+          if (!(await stageDispatch(width, 0, words))) return null;
+          stage(
+            work,
+            new Uint32Array([0, 0, generation, width, quantum, 0, 0, 0]),
+          );
+          const { t0 } = submitDispatch(
+            transportPipeline,
+            buffers.shadeBindGroup,
+            width,
+            {
+              src: transportBuffers.status,
+              dst: transportBuffers.stagingStatus,
+              dstOffset: 0,
+            },
+          );
+          // The status copy rides the chunk's own submission, so its map
+          // completion fences the chunk and every staged write before it.
+          const statusCopy = new Uint32Array(
+            await this.drainStaging(transportBuffers.stagingStatus, width * 4),
+          );
+          if (token !== this.frameToken || this.isLost || this.destroyed)
+            return null;
+          stagedBytes = 0;
+          const wallMs = performance.now() - t0;
+          transportBatchMs.push(wallMs);
+          const workMs = Math.max(0, wallMs - (this.fenceMs ?? 0));
+          let running = 0;
+          for (let i = 0; i < width; i++) {
+            if (!slotLive[i]) continue;
+            const packedStatus = statusCopy[i];
+            const st = packedStatus & 0xff;
+            if (st === FINITE_TRANSPORT_RUNNING) {
+              running++;
+              if (++slotChunks[i] > guardChunks)
+                throw new Error(
+                  "Surface compute: transport continuation did not terminate",
+                );
+              continue;
+            }
+            slotLive[i] = false;
+            if (st === SURFACE_GPU_TRANSPORT_PENDING) {
+              const pass =
+                (slotWord[i] >>> SPHERE_INVERSION_POOL_RAY_BITS) &
+                SPHERE_INVERSION_POOL_PASS_MASK;
+              if (pass + 1 >= DIELECTRIC_REPLAY_PASSES)
+                throw new Error(
+                  "Surface compute: a transport trace stayed pending past the last replay pass",
+                );
+              queue.push(
+                sphereInversionPoolWord(
+                  slotWord[i] & SPHERE_INVERSION_POOL_RAY_MASK,
+                  pass + 1,
+                  false,
+                ),
+              );
+              maxPass = Math.max(maxPass, pass + 1);
+            } else if (
+              st === SURFACE_GPU_TRANSPORT_COMPLETE ||
+              st === SURFACE_GPU_TRANSPORT_RESIDUAL
+            ) {
+              transportResolved++;
+            } else if (st === SURFACE_GPU_TRANSPORT_UNRESOLVED) {
+              transportUnresolved++;
+              const failure = (packedStatus >>> 8) & 0xff;
+              const reason = (packedStatus >>> 16) & 0xff;
+              const key = `f${failure}/r${reason}`;
+              transportFailures.set(key, (transportFailures.get(key) ?? 0) + 1);
+            } else if (st === SURFACE_GPU_TRANSPORT_INVALID) {
+              transportInvalid++;
+            } else if (st !== SURFACE_GPU_TRANSPORT_SKIPPED) {
+              throw new Error(
+                "Surface compute: unknown chunked transport status",
+              );
+            }
+            // SKIPPED: a classic slot — shadeRays owns the pixel.
+          }
+          if (running > 0) transportContinuationChunks++;
+          transportPassesStarted = maxPass + 1;
+          const firstPoolChunk = poolChunks === 0;
+          poolChunks++;
+          // The width model and its capacity ladder price the base-quantum
+          // chunks, the ones whose cost the width governs. A full-width one
+          // re-caps the quantum ladder (transportQuantumCap's doc), and so
+          // does the pool's first chunk, the widest a frame whose every
+          // ray fits in it will ever dispatch.
+          if (quantum === base) {
+            transportSizer.cost = nextShadeHitCost(
+              transportSizer.cost,
+              live,
+              workMs * 1000,
+            );
+            const grown = nextShadeBatchSize(
+              transportSizer.cap,
+              workMs,
+              SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS,
+              SURFACE_COMPUTE_TRANSPORT_POOL_SLOTS,
+            );
+            transportSizer.cap =
+              live < wanted ? Math.min(transportSizer.cap, grown) : grown;
+            if (live >= wanted || firstPoolChunk)
+              quantumCap = transportQuantumCap(
+                base,
+                workMs,
+                this.transportMaxProcessed,
+              );
+          }
+          // WIDTH BEFORE DEPTH: the quantum grows only while the pool
+          // cannot widen — its queue drained, or its width at capacity.
+          // A grown quantum starves the width ladder of the base-quantum
+          // chunks it learns from (measured: the pool pinned at 256 rays,
+          // a few waves on a 96-CU card, and the 3D settle doubled).
+          const chunkQuantum = quantum;
+          const widthLimited =
+            queue.length - queueHead > 0 &&
+            Math.min(
+              transportBatchSize(transportSizer.cost, transportSizer.cap),
+              capacity,
+            ) < capacity;
+          quantum = widthLimited
+            ? base
+            : nextTransportQuantum(quantum, base, workMs, quantumCap);
+          tr(
+            `transport pool width=${width} live=${live} queued=${queue.length - queueHead} running=${running} wallMs=${wallMs.toFixed(1)} workMs=${workMs.toFixed(1)} quantum=${chunkQuantum} maxPass=${maxPass} cost=${transportSizer.cost.interceptUs.toFixed(0)}+n*${transportSizer.cost.marginalUs.toFixed(1)}us`,
+          );
+          transportLastResolved = transportResolved;
+          transportLastUnresolved = transportUnresolved;
+          if (
+            !(await maybePresent(
+              rays -
+                (queue.length - queueHead) -
+                slotLive.filter(Boolean).length,
+            ))
+          )
+            return null;
+        }
+        // Rays still queued or running were truncated mid-schedule: they
+        // keep their seed pixels, as the fixed batches' own truncation.
+        pending = [];
+      }
       transportLane: while (
         pending.length > 0 &&
         transportPass < DIELECTRIC_REPLAY_PASSES
@@ -6531,7 +6771,15 @@ export class SurfaceComputeRenderer {
             pending.length - offset,
             maxDispatchRays,
           );
-          const slice = Uint32Array.from(pending.slice(offset, offset + batch));
+          // The sphere-inversion kernel reads the pool's slot word (ray,
+          // pass, fresh bit); a fixed batch starts every slot through the
+          // header's initialize and carries the batch-wide pass.
+          const slice = Uint32Array.from(
+            pending.slice(offset, offset + batch),
+            this.transportChunkBackend === "sphereInversion"
+              ? (ray) => sphereInversionPoolWord(ray, transportPass, false)
+              : (ray) => ray,
+          );
           if (!(await stageDispatch(slice.length, 0, slice))) return null;
           const work = buffers.transportWork;
           const runningReadback = buffers.stagingTransportRunning;
@@ -6551,11 +6799,7 @@ export class SurfaceComputeRenderer {
           let running = slice.length;
           let batchWorkMs = 0;
           let worstChunkWorkMs = 0;
-          // Every batch opens at the base quantum: its first chunk is the
-          // full-width one the batch sizer prices, and the one that caps
-          // the ladder for the rest of the batch.
-          let quantum = this.transportChunkPaths;
-          let quantumCap = this.transportChunkPaths;
+          const quantum = this.transportChunkPaths;
           // Hold this exact list and slot mapping until the replay completes.
           // A paused trace resumes at the SAME theta; only the outer PENDING
           // queue starts a new trace at the next replay threshold.
@@ -6637,27 +6881,7 @@ export class SurfaceComputeRenderer {
             transportBatchMs.push(wallMs);
             const workMs = Math.max(0, wallMs - (this.fenceMs ?? 0));
             batchWorkMs += workMs;
-            // The batch sizer and its capacity ladder price the chunks the
-            // batch WIDTH governs, the base-quantum ones. A grown chunk is
-            // the quantum ladder's to bound, and it keeps each one under
-            // its own target far below the transport ceiling.
-            if (quantum === this.transportChunkPaths)
-              worstChunkWorkMs = Math.max(worstChunkWorkMs, workMs);
-            const chunkQuantum = quantum;
-            if (this.transportQuantumLadder) {
-              if (chunk === 0)
-                quantumCap = transportQuantumCap(
-                  this.transportChunkPaths,
-                  workMs,
-                  this.transportMaxProcessed,
-                );
-              quantum = nextTransportQuantum(
-                quantum,
-                this.transportChunkPaths,
-                workMs,
-                quantumCap,
-              );
-            }
+            worstChunkWorkMs = Math.max(worstChunkWorkMs, workMs);
             if (running === 0) {
               // The finite lane prices the entire trace batch, not its final
               // short chunk; a per-submission lane prices its worst chunk.
@@ -6684,7 +6908,7 @@ export class SurfaceComputeRenderer {
             tr(
               `transport pass=${transportPass} batch=${slice.length} wallMs=${wallMs.toFixed(1)} workMs=${workMs.toFixed(1)} cost=${transportSizer.cost.interceptUs.toFixed(0)}+n*${transportSizer.cost.marginalUs.toFixed(1)}us` +
                 (work
-                  ? ` chunk=${chunk} running=${running} quantum=${chunkQuantum}`
+                  ? ` chunk=${chunk} running=${running} quantum=${quantum}`
                   : ""),
             );
             chunk++;

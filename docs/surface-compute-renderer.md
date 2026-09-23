@@ -2068,21 +2068,40 @@ one of its paths is an estimator march over the whole fold. An unchunked lane
 has one chunk per batch, so its worst chunk IS its batch and its sizing did
 not move.
 
-THE QUANTUM IS PER SUBMISSION, not baked into the kernel. The batch header
-carries it (`FINITE_TRANSPORT_BUFFER_HEADER_BYTES` 32, the quantum at 16), so
-the sphere-inversion lane grows it as a batch drains
-(`nextTransportQuantum`): every batch opens at the base, 32, and doubles
-after a chunk under half of `SURFACE_COMPUTE_TRANSPORT_QUANTUM_TARGET_MS`
-(64 ms), halving over it and dropping to the base past twice it. A second,
-independent guard caps the ladder per batch from the batch's full-width
-first chunk (`transportQuantumCap`: the multiple of the base at which that
-chunk's per-path price reaches half the transport ceiling), because a
-measured chunk is an average and one path can cost a whole march. The
-600-cell's heavy first chunk pins its lane at the base. Only base-quantum
-chunks price the batch width. The finite lane writes its fixed 2,048 every
+THE SPHERE-INVERSION LANE IS A REFILL POOL, not a sequence of batches. A
+fixed batch ran chunk after chunk until its slowest trace finished, and every
+replay pass waited for its slowest ray, so a serial ~1 s trace (one that
+rides the 2,048-path guard) trailed every batch and every pass. In the pool a
+slot that finishes takes the next queued ray at once, and a ray whose trace
+came back PENDING re-enters the queue at its next replay pass. Each slot
+therefore carries its own ray, replay pass and fresh start in the ray-list
+word the kernel reads (`finite-transport-work.ts`'s slot word: ray in bits
+0–27, pass in 28–30, fresh in 31), and the kernel starts a slot by that bit
+rather than the header's initialize. A drained slot inside the dispatch
+width is re-sent on its old word and the kernel keeps its final status. The
+only drain is the frame's own end. A ray's arithmetic is its own at every
+schedule, so no pixel moves.
+
+Each chunk is still one submission, and TWO LADDERS size it, WIDTH FIRST.
+The width is the lane's two-term model and capacity ladder, learning only
+from base-quantum chunks, up to `SURFACE_COMPUTE_TRANSPORT_POOL_SLOTS`. The
+quantum (`nextTransportQuantum`, carried in the batch header,
+`FINITE_TRANSPORT_BUFFER_HEADER_BYTES` 32 with the quantum at 16) grows only
+while the pool cannot widen, because its queue has drained or its width is
+at capacity. Letting the quantum grow first starved the width ladder of
+base chunks, and the pool pinned at 256 rays and doubled the 3D settle. The
+quantum doubles after a chunk under half of
+`SURFACE_COMPUTE_TRANSPORT_QUANTUM_TARGET_MS` (64 ms), halves over it and
+drops to the base past twice it. A second, independent guard caps it from
+the latest full-width base chunk (`transportQuantumCap`: the multiple of the
+base at which that chunk's per-path price reaches half the transport
+ceiling), because a measured chunk is an average and one path can cost a
+whole march. The 600-cell's heavy first chunk pins its quantum at the base.
+The finite lane keeps its fixed batches and writes its fixed 2,048 every
 submission. `?surfacesichunk=N` pins a FIXED quantum at session create,
-which switches the ladder off (the A/B arm). Measured rows:
-`docs/sphere-inversion-family.md`, "The transport's cost".
+which switches the pool and the ladder off: that is the A/B arm, the old
+fixed-batch schedule. Measured rows: `docs/sphere-inversion-family.md`,
+"The transport's cost".
 
 ### A band is bit-exact
 

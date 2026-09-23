@@ -568,7 +568,13 @@ export function transportTraceCPU(
   theta: number,
   material: DielectricMaterial,
   bgLinear: Vec3,
-  caps?: { maxProcessedPaths: number; maxInterfaces: number },
+  caps?: {
+    maxProcessedPaths: number;
+    maxInterfaces: number;
+    /** Stop, not-accepted, once the residual passes this (a residual only
+     * grows, so the trace could no longer be accepted at its theta). */
+    stopResidual?: number;
+  },
   query?: TransportQueryFn,
   finiteQuery?: TransportFiniteQueryFn,
 ): TransportTraceResult {
@@ -675,6 +681,10 @@ export function transportTraceCPU(
   let failure = 0;
   let reason = 0;
   loop: while (stack.length > 0) {
+    if (caps?.stopResidual !== undefined && residual > caps.stopResidual) {
+      status = "residual";
+      break;
+    }
     const path = stack.pop() as FixturePath;
     if (path.bound <= theta) {
       residual += path.bound;

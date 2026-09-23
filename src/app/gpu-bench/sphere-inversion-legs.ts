@@ -171,11 +171,11 @@ export interface SiTimingRow {
  * quantum, against its row's reference quantum. */
 export interface SiChunkRow {
   system: string;
-  /** The base quantum; with {@link SiChunkRow.ladder}, the ladder's start. */
+  /** The base quantum; with {@link SiChunkRow.adaptive}, the ladder's start. */
   quantum: number;
-  /** The production schedule: no quantum pinned, so the host's quantum
-   * ladder grows each draining batch's chunks from the base. */
-  ladder?: boolean;
+  /** The production schedule: no quantum pinned, so the host runs the
+   * refill pool and its quantum ladder from the base. */
+  adaptive?: boolean;
   width: number;
   height: number;
   wallMs: number;
@@ -1098,27 +1098,27 @@ const CHUNK_ROWS: {
   row: string;
   width: number;
   height: number;
-  /** Pinned quanta, or `"ladder"` for the production schedule (no pin:
-   * the ladder grows from the base quantum as a batch drains). */
-  quanta: (number | "ladder")[];
+  /** Pinned quanta (the fixed-batch schedule), or `"adaptive"` for the
+   * production schedule (no pin: the refill pool and its quantum ladder). */
+  quanta: (number | "adaptive")[];
 }[] = [
   {
     row: "siOct6Pearls3",
     width: 32,
     height: 18,
-    quanta: [0, 1, SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS, "ladder"],
+    quanta: [0, 1, SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS, "adaptive"],
   },
   {
     row: "siCell24Shell4",
     width: 32,
     height: 18,
-    quanta: [0, 1, SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS, "ladder"],
+    quanta: [0, 1, SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS, "adaptive"],
   },
   {
     row: "si600Medallion4@WKISS",
     width: 16,
     height: 9,
-    quanta: [1, 8, SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS, "ladder"],
+    quanta: [1, 8, SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS, "adaptive"],
   },
 ];
 const CHUNK_BUDGET_MS = 600_000;
@@ -1146,12 +1146,14 @@ async function runGlassChunks(
     );
     let control: { pixels: Uint8Array; census: string } | null = null;
     for (const pinned of plan.quanta) {
-      const ladder = pinned === "ladder";
-      const quantum = ladder ? SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS : pinned;
+      const adaptive = pinned === "adaptive";
+      const quantum = adaptive
+        ? SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS
+        : pinned;
       let renderer: SurfaceComputeRenderer | null = null;
       try {
         ctx.status(
-          `sphere-inversion chunks ${plan.row}: glass at quantum ${ladder ? "ladder" : quantum}…`,
+          `sphere-inversion chunks ${plan.row}: glass at quantum ${adaptive ? "adaptive" : quantum}…`,
         );
         renderer = await SurfaceComputeRenderer.create(
           row.dim === 3
@@ -1162,7 +1164,9 @@ async function runGlassChunks(
           {
             materials: slots.materials,
             opticsBackend: "sphereInversion",
-            ...(ladder ? {} : { sphereInversionTransportChunkPaths: quantum }),
+            ...(adaptive
+              ? {}
+              : { sphereInversionTransportChunkPaths: quantum }),
           },
         );
         const spec = siFrameSpec(
@@ -1208,7 +1212,7 @@ async function runGlassChunks(
         const result: SiChunkRow = {
           system: plan.row,
           quantum,
-          ...(ladder ? { ladder } : {}),
+          ...(adaptive ? { adaptive } : {}),
           width: plan.width,
           height: plan.height,
           wallMs: performance.now() - t0,
@@ -1224,14 +1228,14 @@ async function runGlassChunks(
         if (!result.pass) {
           out.failed = true;
           out.notes.push(
-            `sphere-inversion chunks ${plan.row} q=${ladder ? "ladder" : quantum}: ${result.reason}`,
+            `sphere-inversion chunks ${plan.row} q=${adaptive ? "adaptive" : quantum}: ${result.reason}`,
           );
         }
         ctx.update?.(out);
       } catch (e) {
         out.failed = true;
         out.notes.push(
-          `sphere-inversion chunks ${plan.row} q=${ladder ? "ladder" : quantum}: ${describe(e)}`,
+          `sphere-inversion chunks ${plan.row} q=${adaptive ? "adaptive" : quantum}: ${describe(e)}`,
         );
       } finally {
         renderer?.destroy();

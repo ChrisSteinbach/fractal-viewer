@@ -97,3 +97,44 @@ export function resolveFiniteTransportChunkPaths(value?: number): number {
     );
   return paths;
 }
+
+/**
+ * THE SPHERE-INVERSION TRANSPORT POOL'S SLOT WORD. The host keeps a pool of
+ * continuation slots busy: a finished slot takes the next queued ray at once,
+ * and a ray whose trace came back pending re-enters the queue at its next
+ * replay pass, so the long serial traces of one batch or pass overlap the rest
+ * of the frame instead of trailing it. Each slot therefore carries its own
+ * replay pass and its own fresh start, in the ray-list word the kernel reads:
+ * the ray in the low {@link SPHERE_INVERSION_POOL_RAY_BITS} bits, the pass
+ * above them, and a fresh start in bit 31. The finite lane keeps its plain
+ * ray list and batch-wide pass.
+ */
+export const SPHERE_INVERSION_POOL_RAY_BITS = 28;
+export const SPHERE_INVERSION_POOL_RAY_MASK =
+  (1 << SPHERE_INVERSION_POOL_RAY_BITS) - 1;
+export const SPHERE_INVERSION_POOL_PASS_MASK = 7;
+export const SPHERE_INVERSION_POOL_FRESH_BIT = 0x80000000;
+
+/** One pool slot's word (module doc). Throws on a ray or pass the word
+ * cannot carry — never a silently wrapped index. */
+export function sphereInversionPoolWord(
+  ray: number,
+  replayPass: number,
+  fresh: boolean,
+): number {
+  if (
+    !Number.isInteger(ray) ||
+    ray < 0 ||
+    ray > SPHERE_INVERSION_POOL_RAY_MASK ||
+    !Number.isInteger(replayPass) ||
+    replayPass < 0 ||
+    replayPass > SPHERE_INVERSION_POOL_PASS_MASK
+  )
+    throw new RangeError("Transport pool word: ray or pass out of range");
+  return (
+    (ray |
+      (replayPass << SPHERE_INVERSION_POOL_RAY_BITS) |
+      (fresh ? SPHERE_INVERSION_POOL_FRESH_BIT : 0)) >>>
+    0
+  );
+}
