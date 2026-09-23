@@ -3779,6 +3779,9 @@ interface SurfaceSectionConfig {
    * estimator's private arrays at the registry maxima
    * (`?surfacesishape=0`'s pin), the session-shaped kernel's A/B. */
   siShapeOff: boolean;
+  /** `--surface-si-spec-off=1`: the glass envelope's renderers never
+   * speculate a replay pass (`?surfacesispec=0`'s pin), that schedule's A/B. */
+  siSpecOff: boolean;
 }
 
 interface SurfaceKernelConfig {
@@ -5662,6 +5665,7 @@ function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
     siExactNormal: params.get("surfaceSiExactNormal") === "1",
     siJointOff: params.get("surfaceSiJointOff") === "1",
     siShapeOff: params.get("surfaceSiShapeOff") === "1",
+    siSpecOff: params.get("surfaceSiSpecOff") === "1",
     canaryTrip:
       Number.isInteger(canaryTripParsed) && canaryTripParsed >= 1
         ? canaryTripParsed
@@ -20095,6 +20099,7 @@ async function runSurfaceDeSection(
             siExactNormal: config.siExactNormal,
             siJointOff: config.siJointOff,
             siShapeOff: config.siShapeOff,
+            siSpecOff: config.siSpecOff,
           });
           if (config.siExactNormal)
             results.notes.push(
@@ -20103,6 +20108,10 @@ async function runSurfaceDeSection(
           if (config.siJointOff)
             results.notes.push(
               "glass envelope: JOINT POOL OFF (one pool per supersample, the schedule A/B)",
+            );
+          if (config.siSpecOff)
+            results.notes.push(
+              "glass envelope: SPECULATION OFF (no speculative replay passes, the schedule A/B)",
             );
           if (config.siShapeOff)
             results.notes.push(
