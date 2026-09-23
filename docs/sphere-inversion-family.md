@@ -3105,3 +3105,99 @@ WHERE THE 3D GAP STANDS: preview 2.0 s truncated (2.6 s unbudgeted) against
 remainders are the per-sample serial DRAIN (~1.1 s a sample, which needs
 per-sample transport state to overlap) and the floor shadow march (~15%).
 The 4D starter stays inside every line.
+
+### The joint pool closes the 3D settle (2026-09-23)
+
+The drain turned out to be most of each sample, not ~1.1 s of it. A frame-loop
+trace of the 3D starter's settle (`setSurfaceComputeTrace` around the
+envelope's settle, one pool line per chunk) shows the pool at its 16,384-slot
+width for only the first ~450 ms of a ~4 s sample. After that, live slots fall
+to about 5,000 by 0.7 s, about 1,000 by 1.7 s and a few dozen by 2.6 s, where
+they stay for the last ~1.6 s. And every chunk costs the same 50–60 ms whether
+16,384 slots are live or 72: at the base quantum (64 paths) a chunk's wall is
+the per-thread serial time, about 0.8 ms a path, not the device's throughput.
+So the transport is LATENCY-bound. From ~0.7 s on, a sample leaves the card
+mostly idle, and four samples do that one after another.
+
+THE JOINT POOL (`finite-transport-work.ts`'s module doc,
+`surface-compute.ts`'s `jointTransportJob`) runs one pool over every sample.
+Samples 0..N−2 trace their primary rays and seed their glass hits as before,
+then queue their glass rays instead of running a pool. The last sample's frame
+loop runs ONE pool over all N samples' rays, so their tails overlap. The four
+per-ray buffers the transport touches (states, color, layer, transport
+records) become per-sample ARENAS, `sphereInversionJointStride` rays each
+(rounded to 64 rays, so every 4-byte sub-range starts on a 256-byte binding
+offset). Each sample's march, shade and seed bind its own sub-range, sample
+0's at offset 0, so every single-sample path binds exactly what it did. The
+pool word's 28-bit ray field carries the GLOBAL ray, `sample · stride +
+pixel`. In the kernel, the batch header's first pad word (offset 20,
+`sampleStride`, 0 = today's single pool) gives the pixel. The sample's
+sub-pixel offset rides a 64-entry tail appended to the optics lane buffer,
+f32 values identical to the shade uniform's `pixelJitter` for that sample.
+Only the transport entry's first lines change, not `transportNextBoundary`'s
+loop, which is the RADV hazard the fused sample found.
+
+WHERE IT APPLIES (`surfaceComputeJointArenaBytes` and the session rules):
+adaptive-schedule sphere-inversion glass, unlit, unbudgeted, more than one
+sample, no diagnostic record readback, and every sample's arenas inside 64 MiB,
+one storage binding and the ray field. Anything else keeps one pool per
+sample, byte for byte the previous schedule. `?surfacesijoint=0` and the
+bench's `--surface-si-joint-off=1` pin that schedule for the A/B.
+
+MEASURED on the RX 7900 XTX (radeonsi renderer line checked), quiet=YES on
+every run, same build for the A/B arms, censuses identical:
+
+| Line (GPU envelope)                 | glassPearls (3D) per-sample pools → joint | glassPearls4 (4D) per-sample → joint |
+| ----------------------------------- | ----------------------------------------- | ------------------------------------ |
+| Settle 512×288 4-spp, ≤ 10 s        | MISS 16.86 s → PASS 6.85 s (6.71 s)       | PASS 3.92 s → PASS 2.19 s (2.29 s)   |
+| Settle census resolved / unresolved | 111,570 / 12,062 both                     | 104,117 / 6,110 both                 |
+| Settle pixels differing from HEAD   | 0 of 147,456 both                         | 0 of 147,456 both                    |
+| Worst submission (≤ 600 ms)         | 80.5 → 76.8 ms                            | 52.0 → 62.8 ms                       |
+| Retained additional state ≤ 128 MiB | 42.4 → 66.0 MiB                           | 42.4 → 66.0 MiB                      |
+
+(The parenthesized settles are the first joint run, before the retained row
+learned the arenas; the unbracketed ones are the final build. HEAD before this
+work read 16.79 s and 3.88 s on the same card, quiet=YES.) The joint pool's own
+trace is the shape predicted: ~0.7 s of four primary passes, the pool at full
+width to ~1.9 s with ~124k glass rays queued, then ONE tail of ~4 s, where
+there had been four of up to ~3.5 s each. The preview is a one-sample frame,
+which the joint pool does not touch: 2.03 s truncated, a MISS as before.
+
+IN THE APP, the glass gate (`scripts/sphere-inversion-glass.verify.mjs
+--mode=x11::0 --samples=2`, same card, quiet=YES) drives it end to end: at
+its 960×540 pane, 2 samples' arenas are 58 MB, so the menu settle, the link
+reload, the whole Save-PNG and the 3-band tiled export all run the joint pool.
+Every leg PASSES. The reload and the tiled export are byte-identical to the
+menu frame and the whole export (max 0), and the settles read 11.7 s (3D) and
+6.0 s (4D) at 95.7% and 94.8% resolved. A joint frame's `?surfacetrace` feed
+prints each earlier sample's own `frame done`, and after the pool the last
+sample prints their tallies tagged `sample=k`, which
+`scripts/lib/finite-glass-trace.mjs` files under the sample they name. Every
+gate's per-sample completion check therefore reads a joint frame exactly as it
+reads a per-sample one.
+
+WHAT IT COSTS, disclosed:
+
+- MEMORY. 56 B a ray a sample: 33 MB at the envelope's 4-spp settle, 66 MB at
+  the app's default 8 spp on the same raster, under the 64 MiB ceiling with
+  the stride's rounding. The ceiling keeps the envelope's 128 MiB
+  additional-state line with the pool's own 36.8 MiB beside it.
+- IT ENGAGES ONLY AT SMALL RASTERS. The app settles at the pane's own raster,
+  and a pane past about 0.3 Mpx at 4 spp (0.15 Mpx at the default 8) is past
+  the ceiling, so it keeps one pool per sample. The glass gate's 960×540 4-AA
+  menu settles, for one, run the old schedule. At those rasters the dense transport scales with the
+  pixel count while a sample's tail does not, so the drain is a much smaller
+  share of a pane-sized sample than of the envelope's. The lever there would
+  be compact arenas (transport records only for glass rays, about a fifth of
+  the raster), not a larger ceiling.
+- A SUPERSEDED JOB KEEPS LESS. Per-sample pools let a job cancelled during
+  sample k keep samples 0..k−1. A job cancelled mid-pool has no finished
+  sample, because all of them finish together. Sample 0's partials still
+  present during the pool (the pool's sink reads sample 0's arena), so the
+  image develops as before, and the progress row counts every sample's rays.
+
+WHERE THE 3D GAP STANDS: the settle is inside its line. The preview (1-spp,
+2.0 s truncated, 2.6 s unbudgeted at the starters' depth 3) is the one line
+still missed, and the joint pool cannot reach a one-sample frame. The
+floor-shadow march (~15%) and the exact normal (an owner look decision) are
+the measured levers left for it. The 4D starter stays inside every line.
