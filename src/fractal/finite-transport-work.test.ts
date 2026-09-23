@@ -1,6 +1,9 @@
 import {
+  FINITE_TRANSPORT_QUANTUM_OFFSET,
+  SPHERE_INVERSION_JOINT_STRIDE_OFFSET,
   finiteTransportWorkBytes,
   resolveFiniteTransportChunkPaths,
+  sphereInversionJointStride,
 } from "./finite-transport-work";
 
 describe("finite transport scheduling storage", () => {
@@ -32,5 +35,27 @@ describe("finite transport scheduling storage", () => {
         RangeError,
       );
     }
+  });
+});
+
+describe("the joint pool's arena stride", () => {
+  it("rounds a raster up to whole 64-ray blocks, so every 4-byte sub-range starts on a 256-byte binding offset", () => {
+    expect(sphereInversionJointStride(147_456)).toBe(147_456);
+    expect(sphereInversionJointStride(36_864)).toBe(36_864);
+    expect(sphereInversionJointStride(1)).toBe(64);
+    expect(sphereInversionJointStride(65)).toBe(128);
+    expect((sphereInversionJointStride(1920 * 1057) * 4) % 256).toBe(0);
+  });
+
+  it("refuses a raster with no rays", () => {
+    for (const rays of [0, -64, 0.5, NaN, Infinity]) {
+      expect(() => sphereInversionJointStride(rays)).toThrow(RangeError);
+    }
+  });
+
+  it("rides the header word after the quantum, which the host already rewrites per chunk", () => {
+    expect(SPHERE_INVERSION_JOINT_STRIDE_OFFSET).toBe(
+      FINITE_TRANSPORT_QUANTUM_OFFSET + 4,
+    );
   });
 });

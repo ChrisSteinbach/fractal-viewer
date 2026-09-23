@@ -1,6 +1,9 @@
 /** Group the complete console feed into frame records. The final settle is
  * identified by its token and 0..N-1 sample indices, never by taking the last
- * N tally lines (which can borrow a preview or an earlier pose). */
+ * N tally lines (which can borrow a preview or an earlier pose). A tally or
+ * failure line tagged `sample=k` is a sphere-inversion joint pool's report
+ * for an EARLIER sample of the same job (the last sample's pool finishes
+ * them all), so it is filed under that sample's frame. */
 export function traceFrames(lines) {
   const frames = [];
   let current = null;
@@ -21,17 +24,27 @@ export function traceFrames(lines) {
       frames.push(current);
     }
     if (!current) continue;
+    // The frame a line belongs to: its own, or a tagged earlier sample of
+    // the same job. A tag naming no such frame files nowhere, so the
+    // sample it should have completed reads as missing its tally.
+    const tagged = /(?:final|failures) sample=(\d+) /.exec(line);
+    const owner = tagged
+      ? frames.find(
+          (f) => f.token === current.token && f.sample === Number(tagged[1]),
+        )
+      : current;
+    if (!owner) continue;
     if (line.includes("transport failures ")) {
       for (const match of line.matchAll(/(f\d+\/r\d+)=(\d+)/g)) {
-        current.failureClasses[match[1]] = Number(match[2]);
+        owner.failureClasses[match[1]] = Number(match[2]);
       }
     }
     const tally =
-      /transport done final resolved=(\d+) unresolved=(\d+) \(cumulative resolved=(\d+) unresolved=(\d+) invalid=(\d+)\) passes=(\d+)/.exec(
+      /transport done final (?:sample=\d+ )?resolved=(\d+) unresolved=(\d+) \(cumulative resolved=(\d+) unresolved=(\d+) invalid=(\d+)\) passes=(\d+)/.exec(
         line,
       );
     if (tally)
-      current.tallies.push({
+      owner.tallies.push({
         resolved: Number(tally[1]),
         unresolved: Number(tally[2]),
         cumulativeResolved: Number(tally[3]),

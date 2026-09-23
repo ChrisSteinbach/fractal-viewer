@@ -138,3 +138,40 @@ export function sphereInversionPoolWord(
     0
   );
 }
+
+/**
+ * THE JOINT POOL: one pool over EVERY supersample of a frame. A sample's
+ * transport is paced by the serial length of its longest traces, not by the
+ * device's width: past the first few hundred milliseconds a sample's pool
+ * runs a few thousand, then a few dozen, slots, and each chunk still costs
+ * what a full one does. So an N-sample frame queues all N samples' glass rays
+ * into ONE pool and their tails run side by side, instead of four drains
+ * running one after the other.
+ *
+ * The ray field then names a GLOBAL ray, `sample * stride + pixel`, over
+ * per-ray arenas holding `stride` rays per sample. The batch header's first
+ * pad word ({@link SPHERE_INVERSION_JOINT_STRIDE_OFFSET}) carries `stride`,
+ * and 0 there is the single-sample pool exactly. A sample's sub-pixel offset
+ * is the one per-sample quantity the transport reads. It rides the optics
+ * lane buffer's tail: {@link SPHERE_INVERSION_JOINT_SAMPLES_MAX} `vec4f`
+ * entries whose `xy` is sample `s`'s offset, as f32, the same value the
+ * shade uniform's `pixelJitter` carries for that sample. A ray's arithmetic
+ * is its own in either pool, so no pixel moves.
+ */
+export const SPHERE_INVERSION_JOINT_STRIDE_OFFSET = 20;
+export const SPHERE_INVERSION_JOINT_SAMPLES_MAX = 64;
+/** Arena strides are whole multiples of this many rays, so every sample's
+ * sub-range starts on a 256-byte storage-binding offset for the 4-byte
+ * per-ray buffers, and on a larger multiple for the wider ones. */
+export const SPHERE_INVERSION_JOINT_STRIDE_ALIGN = 64;
+
+/** The per-sample arena stride for a raster of `rays`: rounded up to
+ * {@link SPHERE_INVERSION_JOINT_STRIDE_ALIGN}. */
+export function sphereInversionJointStride(rays: number): number {
+  if (!Number.isSafeInteger(rays) || rays < 1)
+    throw new RangeError("Joint transport stride: rays must be positive");
+  return (
+    Math.ceil(rays / SPHERE_INVERSION_JOINT_STRIDE_ALIGN) *
+    SPHERE_INVERSION_JOINT_STRIDE_ALIGN
+  );
+}
