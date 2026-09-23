@@ -1226,7 +1226,8 @@ checks the failure-is-final rule's premise, that no trace accepted at a later
 pass had failed at an earlier one. Verdict: re-tracing failed traces was 48%
 of the work, and most of what remains is the march within 4·eps of a wall.
 Its second test is the refuted early stop's record: stopping a trace once
-its residual passes the budget changes no outcome and saves 0.4%. Its
+its residual passes the budget changes no outcome and saves 0.4%, and it
+barely shortens the chained critical path at 192 px. Its
 critical-path line prices three replay schedules per glass hit: in order,
 chained on first pending (the pool's pending chain), and fully side by side
 (`SIGC_SIZE` sets the raster; 192 approximates the envelope's preview).

@@ -465,9 +465,17 @@ describe("sphere-inversion glass: the transport's evaluation profile", () => {
         inside,
         eps,
       );
+    // Per glass hit, each pass's evaluations under each schedule.
+    const passEvals: number[] = [];
+    const paths: Record<"whole" | "stopped", number[][]> = {
+      whole: [],
+      stopped: [],
+    };
     const schedule = (start: Vec3, rd: Vec3, stop: boolean): string => {
       let theta = DIELECTRIC_INITIAL_BRANCH_THETA;
+      passEvals.length = 0;
       for (let pass = 0; pass < DIELECTRIC_REPLAY_PASSES; pass++) {
+        const before = evals;
         const res = transportTraceCPU(
           system,
           start,
@@ -482,6 +490,7 @@ describe("sphere-inversion glass: the transport's evaluation profile", () => {
           },
           query,
         );
+        passEvals.push(evals - before);
         if (
           (res.status === "complete" || res.status === "residual") &&
           res.residual <= DIELECTRIC_ERROR_BUDGET
@@ -519,9 +528,11 @@ describe("sphere-inversion glass: the transport's evaluation profile", () => {
           ];
           evals = 0;
           const whole = schedule(start, ray.rd, false);
+          paths.whole.push([...passEvals]);
           evalsWhole += evals;
           evals = 0;
           const stopped = schedule(start, ray.rd, true);
+          paths.stopped.push([...passEvals]);
           evalsStopped += evals;
           if (whole !== stopped) differ++;
           return [0, 0, 0];
@@ -532,6 +543,18 @@ describe("sphere-inversion glass: the transport's evaluation profile", () => {
     console.log(
       `early stop: ${String(glass)} glass hits, outcomes differing ${String(differ)}, evaluations ${String(evalsWhole)} whole -> ${String(evalsStopped)} stopped (${((100 * evalsStopped) / Math.max(1, evalsWhole)).toFixed(1)}%)`,
     );
+    // The critical path each schedule leaves a frame: the longest ray, its
+    // passes in order, and chained on its first pending outcome (pass 0,
+    // then the rest side by side: the pool's pending chain).
+    for (const arm of ["whole", "stopped"] as const) {
+      const seq = paths[arm].map((p) => p.reduce((a, b) => a + b, 0));
+      const chained = paths[arm].map((p) =>
+        p.length > 1 ? p[0] + Math.max(...p.slice(1)) : (p[0] ?? 0),
+      );
+      console.log(
+        `early stop critical path, ${arm}: in order max ${String(Math.max(0, ...seq))}, chained max ${String(Math.max(0, ...chained))}`,
+      );
+    }
     expect(differ).toBe(0);
   });
 });
