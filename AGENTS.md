@@ -520,9 +520,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `signedInversionBallScale` keeps the sign for generalized balls (a ball
     holding the centre maps to a complement).
   - `sphere-inversion.ts` — the family's ONE vocabulary: an authored
-    form (registry id, radius fraction, seed, depth, materials) resolved to
-    the explicit `{dim, generators, seed, depth}` construction; bad values and
-    unknown keys REFUSE, never clamp. The optional
+    form resolved to an explicit construction; bad values and unknown keys
+    REFUSE, never clamp. The optional
     `sphereInversion` block persists VERBATIM (refused included), REPLACES the
     transform system as the subject; its arrangement decides the scene's
     dimension (`scene-dimension.ts`). `-de.ts`/`-de-4d.ts` twins: the
@@ -531,9 +530,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `sphere-inversion-oracle.ts`. SURFACE routes to bench-pinned WGSL
     `sphereInv`/`sphereInv4`; `SURFACE_SPHERE_INVERSION` (3D GLSL fallback)
     admits PER CONSTRUCTION (WebGL2's block); 4D, `icosidodec30` and GLASS
-    are COMPUTE-ONLY under one subject phrase. GLASS: `materials` keyed on
-    GENERATION; backend `sphereInversion` (signed field + membership gate)
-    for ball/shell seeds to depth 8.
+    are COMPUTE-ONLY under one subject phrase. GLASS: per-GENERATION
+    `materials`; backend `sphereInversion` (signed field + membership gate),
+    ball/shell seeds to depth 8, any generator count (resumable trace):
+    safe, NOT interactive (preview/settle/export MISS).
     Kaleidoscope/lens/per-transform finishes DORMANT; tiling, balloon, trap,
     slab REFUSE. POINTS draws the same set; Flame/Solid REFUSE. Cost flat in
     depth/generator count; ids all public. CONTROLS: Scene / Look
