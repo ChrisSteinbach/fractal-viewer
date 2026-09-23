@@ -5121,7 +5121,12 @@ async function main(): Promise<void> {
                     total > 0 ? done / total : null;
                 },
               }
-            : { budgetMs: SURFACE_COMPUTE_PREVIEW_BUDGET_MS },
+            : {
+                budgetMs: SURFACE_COMPUTE_PREVIEW_BUDGET_MS,
+                // A glass frame whose every ray has had its slot is down to
+                // its serial tail; a waiting pose gains nothing from it.
+                endTail: () => surfaceComputePreviewPending,
+              },
         );
         surfaceComputePreviewCompleting = false;
         surfaceComputePreviewProgress = null;
@@ -5145,7 +5150,29 @@ async function main(): Promise<void> {
           // renders in. Its seconds-to-minutes cost would only pin the EMA
           // high and hold the rung down long after the pose it belonged to
           // is gone.
-          if (!completing) {
+          // A glass preview cut in its transport's SERIAL TAIL (every ray
+          // already had its slot) is not a verdict on the rung: that tail
+          // is the frame's longest traces, the same length at any raster,
+          // and a smaller rung only starts cold again (measured: the 3D
+          // glass starter's 480x270 first preview cut at 2s, the drop to
+          // 112x63 still took 0.86s). A YIELDED frame ended for a waiting
+          // pose, and its wall up to the tail is the rung's own work, so it
+          // samples as a whole frame. A BUDGET cut feeds the governor
+          // nothing and, parked, takes the completion pass at its own rung,
+          // where the pool's pending prediction makes it warm.
+          const tailCut = frame.truncated
+            ? frame.transport?.tailCut
+            : undefined;
+          const tailBound = !completing && tailCut !== undefined;
+          if (tailBound && tailCut === "yielded")
+            scene.sampleSurfaceComputeCost(performance.now() - t0, false);
+          if (
+            tailBound &&
+            tailCut === "budget" &&
+            !surfaceComputePreviewPending
+          )
+            completionDue = true;
+          if (!completing && !tailBound) {
             const dropped = scene.sampleSurfaceComputeCost(
               performance.now() - t0,
               frame.truncated,
@@ -5174,7 +5201,7 @@ async function main(): Promise<void> {
           console.debug(
             `Surface compute preview ${String(frame.width)}x${String(frame.height)}: ` +
               `${frame.wallMs.toFixed(0)}ms wall, ${String(frame.passes)} passes` +
-              `${frame.truncated ? " (truncated)" : completing ? " (completion)" : ""}, ` +
+              `${frame.truncated ? (tailBound ? ` (transport tail ${tailCut})` : " (truncated)") : completing ? " (completion)" : ""}, ` +
               `hit ${String(frame.counts.hit)} / miss ${String(frame.counts.miss)} / ` +
               `exhausted ${String(frame.counts.exhausted)} / active ${String(frame.counts.active)}`,
           );

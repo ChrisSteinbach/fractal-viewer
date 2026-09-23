@@ -3452,14 +3452,38 @@ truncation of the preview, which the standing no-automatic-give-up verdict
 rules on. Either is an owner decision. It is recorded with this curve, not
 taken.
 
-THE APP'S GOVERNOR, an observation from the same trace. The app treats a
-preview truncated at its 2 s budget as a verdict on the RUNG and drops to a
-smaller raster. The glass preview's floor is per ray, not per pixel, so a
-smaller rung costs the same ~1.1 s tail, and each new raster starts with no
-prediction. The first preview at a new rung is therefore always cold.
+THE APP'S GOVERNOR, measured in the built app by
+`scripts/si-glass-preview-rungs.probe.mjs` (each starter from the menu at
+1600×900, `?surfacetrace`, every frame's raster, wall and cut until the
+settle latch). The app treated a preview truncated at its 2 s budget as a
+verdict on the RUNG and dropped to a smaller raster. The 3D starter's first
+preview traced 480×270 (129,600 rays), was cut at 2.02 s in the pool's tail,
+and dropped to 112×63 (7,056 rays), which still took 0.86 s: the floor is per
+ray, and the new raster started cold. That blurry frame was the whole
+preview until the settle's first sample presented.
 
-WHERE THE 3D PREVIEW STANDS. Warm previews are inside the line (0.83–0.85 s)
-and the settle improved to ~4.2 s. The cold first preview stays at ~2.0 s,
+So the renderer now reports a cut in the pool's tail (`transport.tailCut`)
+and the preview loop reads it apart (`docs/surface-compute-renderer.md`, the
+transport lane's section). It passes `endTail`, and when an invalidation is
+waiting a frame in its tail YIELDS: it presents what resolved and samples
+the governor as a whole frame. A BUDGET cut in the tail feeds the governor
+nothing and, parked, takes the completion pass at the same rung. The same
+probe, same machine, before → after (UNCERTIFIED, the owner's Firefox at
+~72 ms/s):
+
+| Starter      | Before                                                         | After                                                                                         |
+| ------------ | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| glassPearls  | 480×270 cut 2.02 s → 112×63 whole 0.86 s; settle starts +3.3 s | 480×270 yielded 0.54 s → 480×270 cut 2.04 s → 480×270 completion 1.31 s; settle starts +4.3 s |
+| glassPearls4 | 480×270 0.85 s → 480×270 0.81 s; settle starts +2.1 s          | 480×270 yielded 0.55 s → 480×270 0.76 s; settle starts +1.7 s                                 |
+
+The 3D starter's whole preview is now the full rung, and it costs the settle
+about a second of start (47.2 → 48.3 s to the latch at 8 spp). The 4D
+starter's previews both get shorter. The first frame yields because the
+preset load leaves an invalidation waiting.
+
+WHERE THE 3D PREVIEW STANDS. Warm previews are inside the line (0.83–0.85 s),
+the settle improved to ~4.2 s, and in the app the whole preview is now the
+full rung. The cold first preview stays at ~2.0 s,
 bounded below by the path guard's traces. Moving that floor needs a cheaper
 path (a kernel question, whose per-path latency is measured but not
 explained) or a lower guard (an owner decision, priced above).

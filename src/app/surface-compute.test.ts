@@ -5138,6 +5138,69 @@ describe("SurfaceComputeRenderer sphere-inversion glass continuation", () => {
       }
     });
 
+    it("marks a budget cut in the pool's serial tail, and only there", async () => {
+      // The wall is jumped past the budget from the pool's second chunk
+      // on. Three rays fit the first chunk, so the cut finds an empty
+      // queue: the tail. Two hundred do not, so the cut finds rays still
+      // owed a slot: not the tail.
+      const realNow = performance.now.bind(performance);
+      let offset = 0;
+      const clock = vi
+        .spyOn(performance, "now")
+        .mockImplementation(() => realNow() + offset);
+      try {
+        const cut = async (width: number) => {
+          const { h } = await scripted(
+            (k, n) => {
+              if (n >= 2) offset = 1e9;
+              return k === key(0, 0) ? R : C;
+            },
+            false,
+            width,
+          );
+          try {
+            offset = 0;
+            return await h.renderer.renderFrame(h.spec, { budgetMs: 1e8 });
+          } finally {
+            h.renderer.destroy();
+          }
+        };
+        const tail = await cut(3);
+        expect(tail?.truncated).toBe(true);
+        expect(tail?.transport?.tailCut).toBe("budget");
+        const early = await cut(200);
+        expect(early?.truncated).toBe(true);
+        expect(early?.transport?.tailCut).toBeUndefined();
+      } finally {
+        clock.mockRestore();
+      }
+    });
+
+    it("yields its serial tail to endTail, and never before every ray had a slot", async () => {
+      // Two hundred rays outnumber the first chunks, so endTail is asked
+      // only once the queue drains; ray 0 is still running then.
+      const run = async (endTail: () => boolean) => {
+        const { h } = await scripted(
+          (k, n) => (k === key(0, 0) ? (n < 40 ? R : C) : C),
+          false,
+          200,
+        );
+        try {
+          return await h.renderer.renderFrame(h.spec, { endTail });
+        } finally {
+          h.renderer.destroy();
+        }
+      };
+      const yielded = await run(() => true);
+      expect(yielded?.truncated).toBe(true);
+      expect(yielded?.transport?.tailCut).toBe("yielded");
+      expect(yielded?.transport?.resolved).toBe(199);
+      const whole = await run(() => false);
+      expect(whole?.truncated).toBe(false);
+      expect(whole?.transport?.tailCut).toBeUndefined();
+      expect(whole?.transport?.resolved).toBe(200);
+    });
+
     it("never speculates under ?surfacesispec=0", async () => {
       const { h, measured } = await scripted((k, n) =>
         k === key(0, 0) ? (n < 4 ? R : P) : C,

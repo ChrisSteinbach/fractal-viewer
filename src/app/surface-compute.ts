@@ -1224,6 +1224,13 @@ export interface SurfaceComputeFrameOptions {
    * out keep their device-seeded backdrop and the frame reports
    * `truncated`. */
   budgetMs?: number;
+  /** Asked between sphere-inversion pool chunks once every ray has had its
+   * slot: true ends the frame there, truncated, its still-running traces
+   * keeping their seeds (`transport.tailCut` "yielded"). The pool's tail is
+   * its longest serial traces, a length no raster changes, so a caller
+   * with newer work waiting (the preview loop's pending invalidation)
+   * gains nothing by waiting it out. */
+  endTail?: () => boolean;
   /** This frame is an off-canvas CAPTURE (a Save-PNG tile), not the live
    * pane: it neither seeds from the last live frame nor becomes the seed
    * for the next one. Both directions would be wrong — an export traces a
@@ -1343,6 +1350,13 @@ export interface SurfaceComputeFrame {
     batchMs: number[];
     /** Number of finite chunks that paused live work at the same theta. */
     continuationChunks?: number;
+    /** The sphere-inversion pool was cut after every ray had taken a slot,
+     * by the budget or by {@link SurfaceComputeFrameOptions.endTail}
+     * ("yielded"): the frame stopped in its SERIAL TAIL (the longest
+     * traces, the path guard's among them), a length set per ray and not
+     * by the raster, so the truncation says nothing about the preview rung
+     * ("Cold frames" in docs/sphere-inversion-family.md). */
+    tailCut?: "budget" | "yielded";
   };
 }
 
@@ -4643,6 +4657,7 @@ export class SurfaceComputeRenderer {
       !this.transportAdaptiveSchedule ||
       this.lighting ||
       Number.isFinite(opts.budgetMs ?? Infinity) ||
+      opts.endTail ||
       opts.transportReadback ||
       surfaceComputeJointArenaBytes(
         spec.width * spec.height,
@@ -6937,6 +6952,7 @@ export class SurfaceComputeRenderer {
     const transportBatchMs: number[] = [];
     let transportPassesStarted = 0;
     let transportContinuationChunks = 0;
+    let transportTailCut: "budget" | "yielded" | undefined;
     // A joint frame's earlier samples queue their glass rays for the last
     // sample's pool, as global rays over the arenas.
     if (deferTransport)
@@ -7161,7 +7177,22 @@ export class SurfaceComputeRenderer {
             return null;
           if (performance.now() - wallStart > budgetMs) {
             truncated = true;
-            tr("budget truncated (transport pool)");
+            // Every ray already had its slot: what the budget cut was the
+            // pool's serial tail, whose length no raster changes.
+            const tail =
+              queue.length - queueHead - queuedSpec.size - cancelled.size === 0;
+            if (tail) transportTailCut = "budget";
+            tr(`budget truncated (transport pool) tail=${tail}`);
+            break;
+          }
+          if (
+            opts.endTail &&
+            queue.length - queueHead - queuedSpec.size - cancelled.size === 0 &&
+            opts.endTail()
+          ) {
+            truncated = true;
+            transportTailCut = "yielded";
+            tr("tail yielded (transport pool)");
             break;
           }
           // Refill up to the width the model asks for; a slot past it
@@ -7863,6 +7894,7 @@ export class SurfaceComputeRenderer {
               ...(this.transportChunkPaths > 0
                 ? { continuationChunks: transportContinuationChunks }
                 : {}),
+              ...(transportTailCut ? { tailCut: transportTailCut } : {}),
             },
           }
         : {}),

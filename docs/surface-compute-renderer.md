@@ -2122,6 +2122,19 @@ which switches the pool and the ladder off: that is the A/B arm, the old
 fixed-batch schedule. Measured rows: `docs/sphere-inversion-family.md`,
 "The transport's cost".
 
+THE POOL'S TAIL IS NOT A RUNG COST. Once every ray has had a slot, what is
+left is the frame's longest serial traces, and their length is set per ray,
+not by the raster. So a cut there is reported apart from other truncation
+(`transport.tailCut`), and the preview loop reads it apart. A caller may
+pass `endTail`, asked between chunks once the queue has drained. The preview
+loop passes "an invalidation is waiting", and a frame that YIELDS presents
+what it resolved and samples the governor as a whole frame, since its wall
+is the rung's own work. A BUDGET cut in the tail feeds the governor nothing
+and, parked, takes the completion pass at its own rung. Before this, a glass
+preview's budget cut dropped the rung, to a raster that cost the same tail
+and started cold. The measured sequence is in `docs/sphere-inversion-family.md`,
+"Cold frames".
+
 ### A band is bit-exact
 
 The band used to be a `camera.setViewOffset` SUB-FRUSTUM, and its rays
