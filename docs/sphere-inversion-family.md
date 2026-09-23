@@ -2980,3 +2980,30 @@ long traces would overlap the dense work instead of trailing it. Measured
 on the same card, quiet=YES, censuses identical: the 3D settle read 16.5 s
 against 16.8 s, which is noise, and the 4D settle 5.3 s against 4.0 s, the
 wrong way. Not taken: the drain is not a matter of which rays start first.
+
+WHERE THE TRANSPORT'S COST STANDS. Three levers were taken, each a schedule
+change with no pixel moved: a failure is final, the per-submission quantum
+ladder, and the refill pool. Two were measured and refuted: the residual
+early stop and queue ordering. Against the inherited envelope, the 4D
+starter now meets every line (preview 0.71 s, settle 4.0 s, export 18.5 s),
+and the 3D starter meets the export line (40.4 s) and its checkpoint, cancel
+and state lines. It still misses preview and settle: 2.6 s unbudgeted at the
+starters' depth 3, where depths 1 and 2 preview inside the line, and a 16.8 s
+settle. What that remainder is made of, measured:
+
+- One serial DRAIN per antialiasing sample, about 1.1 s: the frame's longest
+  glass traces, running after the pool's queue has emptied. Each sample is
+  its own frame loop, so overlapping one sample's drain with the next
+  sample's work needs per-sample transport state, hundreds of MB at export
+  size. Ordering the queue did not hide it.
+- The FLOOR SHADOW march is about 15% of the glass cost. Short-circuiting it
+  (a measurement, not a change) moved the 3D settle 16.8 → 14.2 s and the 4D
+  settle 4.0 → 3.3 s.
+- In the boundary query, membership evaluations and evaluations repeating
+  the previous point are about 10% of the total. A fused field-and-membership
+  sample would remove them without moving a pixel, in the shadow march as
+  well.
+- 71% of field evaluations sit within 4·eps of a wall. An exact Möbius
+  normal in place of the tetrahedron taps would cut the landings' four
+  evaluations to one, but it changes the normal the images were approved
+  with, so it is a look decision, not a schedule.

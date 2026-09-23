@@ -684,7 +684,8 @@ the heavy-leg wait cap. Each row's missed lines are printed as `MISS` and do
 NOT fail the run, because this record measures the envelope rather than gating
 it. A leg that throws does fail it. The preview line here is the curved-glass
 epic's 1 s, not the finite direction's 1.5 s. Measured rows and the verdict:
-`docs/sphere-inversion-family.md`, "The glass envelope".
+`docs/sphere-inversion-family.md`, "The glass envelope", and the rows since
+the transport's schedule changed, "The transport's cost".
 
 ## Mutation-testing the f32 twins
 
