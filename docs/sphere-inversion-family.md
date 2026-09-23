@@ -3487,3 +3487,29 @@ full rung. The cold first preview stays at ~2.0 s,
 bounded below by the path guard's traces. Moving that floor needs a cheaper
 path (a kernel question, whose per-path latency is measured but not
 explained) or a lower guard (an owner decision, priced above).
+
+### The joint pool at pane size: measured, not built (2026-09-24)
+
+The joint pool engages only inside its 64 MiB arena ceiling
+(`SURFACE_COMPUTE_JOINT_ARENA_BYTES`: below ~0.15 Mpx at the app's 8
+samples), so a pane-sized settle keeps one pool per sample. Compacting the
+arenas to glass rays only would lift that. The design is written out: per
+sample, the transport state for glass rays only, plus a compact-to-pixel
+index. It was measured before it was built, because at pane size the dense
+transport grows with the pixels and the drain does not.
+
+THE MEASUREMENT: the 3D starter's settle in the built app at 1600×900
+(1.44 Mpx, 8 samples), its `?surfacetrace` feed dumped by
+`scripts/si-glass-preview-rungs.probe.mjs --dump`, RX 7900 XTX. Each sample
+takes 5.1–5.4 s. Its transport pool starts at ~1.1 s, after the march and
+shading, and its queue first empties at 4.95–5.05 s. The sample ends at
+5.09–5.40 s. The serial drain the joint pool would overlap is therefore
+0.06–0.43 s of each ~5.2 s sample, 1–8%, and about 2 s of the ~43 s settle
+in all. The 512×288 settle it was built for spent ~1.1 s of a ~3.8 s sample
+in that drain.
+
+VERDICT: not built. The saving is a few percent of a pane-size settle, and
+the cost is a new arena layout in the transport entry of both cores, which
+owes the real-driver agreement legs. Dense transport per glass hit is the
+pane settle's cost. That returns to the per-path latency the cold-frame
+record leaves unexplained.
