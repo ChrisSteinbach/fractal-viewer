@@ -2693,11 +2693,14 @@ share, belong to the envelope work, not to this change.
 THE STARTERS, RERUN WITH EVERY GLASS SESSION CHUNKED (the glass gate, same
 card and flags as the starters' record above): all legs PASS, and both glass
 censuses are IDENTICAL to the pre-continuation record, 91,070 / 4,105 (3D) and
-88,597 / 4,870 (4D), as the schedule-only argument requires. The settles moved
-in opposite directions: 3D 86.3 s → 44.2 s, 4D 14.4 s → 27.0 s. Pricing each
-chunk instead of each whole batch lets the 3D lane's batches grow wider. The 4D
-starter's traces are short, so it pays the per-chunk counter readback without
-needing the pauses. Both are envelope figures, recorded here and not tuned.
+88,597 / 4,870 (4D), as the schedule-only argument requires. The gate's
+settle times read 3D 86.3 s → 44.2 s and 4D 14.4 s → 27.0 s. The 4D number is
+NOT the continuation's cost, and a quantum sweep settles that. The 4D starter
+at 960×540 and one pass settled in 18.4 s at quantum 32, 18.0 s at 256 and
+17.6 s at 100,000 (effectively never pausing), so pausing costs about 5%.
+The same gate at four passes settled at ~17 s a pass. The gate's single-pass
+settle figure moves by more than the quantum does, so treat it as
+observational.
 
 The chunked kernel is pinned on the GPU by the sphere-inversion bench's glass
 chunk leg (`docs/gpu-bench-surface.md`): each row renders one small glass
