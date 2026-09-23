@@ -3373,3 +3373,93 @@ prediction for one frame. Carrying a prediction across rasters (scaling
 pixel coordinates) and across small pose changes is the lever left for the
 cold frame, together with the floor shadow (~15%) and the exact normal (an
 owner look decision).
+
+### Cold frames: the pending chain, and the path guard's floor (2026-09-23)
+
+The last 3D line is the session's FIRST preview (256×144, 1 spp, 1 s line),
+which has no prediction to speculate from. This work took one lever, the
+pending chain, and then measured why that lever cannot reach the line.
+
+THE PENDING CHAIN (`SURFACE_COMPUTE_TRANSPORT_SPEC_AHEAD`, 1). A ray whose
+trace comes back pending has its next pass queued as a real pass, as before,
+and now one pass beyond that queued speculatively beside it. As each pass is
+promoted, the chain adds the next. The evidence is the ray's own pending
+outcome, so a session that never goes pending (the 4D starter) never
+speculates. Rays the prediction seeded never chain: past their known depth
+the extra lane is pure loss. The first build chained them too and took the
+warm repeat from 0.82 to 1.02 s. The cost sheet's critical-path line gained
+the chain's column: at 64 px the worst ray is 119,747 evaluations in order,
+79,021 chained and 52,262 fully side by side. At 192 px (about the preview's
+ray count) it is 142,712, 86,850 and 53,066. No traced ray ran past pass 3.
+
+MEASURED on the RX 7900 XTX, two back-to-back rounds per arm on one build,
+the chain disabled by a temporary toggle. UNCERTIFIED: the quiet check read
+NO on every run (the owner's Firefox at 71–78 ms/s). Preview and settle
+pixels hashed identical across all runs and arms, in both dimensions.
+
+| Line (GPU envelope)                 | glassPearls (3D) chain off → on | glassPearls4 (4D) off → on  |
+| ----------------------------------- | ------------------------------- | --------------------------- |
+| Preview 256×144, first frame (cold) | 1.97 / 1.99 → 2.00 / 2.02 s     | 0.56 / 0.57 → 0.57 / 0.62 s |
+| Preview repeat, same raster (warm)  | 0.82 / 0.85 → 0.83 / 0.85 s     | 0.59 / 0.58 → 0.59 / 0.60 s |
+| Settle 512×288 4-spp                | 4.81 / 4.88 → 4.13 / 4.28 s     | 1.97 / 1.80 → 1.95 / 2.03 s |
+
+The settle gains 13%, because each of its samples is a cold frame at its
+raster. The 4D rows are noise, since its settle runs one pass and the chain
+never fires. The cold preview does not move.
+
+WHY THE COLD PREVIEW DOES NOT MOVE. `?surfacetrace`'s pool lines for the
+unbudgeted depth-3 frame, with each long-running slot's finish logged by a
+temporary line, put the frame's end at the PATH GUARD, not at a pending
+chain. The queue drains by ~0.35 s. From there to ~1.52 s the pool runs a
+few hundred long pass-0 traces. About a hundred of them finish TOGETHER at
+~1.52 s after 43–44 chunks, UNRESOLVED: they rode the 2,048-processed-path
+guard. The pending pass-1 and pass-2 retraces end between 1.6 and 1.95 s.
+Two consequences follow:
+
+- A lone lane's path costs about 0.5 ms at any quantum. The quantum
+  question was re-asked here with the tail allowed to climb the ladder: the
+  chunks grew to 64–128 paths, and the frame ended at 1.92 s against
+  1.84–1.87 s. The earlier refutation stands. The shader clock read about
+  3 GHz through the tail (`pp_dpm_sclk`). The memory clock sat at its floor
+  state throughout, but it did the same in the dense phase, so the working
+  set is served from cache and the memory clock is not the tail's cost.
+  RADV's shader statistics for the 3D sphere-inversion kernels: 120 VGPRs,
+  no spilled registers, and ~108 KiB of scratch per wave, which is the
+  private path stack (24 `TransportPath` entries, about 3.4 KiB a lane at
+  wave32). The stack is touched per path, not per evaluation, so it does not
+  explain the per-path latency either. That latency is measured, not
+  explained.
+- So the cold frame's floor is the guard trace itself: 2,048 serial paths,
+  about 1.1 s on one lane from wherever it starts. No schedule brings the
+  frame under that. Starting those rays first would buy at most the ~0.35 s
+  dense phase, and only if they could be known in advance.
+
+THE GUARD'S PRICE, measured as evidence and not taken. The depth curve's
+renderer was created with a lower `transportMaxPaths` (the diagnostic guard
+control) through a temporary bench flag. One run each, same card and
+conditions:
+
+| Path guard      | 3D D3 cold wall | 3D D3 resolved / unresolved | 3D D1 / D2 / D4 wall | 4D D3 wall, resolved |
+| --------------- | --------------: | --------------------------- | -------------------- | -------------------- |
+| 2,048 (shipped) |          1.84 s | 6,864 / 734                 | 0.41 / 0.68 / 2.41 s | 0.57 s, 6,487        |
+| 1,024           |          1.44 s | 6,725 / 873                 | 0.33 / 0.55 / 1.61 s | 0.48 s, 6,483        |
+| 512             |          0.63 s | 6,467 / 1,131               | 0.30 / 0.51 / 0.77 s | 0.43 s, 6,479        |
+
+A 512-path guard puts the 3D cold preview inside the 1 s line and costs 397
+of 7,598 glass hits (5.2%), which turn from glass to unresolved black. That
+changes the rendered glass, and a preview-only budget would be a per-ray
+truncation of the preview, which the standing no-automatic-give-up verdict
+rules on. Either is an owner decision. It is recorded with this curve, not
+taken.
+
+THE APP'S GOVERNOR, an observation from the same trace. The app treats a
+preview truncated at its 2 s budget as a verdict on the RUNG and drops to a
+smaller raster. The glass preview's floor is per ray, not per pixel, so a
+smaller rung costs the same ~1.1 s tail, and each new raster starts with no
+prediction. The first preview at a new rung is therefore always cold.
+
+WHERE THE 3D PREVIEW STANDS. Warm previews are inside the line (0.83–0.85 s)
+and the settle improved to ~4.2 s. The cold first preview stays at ~2.0 s,
+bounded below by the path guard's traces. Moving that floor needs a cheaper
+path (a kernel question, whose per-path latency is measured but not
+explained) or a lower guard (an owner decision, priced above).

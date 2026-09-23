@@ -319,13 +319,27 @@ describe("sphere-inversion glass: the transport's evaluation profile", () => {
       const par = criticalPaths.map((p) => Math.max(0, ...p));
       const top = (xs: number[], k: number) =>
         [...xs].sort((a, b) => b - a).slice(0, k);
+      // On a ray's FIRST pending outcome, every later pass it may need
+      // starts together: pass 0 in order, then the rest side by side.
+      const onPending = criticalPaths.map((p) =>
+        p.length > 1 ? p[0] + Math.max(...p.slice(1)) : (p[0] ?? 0),
+      );
       const multi = criticalPaths.filter((p) => p.length > 1).length;
+      const passCounts = new Map<number, number>();
+      for (const p of criticalPaths)
+        passCounts.set(p.length, (passCounts.get(p.length) ?? 0) + 1);
       const spec = criticalPaths.reduce(
         (a, p) => a + p.reduce((x, y) => x + y, 0),
         0,
       );
       console.log(
-        `critical path over ${String(criticalPaths.length)} glass hits (${String(multi)} ran >1 pass): sequential max ${String(Math.max(0, ...seq))} evals, top ${top(seq, 5).join("/")}; side by side max ${String(Math.max(0, ...par))}, top ${top(par, 5).join("/")}; total ${String(spec)}`,
+        `critical path over ${String(criticalPaths.length)} glass hits (${String(multi)} ran >1 pass): sequential max ${String(Math.max(0, ...seq))} evals, top ${top(seq, 5).join("/")}; side by side max ${String(Math.max(0, ...par))}, top ${top(par, 5).join("/")}; on first pending max ${String(Math.max(0, ...onPending))}, top ${top(onPending, 5).join("/")}; pass 0 alone top ${top(
+          criticalPaths.map((p) => p[0] ?? 0),
+          5,
+        ).join("/")}; passes run ${[...passCounts]
+          .sort((a, b) => a[0] - b[0])
+          .map(([k, v]) => `${String(k)}:${String(v)}`)
+          .join(" ")}; total ${String(spec)}`,
       );
     }
     const all = zero();
