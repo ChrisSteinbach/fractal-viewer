@@ -342,6 +342,14 @@ let surfaceComputeShadeHitsPin: number | null = null;
  * measured through; absent leaves the base and the ladder.
  */
 let surfaceComputeSiTransportChunkPin: number | null = null;
+/**
+ * `?surfacesinormal=exact` — the sphere-inversion glass backend's EXACT
+ * MÖBIUS NORMAL arm (`surface-de-gpu.ts`'s `sphereInversionExactNormal`) for
+ * a session created while it is set. A LOOK A/B, not a schedule: it changes
+ * the transport's normals, so it ships only as this pin until the owner
+ * decides (`docs/sphere-inversion-family.md`, "The exact normal").
+ */
+let surfaceComputeSiExactNormalPin = false;
 
 function positivePin(value: number | null | undefined): number | null {
   return value !== null &&
@@ -361,6 +369,7 @@ export function setSurfaceComputeSchedulePins(pins: {
   fenceGroup?: number | null;
   timestamps?: boolean | null;
   siTransportChunk?: number | null;
+  siExactNormal?: boolean | null;
 }): void {
   surfaceComputeTimestampsPin = pins.timestamps ?? null;
   surfaceComputeFenceGroupPin = positivePin(pins.fenceGroup);
@@ -368,6 +377,7 @@ export function setSurfaceComputeSchedulePins(pins: {
   surfaceComputeMarchStepsPin = positivePin(pins.marchSteps);
   surfaceComputeShadeHitsPin = positivePin(pins.shadeHits);
   surfaceComputeSiTransportChunkPin = positivePin(pins.siTransportChunk);
+  surfaceComputeSiExactNormalPin = pins.siExactNormal === true;
 }
 
 /** Threads per workgroup — the kernel spike's measured winner (private
@@ -3077,6 +3087,7 @@ export class SurfaceComputeRenderer {
         opts.sphereInversionTransportChunkPaths ??
           surfaceComputeSiTransportChunkPin ??
           undefined,
+        surfaceComputeSiExactNormalPin,
       );
       return renderer;
     } catch (e) {
@@ -3102,6 +3113,7 @@ export class SurfaceComputeRenderer {
     transportMaxPaths?: number,
     finiteCacheCrossings?: boolean,
     sphereInversionTransportChunkPaths?: number,
+    sphereInversionExactNormal = false,
   ): Promise<SurfaceComputeRenderer> {
     // The error-scope pair (out-of-memory outside, validation inside):
     // WebGPU's createBuffer never throws on allocation failure — it
@@ -3291,6 +3303,13 @@ export class SurfaceComputeRenderer {
             : {}),
           ...(mode === "shade" && siChunkPaths > 0
             ? { sphereInversionTransportChunkPaths: siChunkPaths }
+            : {}),
+          ...(mode === "shade" &&
+          sphereInversionExactNormal &&
+          isSphereInversionTarget(target) &&
+          materials?.optics &&
+          opticsBackend === "sphereInversion"
+            ? { sphereInversionExactNormal: true }
             : {}),
           ...(isFiniteSolidTarget(target) && finiteCacheCrossings !== undefined
             ? { finiteCacheCrossings }

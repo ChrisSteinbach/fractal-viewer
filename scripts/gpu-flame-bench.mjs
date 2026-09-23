@@ -142,6 +142,9 @@ const SURFACE_PASSTHROUGH_FLAGS = {
   // renderer envelope and depth curve (measured, not gated; minutes of
   // settles, so it rides the heavy-leg wait cap below).
   "surface-si-glass-envelope": "surfaceSiGlassEnvelope",
+  // With --surface-si-glass-envelope: the exact Möbius normal arm (the
+  // look A/B's cost half; not the shipped normal).
+  "surface-si-exact-normal": "surfaceSiExactNormal",
 };
 
 function parseArgs(argv) {

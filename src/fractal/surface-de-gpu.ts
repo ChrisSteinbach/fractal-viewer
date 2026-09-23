@@ -2046,6 +2046,18 @@ export interface SurfaceGpuKernelOptions {
    * byte-identical. */
   opticsBackend?:
     "estimator" | "closedSolid" | "finiteSolid" | "sphereInversion";
+  /** The sphere-inversion glass backend's EXACT MÖBIUS NORMAL, OPT-IN and
+   * not the shipped default: every transport normal (the boundary query's
+   * landing and reported normals, the primary split, the floor shadow's
+   * crossings) comes from the binding member's folded normal reflected back
+   * through the fold (`sphere-inversion.ts`'s
+   * `sphereInversionFoldedNormal`, one estimator evaluation) instead of four
+   * tetrahedron taps, falling back to the taps where no gradient exists.
+   * It changes the normal the starters' images were approved with, so it
+   * is a LOOK decision and ships only as this A/B arm
+   * (`docs/sphere-inversion-family.md`, "The exact normal"). Requires
+   * `opticsBackend: "sphereInversion"`; absent/false is byte-identical. */
+  sphereInversionExactNormal?: boolean;
   /** The finite-solid construction wire (`core: "finite"` / `"finite4"`
    * and `opticsBackend: "finiteSolid"`): the authored level 0..2 of the
    * admitted document (`analyzeFiniteSolidSystem`'s verdict — the gate
@@ -4640,6 +4652,55 @@ export function packSurfaceGpuSeed(
   return buf;
 }
 
+/** The floor shadow march's inline tetrahedron-tap normal, verbatim (the
+ * exact-normal arm swaps each of its four copies for one call). */
+const SHADOW_TAP_NORMAL_WGSL = `        let e = vec2f(1.0, -1.0) * 0.5773;
+        let grad = e.xyy * transportSolidField(sp + e.xyy * eps) +
+          e.yyx * transportSolidField(sp + e.yyx * eps) +
+          e.yxy * transportSolidField(sp + e.yxy * eps) +
+          e.xxx * transportSolidField(sp + e.xxx * eps);
+        let n = select(-dir, normalize(grad), dot(grad, grad) > 1.0e-12);
+`;
+
+/** Replace every occurrence of `find`, which must occur exactly `count`
+ * times — a generator-time splice that fails loudly if the text drifts. */
+function replaceExactly(
+  source: string,
+  find: string,
+  replacement: string,
+  count: number,
+): string {
+  const parts = source.split(find);
+  if (parts.length - 1 !== count)
+    throw new Error(
+      `surface-de-gpu: expected ${count} copies of a spliced block, found ${parts.length - 1}`,
+    );
+  return parts.join(replacement);
+}
+
+/** The exact-normal arm's displayed-space normal: the estimator's folded
+ * normal at the displayed point, pulled back through the 4D lift's linear
+ * part (the rows of its inverse rotor, transposed) in the 4D cores. */
+function siExactNormalWgsl(core4: boolean): string {
+  return core4
+    ? `
+
+// The exact Möbius normal in the displayed slice: the 4D normal at the
+// lifted point pulled back through the lift (component j is the 4D normal
+// against column j of the lift's linear part). Zero where it has none.
+fn transportSolidExactNormal(p: vec3f) -> vec3f {
+  let g = siExactNormal(liftSphereInv4(p));
+  return g.x * params.rotorInvR0.xyz + g.y * params.rotorInvR1.xyz +
+    g.z * params.rotorInvR2.xyz + g.w * params.rotorInvR3.xyz;
+}`
+    : `
+
+// The exact Möbius normal at the displayed point. Zero where it has none.
+fn transportSolidExactNormal(p: vec3f) -> vec3f {
+  return siExactNormal(p);
+}`;
+}
+
 /**
  * THE FRAME SEED: a standalone compute module, entry `seedFrame`, that
  * writes a compute frame's three per-ray starting values ON THE DEVICE —
@@ -5353,6 +5414,11 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
         : 0;
   const transportChunk = transportChunkPaths > 0;
   const siGlassChunk = transportChunk && opticsBackend === "sphereInversion";
+  const siExactNormal = opts.sphereInversionExactNormal === true;
+  if (siExactNormal && opticsBackend !== "sphereInversion")
+    throw new Error(
+      'surface-de-gpu: sphereInversionExactNormal requires opticsBackend "sphereInversion"',
+    );
   const material = finish || pattern;
   // The hit-info constructor's pattern member: WGSL value constructors
   // are all-or-none, so under the pattern gate every core's full-member
@@ -8467,7 +8533,7 @@ fn surfaceDEHitInfo(pIn: vec3f, li: u32) -> SurfaceHitInfo {
   return info;
 }`;
   const siDescentText = siCore
-    ? /* wgsl */ `${sphereInversionWgslSource(core4 ? 4 : 3, opticsBackend === "sphereInversion")}
+    ? /* wgsl */ `${sphereInversionWgslSource(core4 ? 4 : 3, opticsBackend === "sphereInversion", siExactNormal)}
 ${
   core === "sphereInv4"
     ? `
@@ -9085,7 +9151,7 @@ fn transportSolidField(p: vec3f) -> f32 {
 // of a certified BOUND that also reaches ~0 at every near-kissing tangency.
 fn transportSolidContains(p: vec3f) -> bool {
   return siEstimate(${siLift}).clear >= 0.0;
-}`
+}${siExactNormal ? siExactNormalWgsl(core4) : ""}`
       : core4
         ? `// The closed-solid field (opticsBackend "closedSolid"), 4D form —
 // condensation-de.ts's condensationSignedDistance4 mirrored. The hypot
@@ -9155,7 +9221,7 @@ fn transportSolidField(p: vec3f) -> f32 {
   // block also reads) so shadeGroundPlane's corridor can call it; the
   // optics body moves up beside it for the same reason — the ONE shared
   // math text, still spliced once, now ahead of every consumer.
-  const solidShadowVisibilityWgsl = /* wgsl */ `fn transportShadowVisibility(
+  const solidShadowVisibilityWgslTaps = /* wgsl */ `fn transportShadowVisibility(
   origin: vec3f,
   dir: vec3f,
   ballC: vec3f,
@@ -9324,6 +9390,17 @@ fn transportSolidField(p: vec3f) -> f32 {
   return clamp(trans, vec3f(0.0), vec3f(1.0));
 }
 `;
+  // The exact-normal arm routes the shadow march's four crossing normals
+  // through transportSolidNormal (exact, the taps as its fallback — the same
+  // tap text as these inline blocks, so the fallback is unchanged).
+  const solidShadowVisibilityWgsl = siExactNormal
+    ? replaceExactly(
+        solidShadowVisibilityWgslTaps,
+        SHADOW_TAP_NORMAL_WGSL,
+        "        let n = transportSolidNormal(sp, dir, eps);\n",
+        4,
+      )
+    : solidShadowVisibilityWgslTaps;
   const solidShadowEarly = optics
     ? `// ---- dielectric optical transport (docs/surface-dielectric-transport.md)
 // ---- surface-dielectric.ts's emitted WGSL optics body, verbatim — the
@@ -9601,7 +9678,16 @@ ${
 // the incident ray. (The signed field itself is spliced ahead of the
 // shade entry, where the floor corridor's straight shadow visibility
 // shares it.)
-fn transportSolidNormal(p: vec3f, dir: vec3f, eps: f32) -> vec3f {
+fn transportSolidNormal(p: vec3f, dir: vec3f, eps: f32) -> vec3f {${
+        siExactNormal
+          ? `
+  // The exact Möbius normal (the opt-in arm), the taps where it has none.
+  let exact = transportSolidExactNormal(p);
+  if (dot(exact, exact) > 1.0e-24) {
+    return normalize(exact);
+  }`
+          : ""
+      }
   let e = vec2f(1.0, -1.0) * 0.5773;
   let grad = e.xyy * transportSolidField(p + e.xyy * eps) +
     e.yyx * transportSolidField(p + e.yyx * eps) +

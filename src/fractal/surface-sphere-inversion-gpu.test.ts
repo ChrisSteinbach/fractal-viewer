@@ -302,6 +302,18 @@ describe("sphereInversionWgslSource", () => {
     }
   });
 
+  it("records the fold word only when the exact normal asks for it, and only over the signed body", () => {
+    for (const dim of [3, 4] as const) {
+      const signed = sphereInversionWgslSource(dim, true);
+      expect(sphereInversionWgslSource(dim, true, false)).toBe(signed);
+      expect(signed).not.toContain("siFoldGen");
+      const recorded = sphereInversionWgslSource(dim, true, true);
+      expect(recorded).toContain("siFoldGen[k] = u32(found);");
+      expect(recorded).toContain("fn siExactNormal(");
+      expect(() => sphereInversionWgslSource(dim, false, true)).toThrow();
+    }
+  });
+
   it("the signed body adds only the clearance member and its one transport, leaving d unsigned", () => {
     for (const dim of [3, 4] as const) {
       const signed = sphereInversionWgslSource(dim, true);

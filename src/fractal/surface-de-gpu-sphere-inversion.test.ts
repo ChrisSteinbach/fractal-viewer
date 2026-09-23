@@ -456,6 +456,68 @@ describe("the sphere-inversion glass backend (opticsBackend sphereInversion)", (
     }
   });
 
+  it("keeps the exact-normal arm out of every kernel unless asked", () => {
+    for (const core of ["sphereInv", "sphereInv4"] as const) {
+      const plain = surfaceDeKernelWgsl(
+        glass(core, "shade", { groundPlane: true }),
+      );
+      expect(
+        surfaceDeKernelWgsl(
+          glass(core, "shade", {
+            groundPlane: true,
+            sphereInversionExactNormal: false,
+          }),
+        ),
+      ).toBe(plain);
+      expect(plain).not.toContain("siFoldGen");
+      expect(plain).not.toContain("siExactNormal");
+    }
+  });
+
+  it("the exact-normal arm records the fold word and normals every transport site from it", () => {
+    for (const core of ["sphereInv", "sphereInv4"] as const) {
+      const src = surfaceDeKernelWgsl(
+        glass(core, "shade", {
+          groundPlane: true,
+          sphereInversionExactNormal: true,
+        }),
+      );
+      expect(src).toContain("var<private> siFoldGen: array<u32,");
+      expect(src).toContain("siFoldGen[k] = u32(found);");
+      expect(src).toContain("fn siExactNormal(q: ");
+      expect(src).toContain(
+        "fn transportSolidExactNormal(p: vec3f) -> vec3f {",
+      );
+      // The boundary query's normal tries the exact normal first and keeps
+      // the taps as its fallback.
+      expect(src).toContain(
+        "let exact = transportSolidExactNormal(p);\n  if (dot(exact, exact) > 1.0e-24) {\n    return normalize(exact);\n  }\n  let e = vec2f(1.0, -1.0) * 0.5773;",
+      );
+      // The floor shadow's four crossing normals route through it too.
+      expect(
+        src.split("let n = transportSolidNormal(sp, dir, eps);").length - 1,
+      ).toBe(4);
+      expect(src).not.toContain("let grad = e.xyy * transportSolidField(sp");
+    }
+    // The 4D slice's normal is the 4D normal pulled back through the lift.
+    expect(
+      surfaceDeKernelWgsl(
+        glass("sphereInv4", "shade", { sphereInversionExactNormal: true }),
+      ),
+    ).toContain("let g = siExactNormal(liftSphereInv4(p));");
+  });
+
+  it("refuses the exact-normal arm on any other optics backend", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(
+        glass("sphereInv", "shade", {
+          opticsBackend: "closedSolid",
+          sphereInversionExactNormal: true,
+        }),
+      ),
+    ).toThrow();
+  });
+
   it("leaves the closed-solid emission without the membership gate", () => {
     const closed = surfaceDeKernelWgsl({
       core: "affine",
