@@ -329,12 +329,12 @@ let surfaceComputeMarchChunkPin: number | null = null;
 let surfaceComputeMarchStepsPin: number | null = null;
 let surfaceComputeShadeHitsPin: number | null = null;
 /**
- * `?surfacesichunk=N` — the sphere-inversion glass continuation's quantum,
- * in processed paths per submission, for a session created while it is set
- * (the quantum is baked into the transport kernel, so it pins at create,
- * not per frame). The instrument its production value
- * (`SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS`) was measured through;
- * absent leaves that value.
+ * `?surfacesichunk=N` — a FIXED sphere-inversion glass continuation
+ * quantum, in processed paths per submission, for a session created while
+ * it is set. A pinned quantum switches the per-submission ladder off
+ * ({@link nextTransportQuantum}), so it is also the ladder's A/B arm. The
+ * instrument the base (`SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS`) was
+ * measured through; absent leaves the base and the ladder.
  */
 let surfaceComputeSiTransportChunkPin: number | null = null;
 
@@ -2185,6 +2185,78 @@ export function transportBatchSize(cost: ShadeHitCost, cap: number): number {
 }
 
 /**
+ * The sphere-inversion continuation's per-submission TARGET (ms) for a
+ * chunk whose quantum the ladder has grown — an eighth of
+ * {@link SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS}, a thirtieth of the
+ * AMD box's ~2.0 s job cut.
+ *
+ * WHY A LADDER. A batch runs chunk after chunk until its slowest trace
+ * finishes, and every batch has one that rides the processed-path guard
+ * (2,048 paths, 64 chunks at the base quantum of 32). Measured on the
+ * curved-glass starter's settle (RX 7900 XTX), chunks entered with under a
+ * tenth of the batch still running were ~45% of the transport's wall time:
+ * each is a few rays' worth of work behind a ~4 ms counter round trip. The
+ * base quantum exists to bound the FULL-width first chunk, and a draining
+ * batch no longer needs it.
+ *
+ * WHY IT IS SAFE: TWO INDEPENDENT GUARDS. A chunk's rays are a subset of
+ * the previous chunk's (a finished slot never restarts inside its batch),
+ * so doubling the quantum at most doubles a chunk's cost at a stationary
+ * per-path price, and the ladder doubles only after a chunk measured under
+ * HALF this target; a chunk over the target halves the quantum, one over
+ * twice it drops to the base. But a measured chunk is an AVERAGE over its
+ * paths, and one path's cost spans its march's whole step budget, so a
+ * lane that turns from cheap paths to a streak of expensive ones could
+ * outrun any average. Hence the second guard, {@link transportQuantumCap}:
+ * each batch's FIRST chunk runs every ray at the base quantum, so its time
+ * is the slowest of thousands of lanes' base-quantum paths, and the quantum
+ * may never grow past the multiple of the base at which that chunk's
+ * per-path price would reach half the transport ceiling. A subject whose
+ * full-width chunk is already heavy (the 600-cell, ~0.5 s) never grows.
+ * Every chunk stays its own submission, so the watchdog's unit is
+ * unchanged. A pause moves no pixel at any quantum
+ * (`finite-transport-work.ts`), which the bench's chunk-identity rows pin.
+ */
+export const SURFACE_COMPUTE_TRANSPORT_QUANTUM_TARGET_MS = 64;
+
+/** The batch's quantum ceiling from its full-width first chunk (the
+ * target's doc, second guard): the largest multiple of `base` at which the
+ * first chunk's per-path price stays under half
+ * {@link SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS}, never below `base`
+ * and never above `maxProcessed`, past which no trace can pause. Pure,
+ * tested. */
+export function transportQuantumCap(
+  base: number,
+  firstChunkMs: number,
+  maxProcessed: number,
+): number {
+  const multiple = Math.floor(
+    SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS /
+      2 /
+      Math.max(1, Number.isFinite(firstChunkMs) ? firstChunkMs : Infinity),
+  );
+  return Math.max(base, Math.min(maxProcessed, base * Math.max(1, multiple)));
+}
+
+/** The next chunk's quantum from the last chunk's measured work (the
+ * target's doc, first guard). Never below `base`, never above `max` — the
+ * batch's {@link transportQuantumCap}. Pure, tested. */
+export function nextTransportQuantum(
+  current: number,
+  base: number,
+  lastChunkMs: number,
+  max: number,
+): number {
+  if (!(lastChunkMs <= SURFACE_COMPUTE_TRANSPORT_QUANTUM_TARGET_MS * 2))
+    return base;
+  if (lastChunkMs > SURFACE_COMPUTE_TRANSPORT_QUANTUM_TARGET_MS)
+    return Math.max(base, Math.floor(current / 2));
+  if (lastChunkMs < SURFACE_COMPUTE_TRANSPORT_QUANTUM_TARGET_MS / 2)
+    return Math.min(Math.max(base, max), current * 2);
+  return current;
+}
+
+/**
  * Fold one measured hit dispatch into the cost model.
  *
  * One observation, two unknowns — so the surprise (measured minus
@@ -2711,6 +2783,12 @@ export interface SurfaceComputeRendererInit {
    * path stride, on binding 16. Omitted selects the production quantum;
    * zero is the uninterrupted equivalence control. */
   sphereInversionTransportChunkPaths?: number;
+  /** Sphere-inversion glass only: grow the continuation's per-submission
+   * quantum from `sphereInversionTransportChunkPaths` as the batch drains
+   * ({@link nextTransportQuantum}). True exactly when no caller or pin
+   * chose the quantum, so a pinned quantum stays the fixed schedule it
+   * names. */
+  sphereInversionQuantumLadder?: boolean;
   /** Diagnostic override of the shader's existing coupled path/interface cap. */
   transportMaxPaths?: number;
   /** The frozen `opticsMaps` lane buffer (packSurfaceGpuOpticsMaps) —
@@ -3024,6 +3102,8 @@ export class SurfaceComputeRenderer {
             sphereInversionTransportChunkPaths,
           )
         : 0;
+    const siQuantumLadder =
+      siChunkPaths > 0 && sphereInversionTransportChunkPaths === undefined;
 
     // TWO pipelines (the measured v2 split — see the module doc): the
     // march kernel is the bench's proven register-light shape with only
@@ -3773,6 +3853,7 @@ export class SurfaceComputeRenderer {
       transportPipelineNoSlab,
       finiteTransportChunkPaths: finiteChunkPaths,
       sphereInversionTransportChunkPaths: siChunkPaths,
+      sphereInversionQuantumLadder: siQuantumLadder,
       transportMaxPaths,
       opticsMapsBuf,
       seedPipeline,
@@ -3940,6 +4021,8 @@ export class SurfaceComputeRenderer {
   /** Processed paths per continuation submission (0: uninterrupted), the
    * backend whose continuation it is, and that backend's stack stride. */
   private readonly transportChunkPaths: number;
+  /** The per-submission quantum ladder is live (the init field's doc). */
+  private readonly transportQuantumLadder: boolean;
   private readonly transportChunkBackend:
     "finiteSolid" | "sphereInversion" | null;
   private readonly transportWorkPathBytes: number;
@@ -3997,6 +4080,10 @@ export class SurfaceComputeRenderer {
             init.sphereInversionTransportChunkPaths,
           )
         : 0;
+    this.transportQuantumLadder =
+      siChunk &&
+      this.transportChunkPaths > 0 &&
+      init.sphereInversionQuantumLadder === true;
     this.transportChunkBackend =
       this.transportChunkPaths === 0
         ? null
@@ -6464,6 +6551,11 @@ export class SurfaceComputeRenderer {
           let running = slice.length;
           let batchWorkMs = 0;
           let worstChunkWorkMs = 0;
+          // Every batch opens at the base quantum: its first chunk is the
+          // full-width one the batch sizer prices, and the one that caps
+          // the ladder for the rest of the batch.
+          let quantum = this.transportChunkPaths;
+          let quantumCap = this.transportChunkPaths;
           // Hold this exact list and slot mapping until the replay completes.
           // A paused trace resumes at the SAME theta; only the outer PENDING
           // queue starts a new trace at the next replay threshold.
@@ -6496,6 +6588,10 @@ export class SurfaceComputeRenderer {
                   0,
                   generation,
                   slice.length,
+                  quantum,
+                  0,
+                  0,
+                  0,
                 ]),
               );
             }
@@ -6541,7 +6637,27 @@ export class SurfaceComputeRenderer {
             transportBatchMs.push(wallMs);
             const workMs = Math.max(0, wallMs - (this.fenceMs ?? 0));
             batchWorkMs += workMs;
-            worstChunkWorkMs = Math.max(worstChunkWorkMs, workMs);
+            // The batch sizer and its capacity ladder price the chunks the
+            // batch WIDTH governs, the base-quantum ones. A grown chunk is
+            // the quantum ladder's to bound, and it keeps each one under
+            // its own target far below the transport ceiling.
+            if (quantum === this.transportChunkPaths)
+              worstChunkWorkMs = Math.max(worstChunkWorkMs, workMs);
+            const chunkQuantum = quantum;
+            if (this.transportQuantumLadder) {
+              if (chunk === 0)
+                quantumCap = transportQuantumCap(
+                  this.transportChunkPaths,
+                  workMs,
+                  this.transportMaxProcessed,
+                );
+              quantum = nextTransportQuantum(
+                quantum,
+                this.transportChunkPaths,
+                workMs,
+                quantumCap,
+              );
+            }
             if (running === 0) {
               // The finite lane prices the entire trace batch, not its final
               // short chunk; a per-submission lane prices its worst chunk.
@@ -6567,7 +6683,9 @@ export class SurfaceComputeRenderer {
             }
             tr(
               `transport pass=${transportPass} batch=${slice.length} wallMs=${wallMs.toFixed(1)} workMs=${workMs.toFixed(1)} cost=${transportSizer.cost.interceptUs.toFixed(0)}+n*${transportSizer.cost.marginalUs.toFixed(1)}us` +
-                (work ? ` chunk=${chunk} running=${running}` : ""),
+                (work
+                  ? ` chunk=${chunk} running=${running} quantum=${chunkQuantum}`
+                  : ""),
             );
             chunk++;
           } while (running > 0);

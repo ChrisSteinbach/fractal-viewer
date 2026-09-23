@@ -540,7 +540,7 @@ describe("the sphere-inversion glass continuation (sphereInversionTransportChunk
           glass(core, { sphereInversionTransportChunkPaths: 0 }),
         ),
       ).toBe(plain);
-      expect(plain).not.toContain("TRANSPORT_CHUNK_PATHS");
+      expect(plain).not.toContain("Work.quantum");
       expect(plain).not.toContain("@binding(16)");
     }
   });
@@ -553,7 +553,10 @@ describe("the sphere-inversion glass continuation (sphereInversionTransportChunk
       expect(src).toContain(
         "@group(0) @binding(16) var<storage, read_write> siWork: SiTransportBatch;",
       );
-      expect(src).toContain("const TRANSPORT_CHUNK_PATHS = 32u;");
+      // The quantum is the host's per submission, read off the header.
+      expect(src).toContain(
+        "processed - chunkStartProcessed >= siWork.quantum",
+      );
       expect(src).toContain("atomicAdd(&siWork.running, 1u);");
       expect(src).toContain("var<storage, read> siTable: array<vec4f>;");
       expect(src).not.toMatch(/finiteWork|FiniteTransport/);

@@ -9373,6 +9373,12 @@ struct FiniteTransportBatch {
   running: atomic<u32>,
   generation: u32,
   rayCount: u32,
+  // This submission's scheduling quantum (processed paths before a pause):
+  // the host's per-chunk choice, never a path or energy limit.
+  quantum: u32,
+  pad0: u32,
+  pad1: u32,
+  pad2: u32,
   slots: array<FiniteTransportWork>,
 }
 
@@ -9508,8 +9514,7 @@ const TRANSPORT_MAX_PROCESSED = ${transportMaxPaths}u;
 const TRANSPORT_MAX_INTERFACES = ${transportMaxPaths}u;${
         transportChunk
           ? `
-const TRANSPORT_STATUS_RUNNING = ${FINITE_TRANSPORT_RUNNING}u;
-const TRANSPORT_CHUNK_PATHS = ${transportChunkPaths}u;`
+const TRANSPORT_STATUS_RUNNING = ${FINITE_TRANSPORT_RUNNING}u;`
           : ""
       }
 const TRANSPORT_CROSSING_EPS_REL = ${DIELECTRIC_CROSSING_EPS_REL};
@@ -10064,8 +10069,9 @@ ${
 ${
   transportChunk
     ? `    // Pause BEFORE popping: no path, residual term, or arithmetic order
-    // changes at a scheduling boundary. The cumulative guards below remain.
-    if (processed - chunkStartProcessed >= TRANSPORT_CHUNK_PATHS) {
+    // changes at a scheduling boundary, so the quantum the host picks per
+    // submission moves no pixel. The cumulative guards below remain.
+    if (processed - chunkStartProcessed >= finiteWork.quantum) {
       finiteWork.slots[workSlot].sp = sp;
       finiteWork.slots[workSlot].processed = processed;
       finiteWork.slots[workSlot].radiance = radiance;
@@ -10422,6 +10428,7 @@ fn transportRays(
       finiteWork.rayCount != params.itemCount ||
       finiteWork.rayCount > arrayLength(&finiteWork.slots) ||
       finiteWork.initialize > 1u || finiteWork.generation == 0u ||
+      finiteWork.quantum == 0u ||
       replayPass >= TRANSPORT_REPLAY_PASSES ||
       shade.transport[0] != f32(replayPass) ||
       ray >= arrayLength(&states) ||

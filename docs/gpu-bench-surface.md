@@ -640,7 +640,11 @@ and resumes the same trace next submission (`docs/sphere-inversion-family.md`,
 never the arithmetic, so the family legs' fifth leg renders one small glass
 frame per row through the production `SurfaceComputeRenderer` at several
 quanta and requires pixels AND the transport census to match the row's first
-quantum byte for byte. Each chunked arm must actually pause.
+quantum byte for byte. Each chunked arm must actually pause. Each row also
+runs a `ladder` arm, the production schedule with no quantum pinned, whose
+host grows the quantum from 32 as a batch drains
+(`docs/surface-compute-renderer.md`), so the adaptive schedule is pinned
+byte-identical too.
 
 The 600-cell row cannot have an uninterrupted control: at quantum 0 its 16×9
 glass frame lost the device (`VK_ERROR_DEVICE_LOST`) on this card, which is
@@ -655,6 +659,19 @@ MEASURED on 2026-09-23 on the RX 7900 XTX (`:0`, WebGPU `amd rdna-3`,
 | `siOct6Pearls3`         | 32×18  | 0, 1, 32                        | 19 / 2                | 12,288                | yes           |
 | `siCell24Shell4`        | 32×18  | 0, 1, 32                        | 54 / 10               | 3,763                 | yes           |
 | `si600Medallion4@WKISS` | 16×9   | 1, 8, 32                        | 16 / 10               | 5,920                 | yes           |
+
+RERUN after the failure-is-final replay rule and the quantum ladder, same
+card, `quiet=YES`. The resumes fell because a failed trace is no longer
+re-traced at later passes (12,288 was six passes of the same 2,048-path
+failure). The ladder arm pauses 10 times where quantum 32 pauses 64 on the
+pearls row, and it stays at the base on the 600-cell, whose full-width first
+chunk caps it there:
+
+| Row                     | Quanta (first is the reference) | Resolved / unresolved | Resumes: finest / 32 / ladder | All identical |
+| ----------------------- | ------------------------------- | --------------------- | ----------------------------- | ------------- |
+| `siOct6Pearls3`         | 0, 1, 32, ladder                | 19 / 2                | 2,048 / 64 / 10               | yes           |
+| `siCell24Shell4`        | 0, 1, 32, ladder                | 54 / 10               | 749 / 23 / 18                 | yes           |
+| `si600Medallion4@WKISS` | 1, 8, 32, ladder                | 16 / 10               | 633 / 19 / 19                 | yes           |
 
 ### The glass envelope (opt-in, measured not gated)
 

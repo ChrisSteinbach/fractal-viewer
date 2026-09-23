@@ -171,7 +171,11 @@ export interface SiTimingRow {
  * quantum, against its row's reference quantum. */
 export interface SiChunkRow {
   system: string;
+  /** The base quantum; with {@link SiChunkRow.ladder}, the ladder's start. */
   quantum: number;
+  /** The production schedule: no quantum pinned, so the host's quantum
+   * ladder grows each draining batch's chunks from the base. */
+  ladder?: boolean;
   width: number;
   height: number;
   wallMs: number;
@@ -1094,25 +1098,27 @@ const CHUNK_ROWS: {
   row: string;
   width: number;
   height: number;
-  quanta: number[];
+  /** Pinned quanta, or `"ladder"` for the production schedule (no pin:
+   * the ladder grows from the base quantum as a batch drains). */
+  quanta: (number | "ladder")[];
 }[] = [
   {
     row: "siOct6Pearls3",
     width: 32,
     height: 18,
-    quanta: [0, 1, SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS],
+    quanta: [0, 1, SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS, "ladder"],
   },
   {
     row: "siCell24Shell4",
     width: 32,
     height: 18,
-    quanta: [0, 1, SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS],
+    quanta: [0, 1, SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS, "ladder"],
   },
   {
     row: "si600Medallion4@WKISS",
     width: 16,
     height: 9,
-    quanta: [1, 8, SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS],
+    quanta: [1, 8, SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS, "ladder"],
   },
 ];
 const CHUNK_BUDGET_MS = 600_000;
@@ -1139,11 +1145,13 @@ async function runGlassChunks(
       true,
     );
     let control: { pixels: Uint8Array; census: string } | null = null;
-    for (const quantum of plan.quanta) {
+    for (const pinned of plan.quanta) {
+      const ladder = pinned === "ladder";
+      const quantum = ladder ? SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS : pinned;
       let renderer: SurfaceComputeRenderer | null = null;
       try {
         ctx.status(
-          `sphere-inversion chunks ${plan.row}: glass at quantum ${quantum}…`,
+          `sphere-inversion chunks ${plan.row}: glass at quantum ${ladder ? "ladder" : quantum}…`,
         );
         renderer = await SurfaceComputeRenderer.create(
           row.dim === 3
@@ -1154,7 +1162,7 @@ async function runGlassChunks(
           {
             materials: slots.materials,
             opticsBackend: "sphereInversion",
-            sphereInversionTransportChunkPaths: quantum,
+            ...(ladder ? {} : { sphereInversionTransportChunkPaths: quantum }),
           },
         );
         const spec = siFrameSpec(
@@ -1182,7 +1190,7 @@ async function runGlassChunks(
         if (quantum > 0 && !(t?.continuationChunks ?? 0))
           reasons.push("no trace paused: the quantum was never reached");
         let identical = true;
-        if (quantum === plan.quanta[0]) {
+        if (pinned === plan.quanta[0]) {
           control = { pixels: frame.pixels.slice(), census };
         } else if (!control) {
           identical = false;
@@ -1200,6 +1208,7 @@ async function runGlassChunks(
         const result: SiChunkRow = {
           system: plan.row,
           quantum,
+          ...(ladder ? { ladder } : {}),
           width: plan.width,
           height: plan.height,
           wallMs: performance.now() - t0,
@@ -1215,14 +1224,14 @@ async function runGlassChunks(
         if (!result.pass) {
           out.failed = true;
           out.notes.push(
-            `sphere-inversion chunks ${plan.row} q=${quantum}: ${result.reason}`,
+            `sphere-inversion chunks ${plan.row} q=${ladder ? "ladder" : quantum}: ${result.reason}`,
           );
         }
         ctx.update?.(out);
       } catch (e) {
         out.failed = true;
         out.notes.push(
-          `sphere-inversion chunks ${plan.row} q=${quantum}: ${describe(e)}`,
+          `sphere-inversion chunks ${plan.row} q=${ladder ? "ladder" : quantum}: ${describe(e)}`,
         );
       } finally {
         renderer?.destroy();

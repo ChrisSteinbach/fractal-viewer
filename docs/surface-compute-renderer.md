@@ -2066,7 +2066,23 @@ lane keeps the one-workgroup pilot and the ladder, judged against its WORST
 CHUNK: a chunk is the submission, so the chunk is what the watchdog sees, and
 one of its paths is an estimator march over the whole fold. An unchunked lane
 has one chunk per batch, so its worst chunk IS its batch and its sizing did
-not move. `?surfacesichunk=N` pins the quantum at session create.
+not move.
+
+THE QUANTUM IS PER SUBMISSION, not baked into the kernel. The batch header
+carries it (`FINITE_TRANSPORT_BUFFER_HEADER_BYTES` 32, the quantum at 16), so
+the sphere-inversion lane grows it as a batch drains
+(`nextTransportQuantum`): every batch opens at the base, 32, and doubles
+after a chunk under half of `SURFACE_COMPUTE_TRANSPORT_QUANTUM_TARGET_MS`
+(64 ms), halving over it and dropping to the base past twice it. A second,
+independent guard caps the ladder per batch from the batch's full-width
+first chunk (`transportQuantumCap`: the multiple of the base at which that
+chunk's per-path price reaches half the transport ceiling), because a
+measured chunk is an average and one path can cost a whole march. The
+600-cell's heavy first chunk pins its lane at the base. Only base-quantum
+chunks price the batch width. The finite lane writes its fixed 2,048 every
+submission. `?surfacesichunk=N` pins a FIXED quantum at session create,
+which switches the ladder off (the A/B arm). Measured rows:
+`docs/sphere-inversion-family.md`, "The transport's cost".
 
 ### A band is bit-exact
 
