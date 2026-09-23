@@ -694,6 +694,10 @@ transport pool per supersample (`?surfacesijoint=0`'s pin), the joint pool's
 schedule A/B: no pixel moves, so the two arms' settle PNGs diff to zero. The
 retained-state row counts the joint arenas wherever the renderer takes them.
 Record: "The joint pool closes the 3D settle" in the same doc.
+`--surface-si-shape-off=1` builds the renderers without the session-shaped
+estimator (`?surfacesishape=0`: private arrays at the registry maxima, table
+from its storage binding), that change's codegen A/B. Record: "The glass tail
+is latency" in the same doc.
 
 ## Mutation-testing the f32 twins
 

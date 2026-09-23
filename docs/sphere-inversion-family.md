@@ -3201,3 +3201,82 @@ WHERE THE 3D GAP STANDS: the settle is inside its line. The preview (1-spp,
 still missed, and the joint pool cannot reach a one-sample frame. The
 floor-shadow march (~15%) and the exact normal (an owner look decision) are
 the measured levers left for it. The 4D starter stays inside every line.
+
+### The glass tail is latency: the session-shaped estimator (2026-09-23)
+
+With the settle closed, the 3D preview (256×144, one sample, 1 s line) is the
+line left, and the joint pool cannot reach it. A trace of the unbudgeted
+depth-3 frame has the same shape as a settle sample: primary rays and the
+dense transport are done by ~0.4 s, and the other ~2.2 s is a few hundred
+rays re-tracing from scratch at replay passes 1 and 2. In that tail a chunk
+of 32 paths costs 12–20 ms with a couple of dozen lanes live: a lone thread
+spends ~0.5 ms, over a million cycles, on one processed path. The cost sheet
+puts a path at about 60 field evaluations, and an evaluation at about 70
+dependent table loads (the fold's generator scan and the cover's member
+scan). Un-hidden cache round trips for a lone wave fit that figure; the
+arithmetic does not.
+
+THE SESSION-SHAPED ESTIMATOR (`surface-sphere-inversion-gpu.ts`'s `shape`
+and `workgroupTable`, `surface-de-gpu.ts`'s `sphereInversionShape` and
+`sphereInversionWorkgroupTable`) attacks the latency without moving a value:
+
+- The estimator's per-evaluation PRIVATE arrays were sized to the registry
+  maxima (`foldR`/`foldR2` 32, `gd` 120, `siFoldGen` 32), ~740 B a thread,
+  dynamically indexed, so they lived in scratch memory. A session's
+  construction is frozen, so each kernel now sizes them to its own depth and
+  generator count (3 + 3 + 6 for the 3D starter).
+- The table (43 vec4 for the 3D starter, 146 for the 4D) is copied into
+  WORKGROUP memory by every entry's first statement and read from there.
+  Tables past 256 vec4 (4 KB) or the device's workgroup limit keep the
+  storage binding: a 24-cell or 600-cell arrangement, whose occupancy cost
+  is unmeasured.
+
+Both change where values live, never which values: no index can pass the
+smaller bounds (the fold spends at most `depth` inversions, the cover indexes
+generators below `n`). Absent, the generated source is byte-identical, and
+the tests pin that and that every entry of every mode starts with the copy.
+It applies to every sphere-inversion session, opaque ones included.
+`?surfacesishape=0` / `--surface-si-shape-off=1` is the A/B.
+
+MEASURED on the RX 7900 XTX, quiet=YES, the A/B on one build, the joint pool
+on in both arms, censuses identical, no device loss (it is inside
+`transportNextBoundary`'s calls, so it ran the agreement legs on `:0`
+first):
+
+| Line (GPU envelope)                     | glassPearls (3D) off → on       | glassPearls4 (4D) off → on |
+| --------------------------------------- | ------------------------------- | -------------------------- |
+| Preview 256×144 1-spp (2 s budget)      | 2.02 s truncated → 1.96 s whole | 0.73 → 0.57 s PASS         |
+| Depth curve D3, unbudgeted              | 2.60 → 1.87 s                   | 0.71 → 0.55 s              |
+| Depth curve D8, unbudgeted              | 4.38 → 3.22 s                   | 0.84 → 0.67 s              |
+| Settle 512×288 4-spp                    | 6.60 → 4.90 s PASS              | 2.18 → 1.87 s PASS         |
+| Settle pixels differing from the record | 0                               | 0                          |
+
+The two halves measured separately, in that order: the shaped arrays took
+D3 2.63 → 2.10 s, and the workgroup table 2.10 → 1.83 s. The 3D preview now
+completes inside its budget, and its census (6,864 / 734) is the unbudgeted
+D3 frame's. The sphere-inversion family gate
+(`sphere-inversion-family.verify.mjs --mode=x11::0`) passes on the same
+build, all ten presets byte-exact through link reload, second hop and tiled
+export, and GL agreement unchanged (IoU 1.0000, 0.040/255). Its opaque
+settles sit on the recorded table above (Pearls 7.5 against 7.4 s, Vault 14.5
+against 14.5, Medallions4 13.2 against 13.4): opaque frames are not tail
+bound, so they neither gain nor lose.
+
+A REFUTED LEVER: the pool's quantum in the tail. The preview's tail chunks
+ran at the base quantum (32 paths, 12–20 ms) because a pending ray
+re-entering the queue marks the pool width-limited, and the pool pins the
+quantum there so the width model keeps learning. Counting the pool as
+width-limited only when the queue outnumbers the free slots under the
+model's width let the tail climb the ladder. It measured D3 1.83 → 1.80 s
+and the preview 1.86 → 1.88 s, noise: a chunk's wall is its GPU work, and
+the fence and readback are not the tail's cost. Not taken.
+
+WHAT THE TAIL IS NOW. The critical path is the few rays that go pending: 24
+of 2,137 hits in the cost sheet (`sphere-inversion-glass-cost.harness.ts`,
+its critical-path line) run more than one pass, each re-tracing from
+scratch. Run in order, the worst ray's passes cost 119,747 evaluations; run
+side by side, 52,262, 2.3× shorter. Speculating a long-running ray's next
+pass is therefore the lever left for the preview. It needs a kernel change:
+a later pass can finish in the same chunk as its predecessor (the quantum
+grows between chunks), so a speculative trace must write to its own slot's
+side region, never the ray's pixel, until the host promotes it.
