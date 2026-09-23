@@ -24,12 +24,19 @@ import { pollSurfaceState } from "./surface-browser-runner.mjs";
  * surface-light-guides gate's idiom), from the repository this module lives
  * in, so a gate run from a worktree reads that worktree's table, the one its
  * build was made from.
+ *
+ * The table holds two menu groups' presets. The Sphere inversion group's
+ * showcases author no material; the curved-glass starters author the Glass
+ * material and sit in the Glass group beside the Menger pair, where a user
+ * looking for glass looks. `glass` picks which (`sphereInversionAuthorsOptics`
+ * decides, the predicate the routing reads), so each gate's menu-equals-table
+ * check compares one group with its own presets.
  */
-export async function loadSiPresets() {
+export async function loadSiPresets({ glass = false } = {}) {
   const result = await build({
     stdin: {
       contents: `import { PRESET_SPHERE_INVERSIONS } from "./src/fractal/presets.ts";
-import { resolveSphereInversion, sphereInversionAuthoredDimension } from "./src/fractal/sphere-inversion.ts";
+import { resolveSphereInversion, sphereInversionAuthoredDimension, sphereInversionAuthorsOptics } from "./src/fractal/sphere-inversion.ts";
 import { sphereInversionComputeOnlySubject } from "./src/app/surface-eligibility.ts";
 export default Object.entries(PRESET_SPHERE_INVERSIONS).map(([key, make]) => {
   const block = make();
@@ -39,6 +46,7 @@ export default Object.entries(PRESET_SPHERE_INVERSIONS).map(([key, make]) => {
     key,
     dim: sphereInversionAuthoredDimension(block),
     block,
+    glass: sphereInversionAuthorsOptics(block),
     computeOnly: sphereInversionComputeOnlySubject(resolution.construction),
   };
 });`,
@@ -51,22 +59,24 @@ export default Object.entries(PRESET_SPHERE_INVERSIONS).map(([key, make]) => {
     write: false,
     logLevel: "silent",
   });
-  const presets = (
+  const all = (
     await import(
       `data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString("base64")}`
     )
   ).default;
+  const presets = all.filter((p) => p.glass === glass);
   if (presets.length === 0 || presets.some((p) => p.dim !== 3 && p.dim !== 4)) {
     throw new Error(`unreadable preset table: ${JSON.stringify(presets)}`);
   }
   return presets;
 }
 
-/** The keys the live menu's Sphere inversion group offers, in menu order
- * (runs in the page). */
-export const READ_MENU_GROUP = () => {
+/** The keys a live menu group offers, in menu order (runs in the page).
+ * `label` is the group's label, case-insensitive; the Sphere inversion
+ * group by default. */
+export const READ_MENU_GROUP = (label = "sphere inversion") => {
   const group = [...document.querySelectorAll("#presetSelect optgroup")].find(
-    (g) => /sphere inversion/i.test(g.label),
+    (g) => g.label.toLowerCase() === label.toLowerCase(),
   );
   return group
     ? [...group.querySelectorAll("option")].map((o) => o.value)
@@ -529,4 +539,102 @@ export async function contactSheet(
     ],
   );
   return Buffer.from(b64, "base64");
+}
+
+/** Record the Copy link button's string instead of writing the desktop
+ * clipboard (a headed run shares `:0`'s clipboard with the user). */
+export const CLIPBOARD_STUB = () => {
+  const record = async (text) => {
+    window.__copiedLink = String(text);
+  };
+  try {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: record,
+        readText: async () => window.__copiedLink ?? "",
+      },
+    });
+  } catch {
+    /* the app then reports "Couldn't copy the link", which the leg catches */
+  }
+};
+
+export async function openPanelSection(page, id) {
+  await page.evaluate((sectionId) => {
+    const el = document.getElementById(sectionId);
+    if (el && !el.open) el.open = true;
+  }, id);
+}
+
+/** Save PNG at `scale`; resolves the bytes, the wall time and the tile
+ * count the capture disclosed. */
+export async function savePng(page, consoleLines, scale, timeoutMs) {
+  await openPanelSection(page, "captureSection");
+  await page.selectOption("#exportScale", String(scale));
+  const from = consoleLines.length;
+  const download = page.waitForEvent("download", { timeout: timeoutMs });
+  const t0 = Date.now();
+  await page.click("#savePngBtn");
+  const file = await (await download).path();
+  const bytes = fs.readFileSync(file);
+  const tiles = consoleLines
+    .slice(from)
+    .map((l) => /Surface compute export tile (\d+)\/(\d+)/.exec(l))
+    .filter(Boolean);
+  return {
+    bytes,
+    ms: Date.now() - t0,
+    tileCount: tiles.length === 0 ? 0 : Number(tiles[0][2]),
+    tileLines: tiles.length,
+  };
+}
+
+/** Boot a document from a link in a fresh context and settle it. `args`
+ * carries the gate's `url` and `settle` timeout; `contextOptions` is
+ * {@link openApp}'s. */
+export async function settleFromLink(
+  browser,
+  args,
+  link,
+  query = "",
+  contextOptions = {},
+) {
+  const hash = link.slice(link.indexOf("#"));
+  const app = await openApp(browser, {
+    url: args.url,
+    query,
+    hash,
+    contextOptions,
+    initScripts: [[CLIPBOARD_STUB]],
+  });
+  const { page } = app;
+  await page.waitForFunction(
+    () => {
+      const b = document.getElementById("modeSurfaceBtn");
+      return b && !b.disabled;
+    },
+    undefined,
+    { timeout: 60_000, polling: 200 },
+  );
+  const t0 = Date.now();
+  await page.click("#modeSurfaceBtn");
+  const settled = await waitSettled(page, args.settle);
+  return { ...app, settled, ms: Date.now() - t0 };
+}
+
+/** Click Copy link and resolve the string it built (null when it built
+ * none): the clipboard stub records it. */
+export async function copyLink(page) {
+  await openPanelSection(page, "shareSection");
+  await page.evaluate(() => {
+    window.__copiedLink = undefined;
+  });
+  await page.click("#copyLinkBtn");
+  return page
+    .waitForFunction(() => window.__copiedLink ?? null, undefined, {
+      timeout: 10_000,
+    })
+    .then((h) => h.jsonValue())
+    .catch(() => null);
 }

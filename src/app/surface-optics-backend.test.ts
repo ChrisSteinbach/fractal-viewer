@@ -364,6 +364,8 @@ describe("sphereInversionGlassAdmission (the sphere-inversion glass routing)", (
       inversionIcosidodecaStar: true,
       inversionVault4: seeds,
       inversionMedallions4: `glass is available up to ${SPHERE_INVERSION_GLASS_MAX_GENERATORS} generators`,
+      glassPearls: true,
+      glassPearls4: true,
     });
   });
 

@@ -1134,6 +1134,11 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   canonical posed slice. Loading any of them replaces the whole scene
   (camera, backdrop, floor, palette and per-transform optics included) and
   arms the Surface entry, the Lit interiors' contract one material over.
+  The **Glass** optgroup also holds the CURVED glass starters, **Glass
+  Pearls** and **Glass Cross Pearls (4D)**: sphere-inversion scenes whose
+  Material row is Glass, over the same checker floor. They render glass on
+  WebGPU compute only, and a full-quality settle takes minutes rather than
+  seconds; Points draws them opaque.
 - **Systems → + Add isolated block** — preserves the current system, copies a
   chosen preset, saved scene, or the current system, measures both x extents,
   seats the copy beyond the old with a gap, and writes block-diagonal Xaos rows

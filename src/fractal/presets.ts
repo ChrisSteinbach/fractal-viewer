@@ -2545,6 +2545,11 @@ const PRESETS = {
   // w-preserving lift of the 3D object.
   glassMenger: glassMengerMaps,
   glassMenger4: glassHyperMengerMaps,
+  // The CURVED glass starters: sphere-inversion blocks carrying the Glass
+  // material (PRESET_SPHERE_INVERSIONS), so the transforms are the family's
+  // flat placeholder like every other block preset's.
+  glassPearls: sierpinskiTetrahedron,
+  glassPearls4: sierpinskiTetrahedron,
 } as const satisfies Record<string, () => Transform[]>;
 
 export type Preset = keyof typeof PRESETS;
@@ -2602,6 +2607,8 @@ export const PRESET_RENDER_HINTS: Partial<
   // dust, while the level-2 solid with glass is the deliverable.
   glassMenger: "surface",
   glassMenger4: "surface",
+  glassPearls: "surface",
+  glassPearls4: "surface",
   // Flat 2D sheets in the XY plane: the flame's log-density
   // exposure is what turns an IIM Julia set's tip-heavy point density into
   // a legible curve instead of a faint, mostly-empty sparkle.
@@ -2972,6 +2979,22 @@ export const PRESET_SURFACE_ROOMS: Partial<
     floorTileScale: 0.64,
     floorEmission: 1.4,
   },
+  // The curved-glass starters need the studio MORE than the Menger does:
+  // against the plain dark backdrop sphere-inversion glass is nearly
+  // invisible (measured: only the rims read), and it is the checker bent
+  // through the pearls that makes the curvature the subject.
+  glassPearls: {
+    groundPlane: true,
+    floorPattern: "checker",
+    floorTileScale: 0.64,
+    floorEmission: 1.4,
+  },
+  glassPearls4: {
+    groundPlane: true,
+    floorPattern: "checker",
+    floorTileScale: 0.64,
+    floorEmission: 1.4,
+  },
 };
 
 /**
@@ -3113,6 +3136,29 @@ export const PRESET_SPHERE_INVERSIONS: Partial<
     seed: { kind: "shell", size: 1.1, thickness: 0.03 },
     depth: 5,
   }),
+  // THE CURVED GLASS STARTERS: the look gate's selected subjects
+  // (`scripts/sphere-inversion-glass.harness.ts`, reviewed 2026-09-22) with
+  // the Material row's one Glass entry — the dielectric at its resolver
+  // defaults for every generation, exactly what the panel's Glass choice
+  // writes, so the Material select reads "Glass" on arrival. DEPTH 3 is the
+  // look gate's verdict, not a cost choice: depth 1-3 read as clean glass,
+  // 4 speckles, 6-8 read as lace. The 3D pair is Kissing Pearls' own
+  // construction at that depth; the 4D one is the gate's cross8 ball, since
+  // both 600-cell showcases are past the glass admission's 30-generator cap.
+  glassPearls: () => ({
+    arrangement: "oct6",
+    radiusFraction: 0.99,
+    seed: { kind: "ball", size: 0.28 },
+    depth: 3,
+    materials: [{ optics: { model: "dielectric" } }],
+  }),
+  glassPearls4: () => ({
+    arrangement: "cross8",
+    radiusFraction: 0.99,
+    seed: { kind: "ball", size: 0.42 },
+    depth: 3,
+    materials: [{ optics: { model: "dielectric" } }],
+  }),
 };
 
 /** A preset's authored camera: where the eye is, what it looks at, and the
@@ -3198,6 +3244,17 @@ export const PRESET_VIEWS: Partial<Record<Preset, PresetView>> = {
     camera: { eye: [1.32, 0.96, 1.56], target: [0, 0, 0], fov: 62 },
     // A single xw turn off the kiss slice: fuller medallions (pearl rings
     // round a central rosette) than the double rotation at the kiss slice.
+    fourD: { rotation: [["xw", 0.3]], w0: 0.1 },
+  },
+  // The curved-glass starters, framed from above the floor so the checker
+  // sits BEHIND the pearls in the frame: the bent tiles are the subject.
+  glassPearls: {
+    camera: { eye: [0.26, 0.34, 1.42], target: [0, 0, 0], fov: 62 },
+  },
+  // The look gate's 4D pose: one xw turn off the kiss slice (Medallions'
+  // turn), zero slab thickness, which the family holds for every session.
+  glassPearls4: {
+    camera: { eye: [0.92, 0.67, 1.09], target: [0, 0, 0], fov: 62 },
     fourD: { rotation: [["xw", 0.3]], w0: 0.1 },
   },
   // Both glass constructions use the dielectric study's accepted camera:
