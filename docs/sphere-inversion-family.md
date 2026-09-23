@@ -3007,3 +3007,101 @@ settle. What that remainder is made of, measured:
   normal in place of the tetrahedron taps would cut the landings' four
   evaluations to one, but it changes the normal the images were approved
   with, so it is a look decision, not a schedule.
+
+### Two more levers, both refuted: the fused sample and the exact normal (2026-09-23)
+
+The transport-cost record ended on four remaining pieces of the 3D gap. This
+work measured the two that live in the kernel's arithmetic, the fused
+field-and-membership sample and the exact normal. Neither is taken. The
+drain and the floor shadow are unchanged, and the 3D starter still misses
+the preview and settle lines. Every GPU row below is the RX 7900 XTX
+(radeonsi renderer line checked, WebGPU `amd rdna-3`, software=false), same
+flags as the envelope rows above.
+
+THE FUSED SAMPLE. The signed field and exact membership are one
+`siEstimate` read two ways, so a call site that needs both at one point
+could pay one fold instead of two. The cost sheet bounds that at about 10%
+of the evaluations. It was written as `transportSolidSample(p)` (field and
+membership bit from one result) at every same-point site: the shadow
+march's stride-crossing test and band advance, the boundary query's anchor
+cross-check and per-step membership-crossed test, and the landing's
+beyond point (gate, suppression and the next step's sample, carried).
+
+- ON RADV IT LOSES THE DEVICE. Any variant that touches the boundary
+  query's MARCH LOOP (the per-step sample with or without the carry, the
+  carry disabled, the membership bit read raw or as `clear >= 0`, the
+  landing's beyond-point sample alone) loses the device on the transport
+  agreement leg's first glass fixture, whose trace dispatch is a handful of
+  rays: `vkQueueSubmit failed with VK_ERROR_DEVICE_LOST`, reproduced on
+  every run. The same kernels pass every sphere-inversion leg on SwiftShader,
+  the transport agreement rows included, and the arithmetic is unchanged by
+  construction (`&&` only short-circuits side-effect-free calls). So it is
+  the driver's code generation, not the WGSL. The HEAD kernel passes.
+- WHERE IT SURVIVES IT BUYS NOTHING. The variant the driver accepts (the
+  sample function, the shadow march's sites and the anchor cross-check)
+  settled the 3D starter in 17.0 s against 16.8 s (quiet=YES), censuses
+  identical. Those sites are rare. The frequent ones are in the march loop.
+- NOT TAKEN, and the kernel is left as it was. A future change to
+  `transportNextBoundary`'s loop owes a real-driver run before it is
+  believed, whatever SwiftShader says.
+
+THE EXACT NORMAL. The cost sheet counts the normal taps at 35.1% of all
+field evaluations: every landing's secant, every reported boundary, the
+primary split and the shadow's crossings each pay four taps `eps` apart.
+The signed field is a monotone function of one member's SDF in folded
+coordinates, composed with the fold. Inversion is conformal, and its
+Jacobian is a positive scale times the symmetric reflection along the ray
+from its centre. So the field's gradient is that member's folded normal
+reflected back through the fold, innermost first. At the surface the
+transport's dependence on the fold radii contributes nothing, because a zero
+transports to zero at every radius. It costs one fold and one cover scan.
+It ships as an executable record in all three places:
+
+- `sphere-inversion.ts`'s `sphereInversionFoldedNormal` (one definition,
+  both dimensions; the fold now records its word in `foldGenerator`),
+  exposed as `sphereInversionSignedNormal`/`-4`. The tests pin it to the
+  depth-1 image sphere's own normal at 1e-9 in both dimensions.
+- `surface-de-gpu.ts`'s `sphereInversionExactNormal` kernel option
+  (`sphereInversionWgslSource`'s `recordFold` body, `siExactNormal`, the 4D
+  slice pullback through the lift's rows). Absent, it is byte-identical,
+  checked across every sphere-inversion core, mode and glass option.
+- The `?surfacesinormal=exact` pin, and the bench's
+  `--surface-si-exact-normal=1` on the glass envelope.
+
+It is mostly the same normal. At the 645,758 landings the twin reported,
+it agrees with the taps within 0.26° at 37%, within 1.1° at 87% and within
+5.7° at 99.0%. It is beyond 26° at 0.14% (seams, where the binding term
+switches). It MOVES PIXELS: the settles differ by more than 8/255 at 8.3%
+(3D) and 8.5% (4D) of pixels, as scattered refraction detail. The look
+sheet's panels read as the same glass (`sphere-inversion-glass.harness.ts`,
+finding 8). And it is fast. Both arms below ran back to back on one build
+and are UNCERTIFIED: the quiet check read NO, with a background Firefox at
+about 72 ms/s. The taps arm reproduces the quiet record above within 1%:
+
+| Line (GPU envelope)                 | glassPearls (3D) taps → exact       | glassPearls4 (4D) taps → exact    |
+| ----------------------------------- | ----------------------------------- | --------------------------------- |
+| Preview 256×144 1-spp (2 s budget)  | 2.02 s truncated → 1.82 s           | 0.71 → 0.56 s                     |
+| Settle 512×288 4-spp                | 16.97 → 11.38 s                     | 3.96 → 2.81 s                     |
+| Settle census resolved / unresolved | 111,570 / 12,062 → 107,094 / 16,538 | 104,117 / 6,110 → 103,508 / 6,719 |
+| Depth curve D3, unbudgeted          | 2.66 → 1.74 s                       | 0.73 → 0.52 s                     |
+
+It RESOLVES FEWER, and that decides it. The 3D settle's resolved share
+falls from 90.2% to 86.6%, and the 4D share from 94.5% to 93.9%. The
+kernel-mirroring twin shows why (the cost sheet with `SIGC_EXACT=1`): the
+same 2,137 hits resolve 1,259 times instead of 1,566, the growth is
+TRAVERSAL STATE-MISMATCH at the anchored restart (557 → 846), and the
+evaluations fall only 13.4M → 12.6M. Some of the GPU speed is therefore
+failures ending traces early, not cheaper successes. Neither use alone
+escapes it: exact normals at the landing's secant only resolve 1,238, and
+at the reported boundaries only 1,146. The landing, the anchor envelope and
+the medium cross-check were each built and measured against the tapped
+normal, an `eps`-scale average of a certified bound. The true normal is not
+a drop-in for it. Adopting the exact normal would mean re-deriving that
+machinery around it, and it would change the approved look. That is a
+design for the owner to commission, not a schedule change to take here.
+
+WHERE THE 3D GAP STANDS: preview 2.0 s truncated (2.6 s unbudgeted) against
+1 s, and settle 16.8 s against 10 s, both unchanged. The two measured
+remainders are the per-sample serial DRAIN (~1.1 s a sample, which needs
+per-sample transport state to overlap) and the floor shadow march (~15%).
+The 4D starter stays inside every line.

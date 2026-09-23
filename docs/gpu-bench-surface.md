@@ -686,6 +686,10 @@ it. A leg that throws does fail it. The preview line here is the curved-glass
 epic's 1 s, not the finite direction's 1.5 s. Measured rows and the verdict:
 `docs/sphere-inversion-family.md`, "The glass envelope", and the rows since
 the transport's schedule changed, "The transport's cost".
+`--surface-si-exact-normal=1` builds the envelope's renderers with the
+exact Möbius normal arm (`?surfacesinormal=exact`'s pin). It is the cost
+half of a look A/B, not the shipped normal. That record is "Two more
+levers, both refuted" in the same doc.
 
 ## Mutation-testing the f32 twins
 
