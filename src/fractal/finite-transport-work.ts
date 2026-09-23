@@ -26,10 +26,38 @@ export const FINITE_TRANSPORT_WORK_BYTES =
   FINITE_TRANSPORT_WORK_HEADER_BYTES +
   DIELECTRIC_MAX_STACK * FINITE_TRANSPORT_PATH_BYTES;
 
+/** The generic `TransportPath` (every non-finite backend): origin, dir and
+ * energy vec3f pairs through 56, the displayed anchor vec3f at 64, flags at
+ * 76/80, rounded to 96 at alignment 16. The sphere-inversion glass
+ * continuation stores this stride; the slot header above is unchanged. */
+export const TRANSPORT_PATH_BYTES = 96;
+
+/** One continuation slot for a path stride: the shared 48-byte header and
+ * the unchanged 24-entry LIFO stack. */
+export function transportWorkSlotBytes(pathBytes: number): number {
+  return FINITE_TRANSPORT_WORK_HEADER_BYTES + DIELECTRIC_MAX_STACK * pathBytes;
+}
+
+/** The sphere-inversion glass backend's scheduling quantum. Unlike the
+ * finite DDA, one processed path here is an estimator march over the
+ * family's fold (up to depth x generators inversions per field tap), so the
+ * quantum is small: it bounds ONE WORKGROUP's submission, which the
+ * transport lane cannot shrink below. Measured on the RX 7900 XTX, recorded
+ * in docs/sphere-inversion-family.md's glass envelope section. */
+export const SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS = 32;
+
 export function finiteTransportWorkBytes(capacity: number): number {
+  return transportWorkBytes(capacity, FINITE_TRANSPORT_PATH_BYTES);
+}
+
+/** Batch header plus `capacity` slots of the given path stride. */
+export function transportWorkBytes(
+  capacity: number,
+  pathBytes: number,
+): number {
   const bytes =
     FINITE_TRANSPORT_BUFFER_HEADER_BYTES +
-    capacity * FINITE_TRANSPORT_WORK_BYTES;
+    capacity * transportWorkSlotBytes(pathBytes);
   if (
     !Number.isSafeInteger(capacity) ||
     capacity < 1 ||
@@ -39,6 +67,16 @@ export function finiteTransportWorkBytes(capacity: number): number {
       "Finite transport work capacity must be a positive safe integer",
     );
   return bytes;
+}
+
+/** Zero selects uninterrupted execution (the direct-codegen default and the
+ * diagnostic equivalence control); omitted selects the production quantum. */
+export function resolveSphereInversionTransportChunkPaths(
+  value?: number,
+): number {
+  return resolveFiniteTransportChunkPaths(
+    value ?? SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS,
+  );
 }
 
 /** Zero selects uninterrupted execution for diagnostic equivalence controls.
