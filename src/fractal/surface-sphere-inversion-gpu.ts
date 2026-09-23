@@ -344,8 +344,20 @@ export function packSphereInversionGpuTables(
  * bit) — {@link sphereInversionSignedF32}'s arithmetic. Nothing else moves:
  * `d` keeps its unsigned meaning, so the primary march and hit-info read the
  * same value, and absent/false emits the shipped body byte for byte.
+ *
+ * `recordFold` (requires `signed`) makes the fold RECORD its word — the
+ * generator each inversion went through — in the module-scope private
+ * `siFoldGen`, which the exact Möbius normal reads back innermost first
+ * (`sphereInversionFoldedNormal`'s reflections). One store per inversion;
+ * absent/false emits the body byte for byte.
  */
-export function sphereInversionWgslSource(dim: 3 | 4, signed = false): string {
+export function sphereInversionWgslSource(
+  dim: 3 | 4,
+  signed = false,
+  recordFold = false,
+): string {
+  if (recordFold && !signed)
+    throw new Error("sphereInversionWgslSource: recordFold requires signed");
   const V = dim === 3 ? "vec3f" : "vec4f";
   const center = dim === 3 ? "siTable[i].xyz" : "siTable[2u * i]";
   const radius = dim === 3 ? "siTable[i].w" : "siTable[2u * i + 1u].x";
@@ -391,7 +403,14 @@ fn siMember(x: ${V}, i: u32) -> f32 {
   return select(v, -v, rs < 0.0);
 }
 
-// sphere-inversion-de${dim === 4 ? "-4d" : ""}.ts's evaluate${dim} in f32, cutoff ignored.
+${
+  recordFold
+    ? `// The last siEstimate's fold word: the generator inversion i went through.
+var<private> siFoldGen: array<u32, ${MAXD}>;
+
+`
+    : ""
+}// sphere-inversion-de${dim === 4 ? "-4d" : ""}.ts's evaluate${dim} in f32, cutoff ignored.
 fn siEstimate(q: ${V}) -> SiResult {
   let n = params.siCounts.x;
   let s = params.siCounts.y;
@@ -470,7 +489,7 @@ fn siEstimate(q: ${V}) -> SiResult {
     }
     x = c + (r2 / foundD2) * (x - c);
     foldR[k] = sqrt(foundD2);
-    foldR2[k] = r2;
+    foldR2[k] = r2;${recordFold ? "\n    siFoldGen[k] = u32(found);" : ""}
     ring = min(ring, foldR[k] / rf);
     if (k == 0u) {
       first = found;
@@ -620,7 +639,91 @@ fn siSeedMember(res: SiResult) -> i32 {
     }
   }
   return select(-1, seedArg, seedMax >= rest);
-}`;
+}${
+    recordFold
+      ? `
+
+// THE EXACT MÖBIUS NORMAL (sphere-inversion.ts's sphereInversionFoldedNormal
+// in f32): the binding member's outward gradient in folded coordinates —
+// the member the cover scan's winning term binds on, table order and strict
+// improvement as on the CPU — reflected back through the recorded fold,
+// innermost first. Unnormalized; zero where no gradient exists (a pole or an
+// exhausted fold, a zero-length offset), and the caller falls back.
+fn siExactNormal(q: ${V}) -> ${V} {
+  let res = siEstimate(q);
+  if (res.status != ${SPHERE_INVERSION_FOLD_DOMAIN}u) {
+    return ${V}(0.0);
+  }
+  let n = params.siCounts.x;
+  let s = params.siCounts.y;
+  let x = res.x;
+  var g = ${V}(0.0);
+  if (res.termGap >= 0) {
+    // A depth-2 gap ball: +(|x - c| - r).
+    g = x - siCenter(n + s + u32(res.termJ) * params.siCounts.w + s + u32(res.termGap));
+  } else {
+    // An intersection: its seed members first, then (the folded seed) the
+    // generator exteriors or (a one-step copy) B_j and its gap complements.
+    let base = select(n, n + s + u32(res.termJ) * params.siCounts.w, res.termJ >= 0);
+    var bestV = -3.0e38;
+    for (var i = 0u; i < s; i++) {
+      let e = base + i;
+      let v = siMember(x, e);
+      if (v > bestV) {
+        bestV = v;
+        g = select(x - siCenter(e), siCenter(e) - x, siRadius(e) < 0.0);
+      }
+    }
+    if (res.termJ < 0) {
+      for (var i = 0u; i < n; i++) {
+        let v = siRadius(i) - length(x - siCenter(i));
+        if (v > bestV) {
+          bestV = v;
+          g = siCenter(i) - x;
+        }
+      }
+    } else {
+      let j = u32(res.termJ);
+      let vj = length(x - siCenter(j)) - siRadius(j);
+      if (vj > bestV) {
+        bestV = vj;
+        g = x - siCenter(j);
+      }
+      for (var i = 0u; i + 1u < n; i++) {
+        let e = base + s + i;
+        let v = siRadius(e) - length(x - siCenter(e));
+        if (v > bestV) {
+          bestV = v;
+          g = siCenter(e) - x;
+        }
+      }
+    }
+  }
+  let gl = length(g);
+  if (!(gl > 0.0)) {
+    return ${V}(0.0);
+  }
+  g = g / gl;
+  // Each inversion's Jacobian is a positive scale times the reflection
+  // along the ray from its centre, and symmetric: reflect, then walk the
+  // point back out along the same inversion.
+  var y = x;
+  for (var i = res.k; i > 0u; i--) {
+    let gen = siFoldGen[i - 1u];
+    let c = siCenter(gen);
+    let v = y - c;
+    let u2 = dot(v, v);
+    if (!(u2 > 0.0)) {
+      return ${V}(0.0);
+    }
+    g = g - (2.0 * dot(g, v) / u2) * v;
+    let rg = siRadius(gen);
+    y = c + (rg * rg / u2) * v;
+  }
+  return g;
+}`
+      : ""
+  }`;
 }
 
 // ------------------------------------------------------------- f32 twin

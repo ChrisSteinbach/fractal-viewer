@@ -397,6 +397,7 @@ import {
   SURFACE_COMPUTE_TRANSPORT_POOL_SLOTS,
   SURFACE_COMPUTE_WORKGROUP_SIZE,
   SurfaceComputeRenderer,
+  setSurfaceComputeSchedulePins,
 } from "../surface-compute";
 import type {
   SurfaceComputeAnyTarget,
@@ -3764,6 +3765,10 @@ interface SurfaceSectionConfig {
    * envelope and depth curve, real adapters only. MEASURED, NOT GATED — a
    * line it misses is the envelope's finding, recorded as MISS. */
   siGlassEnvelope: boolean;
+  /** `--surface-si-exact-normal=1`: the glass envelope's renderers take the
+   * exact Möbius normal arm (`?surfacesinormal=exact`'s pin), the look A/B's
+   * cost half. */
+  siExactNormal: boolean;
 }
 
 interface SurfaceKernelConfig {
@@ -5644,6 +5649,7 @@ function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
     planeFrame: params.get("surfacePlaneFrame") === "1",
     sphereInversionOnly: params.get("surfaceSphereInversionOnly") === "1",
     siGlassEnvelope: params.get("surfaceSiGlassEnvelope") === "1",
+    siExactNormal: params.get("surfaceSiExactNormal") === "1",
     canaryTrip:
       Number.isInteger(canaryTripParsed) && canaryTripParsed >= 1
         ? canaryTripParsed
@@ -20054,6 +20060,12 @@ async function runSurfaceDeSection(
             depthCurve,
           };
           results.glassEnvelope = envelope;
+          if (config.siExactNormal) {
+            setSurfaceComputeSchedulePins({ siExactNormal: true });
+            results.notes.push(
+              "glass envelope: EXACT MÖBIUS NORMAL arm (the look A/B, not the shipped normal)",
+            );
+          }
           try {
             envelope.rows = await runSurfaceTransportEnvelopeLeg(
               [],
@@ -20100,6 +20112,7 @@ async function runSurfaceDeSection(
             sphereInversionFailed = true;
             results.notes.push(`glass envelope: ${describeError(e)}`);
           }
+          setSurfaceComputeSchedulePins({});
           render();
           await canaryCheck("the glass envelope leg");
         }

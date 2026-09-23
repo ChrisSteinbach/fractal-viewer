@@ -13123,6 +13123,7 @@ async function main(): Promise<void> {
       shadeHits: pin("surfaceshadehits"),
       fenceGroup: pin("surfacefencegroup"),
       siTransportChunk: pin("surfacesichunk"),
+      siExactNormal: params.get("surfacesinormal") === "exact",
       timestamps:
         params.get("surfacets") === null
           ? null
