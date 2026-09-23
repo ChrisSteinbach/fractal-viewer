@@ -306,6 +306,7 @@ import {
   transportShadowVisibilityCPU,
   transportSolidBoundaryQueryCPU,
   transportTerminalDisplacementCPU,
+  transportOpticalNormal,
   transportTraceCPU,
   type TransportQueryFn,
 } from "./surface-transport-fixture";
@@ -350,6 +351,26 @@ import { FLAME_FILTER_RADIUS } from "../flame-worker-core";
 import { surfaceCondensationKernelSpec } from "./condensation";
 import { runSurfaceEmitterOnlyAgreement } from "./condensation-emitter-only";
 import { runSphereInversionBench } from "./sphere-inversion-legs";
+import { resolveSphereInversion } from "../../fractal/sphere-inversion";
+import type { SphereInversionAuthored } from "../../fractal/sphere-inversion";
+import {
+  buildSphereInversionDE,
+  sphereInversionContains,
+  sphereInversionSignedDistance,
+} from "../../fractal/sphere-inversion-de";
+import {
+  buildSphereInversionDE4,
+  sphereInversionContains4,
+  sphereInversionSignedDistance4,
+} from "../../fractal/sphere-inversion-de-4d";
+import {
+  packSphereInversionGpuTables,
+  SPHERE_INVERSION_GPU_SLACK,
+} from "../../fractal/surface-sphere-inversion-gpu";
+import {
+  packSphereInversion4GpuParams,
+  packSphereInversionGpuParams,
+} from "../../fractal/surface-de-gpu";
 import type {
   SiTimingSubject,
   SphereInversionBenchResults,
@@ -4235,12 +4256,37 @@ interface SurfaceDeviceSanityResult {
  * deterministic probe set. A mismatch THROWS (the leg fails closed), so a
  * row only ever lands with both agreement flags true — they record what
  * was compared, not a tolerance outcome. */
+/** One transport agreement row as the run's notes print it. */
+function surfaceTransportAgreementNote(
+  row: SurfaceTransportAgreementRow,
+): string {
+  return (
+    `transport agreement ${row.core} × ${row.system} [${row.backend}, ${row.opticsSoundness}]: queries=${String(row.queries)} ` +
+    `boundaryAgree=${String(row.boundaryAgree)} traceAgree=${String(row.traceAgree)} ` +
+    `maxRadianceDelta=${row.maxRadianceDelta.toExponential(2)} ` +
+    `maxResidualDelta=${row.maxResidualDelta.toExponential(2)} ` +
+    `maxNormalDelta=${row.maxNormalDelta.toExponential(2)} ` +
+    (row.maxShadowDelta !== undefined
+      ? `maxShadowDelta=${row.maxShadowDelta.toExponential(2)} `
+      : "") +
+    (row.maxDisplacementDelta !== undefined
+      ? `maxDisplacementDelta=${row.maxDisplacementDelta.toExponential(2)} `
+      : "") +
+    `compileMs=${String(Math.round(row.compileMs))}`
+  );
+}
+
 interface SurfaceTransportAgreementRow {
-  core: SurfaceKernelConfig["core"] | "finite" | "finite4";
+  core:
+    | SurfaceKernelConfig["core"]
+    | "finite"
+    | "finite4"
+    | "sphereInv"
+    | "sphereInv4";
   /** The DE the leg drove (the section's own fixture system name). */
   system: string;
   /** The boundary backend the leg pinned ({@link SurfaceTransportLegSpec}). */
-  backend: "estimator" | "closedSolid" | "finiteSolid";
+  backend: SurfaceTransportLegBackend;
   /** Whether the row's agreement certifies OPTICAL soundness. The
    * estimator rows on IFS fixtures are `"vacuous-inside"`: every inside
    * path refuses on BOTH sides identically (the renderer envelope's
@@ -7570,9 +7616,12 @@ async function acquireSurfaceDevice(
  * the strides (query 128 → 192, result 64 → 96) without moving an older
  * offset. */
 function surfaceTransportControlWgsl(
-  backend: "estimator" | "closedSolid" | "finiteSolid",
+  backend: SurfaceTransportLegBackend,
 ): string {
-  const solid = backend === "closedSolid";
+  // The sphere-inversion glass backend rides the closed-solid query's
+  // signature (the caller-carried medium) and its shadow/terminal helpers,
+  // so the control's call sites are the closed-solid ones verbatim.
+  const solid = surfaceTransportSignedBackend(backend);
   const finite = backend === "finiteSolid";
   return `
 struct ControlQuery {
@@ -7696,7 +7745,19 @@ ${
     r.b = vec4f(0.0);`
 }
     r.c = vec4f(0.0);
-    r.d = vec4f(0.0);
+    r.d = vec4f(0.0);${
+      backend === "sphereInversion"
+        ? `
+  } else if (q.mode == 4u) {
+    // The sphere-inversion field probe: the SIGNED field the query marches
+    // and the exact membership bit, at q.origin — the real-driver half of
+    // the interior f32 argument (the twin is sphereInversionSignedF32).
+    r.a = vec4f(transportSolidField(q.origin), select(0.0, 1.0, transportSolidContains(q.origin)), 0.0, 0.0);
+    r.b = vec4f(0.0);
+    r.c = vec4f(0.0);
+    r.d = vec4f(0.0);`
+        : ""
+    }
   } else {
     // The control probes anchor at the fixture's TRUE boundary, so the
     // trace's primary anchor skip is zero (the CPU twin's default).
@@ -8233,6 +8294,13 @@ const SURFACE_TRANSPORT_PROBE_RAYS = 8;
  * driver's job timeout loses the device (measured: two runs died exactly
  * here) — the runtime's own caps knob exists for precisely this bound. */
 const SURFACE_TRANSPORT_LEG_MAX_PATHS = 128;
+/** The sphere-inversion legs' chain-replay arm: at most this many of the
+ * twin's own boundary queries per probe are replayed on the GPU — the leg's
+ * whole path budget, so a trace that spends its cap is replayed entire. */
+const SURFACE_TRANSPORT_CHAIN_REPLAY_CAP = SURFACE_TRANSPORT_LEG_MAX_PATHS;
+/** The sphere-inversion legs' field arm: member points sampled per leg (each
+ * also seeds a bisected pair toward the boundary). */
+const SURFACE_TRANSPORT_FIELD_PROBES = 600;
 /** Max excluded (chaos-flip) probes per forward leg before the leg fails:
  * the escape eval legs' own absolution-cap discipline — a fixture whose
  * every probe flips certifies nothing. */
@@ -8292,16 +8360,38 @@ const TRANSPORT_BOUNDARY_KIND_CODES: Record<TransportBoundaryKind, number> = {
 
 /** One leg's resolved fixture system + the kernel options and packers it
  * drives, assembled per core before any GPU work. */
+/** The transport legs' boundary backends. */
+type SurfaceTransportLegBackend =
+  "estimator" | "closedSolid" | "finiteSolid" | "sphereInversion";
+
+/** The backends whose boundary query marches a SIGNED field with a
+ * caller-carried medium — the closed-solid query's shape, which the
+ * sphere-inversion backend rides — and so share its probe arms, shadow and
+ * terminal-displacement probes. */
+function surfaceTransportSignedBackend(
+  backend: SurfaceTransportLegBackend,
+): boolean {
+  return backend === "closedSolid" || backend === "sphereInversion";
+}
+
 interface SurfaceTransportLegSpec {
-  core: SurfaceKernelConfig["core"] | "finite" | "finite4";
+  core:
+    | SurfaceKernelConfig["core"]
+    | "finite"
+    | "finite4"
+    | "sphereInv"
+    | "sphereInv4";
   systemName: string;
   /** The boundary backend this leg pins: `"estimator"` (the composed
    * public estimator march — sound from OUTSIDE only, the envelope
    * finding's own state), `"closedSolid"` (the signed closed-solid
    * query, whose inside traversal resolves a refracted child) or
    * `"finiteSolid"` (the exact DDA over the finite cell construction,
-   * whose full anchor contract rides the control wire both ways). */
-  backend: "estimator" | "closedSolid" | "finiteSolid";
+   * whose full anchor contract rides the control wire both ways), or
+   * `"sphereInversion"` (the curved-glass backend: the family's signed field
+   * under the closed-solid query with the exact-membership crossing gate,
+   * which the twin carries through the fixture's `contains`). */
+  backend: SurfaceTransportLegBackend;
   options: SurfaceGpuKernelOptions;
   /** The kind's own params packer — the run params' `visibleRadius`/
    * `stepScale` come from the real DE (the packer's offsets 20/24), so the
@@ -8327,6 +8417,17 @@ interface SurfaceTransportLegSpec {
    * authored where the geometry is. Absent on every other backend and
    * every probe shape the through-lobe condition does not select. */
   analyticChord?: number;
+  /** Where the shadow probes' through-lobe ray leaves the floor, in xz —
+   * the analytic control's probe (straight up) and its oblique sibling
+   * start here. Default `[0.35, 0.05]`, under the separated closed-solid
+   * fixture's sphere; a leg whose solid sits elsewhere names its own. */
+  shadowXZ?: readonly [number, number];
+  /** Extra camera rays beyond the canonical grid, each CPU-marched to its
+   * own primary hit and then run through every arm like a grid probe —
+   * the family-specific geometry (a pole, a tangency cusp, a graze) the
+   * grid cannot aim at. A ray that finds no primary hit THROWS: an extra
+   * probe exists to exercise one named case, never to vanish. */
+  extraProbes?: readonly { label: string; ro: Vec3; dir: Vec3 }[];
   fixture: TransportFixtureSystem;
 }
 
@@ -8387,6 +8488,30 @@ function surfaceTransportProbes(
     }
   }
   return probes;
+}
+
+/** One named extra probe's primary hit: the grid's own march (the
+ * fixture's estimator, the `visibleRadius·1e-3` hit test, the fixture's
+ * step scale) from an arbitrary eye, bounded by the eye's distance plus
+ * three visible radii. `null` when the ray finds nothing. */
+function surfaceTransportMarchProbe(
+  fixture: TransportFixtureSystem,
+  ro: Vec3,
+  dir: Vec3,
+): { hitPos: Vec3; dir: Vec3 } | null {
+  const visR = fixture.visibleRadius;
+  const len = Math.hypot(dir[0], dir[1], dir[2]);
+  const d: Vec3 = [dir[0] / len, dir[1] / len, dir[2] / len];
+  const tMax = Math.hypot(ro[0], ro[1], ro[2]) + 3 * visR;
+  let t = 0;
+  for (let step = 0; step < SURFACE_TRANSPORT_HIT_MARCH_STEPS; step++) {
+    const p: Vec3 = [ro[0] + d[0] * t, ro[1] + d[1] * t, ro[2] + d[2] * t];
+    const e = fixture.estimate(p);
+    if (e < visR * 1e-3) return { hitPos: p, dir: d };
+    t += Math.max(e, 0) * fixture.stepScale;
+    if (t > tMax) return null;
+  }
+  return null;
 }
 
 /** Is a TRACE probe chaos-stable at f32 scale? The CPU twin re-traces the
@@ -8612,6 +8737,9 @@ async function runSurfaceTransportAgreementLegs(
    * THROWS (or loses the device mid-dispatch) leaves its progress trail
    * in the record — the failure reports survive the throw. */
   onNote: (text: string) => void = () => {},
+  /** Run only this backend's legs (the sphere-inversion-only iteration
+   * path); the other legs' build-or-skip notes are dropped with them. */
+  only?: SurfaceTransportLegBackend,
 ): Promise<{
   rows: SurfaceTransportAgreementRow[];
   notes: string[];
@@ -8857,6 +8985,123 @@ async function runSurfaceTransportAgreementLegs(
   pushClosedSolidLeg(true);
   pushClosedSolidLeg(false, "abutting");
   pushClosedSolidLeg(true, "abutting");
+
+  // The sphere-inversion GLASS backend's legs (both dimensions): the
+  // family's signed field under the closed-solid query, with the exact
+  // membership gate the twin carries through the fixture's `contains`. Two
+  // constructions per dimension. The ORBIT is the look gate's own subject —
+  // a near-kissing arrangement (radius fraction 0.99) at depth 3, where the
+  // look is clean glass and the bound still dips into the band at every
+  // tangency — with three named rays the canonical grid cannot aim at: one
+  // straight down a generator's axis onto its POLE (the fold's refused
+  // centre; the creep must end in a refusal, never a silent background
+  // hit), one through the near-CUSP where two generators almost touch
+  // (the bound reaches ~0 with no membership; the unanchored arm marches
+  // back through it), and one seed-tangent WINDOW ray between the
+  // generators (a graze along the seed's silhouette in 3D). The ANALYTIC
+  // control is the depth-0 construction whose orbit IS the seed ball
+  // (generators reach in to 0.3, the seed is 0.28), so the through-origin
+  // shadow probe pays exactly (1-F0)²·Beer over the 0.56 chord —
+  // independent of the kernel and the twin. 4D uses cross8 (its w = 0
+  // slice is oct6's picture) at the canonical identity pose, reading the
+  // 4D field at frozen w = 0 exactly as the kernel's lift does there.
+  const pushSphereInversionGlassLeg = (
+    fourD: boolean,
+    variant: "orbit" | "analytic",
+  ): void => {
+    const authored: SphereInversionAuthored =
+      variant === "analytic"
+        ? {
+            arrangement: fourD ? "cross8" : "oct6",
+            seed: { kind: "ball", size: 0.28 },
+            depth: 0,
+          }
+        : {
+            arrangement: fourD ? "cross8" : "oct6",
+            radiusFraction: 0.99,
+            seed: { kind: "ball", size: fourD ? 0.42 : 0.28 },
+            depth: 3,
+          };
+    const resolution = resolveSphereInversion(authored);
+    if (!resolution.ok) {
+      throw new Error(
+        `transport sphere-inversion: ${resolution.reasons.join("; ")}`,
+      );
+    }
+    const construction = resolution.construction;
+    const de = fourD
+      ? buildSphereInversionDE4(construction)
+      : buildSphereInversionDE(construction);
+    const gpu = packSphereInversionGpuTables(de);
+    const window = Math.sqrt(1 / 3);
+    const tangent = fourD ? 0.4195 : 0.2795;
+    legs.push({
+      core: fourD ? "sphereInv4" : "sphereInv",
+      systemName: `sphereInversionGlass${variant === "analytic" ? "Ball" : "Orbit"}${fourD ? "4" : "3"}`,
+      backend: "sphereInversion",
+      ...(variant === "analytic"
+        ? { analyticChord: 0.56, shadowXZ: [0, 0] as const }
+        : {
+            shadowXZ: [0, 0] as const,
+            extraProbes: [
+              {
+                label: "pole (down a generator's axis)",
+                ro: [1, 0, 2.5],
+                dir: [0, 0, -1],
+              },
+              {
+                label: "near-cusp (between two generators)",
+                ro: [3 * window, 3 * window, 3 * window],
+                dir: [0.5 - 3 * window, 0.5 - 3 * window, -3 * window],
+              },
+              {
+                label: "seed-tangent window ray",
+                ro: [
+                  3 * window + tangent * Math.SQRT1_2,
+                  3 * window - tangent * Math.SQRT1_2,
+                  3 * window,
+                ],
+                dir: [-window, -window, -window],
+              },
+            ],
+          }),
+      options: {
+        mode: "shade",
+        core: fourD ? "sphereInv4" : "sphereInv",
+        width: 4,
+        workgroupSize: SURFACE_TRANSPORT_WG,
+        sharedFrontier: false,
+        bnbStage2: false,
+        optics: true,
+        opticsBackend: "sphereInversion",
+        transportMaxPaths: SURFACE_TRANSPORT_LEG_MAX_PATHS,
+      },
+      packParams: (n) =>
+        fourD
+          ? packSphereInversion4GpuParams(gpu, canonicalView4, {
+              itemCount: n,
+              cutoff: 0,
+            })
+          : packSphereInversionGpuParams(gpu, { itemCount: n, cutoff: 0 }),
+      packMaps: () => gpu.data,
+      fixture: {
+        estimate: (p) =>
+          fourD
+            ? sphereInversionSignedDistance4(de, [p[0], p[1], p[2], 0])
+            : sphereInversionSignedDistance(de, p),
+        contains: (p) =>
+          fourD
+            ? sphereInversionContains4(de, [p[0], p[1], p[2], 0])
+            : sphereInversionContains(de, p),
+        stepScale: 1,
+        visibleRadius: de.boundingRadius,
+      },
+    });
+  };
+  pushSphereInversionGlassLeg(false, "analytic");
+  pushSphereInversionGlassLeg(true, "analytic");
+  pushSphereInversionGlassLeg(false, "orbit");
+  pushSphereInversionGlassLeg(true, "orbit");
 
   // The finite-solid backend's legs (both dimensions, the same bisect
   // slot): the study's finite cell decomposition — the level-2 Menger
@@ -9213,6 +9458,12 @@ async function runSurfaceTransportAgreementLegs(
     );
   }
 
+  if (only !== undefined) {
+    const kept = legs.filter((leg) => leg.backend === only);
+    legs.length = 0;
+    legs.push(...kept);
+    notes.length = 0;
+  }
   const rows: SurfaceTransportAgreementRow[] = [];
   for (const leg of legs) {
     note(`transport: leg ${leg.core} (${leg.systemName}) begin`);
@@ -9249,6 +9500,21 @@ async function runSurfaceTransportAgreementLegs(
           "engines run the same origins, so the arithmetic agreement " +
           "is unchanged",
       );
+    }
+    // The leg's named extra probes (the family-specific geometry the grid
+    // cannot aim at), appended after the grid so the grid's indices keep
+    // their meaning in every failure message.
+    for (const extra of leg.extraProbes ?? []) {
+      const hit = surfaceTransportMarchProbe(leg.fixture, extra.ro, extra.dir);
+      if (!hit) {
+        throw new Error(
+          `transport ${leg.core} (${leg.systemName}): extra probe "${extra.label}" found no primary hit`,
+        );
+      }
+      notes.push(
+        `transport ${leg.core} (${leg.systemName}): extra probe ${String(probes.length)} = ${extra.label}`,
+      );
+      probes = [...probes, hit];
     }
     // The control wire's strides are per-backend: the finite legs' query
     // record carries the DDA's caller-carried anchor past the shared
@@ -9470,7 +9736,7 @@ async function runSurfaceTransportAgreementLegs(
             ...anchorFields,
           });
         }
-      } else if (leg.backend === "closedSolid") {
+      } else if (surfaceTransportSignedBackend(leg.backend)) {
         // The closed-solid legs' arms pin the INSIDE traversal (the
         // backend's whole point) beside the outside one: the anchored
         // arm restarts AT the hit heading INTO the solid with the
@@ -9517,6 +9783,66 @@ async function runSurfaceTransportAgreementLegs(
           visR,
           distortion: 0,
         });
+        if (leg.backend === "sphereInversion") {
+          // THE CHAIN-REPLAY ARM: the twin's OWN boundary-query chain while
+          // it traces this probe, replayed on the GPU query by query. A
+          // trace chains dozens of queries, so a trace-level disagreement
+          // names nothing; the first chain query whose answers differ
+          // names the divergence exactly. Capped per probe so a long
+          // trace cannot swamp the dispatch.
+          const chain: ControlQueryRec[] = [];
+          transportTraceCPU(
+            leg.fixture,
+            probe.hitPos,
+            probe.dir,
+            DIELECTRIC_INITIAL_BRANCH_THETA,
+            {
+              ior: DIELECTRIC_IOR,
+              absorption: DIELECTRIC_ABSORPTION,
+              radius: visR,
+            },
+            SURFACE_TRANSPORT_CONTROL_BG_LINEAR,
+            {
+              maxProcessedPaths:
+                leg.options.transportMaxPaths ??
+                SURFACE_TRANSPORT_LEG_MAX_PATHS,
+              maxInterfaces:
+                leg.options.transportMaxPaths ??
+                SURFACE_TRANSPORT_LEG_MAX_PATHS,
+            },
+            (origin, dir, anchorPresent, anchorPoint, inside, eps) => {
+              if (chain.length < SURFACE_TRANSPORT_CHAIN_REPLAY_CAP) {
+                chain.push({
+                  origin: [...origin] as Vec3,
+                  dir: [...dir] as Vec3,
+                  anchorPoint: [...anchorPoint] as Vec3,
+                  eps,
+                  ior: DIELECTRIC_IOR,
+                  radius: visR,
+                  absorb: DIELECTRIC_ABSORPTION,
+                  theta: DIELECTRIC_INITIAL_BRANCH_THETA,
+                  anchorPresent: anchorPresent ? 1 : 0,
+                  mode: 1,
+                  inside: inside ? 1 : 0,
+                  ballC: [0, 0, 0],
+                  ballR: visR,
+                  visR,
+                  distortion: 0,
+                });
+              }
+              return transportSolidBoundaryQueryCPU(
+                leg.fixture,
+                origin,
+                dir,
+                anchorPresent,
+                anchorPoint,
+                inside,
+                eps,
+              );
+            },
+          );
+          boundaryQueries.push(...chain);
+        }
       } else {
         boundaryQueries.push({
           origin: [
@@ -9611,7 +9937,8 @@ async function runSurfaceTransportAgreementLegs(
     // fixture's geometry (0.7 the separated sphere, 1.0 the abutting
     // through-box).
     const shadowQueries: ControlQueryRec[] = [];
-    if (leg.backend === "closedSolid") {
+    const [shadowX, shadowZ] = leg.shadowXZ ?? [0.35, 0.05];
+    if (surfaceTransportSignedBackend(leg.backend)) {
       const floorY = -1.2 * visR;
       const norm3 = (v: Vec3): Vec3 => {
         const l = Math.hypot(v[0], v[1], v[2]);
@@ -9636,8 +9963,8 @@ async function runSurfaceTransportAgreementLegs(
           distortion: 0,
         });
       };
-      probeShadow([0.35, floorY, 0.05], [0, 1, 0]);
-      probeShadow([0.35, floorY, 0.05], norm3([0.4, 1, 0.2]));
+      probeShadow([shadowX, floorY, shadowZ], [0, 1, 0]);
+      probeShadow([shadowX, floorY, shadowZ], norm3([0.4, 1, 0.2]));
       probeShadow([-0.4, floorY, -0.05], norm3([-0.5, 1, -0.3]));
       // Gate exits: ball-behind (along <= 0) and a closest approach
       // clearing 1.05 R + 0.3 * along — transmittance exactly 1.
@@ -9655,7 +9982,7 @@ async function runSurfaceTransportAgreementLegs(
     // axis, below. Zero stays on every other probe, so the
     // straight-terminal pins are unchanged.
     const terminalQueries: ControlQueryRec[] = [];
-    if (leg.backend === "closedSolid") {
+    if (surfaceTransportSignedBackend(leg.backend)) {
       for (const probe of probes) {
         traceQueries.push({
           origin: probe.hitPos,
@@ -9885,15 +10212,16 @@ async function runSurfaceTransportAgreementLegs(
     // carries. The estimator legs' control entry never reaches it — the
     // helper is only emitted under the closed-solid backend — and an
     // unused binding must stay out of the derived layout's bind group.
-    const legOpticsMaps: GPUBuffer | null =
-      leg.backend === "closedSolid"
-        ? await createSurfaceBuffer(
-            device,
-            `surface-de transport optics maps ${leg.core}`,
-            8 * 4,
-            GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-          )
-        : null;
+    const legOpticsMaps: GPUBuffer | null = surfaceTransportSignedBackend(
+      leg.backend,
+    )
+      ? await createSurfaceBuffer(
+          device,
+          `surface-de transport optics maps ${leg.core}`,
+          8 * 4,
+          GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        )
+      : null;
     if (legOpticsMaps) {
       device.queue.writeBuffer(
         legOpticsMaps,
@@ -9987,6 +10315,68 @@ async function runSurfaceTransportAgreementLegs(
     let traceOut: Float32Array;
     let shadowOut: Float32Array | null = null;
     let terminalOut: Float32Array | null = null;
+    // The sphere-inversion legs' FIELD probes (mode 4): member points of
+    // the displayed set — rejection samples in the domain ball, then pairs
+    // bisected toward the boundary from both sides — where the GPU's signed
+    // field is read against the f64 authority. The deterministic RNG keeps
+    // the set identical run to run.
+    const fieldQueries: ControlQueryRec[] = [];
+    if (leg.backend === "sphereInversion" && leg.fixture.contains) {
+      const contains = leg.fixture.contains;
+      const rng = mulberry32(0x9ea55);
+      const members: Vec3[] = [];
+      const others: Vec3[] = [];
+      for (
+        let i = 0;
+        i < 400_000 && members.length < SURFACE_TRANSPORT_FIELD_PROBES;
+        i++
+      ) {
+        const p: Vec3 = [
+          (2 * rng() - 1) * visR,
+          (2 * rng() - 1) * visR,
+          (2 * rng() - 1) * visR,
+        ];
+        if (Math.hypot(p[0], p[1], p[2]) > visR) continue;
+        if (contains(p)) members.push(p);
+        else if (others.length < SURFACE_TRANSPORT_FIELD_PROBES) others.push(p);
+      }
+      const points: Vec3[] = [...members];
+      for (let i = 0; i < members.length && others.length > 0; i++) {
+        let a = members[i];
+        let b = others[i % others.length];
+        const steps = 8 + Math.floor(rng() * 24);
+        for (let k = 0; k < steps; k++) {
+          const mid: Vec3 = [
+            0.5 * (a[0] + b[0]),
+            0.5 * (a[1] + b[1]),
+            0.5 * (a[2] + b[2]),
+          ];
+          if (contains(mid)) a = mid;
+          else b = mid;
+        }
+        points.push(a, b);
+      }
+      for (const origin of points) {
+        fieldQueries.push({
+          origin: origin.map(Math.fround) as Vec3,
+          dir: [0, 0, 1],
+          anchorPoint: [0, 0, 0],
+          eps: DIELECTRIC_CROSSING_EPS_REL * visR,
+          ior: DIELECTRIC_IOR,
+          radius: visR,
+          absorb: DIELECTRIC_ABSORPTION,
+          theta: DIELECTRIC_INITIAL_BRANCH_THETA,
+          anchorPresent: 0,
+          mode: 4,
+          inside: 0,
+          ballC: [0, 0, 0],
+          ballR: visR,
+          visR,
+          distortion: 0,
+        });
+      }
+    }
+    let fieldOut: Float32Array | null = null;
     try {
       boundaryOut = await runControl(boundaryQueries);
       note(`transport: ${leg.core} boundary dispatch ok`);
@@ -9999,6 +10389,10 @@ async function runSurfaceTransportAgreementLegs(
       if (terminalQueries.length > 0) {
         terminalOut = await runControl(terminalQueries);
         note(`transport: ${leg.core} terminal dispatch ok`);
+      }
+      if (fieldQueries.length > 0) {
+        fieldOut = await runControl(fieldQueries);
+        note(`transport: ${leg.core} field dispatch ok`);
       }
     } finally {
       params.destroy();
@@ -10040,123 +10434,9 @@ async function runSurfaceTransportAgreementLegs(
       );
     };
     probes.forEach((probe, pi) => {
-      // --- the TRACE probe (mode 0): the replay trace from the hit ---
-      const solidQuery: TransportQueryFn | undefined =
-        leg.backend === "closedSolid"
-          ? (origin, dir, anchorPresent, anchorPoint, inside, eps) =>
-              transportSolidBoundaryQueryCPU(
-                leg.fixture,
-                origin,
-                dir,
-                anchorPresent,
-                anchorPoint,
-                inside,
-                eps,
-              )
-          : undefined;
-      const cpuTrace = transportTraceCPU(
-        leg.fixture,
-        traceQueries[pi].origin,
-        probe.dir,
-        DIELECTRIC_INITIAL_BRANCH_THETA,
-        {
-          ior: DIELECTRIC_IOR,
-          absorption: DIELECTRIC_ABSORPTION,
-          radius: visR,
-        },
-        SURFACE_TRANSPORT_CONTROL_BG_LINEAR,
-        legCaps,
-        solidQuery,
-        // The finite backend's twin — the 9th argument threads the DDA's
-        // full anchor through the trace's paths (the fixture's own
-        // rule); absent (undefined) on every other backend, which the
-        // fixture treats as the estimator query exactly as before.
-        finiteQuery,
-      );
-      const traceStable =
-        !discreteQuery ||
-        surfaceTransportTraceProbeStable(
-          leg.fixture,
-          traceQueries[pi].origin,
-          probe.dir,
-          legCaps,
-          finiteQuery,
-        );
-      if (!traceStable) flipped++;
-      const traceBase = pi * resultFloats;
-      const gpuStatus = traceOut[traceBase];
-      // Finite probes use the same status, radiance and residual agreement
-      // as every other backend. The pre-hoc ULP ensemble above is the only
-      // trace exclusion: terminating without INVALID is not agreement.
-      const gpuRadiance = [0, 1, 2].map((c) => traceOut[traceBase + 4 + c]);
-      const finiteTrace = leg.backend === "finiteSolid";
-      if (
-        !Number.isFinite(gpuStatus) ||
-        !gpuRadiance.every(Number.isFinite) ||
-        !Number.isFinite(traceOut[traceBase + 3]) ||
-        gpuStatus === SURFACE_GPU_TRANSPORT_INVALID
-      ) {
-        fail(
-          pi,
-          "trace",
-          `invalid/non-finite GPU result (cpu "${cpuTrace.status}")`,
-        );
-      }
-      if (
-        traceStable &&
-        gpuStatus !== TRANSPORT_TRACE_STATUS_CODES[cpuTrace.status]
-      ) {
-        fail(
-          pi,
-          "trace",
-          `status — gpu ${String(gpuStatus)} vs cpu "${cpuTrace.status}"`,
-        );
-      }
-      if (finiteTrace && traceStable) {
-        stableFiniteTraces++;
-        if (cpuTrace.status === "complete" || cpuTrace.status === "residual") {
-          resolvedFiniteTraces++;
-        }
-        if (
-          traceOut[traceBase + 1] !== cpuTrace.failure ||
-          traceOut[traceBase + 2] !== cpuTrace.reason
-        ) {
-          fail(
-            pi,
-            "trace",
-            `failure/reason — gpu ${String(traceOut[traceBase + 1])}/${String(traceOut[traceBase + 2])} vs cpu ${String(cpuTrace.failure)}/${String(cpuTrace.reason)}`,
-          );
-        }
-      }
-      for (let c = 0; c < 3; c++) {
-        const gpu = gpuRadiance[c];
-        const cpu = cpuTrace.radiance[c];
-        const delta = Math.abs(gpu - cpu);
-        if (!traceStable) continue;
-        maxRadianceDelta = Math.max(maxRadianceDelta, delta);
-        if (!(delta <= 3e-3 || delta <= 1e-2 * Math.abs(cpu))) {
-          fail(
-            pi,
-            "trace",
-            `radiance[${String(c)}] — gpu ${String(gpu)} vs cpu ${String(cpu)}`,
-          );
-        }
-      }
-      const residualDelta = Math.abs(
-        traceOut[traceBase + 3] - cpuTrace.residual,
-      );
-      if (traceStable) {
-        maxResidualDelta = Math.max(maxResidualDelta, residualDelta);
-        if (!(residualDelta <= 5e-3)) {
-          fail(
-            pi,
-            "trace",
-            `residual — gpu ${String(traceOut[traceBase + 3])} vs cpu ${String(cpuTrace.residual)}`,
-          );
-        }
-      }
-      // An unstable TRACE skips only its own comparisons: the boundary
-      // probes below carry their own classifier, so they still gate.
+      // The BOUNDARY probes run FIRST: a trace chains dozens of queries,
+      // so a trace mismatch names nothing — the narrowest disagreement
+      // (one query, the chain-replay arm's included) is reported first.
       // --- the BOUNDARY probes (mode 1), backend's own arms ---
       // The closed-solid legs' arm 0 is the ANCHORED inside traversal (the
       // refracted child); the estimator legs' arm 1 is theirs; the finite
@@ -10165,6 +10445,9 @@ async function runSurfaceTransportAgreementLegs(
       // pin follow the RECORD's own anchorPresent flag — one derivation
       // for the three orderings.
       const boundaryBase = boundaryBases[pi];
+      // Per-probe worst boundary deltas (the chain-replay arm's disclosure).
+      let probeTDelta = 0;
+      let probeNormalDelta = 0;
       for (let b = 0; b < boundaryCounts[pi]; b++) {
         const query = boundaryQueries[boundaryBase + b];
         const anchoredArm = query.anchorPresent === 1;
@@ -10173,7 +10456,7 @@ async function runSurfaceTransportAgreementLegs(
           : "boundary-unanchored";
         let cpuHit: TransportBoundaryResult;
         let cpuAnchor: FiniteSolidAnchor | null = null;
-        if (leg.backend === "closedSolid") {
+        if (surfaceTransportSignedBackend(leg.backend)) {
           cpuHit = transportSolidBoundaryQueryCPU(
             leg.fixture,
             query.origin,
@@ -10241,6 +10524,32 @@ async function runSurfaceTransportAgreementLegs(
           );
         if (!boundaryStable) flipped++;
         if (!boundaryStable) continue;
+        // THE MEMBERSHIP INVARIANT (sphere-inversion legs): the field is a
+        // certified BOUND whose band also fires where the bound is merely
+        // loose, so a reported boundary is real only where exact
+        // membership flips across the landing — the kernel's own gate,
+        // re-asked here of the f64 predicate over the GPU's OWN t, so a
+        // kernel that dropped the gate fails even where the twin happened
+        // to agree with it.
+        if (
+          leg.backend === "sphereInversion" &&
+          gpuKind === 1 &&
+          leg.fixture.contains
+        ) {
+          const reach = gpuT + 2 * query.eps;
+          const beyond: Vec3 = [
+            query.origin[0] + query.dir[0] * reach,
+            query.origin[1] + query.dir[1] * reach,
+            query.origin[2] + query.dir[2] * reach,
+          ];
+          if (leg.fixture.contains(beyond) === (query.inside === 1)) {
+            fail(
+              pi,
+              armName,
+              `a boundary membership does not flip across — t ${String(gpuT)}, inside ${String(query.inside)}`,
+            );
+          }
+        }
         // Both arms pin the GPU/CPU AGREEMENT (kind, reason, t, normal).
         // The camera-marched probes' unanchored arm does usually report a
         // boundary (it starts 1% of the radius past a real hit and
@@ -10293,6 +10602,7 @@ async function runSurfaceTransportAgreementLegs(
           );
         }
         const tDelta = Math.abs(gpuT - cpuHit.t);
+        if (gpuKind === 1) probeTDelta = Math.max(probeTDelta, tDelta);
         // The closed-solid anchored arm's t is QUANTIZED by the anchored
         // restart's same-boundary suppression: each suppression step
         // advances 2·eps, and a f32-vs-f64 field rounding near the
@@ -10312,7 +10622,38 @@ async function runSurfaceTransportAgreementLegs(
           leg.backend !== "estimator" && anchoredArm
             ? 1e-3 * visR + 4 * DIELECTRIC_CROSSING_EPS_REL * visR
             : 1e-3 * visR;
-        if (tDelta > tTol) {
+        // A sphere-inversion MISS's t is not a location: it is wherever the
+        // march first stood past the domain edge, and this field reads ~1
+        // there, so an f32 sample landing a hair short of the edge takes one
+        // more ~1-wide stride the f64 one did not (measured: 2.87 vs 1.88 on
+        // the orbit leg's chain, both misses). What a miss must pin is that
+        // it happened AT OR PAST the domain exit, on both engines.
+        const missPair =
+          leg.backend === "sphereInversion" &&
+          gpuKind === 2 &&
+          cpuHit.kind === "miss";
+        if (missPair) {
+          const radius = visR * 1.02;
+          const o = query.origin;
+          const d = query.dir;
+          const bq = o[0] * d[0] + o[1] * d[1] + o[2] * d[2];
+          const disc =
+            bq * bq -
+            (o[0] * o[0] + o[1] * o[1] + o[2] * o[2] - radius * radius);
+          const tFar = disc < 0 ? 0 : -bq + Math.sqrt(disc);
+          for (const [side, value] of [
+            ["gpu", gpuT],
+            ["cpu", cpuHit.t],
+          ] as const) {
+            if (!(value >= tFar - tTol)) {
+              fail(
+                pi,
+                armName,
+                `miss t — ${side} ${String(value)} short of the domain exit ${String(tFar)}`,
+              );
+            }
+          }
+        } else if (tDelta > tTol) {
           fail(
             pi,
             armName,
@@ -10320,14 +10661,34 @@ async function runSurfaceTransportAgreementLegs(
               `(delta ${String(tDelta)} > ${String(tTol)})`,
           );
         }
+        // A sphere-inversion boundary's normal is pinned as a FUNCTION: the
+        // twin's taps at the GPU's own landing. Near a seam of this
+        // union-of-pieces field the normal turns fast along the ray
+        // (measured ~4e-3 per 1e-4 of t on the orbit leg's graze), so a
+        // landing inside the t tolerance still taps a visibly different
+        // normal; the landing itself stays pinned by the t check above.
+        const refNormal: readonly number[] =
+          leg.backend === "sphereInversion" && gpuKind === 1
+            ? transportOpticalNormal(
+                leg.fixture,
+                [
+                  query.origin[0] + query.dir[0] * gpuT,
+                  query.origin[1] + query.dir[1] * gpuT,
+                  query.origin[2] + query.dir[2] * gpuT,
+                ],
+                query.dir,
+                query.eps,
+              )
+            : cpuHit.normal;
         for (let c = 0; c < 3; c++) {
-          const delta = Math.abs(gpuNormal[c] - cpuHit.normal[c]);
+          const delta = Math.abs(gpuNormal[c] - refNormal[c]);
           maxNormalDelta = Math.max(maxNormalDelta, delta);
+          probeNormalDelta = Math.max(probeNormalDelta, delta);
           if (delta > 3e-2) {
             fail(
               pi,
               armName,
-              `normal[${String(c)}] — gpu ${String(boundaryOut[base + 4 + c])} vs cpu ${String(cpuHit.normal[c])}`,
+              `normal[${String(c)}] — gpu ${String(boundaryOut[base + 4 + c])} vs cpu ${String(refNormal[c])}`,
             );
           }
         }
@@ -10421,6 +10782,135 @@ async function runSurfaceTransportAgreementLegs(
           }
         }
       }
+      if (leg.backend === "sphereInversion") {
+        note(
+          `transport ${leg.core} (${leg.systemName}) probe ${String(pi)}: ` +
+            `${String(boundaryCounts[pi])} boundary queries agree, worst ` +
+            `boundary t delta ${probeTDelta.toExponential(2)}, worst normal ` +
+            `delta ${probeNormalDelta.toExponential(2)}`,
+        );
+      }
+      // --- the TRACE probe (mode 0): the replay trace from the hit ---
+      const solidQuery: TransportQueryFn | undefined =
+        surfaceTransportSignedBackend(leg.backend)
+          ? (origin, dir, anchorPresent, anchorPoint, inside, eps) =>
+              transportSolidBoundaryQueryCPU(
+                leg.fixture,
+                origin,
+                dir,
+                anchorPresent,
+                anchorPoint,
+                inside,
+                eps,
+              )
+          : undefined;
+      const cpuTrace = transportTraceCPU(
+        leg.fixture,
+        traceQueries[pi].origin,
+        probe.dir,
+        DIELECTRIC_INITIAL_BRANCH_THETA,
+        {
+          ior: DIELECTRIC_IOR,
+          absorption: DIELECTRIC_ABSORPTION,
+          radius: visR,
+        },
+        SURFACE_TRANSPORT_CONTROL_BG_LINEAR,
+        legCaps,
+        solidQuery,
+        // The finite backend's twin — the 9th argument threads the DDA's
+        // full anchor through the trace's paths (the fixture's own
+        // rule); absent (undefined) on every other backend, which the
+        // fixture treats as the estimator query exactly as before.
+        finiteQuery,
+      );
+      const traceStable =
+        !discreteQuery ||
+        surfaceTransportTraceProbeStable(
+          leg.fixture,
+          traceQueries[pi].origin,
+          probe.dir,
+          legCaps,
+          finiteQuery,
+        );
+      if (!traceStable) flipped++;
+      const traceBase = pi * resultFloats;
+      const gpuStatus = traceOut[traceBase];
+      // Finite probes use the same status, radiance and residual agreement
+      // as every other backend. The pre-hoc ULP ensemble above is the only
+      // trace exclusion: terminating without INVALID is not agreement.
+      const gpuRadiance = [0, 1, 2].map((c) => traceOut[traceBase + 4 + c]);
+      const finiteTrace = leg.backend === "finiteSolid";
+      if (
+        !Number.isFinite(gpuStatus) ||
+        !gpuRadiance.every(Number.isFinite) ||
+        !Number.isFinite(traceOut[traceBase + 3]) ||
+        gpuStatus === SURFACE_GPU_TRANSPORT_INVALID
+      ) {
+        fail(
+          pi,
+          "trace",
+          `invalid/non-finite GPU result (cpu "${cpuTrace.status}")`,
+        );
+      }
+      if (
+        traceStable &&
+        gpuStatus !== TRANSPORT_TRACE_STATUS_CODES[cpuTrace.status]
+      ) {
+        fail(
+          pi,
+          "trace",
+          `status — gpu ${String(gpuStatus)} vs cpu "${cpuTrace.status}" ` +
+            `(gpu residual ${String(traceOut[traceBase + 3])} radiance ` +
+            `${gpuRadiance.map((v) => v.toFixed(4)).join(",")} lanes ` +
+            `${String(traceOut[traceBase + 1])}/${String(traceOut[traceBase + 2])}; ` +
+            `cpu residual ${cpuTrace.residual.toFixed(4)} radiance ` +
+            `${cpuTrace.radiance.map((v) => v.toFixed(4)).join(",")} failure ` +
+            `${String(cpuTrace.failure)} reason ${String(cpuTrace.reason)})`,
+        );
+      }
+      if (finiteTrace && traceStable) {
+        stableFiniteTraces++;
+        if (cpuTrace.status === "complete" || cpuTrace.status === "residual") {
+          resolvedFiniteTraces++;
+        }
+        if (
+          traceOut[traceBase + 1] !== cpuTrace.failure ||
+          traceOut[traceBase + 2] !== cpuTrace.reason
+        ) {
+          fail(
+            pi,
+            "trace",
+            `failure/reason — gpu ${String(traceOut[traceBase + 1])}/${String(traceOut[traceBase + 2])} vs cpu ${String(cpuTrace.failure)}/${String(cpuTrace.reason)}`,
+          );
+        }
+      }
+      for (let c = 0; c < 3; c++) {
+        const gpu = gpuRadiance[c];
+        const cpu = cpuTrace.radiance[c];
+        const delta = Math.abs(gpu - cpu);
+        if (!traceStable) continue;
+        maxRadianceDelta = Math.max(maxRadianceDelta, delta);
+        if (!(delta <= 3e-3 || delta <= 1e-2 * Math.abs(cpu))) {
+          fail(
+            pi,
+            "trace",
+            `radiance[${String(c)}] — gpu ${String(gpu)} vs cpu ${String(cpu)}`,
+          );
+        }
+      }
+      const residualDelta = Math.abs(
+        traceOut[traceBase + 3] - cpuTrace.residual,
+      );
+      if (traceStable) {
+        maxResidualDelta = Math.max(maxResidualDelta, residualDelta);
+        if (!(residualDelta <= 5e-3)) {
+          fail(
+            pi,
+            "trace",
+            `residual — gpu ${String(traceOut[traceBase + 3])} vs cpu ${String(cpuTrace.residual)}`,
+          );
+        }
+      }
     });
     if (leg.backend === "finiteSolid") {
       if (stableFiniteTraces === 0 || resolvedFiniteTraces === 0) {
@@ -10456,7 +10946,7 @@ async function runSurfaceTransportAgreementLegs(
     // 0.7 for the separated sphere, 1.0 for the abutting through-box)
     // and the two gate exits' exact-1 pin.
     let maxShadowDelta = 0;
-    if (leg.backend === "closedSolid") {
+    if (surfaceTransportSignedBackend(leg.backend)) {
       const material = {
         ior: DIELECTRIC_IOR,
         absorption: DIELECTRIC_ABSORPTION,
@@ -10498,7 +10988,7 @@ async function runSurfaceTransportAgreementLegs(
           if (
             analytic !== null &&
             q.dir[1] > 0.99 &&
-            Math.abs(q.origin[0] - 0.35) < 1e-9
+            Math.abs(q.origin[0] - shadowX) < 1e-9
           ) {
             // The analytic control: one crossing pair through the
             // fixture's emitter, normal incidence, the leg's own
@@ -10529,6 +11019,59 @@ async function runSurfaceTransportAgreementLegs(
         }
       });
     }
+    // --- the FIELD probes (mode 4, sphere-inversion legs): the real-driver
+    // half of the interior f32 argument. Hard gates: membership agrees
+    // with the f64 predicate outside the slack's band, and the GPU never
+    // claims more interior clearance than f64. Disclosed: the worst
+    // PRE-SLACK interior excess, `gpu clearance + slack − f64 clearance`,
+    // the number the slack exists to cover (CPU emulation: <= 1.39e-7).
+    if (fieldOut) {
+      const band = 4 * SPHERE_INVERSION_GPU_SLACK;
+      let interior = 0;
+      let worstExcess = -Infinity;
+      fieldQueries.forEach((q, fi) => {
+        const base = fi * resultFloats;
+        const gpuField = fieldOut[base];
+        const gpuMember = fieldOut[base + 1] > 0.5;
+        const f64 = leg.fixture.estimate(q.origin);
+        const member = leg.fixture.contains!(q.origin);
+        if (!Number.isFinite(gpuField)) {
+          fail(fi, "field", `non-finite GPU field ${String(gpuField)}`);
+        }
+        if (Math.abs(f64) > band && gpuMember !== member) {
+          fail(
+            fi,
+            "field",
+            `membership — gpu ${String(gpuMember)} vs cpu ${String(member)} (f64 field ${String(f64)})`,
+          );
+        }
+        if (gpuMember && member && f64 < 0) {
+          interior++;
+          const gpuClear = -gpuField;
+          if (gpuClear > -f64) {
+            fail(
+              fi,
+              "field",
+              `interior clearance — gpu ${String(gpuClear)} exceeds f64 ${String(-f64)}`,
+            );
+          }
+          if (gpuClear > 0) {
+            worstExcess = Math.max(
+              worstExcess,
+              gpuClear + SPHERE_INVERSION_GPU_SLACK + f64,
+            );
+          }
+        }
+      });
+      if (interior < 50) {
+        fail(0, "field", `only ${String(interior)} interior samples read`);
+      }
+      note(
+        `transport ${leg.core} (${leg.systemName}) field: ${String(fieldQueries.length)} ` +
+          `probes, ${String(interior)} interior, worst pre-slack interior excess ` +
+          `${worstExcess.toExponential(2)} (slack ${SPHERE_INVERSION_GPU_SLACK.toExponential(0)})`,
+      );
+    }
     // --- the TERMINAL-displacement probes (mode 3, closed-solid legs):
     // the smoothed optical normal and the virtual parallel slab's lateral
     // offset the trace's terminal applies, against the ORACLE's own
@@ -10537,7 +11080,7 @@ async function runSurfaceTransportAgreementLegs(
     // trace probes cannot see an origin displacement, so this axis is
     // pinned here.
     let maxDisplacementDelta = 0;
-    if (leg.backend === "closedSolid") {
+    if (surfaceTransportSignedBackend(leg.backend)) {
       const material = {
         ior: DIELECTRIC_IOR,
         absorption: DIELECTRIC_ABSORPTION,
@@ -10605,8 +11148,9 @@ async function runSurfaceTransportAgreementLegs(
       maxRadianceDelta,
       maxResidualDelta,
       maxNormalDelta,
-      ...(leg.backend === "closedSolid" ? { maxShadowDelta } : {}),
-      ...(leg.backend === "closedSolid" ? { maxDisplacementDelta } : {}),
+      ...(surfaceTransportSignedBackend(leg.backend)
+        ? { maxShadowDelta, maxDisplacementDelta }
+        : {}),
       ...(discreteQuery ? { flipsExcluded: flipped } : {}),
       ...(leg.backend === "finiteSolid"
         ? {
@@ -19198,6 +19742,36 @@ async function runSurfaceDeSection(
     if (config.sphereInversionOnly) {
       await runSphereInversionLegs();
       await canaryCheck("the sphere-inversion legs");
+      // The glass backend's transport agreement legs ride this path too, so
+      // iterating on the family's optics does not need the whole section.
+      try {
+        const { rows, notes: transportNotes } =
+          await runSurfaceTransportAgreementLegs(
+            device,
+            {
+              descent: [],
+              escape: [],
+              bulb: [],
+              affine4: [],
+              fold4: [],
+              escape4: [],
+            },
+            status,
+            activity,
+            (text) => results.notes.push(text),
+            "sphereInversion",
+          );
+        results.transportAgreement = rows;
+        for (const n of transportNotes) results.notes.push(n);
+        for (const row of rows)
+          results.notes.push(surfaceTransportAgreementNote(row));
+        if (rows.length === 0) sphereInversionFailed = true;
+      } catch (e) {
+        sphereInversionFailed = true;
+        results.notes.push(`transport agreement: ${describeError(e)}`);
+      }
+      render();
+      await canaryCheck("the sphere-inversion transport legs");
       results.verdict = sphereInversionFailed ? "fail" : "skipped";
       results.reason = sphereInversionFailed
         ? "sphere-inversion compile/eval/march/frame failure — see sphereInversion and notes"
@@ -23324,20 +23898,7 @@ async function runSurfaceDeSection(
         // The computeFrame4 dual-reporting convention: the headless
         // runner's stdout printer predates this field, so the row also
         // lands in `notes` and the run's summary discloses it.
-        results.notes.push(
-          `transport agreement ${row.core} × ${row.system} [${row.backend}, ${row.opticsSoundness}]: queries=${String(row.queries)} ` +
-            `boundaryAgree=${String(row.boundaryAgree)} traceAgree=${String(row.traceAgree)} ` +
-            `maxRadianceDelta=${row.maxRadianceDelta.toExponential(2)} ` +
-            `maxResidualDelta=${row.maxResidualDelta.toExponential(2)} ` +
-            `maxNormalDelta=${row.maxNormalDelta.toExponential(2)} ` +
-            (row.maxShadowDelta !== undefined
-              ? `maxShadowDelta=${row.maxShadowDelta.toExponential(2)} `
-              : "") +
-            (row.maxDisplacementDelta !== undefined
-              ? `maxDisplacementDelta=${row.maxDisplacementDelta.toExponential(2)} `
-              : "") +
-            `compileMs=${String(Math.round(row.compileMs))}`,
-        );
+        results.notes.push(surfaceTransportAgreementNote(row));
       }
       if (rows.length === 0) {
         results.notes.push(
