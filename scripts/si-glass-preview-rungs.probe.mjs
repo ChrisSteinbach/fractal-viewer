@@ -10,7 +10,7 @@
  * docs/sphere-inversion-family.md). Measures, gates nothing.
  *
  *   npm run build && npm run preview &
- *   node scripts/si-glass-preview-rungs.probe.mjs --mode=x11::0 [--only=glassPearls]
+ *   node scripts/si-glass-preview-rungs.probe.mjs --mode=x11::0 [--only=glassPearls] [--dump=DIR]
  */
 import { launchSurfaceBrowser } from "./lib/surface-browser-runner.mjs";
 import {
@@ -48,6 +48,15 @@ try {
       await loadPreset(app.page, starter.key);
       const settled = await waitSettled(app.page, settleMs);
       log(`${starter.key}: settled=${settled.ok} after ${Date.now() - t0} ms`);
+      // --dump=DIR writes the raw feed, one file per starter.
+      if (args.dump) {
+        const fs = await import("node:fs");
+        fs.mkdirSync(args.dump, { recursive: true });
+        fs.writeFileSync(
+          `${args.dump}/${starter.key}.trace.txt`,
+          lines.map(([at, t]) => `${at - t0} ${t}`).join("\n"),
+        );
+      }
       // One row per frame: its start line (raster, samples, budget) and
       // its done line (truncation), with the transport's passes between.
       let frame = null;
