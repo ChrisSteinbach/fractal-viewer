@@ -3488,6 +3488,47 @@ bounded below by the path guard's traces. Moving that floor needs a cheaper
 path (a kernel question, whose per-path latency is measured but not
 explained) or a lower guard (an owner decision, priced above).
 
+### Where a cold frame's lanes lose their time (2026-09-24)
+
+A follow-up on the cold 3D preview's tail, with temporary per-ray timing
+(slot start, final status) in the pool and nothing shipped. RX 7900 XTX,
+the envelope leg's cold preview and its warm repeat.
+
+- THE SAME TRACE RUNS TWICE AS FAST WARM. Six guard-riding rays (2,048 paths
+  each, UNRESOLVED both times) take slots at the same moments in both
+  frames, 0.16–0.32 s. They finish at ~1.49 s cold and ~0.87 s warm: about
+  1.26 s against 0.62 s for identical work.
+- PART OF IT IS THE QUANTUM. Up to ~0.58 s both frames' chunks run
+  similarly, 40–55 ms at 128 paths. Then the cold frame's pending rays
+  re-queue their next passes one by one. Each arrival marks the pool
+  width-limited and pins the quantum at the 32-path base, and a chunk
+  costs ~20 ms for 32 paths. Relaxing that rule and raising the ladder's
+  target (quantum up to 224) brought the guard rays in from 1.71 to 1.45 s.
+  It did NOT move the frame's end (2.03 → 2.01 s), because that end is not
+  the guard rays.
+- THE FRAME'S END IS THE PENDING CHAINS. The last rays to finish in both
+  arms are pending rays at pass 1 (with pass 2 already chained beside it),
+  ending at 1.95–2.02 s. Their pass 0 runs first and alone. The warm frame
+  runs every predicted pass from the start.
+- AN EARLY PENDING DOES NOT SHORTEN THEM. Stopping a trace once its residual
+  passes the budget (the refuted early stop, `stopResidual`) keeps every
+  outcome. It is now priced on the critical path in the cost sheet's second
+  test: at 64 px the worst chained ray falls 79,021 → 61,879 evaluations, but
+  at 192 px, about the preview's ray count, it falls only 86,850 → 85,109.
+  The critical rays' residuals cross the budget late.
+- NOT THE MACHINE. `pp_dpm_sclk` reads ~3.1 GHz and `pp_dpm_mclk` its floor
+  state through both windows alike. RADV's statistics put the 3D kernels'
+  scratch in the path stack alone: 12 static scratch loads and 167 stores,
+  none in the estimator, whose arrays stay in registers.
+
+What would move the cold chain is a pass that does not redo its
+predecessor's work. A later pass visits a superset of the earlier pass's
+paths in the same relative order, with identical inputs, so every boundary
+query the earlier pass made is recomputed bit for bit. A pass could replay
+them from a log instead. That is a design with a memory cost (a log per
+pending trace) and a kernel change, recorded as a bead with its shape, not
+built here.
+
 ### The joint pool at pane size: measured, not built (2026-09-24)
 
 The joint pool engages only inside its 64 MiB arena ceiling
