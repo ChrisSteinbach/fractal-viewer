@@ -986,6 +986,25 @@ pre-supersampling frame, arriving when it always did and presenting its own
 partials; every later pass only refines and presents when it lands; a
 superseded job keeps what it finished.
 
+ONE EXCEPTION SHARES A POOL ACROSS THE PASSES: the sphere-inversion glass
+JOINT POOL. A glass sample's transport is paced by its longest serial
+traces, not by the device's width, so an unbudgeted, unlit, supersampled
+glass frame traces every pass's primary rays first and then runs ONE
+transport pool over all of them (the last pass's frame loop owns it). The
+four per-ray buffers the transport touches become per-pass ARENAS
+(`sphereInversionJointStride` rays each, 256-byte-aligned sub-range
+bindings, pass 0 at offset 0 so every single-pass path is unchanged), and
+the pool word's ray is `pass · stride + pixel`. Its size rules are
+`surfaceComputeJointArenaBytes`: all passes' arenas inside
+`SURFACE_COMPUTE_JOINT_ARENA_BYTES` (64 MiB), one storage binding and the
+pool word's ray field, or the frame keeps one pool per pass. It moves no
+pixel (a ray's arithmetic is its own), but it changes two things this
+section promises. Pass 0's partials during the pool are its own arena
+developing, as before. A job superseded MID-POOL, though, has no finished
+pass to keep, because every pass finishes together. `?surfacesijoint=0` is
+the per-pass schedule. Record: `docs/sphere-inversion-family.md`, "The
+joint pool closes the 3D settle".
+
 The speckle supersampling removes is sub-pixel STRUCTURE — measured, not
 march undersampling (`exhausted` reads 0.00% at 20x the step budget) and
 not reachable by any viewport (the impulse rate is FLAT across a 4x

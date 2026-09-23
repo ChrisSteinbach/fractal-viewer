@@ -689,7 +689,11 @@ the transport's schedule changed, "The transport's cost".
 `--surface-si-exact-normal=1` builds the envelope's renderers with the
 exact Möbius normal arm (`?surfacesinormal=exact`'s pin). It is the cost
 half of a look A/B, not the shipped normal. That record is "Two more
-levers, both refuted" in the same doc.
+levers, both refuted" in the same doc. `--surface-si-joint-off=1` keeps one
+transport pool per supersample (`?surfacesijoint=0`'s pin), the joint pool's
+schedule A/B: no pixel moves, so the two arms' settle PNGs diff to zero. The
+retained-state row counts the joint arenas wherever the renderer takes them.
+Record: "The joint pool closes the 3D settle" in the same doc.
 
 ## Mutation-testing the f32 twins
 
