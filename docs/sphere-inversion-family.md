@@ -2812,3 +2812,69 @@ preview, 2.4–5.2× on the settle, and 1.6–2.9× on the export. The same gate
 at 960×540 and 4 AA settled the menu starters in 123.1 s (3D) and 68.0 s (4D),
 resolved 95.7% and 94.8%, and every identity leg held. Closing the time lines
 is a transport-cost problem, per glass hit, and depth is not the lever.
+
+### The transport's cost (2026-09-23)
+
+The envelope's MISS lines are a per-glass-hit cost, so this work measured
+where a glass hit's work goes before changing anything, then took the one
+lever that is a pure schedule change.
+
+THE PROFILE is `scripts/sphere-inversion-glass-cost.harness.ts`: the
+`glassPearls` starter at its saved view, 64 px, traced through the f64
+transport twin (which mirrors the kernel's boundary query and trace), with
+the replay schedule driven as the kernel drives it and every signed-field and
+membership evaluation tallied at the kernel's own call count (the twin's
+normal re-evaluates each tap per gradient component; the harness answers
+those duplicates uncounted). It prices no milliseconds; it measures the
+schedule, which the GPU shares. Before the rule below, on 2,137 glass hits:
+
+| Where the evaluations went                                  | Share |
+| ----------------------------------------------------------- | ----: |
+| replay pass 0                                               | 47.4% |
+| replay passes 1–5                                           | 52.6% |
+| … of which re-tracing a trace that had ALREADY FAILED       | 48.3% |
+| inside-medium boundary queries (19.8 evaluations per query) | 54.9% |
+| outside misses to the domain exit (27.3 per query)          | 33.4% |
+| outside boundary queries (20.6 per query)                   | 11.4% |
+| membership evaluations                                      |  5.4% |
+| evaluations repeating the previous point (fusable)          |  5.0% |
+
+Two findings. First, the 571 unresolved rays failed with a traversal refusal
+(`state-mismatch`, 557) or the path guard (14). All but one failed at pass 0,
+yet the kernel re-traced each one at every remaining pass, and none of them
+was ever accepted later. Second, 71% of field evaluations sit within 4·eps of
+a wall (36% inside the ±eps band itself): the cost is the march departing
+and approaching walls, not crossing interiors. Membership and same-point
+repeats together bound a fused field-and-membership sample at about 10%.
+
+THE LEVER TAKEN: A FAILURE IS FINAL. The replay contract re-traced a sample
+that "misses the per-sample budget (or hits a guard)". The second half is
+futile by construction. A child's bound never exceeds its parent's, so the
+paths a halved theta keeps are an ancestor-closed superset of the larger
+theta's. Weak-child-first depth-first order depends only on the bounds, so
+the superset is visited in the same relative order, and the failing path is
+re-created with the same origin, direction, medium and anchor. Every later
+pass therefore fails at that path or earlier, since the processed-path and
+stack guards only fire sooner under the superset. What replay could change is
+only WHICH failure the census names, so a failed trace is now final at its
+first failure. That holds in the kernel and in both GLSL inline replay loops,
+for every optics backend (`DIELECTRIC_REPLAY_PASSES` carries the argument).
+Pixels are unchanged, since unresolved is black at any pass.
+
+MEASURED, RX 7900 XTX (radeonsi renderer line checked, `amd rdna-3`,
+software=false), quiet=YES, the envelope leg before and after, same build
+otherwise:
+
+| Line                               | glassPearls (3D) before → after | glassPearls4 (4D) before → after |
+| ---------------------------------- | ------------------------------- | -------------------------------- |
+| Preview 256×144 1-spp (2 s budget) | truncated → truncated           | truncated → 1.69 s, completes    |
+| Settle 512×288 4-spp               | 51.2 s → 43.8 s                 | 24.3 s → 12.1 s                  |
+| Settle replay passes dispatched    | 6 → 4                           | 6 → 1                            |
+| Settle census                      | 111,570 / 12,062 / 0, identical | 104,117 / 6,110 / 0, identical   |
+| Depth curve, D3 unbudgeted         | 8.0 s → 5.7 s                   | 4.7 s → 1.7 s                    |
+| Depth curve, D1 unbudgeted         | 4.2 s → 2.0 s                   | 1.1 s → 0.75 s                   |
+
+Every other sphere-inversion leg passed, including the glass chunk-identity
+rows and the transport agreement rows. The 4D half halves. In 3D the settle
+still needs four passes for its genuinely residual samples, so the gain is
+15%. The 3D line's remaining cost is the wall crawl the profile names.

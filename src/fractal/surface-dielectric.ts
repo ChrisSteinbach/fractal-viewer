@@ -77,7 +77,25 @@ export const DIELECTRIC_ERROR_BUDGET = 1 / 1024;
  */
 export const DIELECTRIC_INITIAL_BRANCH_THETA = DIELECTRIC_ERROR_BUDGET / 64;
 
-/** Replay attempts before a still-pending sample is reported unresolved. */
+/**
+ * Replay attempts before a still-pending sample is reported unresolved.
+ *
+ * ONLY A RESIDUAL IS REPLAYED; A FAILURE IS FINAL. A trace that returns
+ * `unresolved` (a guard or a boundary query's refusal) is not re-traced at
+ * the halved theta, because it would fail again: a path's bound never
+ * exceeds its parent's, so the paths a smaller theta keeps are an
+ * ancestor-closed superset of the larger's, visited in the same relative
+ * order (weak-child-first depth-first order depends only on the bounds).
+ * The failing path is therefore re-created with identical origin,
+ * direction, medium and anchor, and every later pass fails at it or
+ * earlier — the processed-path and stack guards only fire sooner under the
+ * superset. The one outcome replay could change is WHICH failure the census
+ * names (or, for an extra path's non-finite radiance, invalid instead of
+ * unresolved — black either way). Measured on the curved-glass starter's
+ * twin: no failed trace was ever accepted at a later pass, and re-tracing
+ * them was about half the transport's work (`docs/sphere-inversion-family.md`,
+ * "The transport's cost").
+ */
 export const DIELECTRIC_REPLAY_PASSES = 6;
 
 /**

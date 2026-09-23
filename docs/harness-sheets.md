@@ -1215,6 +1215,19 @@ RESOLUTION, and keeps the refuted `measured`-medium row. Verdict and measured
 rows: `docs/sphere-inversion-family.md`'s glass section. Writes
 `sphere-inversion-glass-{3d,depth,medium,eps,matched,4d}.png`.
 
+### sphere-inversion-glass-cost
+
+`scripts/sphere-inversion-glass-cost.harness.ts` — where the curved-glass
+transport spends its field evaluations. Traces the `glassPearls` starter
+through the f64 transport twin with the kernel's replay schedule and tallies
+every signed-field and membership evaluation at the kernel's call count, by
+replay pass, query outcome and medium, with an `|f|/eps` histogram. It also
+checks the failure-is-final rule's premise, that no trace accepted at a later
+pass had failed at an earlier one. Verdict: re-tracing failed traces was 48%
+of the work, and most of what remains is the march within 4·eps of a wall.
+Record: `docs/sphere-inversion-family.md`, "The transport's cost". Prints
+only.
+
 ## The space-tiling sheet
 
 ### tiling

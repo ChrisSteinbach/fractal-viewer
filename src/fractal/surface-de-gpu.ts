@@ -10574,9 +10574,18 @@ fn transportRays(
     transportStatusOut[slotI] = traced.status;
     return;
   }
-  if (replayPass + 1u >= TRANSPORT_REPLAY_PASSES) {
-    // The replay schedule is exhausted: final unresolved work. Never
-    // background — black, disclosed by the frame's unresolved count.
+  // A FAILED trace is final at its first failure, not re-traced (the
+  // replay contract's failure-is-final rule, surface-dielectric.ts's
+  // DIELECTRIC_REPLAY_PASSES): a path's bound never exceeds its parent's,
+  // so the paths a halved theta keeps are an ancestor-closed SUPERSET
+  // visited in the same relative order, the failing path is re-created
+  // bit for bit, and every later pass fails again at it or earlier. Only
+  // the census's failure detail could differ, and it now names the first.
+  if (traced.status == TRANSPORT_STATUS_UNRESOLVED ||
+      replayPass + 1u >= TRANSPORT_REPLAY_PASSES) {
+    // The replay schedule is exhausted (or the trace failed): final
+    // unresolved work. Never background — black, disclosed by the frame's
+    // unresolved count.
     transportState[ray * 2u] = vec4f(traced.radiance, traced.residual);
     transportState[ray * 2u + 1u] = vec4f(
       f32(TRANSPORT_STATUS_UNRESOLVED), f32(traced.failure), f32(traced.reason), f32(replayPass));
