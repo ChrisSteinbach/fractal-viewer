@@ -15,6 +15,17 @@
  * at its theta). Outcomes agree on every glass hit and it saves 0.4% of the
  * evaluations, because the expensive traces fail rather than overrun.
  *
+ * THE NORMAL TAPS are counted too: the twin re-taps each tetrahedron point
+ * per gradient component, so the duplicates it answers uncounted (halved)
+ * are the kernel's four taps per normal — 35.1% of all evaluations. With
+ * `SIGC_EXACT=1` the twin normals every site with the exact Möbius normal
+ * (`sphereInversionSignedNormal`, one evaluation, counted as one) — the
+ * refuted lever's record: in the kernel's own schedule it RESOLVES FEWER
+ * (1,566 -> 1,259 of 2,137 hits, the growth traversal state-mismatch
+ * refusals 557 -> 846) and saves only 6% of evaluations, because the
+ * failures it adds end traces the taps would have finished
+ * (`docs/sphere-inversion-family.md`, "The exact normal").
+ *
  * Run: npx vitest run --config scripts/vitest.harness.config.ts \
  *        scripts/sphere-inversion-glass-cost.harness.ts
  */
@@ -25,6 +36,7 @@ import {
   estimateSphereInversionDistance,
   sphereInversionContains,
   sphereInversionSignedDistance,
+  sphereInversionSignedNormal,
 } from "../src/fractal/sphere-inversion-de";
 import {
   DIELECTRIC_ABSORPTION,
@@ -82,6 +94,7 @@ describe("sphere-inversion glass: the transport's evaluation profile", () => {
     const ring: ({ p: Vec3; v: number } | undefined)[] = [];
     let ringAt = 0;
     let cur = zero();
+    let ringHits = 0;
     let last: Vec3 | null = null;
     const same = (p: Vec3) =>
       last !== null && p[0] === last[0] && p[1] === last[1] && p[2] === last[2];
@@ -100,6 +113,7 @@ describe("sphere-inversion glass: the transport's evaluation profile", () => {
         ) {
           ring[ringAt % 4] = back;
           ringAt++;
+          ringHits++;
           return back.v;
         }
         if (same(p)) cur.repeat++;
@@ -132,6 +146,15 @@ describe("sphere-inversion glass: the transport's evaluation profile", () => {
       },
       stepScale: 1,
       visibleRadius: radius,
+      ...(process.env.SIGC_EXACT === "1"
+        ? {
+            normal: (p: Vec3) => {
+              // One fold and one cover scan: one evaluation's cost.
+              cur.fieldOut++;
+              return sphereInversionSignedNormal(de, p);
+            },
+          }
+        : {}),
     };
     const material: DielectricMaterial = {
       ior: DIELECTRIC_IOR,
@@ -283,6 +306,30 @@ describe("sphere-inversion glass: the transport's evaluation profile", () => {
     );
     console.log(
       `CPU time: field inside ${pct(all.fieldNsIn, ns(all))}, field outside ${pct(all.fieldNsOut, ns(all))}, membership ${pct(all.containsNs, ns(all))}; ns/eval inside ${(all.fieldNsIn / Math.max(1, all.fieldIn)).toFixed(0)}, outside ${(all.fieldNsOut / Math.max(1, all.fieldOut)).toFixed(0)}, membership ${(all.containsNs / Math.max(1, all.contains)).toFixed(0)}`,
+    );
+    {
+      const ang = (globalThis as unknown as { __ang?: number[] }).__ang ?? [];
+      const b = [0, 0, 0, 0, 0, 0];
+      for (const d of ang)
+        b[
+          d === 2
+            ? 5
+            : d > 0.99999
+              ? 0
+              : d > 0.9998
+                ? 1
+                : d > 0.995
+                  ? 2
+                  : d > 0.9
+                    ? 3
+                    : 4
+        ]++;
+      console.log(
+        `landing normal agreement over ${String(ang.length)}: <0.26deg ${String(b[0])}, <1.1deg ${String(b[1])}, <5.7deg ${String(b[2])}, <26deg ${String(b[3])}, worse ${String(b[4])}, null ${String(b[5])}`,
+      );
+    }
+    console.log(
+      `normal taps (ring duplicates / 2): ${String(ringHits / 2)} = ${pct(ringHits / 2, evals(all))} of evaluations`,
     );
     console.log(
       `first failure by pass: ${[...firstFailure].map(([k, v]) => `pass ${String(k)} ${String(v)}`).join(", ")}; accepted after a failure: ${String(acceptedAfterFailure)}; re-tracing failed traces ${pct(wastedEvals, evals(all))} of evaluations`,

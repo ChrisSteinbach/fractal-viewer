@@ -89,6 +89,10 @@ export interface TransportFixtureSystem {
   /** Exact membership in the displayed solid, for a field that is a
    * certified bound rather than a signed distance (interface doc). */
   contains?: (p: Vec3) => boolean;
+  /** An EXACT unit normal of the field, in place of the tetrahedron taps
+   * (the sphere-inversion family's Möbius normal — an A/B the kernel does
+   * not ship). Null falls back to the taps. Absent is the kernel's rule. */
+  normal?: (p: Vec3) => Vec3 | null;
 }
 
 export const TRANSPORT_QUERY_MAX_STEPS = 192;
@@ -128,6 +132,8 @@ export function transportOpticalNormal(
   dir: Vec3,
   eps: number,
 ): Vec3 {
+  const exact = system.normal?.(p);
+  if (exact) return exact;
   const e = 0.5773;
   const ex: Vec3 = [e, -e, -e];
   const ey: Vec3 = [-e, -e, e];
