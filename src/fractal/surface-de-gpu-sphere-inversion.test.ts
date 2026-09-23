@@ -1,4 +1,11 @@
 import { resolveSphereInversion } from "./sphere-inversion";
+import { DIELECTRIC_MAX_STACK } from "./surface-dielectric";
+import {
+  FINITE_TRANSPORT_BUFFER_HEADER_BYTES,
+  FINITE_TRANSPORT_WORK_HEADER_BYTES,
+  TRANSPORT_PATH_BYTES,
+  transportWorkSlotBytes,
+} from "./finite-transport-work";
 import type { SphereInversionAuthored } from "./sphere-inversion";
 import { buildSphereInversionDE } from "./sphere-inversion-de";
 import { buildSphereInversionDE4 } from "./sphere-inversion-de-4d";
@@ -506,5 +513,97 @@ describe("the sphere-inversion glass backend (opticsBackend sphereInversion)", (
         ),
       ).not.toThrow();
     }
+  });
+});
+
+describe("the sphere-inversion glass continuation (sphereInversionTransportChunkPaths)", () => {
+  const glass = (
+    core: "sphereInv" | "sphereInv4",
+    extra: Partial<SurfaceGpuKernelOptions> = {},
+  ): SurfaceGpuKernelOptions => ({
+    core,
+    mode: "shade",
+    width: 4,
+    workgroupSize: 16,
+    sharedFrontier: false,
+    bnbStage2: false,
+    optics: true,
+    opticsBackend: "sphereInversion",
+    ...extra,
+  });
+
+  it("is absent by default: a zero quantum emits the uninterrupted kernel byte for byte", () => {
+    for (const core of ["sphereInv", "sphereInv4"] as const) {
+      const plain = surfaceDeKernelWgsl(glass(core));
+      expect(
+        surfaceDeKernelWgsl(
+          glass(core, { sphereInversionTransportChunkPaths: 0 }),
+        ),
+      ).toBe(plain);
+      expect(plain).not.toContain("TRANSPORT_CHUNK_PATHS");
+      expect(plain).not.toContain("@binding(16)");
+    }
+  });
+
+  it("emits the same-trace continuation at binding 16 under its own names, never a finite one", () => {
+    for (const core of ["sphereInv", "sphereInv4"] as const) {
+      const src = surfaceDeKernelWgsl(
+        glass(core, { sphereInversionTransportChunkPaths: 32 }),
+      );
+      expect(src).toContain(
+        "@group(0) @binding(16) var<storage, read_write> siWork: SiTransportBatch;",
+      );
+      expect(src).toContain("const TRANSPORT_CHUNK_PATHS = 32u;");
+      expect(src).toContain("atomicAdd(&siWork.running, 1u);");
+      expect(src).toContain("var<storage, read> siTable: array<vec4f>;");
+      expect(src).not.toMatch(/finiteWork|FiniteTransport/);
+      // Pause BEFORE popping, exactly the finite text's order.
+      expect(src.indexOf("processed - chunkStartProcessed >=")).toBeLessThan(
+        src.indexOf("var path = stack[sp - 1u];"),
+      );
+    }
+  });
+
+  it("packs the slot header at the shared offsets and the generic path at the host's stride", () => {
+    const types = new Map([
+      ["u32", { align: 4, size: 4 }],
+      ["atomic<u32>", { align: 4, size: 4 }],
+      ["f32", { align: 4, size: 4 }],
+      ["vec3f", { align: 16, size: 12 }],
+      ["vec2u", { align: 8, size: 8 }],
+      [
+        `array<TransportPath, ${DIELECTRIC_MAX_STACK}>`,
+        { align: 16, size: DIELECTRIC_MAX_STACK * TRANSPORT_PATH_BYTES },
+      ],
+      ["array<SiTransportWork>", { align: 16, size: 0 }],
+    ]);
+    const src = surfaceDeKernelWgsl(
+      glass("sphereInv4", { sphereInversionTransportChunkPaths: 32 }),
+    );
+    const layout = (name: string) => {
+      const body = new RegExp(`struct ${name} \\{([^}]+)\\}`).exec(src)?.[1];
+      expect(body).toBeDefined();
+      let offset = 0;
+      let alignment = 1;
+      const offsets: Record<string, number> = {};
+      for (const [, field, type] of (body ?? "")
+        .replace(/\/\/[^\n]*/g, "")
+        .matchAll(/^\s*(\w+): ([^\n]+),$/gm)) {
+        const value = types.get(type);
+        if (!value) throw new Error(`Unexpected storage field: ${type}`);
+        alignment = Math.max(alignment, value.align);
+        offset = Math.ceil(offset / value.align) * value.align;
+        offsets[field] = offset;
+        offset += value.size;
+      }
+      return { offsets, size: Math.ceil(offset / alignment) * alignment };
+    };
+    expect(layout("TransportPath").size).toBe(TRANSPORT_PATH_BYTES);
+    expect(layout("SiTransportBatch").offsets.slots).toBe(
+      FINITE_TRANSPORT_BUFFER_HEADER_BYTES,
+    );
+    const work = layout("SiTransportWork");
+    expect(work.offsets.stack).toBe(FINITE_TRANSPORT_WORK_HEADER_BYTES);
+    expect(work.size).toBe(transportWorkSlotBytes(TRANSPORT_PATH_BYTES));
   });
 });

@@ -2049,14 +2049,24 @@ sphere-inversion glass backend on the RX 7900 XTX.
   1,169 ms (tess16): the tail still overshoots the prediction, but it lands
   well inside the cut.
 
-What neither change can fix: a single WORKGROUP whose trace outruns the
+What neither change could fix: a single WORKGROUP whose trace outruns the
 watchdog. 600-cell glass at depth 2 still ran 2.06 s at a one-workgroup batch
-and lost the device, so the routing refuses glass past 30 generators
-(`docs/sphere-inversion-family.md`) until the backend has a resumable trace.
+and lost the device, so the routing refused glass past 30 generators until the
+backend had a resumable trace. It now has one: the finite backend's same-trace
+continuation, emitted for the sphere-inversion cores over the generic path
+stride on binding 16 (binding 1 is their table), pausing every
+`SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS` processed paths. The cap is gone;
+the measured rows are in `docs/sphere-inversion-family.md`.
 
-The finite backend's CHUNKED transport keeps its old shape exactly. Each of its
-submissions is bounded by the chunk, and its model prices the whole
-multi-submission batch, which a per-submission ceiling must not judge.
+The two chunked lanes are SIZED DIFFERENTLY, on purpose. The finite backend's
+keeps its old shape exactly: each submission is bounded by its 2,048-path
+chunk over a cheap exact DDA, and its model prices the whole multi-submission
+batch, which a per-submission ceiling must not judge. The sphere-inversion
+lane keeps the one-workgroup pilot and the ladder, judged against its WORST
+CHUNK: a chunk is the submission, so the chunk is what the watchdog sees, and
+one of its paths is an estimator march over the whole fold. An unchunked lane
+has one chunk per batch, so its worst chunk IS its batch and its sizing did
+not move. `?surfacesichunk=N` pins the quantum at session create.
 
 ### A band is bit-exact
 

@@ -100,8 +100,11 @@ import { finiteSolidBoundingRadius } from "../fractal/finite-solid";
 import {
   FINITE_TRANSPORT_RUNNING,
   FINITE_TRANSPORT_RUNNING_OFFSET,
-  finiteTransportWorkBytes,
+  FINITE_TRANSPORT_PATH_BYTES,
+  TRANSPORT_PATH_BYTES,
   resolveFiniteTransportChunkPaths,
+  resolveSphereInversionTransportChunkPaths,
+  transportWorkBytes,
 } from "../fractal/finite-transport-work";
 import type {
   SurfaceGpu4View,
@@ -180,6 +183,7 @@ import {
   SURFACE_GPU_SHADE_PATTERN_BYTES,
   SURFACE_GPU_TRANSPORT_COMPLETE,
   SURFACE_GPU_TRANSPORT_INVALID,
+  SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS,
   SURFACE_GPU_TRANSPORT_PENDING,
   SURFACE_GPU_TRANSPORT_RESIDUAL,
   SURFACE_GPU_TRANSPORT_SKIPPED,
@@ -324,6 +328,15 @@ let surfaceComputeFenceGroupPin: number | null = null;
 let surfaceComputeMarchChunkPin: number | null = null;
 let surfaceComputeMarchStepsPin: number | null = null;
 let surfaceComputeShadeHitsPin: number | null = null;
+/**
+ * `?surfacesichunk=N` — the sphere-inversion glass continuation's quantum,
+ * in processed paths per submission, for a session created while it is set
+ * (the quantum is baked into the transport kernel, so it pins at create,
+ * not per frame). The instrument its production value
+ * (`SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS`) was measured through;
+ * absent leaves that value.
+ */
+let surfaceComputeSiTransportChunkPin: number | null = null;
 
 function positivePin(value: number | null | undefined): number | null {
   return value !== null &&
@@ -342,12 +355,14 @@ export function setSurfaceComputeSchedulePins(pins: {
   shadeHits?: number | null;
   fenceGroup?: number | null;
   timestamps?: boolean | null;
+  siTransportChunk?: number | null;
 }): void {
   surfaceComputeTimestampsPin = pins.timestamps ?? null;
   surfaceComputeFenceGroupPin = positivePin(pins.fenceGroup);
   surfaceComputeMarchChunkPin = positivePin(pins.marchChunk);
   surfaceComputeMarchStepsPin = positivePin(pins.marchSteps);
   surfaceComputeShadeHitsPin = positivePin(pins.shadeHits);
+  surfaceComputeSiTransportChunkPin = positivePin(pins.siTransportChunk);
 }
 
 /** Threads per workgroup — the kernel spike's measured winner (private
@@ -2692,6 +2707,10 @@ export interface SurfaceComputeRendererInit {
   /** Finite optics only: processed paths per continuation submission.
    * Zero preserves the uninterrupted diagnostic pipeline. */
   finiteTransportChunkPaths?: number;
+  /** Sphere-inversion glass only: the same continuation over the generic
+   * path stride, on binding 16. Omitted selects the production quantum;
+   * zero is the uninterrupted equivalence control. */
+  sphereInversionTransportChunkPaths?: number;
   /** Diagnostic override of the shader's existing coupled path/interface cap. */
   transportMaxPaths?: number;
   /** The frozen `opticsMaps` lane buffer (packSurfaceGpuOpticsMaps) —
@@ -2773,8 +2792,8 @@ interface FrameBuffers {
   transportStatus?: GPUBuffer;
   stagingTransportStatus?: GPUBuffer;
   /** One reusable finite continuation batch, never a full-image stack. */
-  finiteTransportWork?: GPUBuffer;
-  stagingFiniteTransportRunning?: GPUBuffer;
+  transportWork?: GPUBuffer;
+  stagingTransportRunning?: GPUBuffer;
   marchBindGroup: GPUBindGroup;
   shadeBindGroup: GPUBindGroup;
   /** The frame seed's bind group: rebuilt with the shade one, since both
@@ -2873,6 +2892,10 @@ export class SurfaceComputeRenderer {
        * Omitted selects the production quantum; zero is the uninterrupted
        * equivalence control. No document or user-facing setting. */
       finiteTransportChunkPaths?: number;
+      /** Sphere-inversion glass scheduling only, the finite option's twin:
+       * omitted selects the production quantum, zero the uninterrupted
+       * equivalence control. */
+      sphereInversionTransportChunkPaths?: number;
       /** Diagnostic guard-equivalence control; production leaves it absent. */
       transportMaxPaths?: number;
       /** Diagnostic finite DDA equivalence control. False retains the
@@ -2952,6 +2975,9 @@ export class SurfaceComputeRenderer {
         opts.finiteTransportChunkPaths,
         opts.transportMaxPaths,
         opts.finiteCacheCrossings,
+        opts.sphereInversionTransportChunkPaths ??
+          surfaceComputeSiTransportChunkPin ??
+          undefined,
       );
       return renderer;
     } catch (e) {
@@ -2976,6 +3002,7 @@ export class SurfaceComputeRenderer {
     finiteTransportChunkPaths?: number,
     transportMaxPaths?: number,
     finiteCacheCrossings?: boolean,
+    sphereInversionTransportChunkPaths?: number,
   ): Promise<SurfaceComputeRenderer> {
     // The error-scope pair (out-of-memory outside, validation inside):
     // WebGPU's createBuffer never throws on allocation failure — it
@@ -2988,6 +3015,14 @@ export class SurfaceComputeRenderer {
       materials?.optics &&
       opticsBackend === "finiteSolid"
         ? resolveFiniteTransportChunkPaths(finiteTransportChunkPaths)
+        : 0;
+    // The sphere-inversion glass continuation: an optics session on these
+    // cores IS this backend (the codegen refuses any other).
+    const siChunkPaths =
+      isSphereInversionTarget(target) && materials?.optics
+        ? resolveSphereInversionTransportChunkPaths(
+            sphereInversionTransportChunkPaths,
+          )
         : 0;
 
     // TWO pipelines (the measured v2 split — see the module doc): the
@@ -3153,6 +3188,9 @@ export class SurfaceComputeRenderer {
           ...(mode === "shade" && finiteChunkPaths > 0
             ? { finiteTransportChunkPaths: finiteChunkPaths }
             : {}),
+          ...(mode === "shade" && siChunkPaths > 0
+            ? { sphereInversionTransportChunkPaths: siChunkPaths }
+            : {}),
           ...(isFiniteSolidTarget(target) && finiteCacheCrossings !== undefined
             ? { finiteCacheCrossings }
             : {}),
@@ -3269,6 +3307,10 @@ export class SurfaceComputeRenderer {
               bufferEntry(13, "read-only-storage"),
               bufferEntry(14, "storage"),
               bufferEntry(15, "storage"),
+              // The sphere-inversion continuation's own slot: binding 1 is
+              // its table. The tenth storage buffer, within the adapter
+              // ceiling requested for optics sessions.
+              ...(siChunkPaths > 0 ? [bufferEntry(16, "storage")] : []),
             ]
           : []),
         ...(targetHasMesh ? [meshTextureLayoutEntry] : []),
@@ -3730,6 +3772,7 @@ export class SurfaceComputeRenderer {
       transportPipeline,
       transportPipelineNoSlab,
       finiteTransportChunkPaths: finiteChunkPaths,
+      sphereInversionTransportChunkPaths: siChunkPaths,
       transportMaxPaths,
       opticsMapsBuf,
       seedPipeline,
@@ -3830,7 +3873,7 @@ export class SurfaceComputeRenderer {
   private deviceDestroyed = false;
   private frameToken = 0;
   /** Monotonic across frames and AA samples; never reused for a new batch. */
-  private finiteTransportGeneration = 0;
+  private transportGeneration = 0;
   /** The session's own fence round-trip in ms, measured once by the first
    * frame's calibration probes and subtracted from every later dispatch
    * before a sizing model sees it — {@link surfaceComputeDispatchWorkMs}
@@ -3894,8 +3937,13 @@ export class SurfaceComputeRenderer {
    * for every classic session. */
   private readonly transportPipeline: GPUComputePipeline | null;
   private readonly transportPipelineNoSlab: GPUComputePipeline | null;
-  private readonly finiteTransportChunkPaths: number;
-  private readonly finiteTransportMaxPaths: number;
+  /** Processed paths per continuation submission (0: uninterrupted), the
+   * backend whose continuation it is, and that backend's stack stride. */
+  private readonly transportChunkPaths: number;
+  private readonly transportChunkBackend:
+    "finiteSolid" | "sphereInversion" | null;
+  private readonly transportWorkPathBytes: number;
+  private readonly transportMaxProcessed: number;
   /** The frozen opticsMaps lane buffer; null when no slot resolves optics. */
   private readonly opticsMapsBuf: GPUBuffer | null;
   /** The session's optics gate — the wire's own state, frozen at create
@@ -3940,12 +3988,31 @@ export class SurfaceComputeRenderer {
     this.transportPipelineNoSlab = init.transportPipelineNoSlab;
     this.opticsMapsBuf = init.opticsMapsBuf;
     this.optics = init.transportPipeline !== null;
-    this.finiteTransportChunkPaths =
-      this.optics && isFiniteSolidTarget(init.target)
-        ? resolveFiniteTransportChunkPaths(init.finiteTransportChunkPaths)
+    const finiteChunk = this.optics && isFiniteSolidTarget(init.target);
+    const siChunk = this.optics && isSphereInversionTarget(init.target);
+    this.transportChunkPaths = finiteChunk
+      ? resolveFiniteTransportChunkPaths(init.finiteTransportChunkPaths)
+      : siChunk
+        ? resolveSphereInversionTransportChunkPaths(
+            init.sphereInversionTransportChunkPaths,
+          )
         : 0;
-    this.finiteTransportMaxPaths =
-      init.transportMaxPaths ?? DIELECTRIC_MAX_PROCESSED_PATHS;
+    this.transportChunkBackend =
+      this.transportChunkPaths === 0
+        ? null
+        : finiteChunk
+          ? "finiteSolid"
+          : "sphereInversion";
+    this.transportWorkPathBytes = finiteChunk
+      ? FINITE_TRANSPORT_PATH_BYTES
+      : TRANSPORT_PATH_BYTES;
+    // The shader's coupled path cap, per backend (the codegen's defaults):
+    // the finite DDA's oracle allowance, the estimator-shaped guard else.
+    this.transportMaxProcessed =
+      init.transportMaxPaths ??
+      (finiteChunk
+        ? DIELECTRIC_MAX_PROCESSED_PATHS
+        : SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS);
     this.seedPipeline = init.seedPipeline;
     this.seedLayout = init.seedLayout;
     this.seedBuf = init.seedBuf;
@@ -4295,8 +4362,8 @@ export class SurfaceComputeRenderer {
       this.frame.transportState,
       this.frame.transportStatus,
       this.frame.stagingTransportStatus,
-      this.frame.finiteTransportWork,
-      this.frame.stagingFiniteTransportRunning,
+      this.frame.transportWork,
+      this.frame.stagingTransportRunning,
     ]) {
       b?.destroy();
     }
@@ -4355,8 +4422,8 @@ export class SurfaceComputeRenderer {
     let transportState: GPUBuffer | undefined;
     let transportStatus: GPUBuffer | undefined;
     let stagingTransportStatus: GPUBuffer | undefined;
-    let finiteTransportWork: GPUBuffer | undefined;
-    let stagingFiniteTransportRunning: GPUBuffer | undefined;
+    let transportWork: GPUBuffer | undefined;
+    let stagingTransportRunning: GPUBuffer | undefined;
     if (this.optics) {
       transportState = device.createBuffer({
         size: rays * SURFACE_COMPUTE_TRANSPORT_RECORD_BYTES,
@@ -4373,19 +4440,26 @@ export class SurfaceComputeRenderer {
         size: rays * 4,
         usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
       });
-      if (this.finiteTransportChunkPaths > 0) {
-        finiteTransportWork = device.createBuffer({
-          label: "finite-transport-work",
-          size: finiteTransportWorkBytes(
+      if (this.transportChunkPaths > 0) {
+        transportWork = device.createBuffer({
+          label:
+            this.transportChunkBackend === "finiteSolid"
+              ? "finite-transport-work"
+              : "si-transport-work",
+          size: transportWorkBytes(
             Math.min(rays, SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH),
+            this.transportWorkPathBytes,
           ),
           usage:
             GPUBufferUsage.STORAGE |
             GPUBufferUsage.COPY_DST |
             GPUBufferUsage.COPY_SRC,
         });
-        stagingFiniteTransportRunning = device.createBuffer({
-          label: "finite-transport-running",
+        stagingTransportRunning = device.createBuffer({
+          label:
+            this.transportChunkBackend === "finiteSolid"
+              ? "finite-transport-running"
+              : "si-transport-running",
           size: 4,
           usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
         });
@@ -4417,7 +4491,7 @@ export class SurfaceComputeRenderer {
       layer,
       transportState,
       transportStatus,
-      finiteTransportWork,
+      transportWork,
     );
     // After the march and shade groups, so their creation order is unchanged.
     const seedBindGroup = this.createSeedBindGroup(
@@ -4439,8 +4513,8 @@ export class SurfaceComputeRenderer {
       transportState,
       transportStatus,
       stagingTransportStatus,
-      finiteTransportWork,
-      stagingFiniteTransportRunning,
+      transportWork,
+      stagingTransportRunning,
       marchBindGroup,
       shadeBindGroup,
       seedBindGroup,
@@ -4455,15 +4529,23 @@ export class SurfaceComputeRenderer {
     layer: GPUBuffer,
     transportState?: GPUBuffer,
     transportStatus?: GPUBuffer,
-    finiteTransportWork?: GPUBuffer,
+    transportWork?: GPUBuffer,
   ): GPUBindGroup {
+    // The finite cores have no maps, so their continuation reuses binding
+    // 1; the sphere-inversion cores keep their table there and take 16.
+    const finiteWork =
+      this.transportChunkBackend === "finiteSolid" ? transportWork : undefined;
+    const siWork =
+      this.transportChunkBackend === "sphereInversion"
+        ? transportWork
+        : undefined;
     return this.device.createBindGroup({
       layout: this.shadeLayout,
       entries: [
         { binding: 0, resource: { buffer: this.paramsBuf } },
         {
           binding: 1,
-          resource: { buffer: finiteTransportWork ?? this.mapsBuf },
+          resource: { buffer: finiteWork ?? this.mapsBuf },
         },
         { binding: 2, resource: { buffer: active } },
         { binding: 3, resource: { buffer: states } },
@@ -4500,6 +4582,9 @@ export class SurfaceComputeRenderer {
               },
               { binding: 14, resource: { buffer: transportState } },
               { binding: 15, resource: { buffer: transportStatus } },
+              ...(siWork
+                ? [{ binding: 16, resource: { buffer: siWork } }]
+                : []),
             ]
           : []),
       ],
@@ -6303,7 +6388,13 @@ export class SurfaceComputeRenderer {
       // its submissions is bounded by the chunk, and its model prices the
       // whole multi-submission batch, which no per-submission ceiling may
       // judge.
-      const chunkedTransport = this.finiteTransportChunkPaths > 0;
+      // THE FINITE continuation prices the whole multi-submission batch and
+      // leaves its cap at the maximum; every other lane — the sphere-
+      // inversion continuation included — is judged PER SUBMISSION against
+      // the transport ceiling, which for a chunked lane is its worst CHUNK
+      // (the unit the watchdog sees). An unchunked lane has one chunk, so
+      // its worst chunk IS its batch and nothing about it moves.
+      const chunkedTransport = this.transportChunkBackend === "finiteSolid";
       const transportSizer: ShadeSizerState = {
         cost: initialShadeHitCost(),
         cap: chunkedTransport
@@ -6355,15 +6446,15 @@ export class SurfaceComputeRenderer {
           );
           const slice = Uint32Array.from(pending.slice(offset, offset + batch));
           if (!(await stageDispatch(slice.length, 0, slice))) return null;
-          const work = buffers.finiteTransportWork;
-          const runningReadback = buffers.stagingFiniteTransportRunning;
-          if (this.finiteTransportChunkPaths > 0 && (!work || !runningReadback))
+          const work = buffers.transportWork;
+          const runningReadback = buffers.stagingTransportRunning;
+          if (this.transportChunkPaths > 0 && (!work || !runningReadback))
             throw new Error(
-              "Surface compute: finite continuation buffers missing",
+              "Surface compute: transport continuation buffers missing",
             );
           let generation = 0;
           if (work) {
-            generation = ++this.finiteTransportGeneration;
+            generation = ++this.transportGeneration;
             if (generation > 0xffffffff)
               throw new Error(
                 "Surface compute: finite continuation generation exhausted",
@@ -6372,6 +6463,7 @@ export class SurfaceComputeRenderer {
           let chunk = 0;
           let running = slice.length;
           let batchWorkMs = 0;
+          let worstChunkWorkMs = 0;
           // Hold this exact list and slot mapping until the replay completes.
           // A paused trace resumes at the SAME theta; only the outer PENDING
           // queue starts a new trace at the next replay threshold.
@@ -6390,12 +6482,12 @@ export class SurfaceComputeRenderer {
               if (
                 chunk >=
                 Math.ceil(
-                  this.finiteTransportMaxPaths / this.finiteTransportChunkPaths,
+                  this.transportMaxProcessed / this.transportChunkPaths,
                 ) +
                   1
               )
                 throw new Error(
-                  "Surface compute: finite continuation did not terminate",
+                  "Surface compute: transport continuation did not terminate",
                 );
               stage(
                 work,
@@ -6433,7 +6525,7 @@ export class SurfaceComputeRenderer {
                 return null;
               if (counter.length !== 1 || counter[0] > previousRunning)
                 throw new Error(
-                  "Surface compute: invalid finite continuation running count",
+                  "Surface compute: invalid transport continuation running count",
                 );
               running = counter[0];
               if (running > 0) transportContinuationChunks++;
@@ -6449,12 +6541,14 @@ export class SurfaceComputeRenderer {
             transportBatchMs.push(wallMs);
             const workMs = Math.max(0, wallMs - (this.fenceMs ?? 0));
             batchWorkMs += workMs;
+            worstChunkWorkMs = Math.max(worstChunkWorkMs, workMs);
             if (running === 0) {
-              // Price the entire trace batch, not its final short chunk.
+              // The finite lane prices the entire trace batch, not its final
+              // short chunk; a per-submission lane prices its worst chunk.
               transportSizer.cost = nextShadeHitCost(
                 transportSizer.cost,
                 slice.length,
-                batchWorkMs * 1000,
+                (chunkedTransport ? batchWorkMs : worstChunkWorkMs) * 1000,
               );
               // The capacity ladder, judged against the transport ceiling.
               // A queue-limited batch may shrink it but never grow it (the
@@ -6462,7 +6556,7 @@ export class SurfaceComputeRenderer {
               if (!chunkedTransport) {
                 const grown = nextShadeBatchSize(
                   transportSizer.cap,
-                  batchWorkMs,
+                  worstChunkWorkMs,
                   SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS,
                 );
                 transportSizer.cap =
@@ -6493,12 +6587,9 @@ export class SurfaceComputeRenderer {
         for (let slot = 0; slot < pending.length; slot++) {
           const packedStatus = statusCopy[slot];
           const s = packedStatus & 0xff;
-          if (
-            this.finiteTransportChunkPaths > 0 &&
-            s === FINITE_TRANSPORT_RUNNING
-          )
+          if (this.transportChunkPaths > 0 && s === FINITE_TRANSPORT_RUNNING)
             throw new Error(
-              "Surface compute: running finite trace escaped its batch",
+              "Surface compute: running transport trace escaped its batch",
             );
           if (s === SURFACE_GPU_TRANSPORT_PENDING) {
             nextPending.push(pending[slot]);
@@ -6516,10 +6607,12 @@ export class SurfaceComputeRenderer {
           } else if (s === SURFACE_GPU_TRANSPORT_INVALID) {
             transportInvalid++;
           } else if (
-            this.finiteTransportChunkPaths > 0 &&
+            this.transportChunkPaths > 0 &&
             s !== SURFACE_GPU_TRANSPORT_SKIPPED
           ) {
-            throw new Error("Surface compute: unknown finite transport status");
+            throw new Error(
+              "Surface compute: unknown chunked transport status",
+            );
           }
           // SKIPPED: a classic slot — shadeRays owns the pixel; not
           // transport work to count or re-dispatch.
@@ -6641,7 +6734,7 @@ export class SurfaceComputeRenderer {
               invalid: transportInvalid,
               passes: transportPassesStarted,
               batchMs: transportBatchMs,
-              ...(this.finiteTransportChunkPaths > 0
+              ...(this.transportChunkPaths > 0
                 ? { continuationChunks: transportContinuationChunks }
                 : {}),
             },

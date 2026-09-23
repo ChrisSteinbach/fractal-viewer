@@ -113,7 +113,10 @@ import {
 } from "../fractal/surface-lighting";
 import {
   FINITE_TRANSPORT_RUNNING,
+  SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS,
+  TRANSPORT_PATH_BYTES,
   finiteTransportWorkBytes,
+  transportWorkBytes,
 } from "../fractal/finite-transport-work";
 import {
   FINITE_SOLID_HALF_EXTENT,
@@ -1673,7 +1676,11 @@ async function createPaletteResourceHarness(
   targetOverride?: SurfaceComputeAnyTarget,
   lighting = false,
   deviceFeatures: string[] = [],
-  opticsOpts?: { chunkPaths?: number; maxPaths?: number },
+  opticsOpts?: {
+    chunkPaths?: number;
+    maxPaths?: number;
+    backend?: "finiteSolid" | "sphereInversion";
+  },
   finiteCacheCrossings?: boolean,
 ): Promise<PaletteResourceHarness> {
   const layoutDescriptors: GPUBindGroupLayoutDescriptor[] = [];
@@ -1773,11 +1780,13 @@ async function createPaletteResourceHarness(
     adapterStatus: { label: string | undefined; software: boolean },
     materials: SurfaceMaterialSlots | null,
     lighting: boolean,
-    opticsBackend?: "finiteSolid",
+    opticsBackend?: "finiteSolid" | "sphereInversion",
     chunkPaths?: number,
     maxPaths?: number,
     cacheCrossings?: boolean,
+    siChunkPaths?: number,
   ) => Promise<SurfaceComputeRenderer>;
+  const siOptics = opticsOpts?.backend === "sphereInversion";
   const renderer = await build.call(
     SurfaceComputeRenderer,
     device,
@@ -1795,10 +1804,11 @@ async function createPaletteResourceHarness(
         )
       : null,
     lighting,
-    opticsOpts ? "finiteSolid" : undefined,
-    opticsOpts?.chunkPaths,
+    opticsOpts ? (opticsOpts.backend ?? "finiteSolid") : undefined,
+    siOptics ? undefined : opticsOpts?.chunkPaths,
     opticsOpts?.maxPaths,
     finiteCacheCrossings,
+    siOptics ? opticsOpts.chunkPaths : undefined,
   );
   return {
     renderer,
@@ -3253,6 +3263,18 @@ describe("SurfaceComputeRenderer authored lighting", () => {
   });
 });
 
+/** A small glass-shaped sphere-inversion subject for the host-loop fakes:
+ * the loop never reads its geometry, only its target kind. */
+function continuationSphereInversionDE() {
+  const r = resolveSphereInversion({
+    arrangement: "oct6",
+    seed: { kind: "ball", size: 0.28 },
+    depth: 2,
+  });
+  if (!r.ok) throw new Error(r.reasons.join("; "));
+  return buildSphereInversionDE(r.construction);
+}
+
 interface FiniteHostDispatch {
   submission: number;
   initialize: number;
@@ -3269,7 +3291,7 @@ interface FiniteHostDispatch {
  * not reproduce optical arithmetic or the continuation implementation. */
 function finiteContinuationHarness(
   opts: {
-    kind?: "finite" | "finite4";
+    kind?: "finite" | "finite4" | "sphereInversion";
     chunkPaths?: number;
     maxPaths?: number;
     parkLabel?: string;
@@ -3436,7 +3458,12 @@ function finiteContinuationHarness(
                 if (pipeline === pipelines.march) {
                   words(bindings.get(5)!).fill(SURFACE_GPU_RAY_HIT, 0, length);
                 } else if (pipeline === pipelines.transport) {
-                  const work = bindings.get(1)!;
+                  // The sphere-inversion continuation rides binding 16; an
+                  // unchunked session has none (binding 1 is its table).
+                  const work =
+                    opts.kind === "sphereInversion"
+                      ? (bindings.get(16) ?? mapsBuf)
+                      : bindings.get(1)!;
                   const header = work === mapsBuf ? [1, 0, 0] : words(work);
                   const status = words(bindings.get(15)!);
                   const rayIds = Array.from(
@@ -3507,7 +3534,10 @@ function finiteContinuationHarness(
   } as unknown as GPUDevice;
   const renderer = new SurfaceComputeRenderer({
     device,
-    target: { kind: opts.kind ?? "finite", level: 2 },
+    target:
+      opts.kind === "sphereInversion"
+        ? { kind: "sphereInversion", de: continuationSphereInversionDE() }
+        : { kind: opts.kind ?? "finite", level: 2 },
     marchPipeline: pipelines.march,
     shadePipeline: pipelines.shade,
     marchLayout: {} as GPUBindGroupLayout,
@@ -3517,6 +3547,7 @@ function finiteContinuationHarness(
     transportPipeline: pipelines.transport,
     transportPipelineNoSlab: null,
     finiteTransportChunkPaths: opts.chunkPaths,
+    sphereInversionTransportChunkPaths: opts.chunkPaths,
     transportMaxPaths: opts.maxPaths,
     opticsMapsBuf: plain(),
     seedPipeline: pipelines.seed,
@@ -4394,5 +4425,145 @@ describe("transportBatchSize", () => {
         SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH,
       ),
     ).toBe(SURFACE_COMPUTE_WORKGROUP_SIZE);
+  });
+});
+
+describe("SurfaceComputeRenderer sphere-inversion glass continuation", () => {
+  function glassTarget(): SurfaceComputeAnyTarget {
+    return { kind: "sphereInversion", de: continuationSphereInversionDE() };
+  }
+
+  it("binds its continuation at 16, beside the table it leaves at 1, as the stage's tenth storage buffer", async () => {
+    const h = await createPaletteResourceHarness(
+      false,
+      glassTarget(),
+      false,
+      [],
+      { backend: "sphereInversion" },
+    );
+    const shadeLayout = Array.from(h.layoutDescriptors[1].entries);
+    expect(
+      shadeLayout.filter((e) => e.buffer && e.buffer.type !== "uniform"),
+    ).toHaveLength(10);
+    expect(shadeLayout.find((e) => e.binding === 1)?.buffer?.type).toBe(
+      "read-only-storage",
+    );
+    expect(shadeLayout.find((e) => e.binding === 16)?.buffer?.type).toBe(
+      "storage",
+    );
+    const transport = h.shaderSources.find((src) =>
+      src.includes("fn transportRays("),
+    );
+    expect(transport).toContain(
+      "@group(0) @binding(16) var<storage, read_write> siWork: SiTransportBatch;",
+    );
+    expect(transport).toContain(
+      `const TRANSPORT_CHUNK_PATHS = ${SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS}u;`,
+    );
+    const allocate = Reflect.get(h.renderer, "allocateFrameBuffers") as (
+      rays: number,
+    ) => Promise<unknown>;
+    await allocate.call(h.renderer, 17);
+    const work = h.bufferDescriptors.filter(
+      (b) => b.label === "si-transport-work",
+    );
+    expect(work).toHaveLength(1);
+    expect(work[0].size).toBe(transportWorkBytes(17, TRANSPORT_PATH_BYTES));
+    const entry = (group: number, binding: number) =>
+      Array.from(h.bindGroups[group].entries).find((e) => e.binding === binding)
+        ?.resource;
+    // The table stays the table in both groups; the work is its own slot.
+    expect(entry(1, 1)).toEqual(entry(0, 1));
+    expect(entry(1, 16)).toBeDefined();
+    expect(entry(0, 16)).toBeUndefined();
+    h.renderer.destroy();
+  });
+
+  it("keeps the uninterrupted control's nine bindings and kernel text when the quantum is zero", async () => {
+    const h = await createPaletteResourceHarness(
+      false,
+      glassTarget(),
+      false,
+      [],
+      { backend: "sphereInversion", chunkPaths: 0 },
+    );
+    const shadeLayout = Array.from(h.layoutDescriptors[1].entries);
+    expect(
+      shadeLayout.filter((e) => e.buffer && e.buffer.type !== "uniform"),
+    ).toHaveLength(9);
+    expect(shadeLayout.some((e) => e.binding === 16)).toBe(false);
+    for (const src of h.shaderSources) {
+      expect(src).not.toContain("siWork");
+      expect(src).not.toContain("TRANSPORT_CHUNK_PATHS");
+    }
+    const allocate = Reflect.get(h.renderer, "allocateFrameBuffers") as (
+      rays: number,
+    ) => Promise<unknown>;
+    await allocate.call(h.renderer, 17);
+    expect(
+      h.bufferDescriptors.some((b) => b.label === "si-transport-work"),
+    ).toBe(false);
+    h.renderer.destroy();
+  });
+
+  it("resumes a paused trace from the same slot list through its own running counter", async () => {
+    const h = finiteContinuationHarness({ kind: "sphereInversion" });
+    const frame = await h.renderer.renderFrame(h.spec);
+    expect(frame?.transport?.resolved).toBe(3);
+    expect(frame?.transport?.continuationChunks).toBe(1);
+    expect(
+      h.dispatches.map((d) => [d.initialize, d.generation, d.rayIds]),
+    ).toEqual([
+      [1, 1, [0, 1, 2]],
+      [0, 1, [0, 1, 2]],
+    ]);
+    expect(
+      h.copies.filter(
+        (c) => h.memory.get(c.dst)!.descriptor.label === "si-transport-running",
+      ),
+    ).toHaveLength(2);
+    h.renderer.destroy();
+  });
+
+  it("pilots at one workgroup and grows on its worst CHUNK, not on the batch the chunks sum to", async () => {
+    let now = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    // Four chunks of 150 ms: every submission is well under the transport
+    // ceiling, while the batch they sum to (600 ms) is over it. Judged per
+    // submission the lane grows; judged per batch it would stay pinned.
+    const chunks = new Map<number, number>();
+    const h = finiteContinuationHarness({
+      kind: "sphereInversion",
+      outcome: (d) => {
+        now += 150;
+        const k = (chunks.get(d.generation) ?? 0) + 1;
+        chunks.set(d.generation, k);
+        const running = k < 4 ? d.rayIds.length : 0;
+        return {
+          running,
+          statuses: d.rayIds.map(() =>
+            running > 0
+              ? FINITE_TRANSPORT_RUNNING
+              : SURFACE_GPU_TRANSPORT_COMPLETE,
+          ),
+        };
+      },
+    });
+    try {
+      h.spec.width = 400;
+      const frame = await h.renderer.renderFrame(h.spec);
+      expect(frame?.transport?.resolved).toBe(400);
+      const batches = h.dispatches
+        .filter((d) => d.initialize === 1)
+        .map((d) => d.rayIds.length);
+      expect(batches[0]).toBe(SURFACE_COMPUTE_SHADE_HIT_CAP_START);
+      expect(batches[1]).toBeGreaterThan(SURFACE_COMPUTE_SHADE_HIT_CAP_START);
+      expect(4 * 150).toBeGreaterThan(
+        SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS,
+      );
+    } finally {
+      h.renderer.destroy();
+      clock.mockRestore();
+    }
   });
 });

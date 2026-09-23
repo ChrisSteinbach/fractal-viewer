@@ -53,6 +53,7 @@ import {
   FINITE_TRANSPORT_RUNNING,
   FINITE_TRANSPORT_WORK_HEADER_BYTES,
   resolveFiniteTransportChunkPaths,
+  resolveSphereInversionTransportChunkPaths,
 } from "./finite-transport-work";
 import {
   SURFACE_GPU_PARAMS4_FINITE_BYTES,
@@ -1972,6 +1973,13 @@ export interface SurfaceGpuKernelOptions {
    * to uninterrupted execution (undefined/0); the host explicitly supplies
    * its resolved production default. No other core or entry is changed. */
   finiteTransportChunkPaths?: number;
+  /** Sphere-inversion glass shade only: the same continuation over the
+   * generic path stride, pausing after this many additional processed
+   * paths. Its storage takes binding 16 (binding 1 is the family's
+   * `siTable`), and every WGSL identifier the finite text calls `finite*`
+   * emits as `si*`. Direct codegen defaults to uninterrupted execution
+   * (undefined/0); the host supplies the resolved production quantum. */
+  sphereInversionTransportChunkPaths?: number;
   /** Finite DDA only: retain each axis's crossing time until its cell
    * changes, with the same division and tie order. Default true; false
    * preserves the original uncached query for diagnostic comparisons. */
@@ -5330,11 +5338,18 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
       "surface-de-gpu: transportMaxPaths must be a positive integer",
     );
   }
-  const finiteTransportChunkPaths =
+  // The same-trace continuation (option docs): the finite backend's, and
+  // the sphere-inversion glass backend's over the generic path stride.
+  const transportChunkPaths =
     opticsBackend === "finiteSolid"
       ? resolveFiniteTransportChunkPaths(opts.finiteTransportChunkPaths ?? 0)
-      : 0;
-  const finiteTransportChunk = finiteTransportChunkPaths > 0;
+      : opticsBackend === "sphereInversion"
+        ? resolveSphereInversionTransportChunkPaths(
+            opts.sphereInversionTransportChunkPaths ?? 0,
+          )
+        : 0;
+  const transportChunk = transportChunkPaths > 0;
+  const siGlassChunk = transportChunk && opticsBackend === "sphereInversion";
   const material = finish || pattern;
   // The hit-info constructor's pattern member: WGSL value constructors
   // are all-or-none, so under the pattern gate every core's full-member
@@ -9334,12 +9349,12 @@ ${finiteSolidGeneralTransportSource(core4 ? 4 : 3, finiteGeneral, finiteLevel ??
           : ""
       }`
     : "";
-  const finiteTransportWorkSource = finiteTransportChunk
+  const finiteTransportWorkSource = transportChunk
     ? `
 
 // Same-trace scheduling storage: ${FINITE_TRANSPORT_BUFFER_HEADER_BYTES}-byte batch
 // header, then ${FINITE_TRANSPORT_WORK_HEADER_BYTES}-byte slot headers and the
-// unchanged finite paths. Only live stack entries are read or written.
+// unchanged ${siGlass ? "generic" : "finite"} paths. Only live stack entries are read or written.
 struct FiniteTransportWork {
   radiance: vec3f,
   residual: f32,
@@ -9361,9 +9376,16 @@ struct FiniteTransportBatch {
   slots: array<FiniteTransportWork>,
 }
 
-// Finite cores have no map buffer. Reuse its unused binding rather than
+${
+  siGlass
+    ? `// The sphere-inversion cores read their table from binding 1, so the
+// continuation takes its own binding: the transport entry's tenth storage
+// buffer (the adapter's per-stage ceiling is requested for optics sessions).
+@group(0) @binding(16) var<storage, read_write> finiteWork: FiniteTransportBatch;`
+    : `// Finite cores have no map buffer. Reuse its unused binding rather than
 // increasing the transport entry's storage-binding requirement.
-@group(0) @binding(1) var<storage, read_write> finiteWork: FiniteTransportBatch;
+@group(0) @binding(1) var<storage, read_write> finiteWork: FiniteTransportBatch;`
+}
 
 fn finiteWorkReset(slotI: u32, ray: u32, replayPass: u32) {
   finiteWork.slots[slotI].radiance = vec3f(0.0);
@@ -9484,10 +9506,10 @@ const TRANSPORT_REPLAY_PASSES = ${DIELECTRIC_REPLAY_PASSES}u;
 const TRANSPORT_MAX_STACK = ${DIELECTRIC_MAX_STACK}u;
 const TRANSPORT_MAX_PROCESSED = ${transportMaxPaths}u;
 const TRANSPORT_MAX_INTERFACES = ${transportMaxPaths}u;${
-        finiteTransportChunk
+        transportChunk
           ? `
 const TRANSPORT_STATUS_RUNNING = ${FINITE_TRANSPORT_RUNNING}u;
-const TRANSPORT_CHUNK_PATHS = ${finiteTransportChunkPaths}u;`
+const TRANSPORT_CHUNK_PATHS = ${transportChunkPaths}u;`
           : ""
       }
 const TRANSPORT_CROSSING_EPS_REL = ${DIELECTRIC_CROSSING_EPS_REL};
@@ -9898,7 +9920,7 @@ fn transportTrace(
   absorb: vec3f,
   bg: vec3f,
   li: u32,
-  distortion: f32,${finiteTransportChunk ? "\n  workSlot: u32," : ""}
+  distortion: f32,${transportChunk ? "\n  workSlot: u32," : ""}
 ) -> TransportTrace {
   var out: TransportTrace;
   out.radiance = vec3f(0.0);
@@ -9912,7 +9934,7 @@ fn transportTrace(
   var radiance = vec3f(0.0);
   var residual = 0.0;
   let eps = TRANSPORT_CROSSING_EPS_REL * radius;${
-    finiteTransportChunk
+    transportChunk
       ? `
   if (finiteWork.initialize == 0u) {
     // Identity and bounds were checked by transportRays before this load.
@@ -10028,7 +10050,7 @@ ${
   }
 `
 }${
-        finiteTransportChunk
+        transportChunk
           ? `  }
   let chunkStartProcessed = processed;
 `
@@ -10040,7 +10062,7 @@ ${
       break;
     }
 ${
-  finiteTransportChunk
+  transportChunk
     ? `    // Pause BEFORE popping: no path, residual term, or arithmetic order
     // changes at a scheduling boundary. The cumulative guards below remain.
     if (processed - chunkStartProcessed >= TRANSPORT_CHUNK_PATHS) {
@@ -10354,7 +10376,7 @@ ${
     }
   }
 ${
-  finiteTransportChunk
+  transportChunk
     ? `  finiteWork.slots[workSlot].sp = 0u;
   finiteWork.slots[workSlot].processed = processed;
 `
@@ -10379,7 +10401,7 @@ fn transportRays(
   if (slotI >= params.itemCount) {
     return;
   }${
-    finiteTransportChunk
+    transportChunk
       ? `
   // The host keeps this batch's ray list and replay threshold fixed until
   // every slot is done. Reject malformed lengths before addressing a slot.
@@ -10394,7 +10416,7 @@ fn transportRays(
       : ""
   }
   let ray = activeList[slotI];${
-    finiteTransportChunk
+    transportChunk
       ? `
   if (slotI >= arrayLength(&finiteWork.slots) ||
       finiteWork.rayCount != params.itemCount ||
@@ -10444,7 +10466,7 @@ fn transportRays(
   if (prevStatus == TRANSPORT_STATUS_COMPLETE ||
       prevStatus == TRANSPORT_STATUS_RESIDUAL ||
       prevStatus == TRANSPORT_STATUS_INVALID) {${
-        finiteTransportChunk
+        transportChunk
           ? `
     if (finiteWork.initialize == 0u) {
       finiteWorkReject(slotI, ray, replayPass);
@@ -10458,7 +10480,7 @@ fn transportRays(
   }
   let st = states[ray];
   if (st.y != ${SURFACE_GPU_RAY_HIT}.0) {${
-    finiteTransportChunk
+    transportChunk
       ? `
     if (finiteWork.initialize == 0u) {
       finiteWorkReject(slotI, ray, replayPass);
@@ -10489,7 +10511,7 @@ fn transportRays(
   let lane1 = opticsMaps[u32(fSlot) * 2u + 1u];
   if (lane0[0] <= 0.0) {
     // A classic slot: shadeRays owns this pixel exactly as before.${
-      finiteTransportChunk
+      transportChunk
         ? `
     if (finiteWork.initialize == 0u) {
       finiteWorkReject(slotI, ray, replayPass);
@@ -10504,10 +10526,10 @@ fn transportRays(
   let ior = lane0[0];
   let radius = lane0[1];
   let absorb = vec3f(lane0[2], lane0[3], lane1[0]);
-  let distortion = lane1[1];${finiteTransportChunk ? "" : "\n  let replayPass = u32(shade.transport[0]);"}
+  let distortion = lane1[1];${transportChunk ? "" : "\n  let replayPass = u32(shade.transport[0]);"}
   let theta = dielectricReplayTheta(f32(replayPass), TRANSPORT_INITIAL_THETA);
-  let traced = transportTrace(${finiteQuery ? "ro" : "pos"}, rd, theta, ior, radius, absorb, bg, li, distortion${finiteTransportChunk ? ", slotI" : ""});${
-    finiteTransportChunk
+  let traced = transportTrace(${finiteQuery ? "ro" : "pos"}, rd, theta, ior, radius, absorb, bg, li, distortion${transportChunk ? ", slotI" : ""});${
+    transportChunk
       ? `
   if (traced.status == TRANSPORT_STATUS_RUNNING) {
     // Partial radiance remains private to the work buffer. Neither the
@@ -15658,5 +15680,16 @@ ${tilingProbeWrapText}`
 
 ${meshSdfHelperText}${trapGeometryHelperText}${condensationHelperText}${tiledBodyBlock}${marchSample ? `\n${balloon ? inversionDistanceShaderSource("wgsl") : ""}\n${sampleLensText}\n${sampleOuterText}` : ""}
 ${finiteCore && mode === "march" ? `${finiteGeneral ? finiteSolidGeneralTransportSource(core4 ? 4 : 3, finiteGeneral, finiteLevel ?? 0) : finiteSolidTransportSource(core4 ? 4 : 3, opts.finiteCacheCrossings)}\n` : ""}${entry}
-${opticsBlock}`;
+${siGlassChunk ? siTransportWorkNames(opticsBlock) : opticsBlock}`;
+}
+
+/** The continuation text is written once, in the finite backend's words;
+ * the sphere-inversion glass emission renames its identifiers so its kernel
+ * never claims a finite construction. Only the continuation machinery
+ * carries these names (no finite query is spliced into a sphere-inversion
+ * kernel), so a whole-block rename is exact. */
+function siTransportWorkNames(text: string): string {
+  return text
+    .replace(/\bFiniteTransport(Work|Batch)\b/g, "SiTransport$1")
+    .replace(/\bfiniteWork(Reset|Reject)?\b/g, "siWork$1");
 }
