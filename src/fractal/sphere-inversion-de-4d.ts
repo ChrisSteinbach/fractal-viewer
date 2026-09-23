@@ -48,6 +48,7 @@ import {
   createSphereInversionDE,
   makeSphereInversionHit,
   sphereInversionFoldedCutoff,
+  sphereInversionFoldedNormal,
   sphereInversionGapGenerator,
   transportSphereInversionBound,
 } from "./sphere-inversion";
@@ -124,6 +125,7 @@ function fold4(de: SphereInversionDE, p: Vec4): void {
     w = gc[o + 3] + s * (w - gc[o + 3]);
     de.foldRadius[k] = Math.sqrt(foundD2);
     de.foldRadius2[k] = R2;
+    de.foldGenerator[k] = found;
     if (k === 0) first = found;
     k++;
     parent = found;
@@ -398,4 +400,20 @@ export function sphereInversionContains4(
       de.foldPoint[3],
     ) <= 0
   );
+}
+
+/** THE EXACT MÖBIUS NORMAL of the signed field at `p`
+ * ({@link sphereInversionFoldedNormal}): the unit gradient direction, or
+ * null at a pole, an exhausted fold, or a degenerate offset, where a caller
+ * falls back to finite-difference taps. One fold and one cover scan — the
+ * cost of one field evaluation. */
+export function sphereInversionSignedNormal4(
+  de: SphereInversionDE,
+  p: Vec4,
+): Vec4 | null {
+  fold4(de, p);
+  if (foldStatus !== SPHERE_INVERSION_FOLD_DOMAIN) return null;
+  const out = new Float64Array(4);
+  if (!sphereInversionFoldedNormal(de, 4, foldK, foldParent, out)) return null;
+  return [out[0], out[1], out[2], out[3]];
 }

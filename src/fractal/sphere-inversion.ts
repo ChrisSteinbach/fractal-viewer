@@ -1195,6 +1195,9 @@ export interface SphereInversionDE extends SphereInversionTables {
   foldRadius2: Float64Array;
   /** The folded query. */
   foldPoint: Float64Array;
+  /** The generator fold inversion `i` went through (the exact normal's
+   * reflections read it back, innermost first). */
+  foldGenerator: Int32Array;
 }
 
 /** Build the tables and scratch for a construction of dimension `dim`.
@@ -1215,6 +1218,7 @@ export function createSphereInversionDE(
     foldRadius: new Float64Array(construction.depth + 1),
     foldRadius2: new Float64Array(construction.depth + 1),
     foldPoint: new Float64Array(dim),
+    foldGenerator: new Int32Array(construction.depth + 1),
   };
 }
 
@@ -1252,6 +1256,141 @@ export function makeSphereInversionHit(): SphereInversionHit {
     lastGenerator: -1,
     seedMember: -1,
   };
+}
+
+/** The binding member's outward gradient `sign·(x − c)/|x − c|` of an
+ * intersection table at the folded point, and its SDF value. */
+function bindingGradient(
+  t: SphereInversionBallTable,
+  x: Float64Array,
+  dim: number,
+  out: Float64Array,
+): number {
+  let best = -Infinity;
+  let arg = -1;
+  let len = 0;
+  for (let i = 0; i < t.count; i++) {
+    let d2 = 0;
+    for (let a = 0; a < dim; a++) {
+      const v = x[a] - t.center[i * dim + a];
+      d2 += v * v;
+    }
+    const l = Math.sqrt(d2);
+    const v = t.sign[i] * (l - t.radius[i]);
+    if (v > best) {
+      best = v;
+      arg = i;
+      len = l;
+    }
+  }
+  for (let a = 0; a < dim; a++)
+    out[a] =
+      arg >= 0 && len > 0
+        ? (t.sign[arg] * (x[a] - t.center[arg * dim + a])) / len
+        : 0;
+  return best;
+}
+
+/**
+ * THE EXACT MÖBIUS NORMAL of the signed field, both dimensions — the
+ * direction of the field's gradient at a query whose fold (`k` inversions,
+ * last generator `parent`, DOMAIN status) was just taken by the dimension's
+ * own fold: the folded point is in `de.foldPoint`, its word in
+ * `de.foldGenerator`.
+ *
+ * The field is a monotone function of ONE member's SDF in folded
+ * coordinates — the binding member of the winning covering term, selected
+ * exactly as the estimator's cover scan selects it — composed with the
+ * fold. Inversion is CONFORMAL: its Jacobian is a positive scale times the
+ * reflection `I − 2uuᵀ` along the ray from its centre, which is symmetric,
+ * so the gradient pulls back to the query by reflecting the member's
+ * folded normal through each inversion, innermost first. The transport's
+ * dependence on the fold radii contributes nothing at the surface (a zero
+ * transports to zero at every radius), so on the boundary this is the
+ * surface's own normal, where the tetrahedron taps approximate it from four
+ * field evaluations `eps` apart.
+ *
+ * Writes the unit normal into `out` and returns true; false where no
+ * gradient exists (a zero-length member offset), and the caller falls back.
+ * Scratch-free past `out`; the tables are read-only.
+ */
+export function sphereInversionFoldedNormal(
+  de: SphereInversionDE,
+  dim: 3 | 4,
+  k: number,
+  parent: number,
+  out: Float64Array,
+): boolean {
+  const x = de.foldPoint;
+  const n = de.generatorCount;
+  const gc = de.generatorCenter;
+  const gr = de.generatorRadius;
+  const m = de.depth - k;
+  const g = new Float64Array(dim);
+  // The cover scan's own selection (the estimator's `evaluate`, cutoff 0):
+  // the folded seed, then each admitted generator's copy and gap balls,
+  // strict improvements only, stopping once a term reads a member.
+  let best = bindingGradient(de.domainSeed, x, dim, out);
+  for (let j = 0; j < n && best > 0; j++) {
+    const isParent = j === parent;
+    if (!isParent && m < 1) continue;
+    let d2 = 0;
+    for (let a = 0; a < dim; a++) {
+      const v = x[a] - gc[j * dim + a];
+      d2 += v * v;
+    }
+    if (Math.sqrt(d2) - gr[j] >= best) continue;
+    const dc = bindingGradient(de.copies[j], x, dim, g);
+    if (dc < best) {
+      best = dc;
+      out.set(g);
+    }
+    if (best <= 0) break;
+    if (isParent || m >= 2) {
+      const t = de.gaps[j];
+      for (let i = 0; i < t.count; i++) {
+        let e2 = 0;
+        for (let a = 0; a < dim; a++) {
+          const v = x[a] - t.center[i * dim + a];
+          e2 += v * v;
+        }
+        const l = Math.sqrt(e2);
+        const v = l - t.radius[i];
+        if (v < best && l > 0) {
+          best = v;
+          for (let a = 0; a < dim; a++)
+            out[a] = (x[a] - t.center[i * dim + a]) / l;
+        }
+      }
+    }
+  }
+  // Reflect back out through the fold, innermost first, walking the folded
+  // point back along the same inversions.
+  const y = new Float64Array(x);
+  for (let i = k - 1; i >= 0; i--) {
+    const j = de.foldGenerator[i];
+    let u2 = 0;
+    for (let a = 0; a < dim; a++) {
+      const v = y[a] - gc[j * dim + a];
+      u2 += v * v;
+    }
+    if (!(u2 > 0)) return false;
+    let dot = 0;
+    for (let a = 0; a < dim; a++) dot += out[a] * (y[a] - gc[j * dim + a]);
+    const s = (2 * dot) / u2;
+    const r2s = de.generatorRadius2[j] / u2;
+    for (let a = 0; a < dim; a++) {
+      const v = y[a] - gc[j * dim + a];
+      out[a] -= s * v;
+      y[a] = gc[j * dim + a] + r2s * v;
+    }
+  }
+  let len2 = 0;
+  for (let a = 0; a < dim; a++) len2 += out[a] * out[a];
+  if (!(len2 > 1e-24)) return false;
+  const inv = 1 / Math.sqrt(len2);
+  for (let a = 0; a < dim; a++) out[a] *= inv;
+  return true;
 }
 
 /** Carry a folded-coordinate EXACT lower bound back through the fold's `k`

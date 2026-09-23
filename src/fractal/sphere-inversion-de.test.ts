@@ -16,6 +16,7 @@ import {
   sphereInversionContains,
   sphereInversionHitInfo,
   sphereInversionSignedDistance,
+  sphereInversionSignedNormal,
 } from "./sphere-inversion-de";
 import {
   enumerateSeedOrbit,
@@ -673,5 +674,82 @@ describe("sphereInversionSignedDistance", () => {
       expect(-f).toBeLessThanOrEqual(explicitOrbitClearance(pieces, p) + 1e-12);
     }
     expect(deep).toBeGreaterThan(10);
+  });
+});
+
+describe("sphereInversionSignedNormal: the exact Möbius normal", () => {
+  // A point ON a depth-1 image of the seed ball: the seed sphere's point s,
+  // outside every generator ball, carried through generator j. Inversion
+  // takes the seed ball B(c, r) to the ball B(c', r'), c' = C + R²(c − C)/
+  // (|c − C|² − r²), r' = R²r/(|c − C|² − r²) — the ball not holding C, so
+  // interior maps to interior — and the surface's outward normal at p is
+  // (p − c')/r'. The exact normal must be that direction to f64 rounding,
+  // where the tetrahedron taps only approximate it.
+  const c = construction({
+    arrangement: "oct6",
+    radiusFraction: 0.99,
+    seed: { kind: "ball", size: 0.28 },
+    depth: 3,
+  });
+  const de = buildSphereInversionDE(c);
+  const seed = c.seed[0];
+  const rng = mulberry32(0x5e1);
+  const onSeed = (): Vec3 | null => {
+    const u = Array.from({ length: 3 }, () => rng() * 2 - 1);
+    const m = Math.hypot(...u);
+    const s = u.map((v, a) => seed.center[a] + (seed.radius * v) / m);
+    for (const g of c.generators) {
+      const d = Math.hypot(...s.map((v, a) => v - g.center[a]));
+      if (d <= g.radius * 1.01) return null;
+    }
+    return s as Vec3;
+  };
+
+  it("is the depth-1 image sphere's own normal", () => {
+    let checked = 0;
+    for (let trial = 0; trial < 400 && checked < 120; trial++) {
+      const s = onSeed();
+      if (!s) continue;
+      const g = c.generators[trial % c.generators.length];
+      const sc = s.map((v, a) => v - g.center[a]);
+      const k = (g.radius * g.radius) / sc.reduce((t, v) => t + v * v, 0);
+      const p = sc.map((v, a) => g.center[a] + k * v) as Vec3;
+      const cc = seed.center.map((v, a) => v - g.center[a]);
+      const den = cc.reduce((t, v) => t + v * v, 0) - seed.radius * seed.radius;
+      const center = cc.map(
+        (v, a) => g.center[a] + (g.radius * g.radius * v) / den,
+      );
+      const want = p.map((v, a) => v - center[a]);
+      const wl = Math.hypot(...want);
+      const n = sphereInversionSignedNormal(de, p);
+      expect(n).not.toBeNull();
+      const dot = n!.reduce((t, v, a) => t + (v * want[a]) / wl, 0);
+      expect(dot).toBeGreaterThan(1 - 1e-9);
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(100);
+  });
+
+  it("points up the field: a step along it raises the signed field", () => {
+    let checked = 0;
+    for (let trial = 0; trial < 400 && checked < 120; trial++) {
+      const s = onSeed();
+      if (!s) continue;
+      const n = sphereInversionSignedNormal(de, s);
+      if (!n) continue;
+      const h = 1e-6 * de.boundingRadius;
+      const up = s.map((v, a) => v + h * n[a]) as Vec3;
+      const down = s.map((v, a) => v - h * n[a]) as Vec3;
+      expect(sphereInversionSignedDistance(de, up)).toBeGreaterThan(
+        sphereInversionSignedDistance(de, down),
+      );
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(100);
+  });
+
+  it("is null at a pole, where the caller falls back to the taps", () => {
+    const g = c.generators[0];
+    expect(sphereInversionSignedNormal(de, [...g.center] as Vec3)).toBeNull();
   });
 });
