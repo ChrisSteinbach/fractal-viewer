@@ -151,6 +151,9 @@ const SURFACE_PASSTHROUGH_FLAGS = {
   // With --surface-si-glass-envelope: the estimator's private arrays at the
   // registry maxima (the session-shaped kernel's codegen A/B).
   "surface-si-shape-off": "surfaceSiShapeOff",
+  // With --surface-si-glass-envelope: no speculative replay passes (the
+  // pool's schedule A/B; no pixel moves).
+  "surface-si-spec-off": "surfaceSiSpecOff",
 };
 
 function parseArgs(argv) {
