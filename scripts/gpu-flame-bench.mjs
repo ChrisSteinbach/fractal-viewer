@@ -145,6 +145,9 @@ const SURFACE_PASSTHROUGH_FLAGS = {
   // With --surface-si-glass-envelope: the exact Möbius normal arm (the
   // look A/B's cost half; not the shipped normal).
   "surface-si-exact-normal": "surfaceSiExactNormal",
+  // With --surface-si-glass-envelope: the joint pool OFF (one pool per
+  // supersample, the schedule before it; a schedule A/B, no pixel moves).
+  "surface-si-joint-off": "surfaceSiJointOff",
 };
 
 function parseArgs(argv) {

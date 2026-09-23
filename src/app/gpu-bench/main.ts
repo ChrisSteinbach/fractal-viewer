@@ -398,6 +398,8 @@ import {
   SURFACE_COMPUTE_WORKGROUP_SIZE,
   SurfaceComputeRenderer,
   setSurfaceComputeSchedulePins,
+  surfaceComputeJointArenaBytes,
+  SURFACE_COMPUTE_JOINT_RAY_BYTES,
 } from "../surface-compute";
 import type {
   SurfaceComputeAnyTarget,
@@ -3769,6 +3771,10 @@ interface SurfaceSectionConfig {
    * exact Möbius normal arm (`?surfacesinormal=exact`'s pin), the look A/B's
    * cost half. */
   siExactNormal: boolean;
+  /** `--surface-si-joint-off=1`: the glass envelope's renderers keep one
+   * transport pool per supersample (`?surfacesijoint=0`'s pin), the joint
+   * pool's schedule A/B. */
+  siJointOff: boolean;
 }
 
 interface SurfaceKernelConfig {
@@ -5650,6 +5656,7 @@ function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
     sphereInversionOnly: params.get("surfaceSphereInversionOnly") === "1",
     siGlassEnvelope: params.get("surfaceSiGlassEnvelope") === "1",
     siExactNormal: params.get("surfaceSiExactNormal") === "1",
+    siJointOff: params.get("surfaceSiJointOff") === "1",
     canaryTrip:
       Number.isInteger(canaryTripParsed) && canaryTripParsed >= 1
         ? canaryTripParsed
@@ -12337,7 +12344,26 @@ async function runSurfaceTransportEnvelopeLeg(
               SURFACE_COMPUTE_TRANSPORT_POOL_SLOTS,
             ),
             TRANSPORT_PATH_BYTES,
-          ) + 4
+          ) +
+          4 +
+          // The joint pool's arenas past the settle's one-sample buffers
+          // (the settle is unbudgeted, so the renderer takes it wherever
+          // the size rules admit it; the device limits are generous here).
+          Math.max(
+            0,
+            surfaceComputeJointArenaBytes(
+              SURFACE_TRANSPORT_ENVELOPE_SETTLE_WIDTH *
+                SURFACE_TRANSPORT_ENVELOPE_SETTLE_HEIGHT,
+              SURFACE_TRANSPORT_ENVELOPE_SETTLE_SAMPLES,
+              {
+                maxStorageBufferBindingSize: Infinity,
+                maxBufferSize: Infinity,
+              },
+            ) -
+              SURFACE_TRANSPORT_ENVELOPE_SETTLE_WIDTH *
+                SURFACE_TRANSPORT_ENVELOPE_SETTLE_HEIGHT *
+                SURFACE_COMPUTE_JOINT_RAY_BYTES,
+          )
         : 0);
 
     activity.setState("gpu", `Surface transport envelope — ${core}`);
@@ -20060,12 +20086,18 @@ async function runSurfaceDeSection(
             depthCurve,
           };
           results.glassEnvelope = envelope;
-          if (config.siExactNormal) {
-            setSurfaceComputeSchedulePins({ siExactNormal: true });
+          setSurfaceComputeSchedulePins({
+            siExactNormal: config.siExactNormal,
+            siJointOff: config.siJointOff,
+          });
+          if (config.siExactNormal)
             results.notes.push(
               "glass envelope: EXACT MÖBIUS NORMAL arm (the look A/B, not the shipped normal)",
             );
-          }
+          if (config.siJointOff)
+            results.notes.push(
+              "glass envelope: JOINT POOL OFF (one pool per supersample, the schedule A/B)",
+            );
           try {
             envelope.rows = await runSurfaceTransportEnvelopeLeg(
               [],
