@@ -350,19 +350,66 @@ export function packSphereInversionGpuTables(
  * `siFoldGen`, which the exact Möbius normal reads back innermost first
  * (`sphereInversionFoldedNormal`'s reflections). One store per inversion;
  * absent/false emits the body byte for byte.
+ *
+ * `shape` sizes the per-evaluation PRIVATE arrays (the fold's radii and
+ * word, the cover's generator distances) and the fold loop's structural
+ * bound to ONE construction's generator count and depth instead of the
+ * registry maxima ({@link SPHERE_INVERSION_GPU_MAX_GENERATORS},
+ * `SPHERE_INVERSION_MAX_DEPTH`): 3 + 3 + 6 words for a depth-3 six-generator
+ * arrangement where the maxima declare 32 + 32 + 120 (+32 recorded). No
+ * index can reach past the smaller bound — the fold spends at most `depth`
+ * inversions and the cover indexes generators below `n` — so the arithmetic
+ * is unchanged; only where the arrays live moves (the "glass latency"
+ * record in `docs/sphere-inversion-family.md`). The kernel it is emitted
+ * into must be run only against that construction's table: the host builds
+ * one per session, whose construction is frozen. Absent emits the body byte
+ * for byte.
+ *
+ * `workgroupTable` reads the table from a workgroup-memory copy instead of
+ * the storage binding. The estimator's table loads are dependent, and a
+ * glass trace's tail runs a few dozen lanes that cannot hide a cache
+ * round trip, so the copy's lower latency is what it buys. The same values,
+ * so the arithmetic is unchanged. Absent emits the body byte for byte.
  */
+/** One construction's generator count and fold depth, for
+ * {@link sphereInversionWgslSource}'s `shape`. */
+export interface SphereInversionWgslShape {
+  generators: number;
+  depth: number;
+}
+
 export function sphereInversionWgslSource(
   dim: 3 | 4,
   signed = false,
   recordFold = false,
+  shape?: SphereInversionWgslShape,
+  /** The construction's table in WORKGROUP memory: `vec4s` entries, copied
+   * by each entry's `siLoadTable(li)` prologue with `stride` = the
+   * workgroup size, and every accessor reads the copy. Every entry of the
+   * module must call the prologue first, in uniform control flow. */
+  workgroupTable?: { vec4s: number; stride: number },
 ): string {
   if (recordFold && !signed)
     throw new Error("sphereInversionWgslSource: recordFold requires signed");
+  if (
+    shape &&
+    !(
+      Number.isInteger(shape.generators) &&
+      shape.generators >= 1 &&
+      shape.generators <= SPHERE_INVERSION_GPU_MAX_GENERATORS &&
+      Number.isInteger(shape.depth) &&
+      shape.depth >= 0 &&
+      shape.depth <= SPHERE_INVERSION_MAX_DEPTH
+    )
+  )
+    throw new RangeError("sphereInversionWgslSource: shape out of range");
   const V = dim === 3 ? "vec3f" : "vec4f";
-  const center = dim === 3 ? "siTable[i].xyz" : "siTable[2u * i]";
-  const radius = dim === 3 ? "siTable[i].w" : "siTable[2u * i + 1u].x";
-  const MAXD = SPHERE_INVERSION_MAX_DEPTH;
-  const MAXG = SPHERE_INVERSION_GPU_MAX_GENERATORS;
+  const T = workgroupTable ? "siTableWg" : "siTable";
+  const center = dim === 3 ? `${T}[i].xyz` : `${T}[2u * i]`;
+  const radius = dim === 3 ? `${T}[i].w` : `${T}[2u * i + 1u].x`;
+  // A zero-length WGSL array is invalid; a depth-0 fold never stores.
+  const MAXD = shape ? Math.max(1, shape.depth) : SPHERE_INVERSION_MAX_DEPTH;
+  const MAXG = shape ? shape.generators : SPHERE_INVERSION_GPU_MAX_GENERATORS;
   return /* wgsl */ `// The shared empty-ball transport (inversion.ts), verbatim.
 ${inversionDistanceShaderSource("wgsl")}
 
@@ -386,7 +433,22 @@ struct SiResult {
   }
 }
 
-fn siCenter(i: u32) -> ${V} {
+${
+  workgroupTable
+    ? `var<workgroup> siTableWg: array<vec4f, ${workgroupTable.vec4s}>;
+
+// Every entry's first statement, in uniform control flow: the workgroup
+// copies the construction's table once, then reads it from there.
+fn siLoadTable(li: u32) {
+  for (var e = li; e < ${workgroupTable.vec4s}u; e += ${workgroupTable.stride}u) {
+    siTableWg[e] = siTable[e];
+  }
+  workgroupBarrier();
+}
+
+`
+    : ""
+}fn siCenter(i: u32) -> ${V} {
   return ${center};
 }
 

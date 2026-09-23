@@ -677,6 +677,53 @@ describe("the sphere-inversion glass continuation (sphereInversionTransportChunk
     expect(work.size).toBe(transportWorkSlotBytes(TRANSPORT_PATH_BYTES));
   });
 
+  it("copies a workgroup table as EVERY entry's first statement, in every mode, and nowhere without it", () => {
+    for (const core of ["sphereInv", "sphereInv4"] as const) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        const base = glass(core, {
+          mode,
+          ...(mode === "shade"
+            ? { sphereInversionTransportChunkPaths: 32 }
+            : {}),
+        });
+        const plain = surfaceDeKernelWgsl(base);
+        expect(plain).not.toContain("siLoadTable");
+        const src = surfaceDeKernelWgsl({
+          ...base,
+          sphereInversionShape: { generators: 6, depth: 3 },
+          sphereInversionWorkgroupTable: 43,
+        });
+        const entries = [
+          ...src.matchAll(/@compute @workgroup_size\([^)]*\)\s*fn (\w+)\(/g),
+        ];
+        expect(entries.length).toBeGreaterThan(0);
+        for (const entry of entries) {
+          const body = src.slice(src.indexOf("{", entry.index) + 1);
+          expect(body.trimStart().startsWith("siLoadTable(li);")).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("refuses the session-shaped options off the sphere-inversion cores, and a workgroup table without a shape", () => {
+    expect(() =>
+      surfaceDeKernelWgsl({
+        core: "affine",
+        mode: "shade",
+        width: 4,
+        workgroupSize: 16,
+        sharedFrontier: false,
+        bnbStage2: false,
+        sphereInversionShape: { generators: 6, depth: 3 },
+      }),
+    ).toThrow(/sphere-inversion core/);
+    expect(() =>
+      surfaceDeKernelWgsl(
+        glass("sphereInv", { sphereInversionWorkgroupTable: 43 }),
+      ),
+    ).toThrow(/requires sphereInversionShape/);
+  });
+
   it("reads the joint pool's pixel and sub-pixel offset off the global ray, in both cores", () => {
     for (const core of ["sphereInv", "sphereInv4"] as const) {
       const src = surfaceDeKernelWgsl(
