@@ -2794,6 +2794,11 @@ ${surfaceTransportSource(true)}
           );
           return;
         }
+        if (traced.status == TRANSPORT_STATUS_UNRESOLVED) {
+          // A failure is final at its first pass: a halved theta re-creates
+          // the failing path and fails again (DIELECTRIC_REPLAY_PASSES).
+          break;
+        }
         // Still pending: the replay schedule re-traces this sample from
         // scratch at the next pass's halved theta; falling out of the loop
         // is the schedule exhausted — final UNRESOLVED work. Black, never

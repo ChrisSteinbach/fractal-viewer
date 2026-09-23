@@ -143,8 +143,13 @@ Two resumption layers, both contract:
    and counters in bounded batch storage at the same replay threshold. Other
    GPU backends retain their uninterrupted per-invocation trace.
 2. **Replay passes (outer GPU refinement).** A sample that misses the per-sample
-   budget (or hits a guard) keeps its pending identity and is re-traced FROM
-   SCRATCH at the next pass's halved theta (`dielectricReplayTheta`). Nothing
+   budget keeps its pending identity and is re-traced FROM SCRATCH at the next
+   pass's halved theta (`dielectricReplayTheta`). A sample whose trace FAILED —
+   a guard or a boundary query's refusal — is final unresolved at that pass,
+   not replayed: a halved theta keeps an ancestor-closed superset of the paths,
+   in the same relative order, so it re-creates the failing path and fails
+   again (`DIELECTRIC_REPLAY_PASSES` carries the argument; the measured saving
+   is in `docs/sphere-inversion-family.md`, "The transport's cost"). Nothing
    crosses passes except the pending mask, the accumulated radiance/residual
    of accepted samples, and the invalid mask. This is what the qualified
    study kernel implements per tile pass; its cancellation probes establish
@@ -699,7 +704,9 @@ are byte-unchanged (4D off exactly 64,679 B as recorded).
   pending sample re-traces FROM SCRATCH at the halved theta; accepted
   samples (per-sample residual ≤ `DIELECTRIC_ERROR_BUDGET`) overwrite the
   pixel and never reprocess. Six passes and a still-pending sample is
-  final UNRESOLVED; a non-finite outcome is final INVALID; both go BLACK —
+  final UNRESOLVED, and so is a FAILED trace at the pass it fails (a guard
+  or a refusal recurs under every smaller theta); a non-finite outcome is
+  final INVALID; both go BLACK —
   never background — and the sample's counts disclose them. A finite trace
   may pause within a batch at the same theta; its ray list and batch generation
   remain fixed until all its slots finish. RUNNING is internal to those chunks,
@@ -881,7 +888,8 @@ are the delegated working lines; the appearance selection is untouched.
 
 - **The replay schedule runs INLINE per invocation.** The contract's replay
   shape — re-trace from scratch at the halved theta, accepted paints
-  2.2-encode + the hit fog, invalid never retried, exhausted and invalid
+  2.2-encode + the hit fog, invalid never retried, a failed trace final at
+  its first failure, exhausted and invalid
   black never background — is driven per pixel inside one fragment
   invocation rather than across dispatches: the strip pump renders whole
   strips statelessly (every strip is a complete re-trace), so nothing needs
