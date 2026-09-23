@@ -2566,3 +2566,68 @@ crossing scale.
 
 The real-driver interior excess the f32 argument owed is 1.03e-7 at worst (the
 4D orbit), about 10× under the slack.
+
+### The curved-glass starters and their app gate (2026-09-23)
+
+Two starters sit in the menu's Glass group beside the Menger pair, where a
+user looking for glass looks: **Glass Pearls** (`glassPearls`, 3D) and
+**Glass Cross Pearls (4D)** (`glassPearls4`). Each is a sphere-inversion
+block carrying the Material row's one Glass entry (the dielectric at its
+resolver defaults for every generation), so the row reads "Glass" on arrival
+rather than "Authored materials", plus the Menger pair's checker-floor room
+and studio backdrop.
+
+THE CHOICES ARE THE LOOK GATE'S, NOT NEW ONES. Depth 3 is the gate's
+verdict (depth 1-3 read as clean glass, 4 speckles, 6-8 read as lace), and
+the 3D block is Kissing Pearls' own construction at that depth, at its own
+camera. The 4D block is the gate's `cross8` ball (0.42, depth 3) at its pose,
+one `xw` turn of 0.3 off the kiss slice, `w0 = 0.1`, zero slab thickness;
+the camera is the gate's direction pulled in to 0.7 of its distance, because
+at the gate's square panel distance the object filled a small corner of a
+16:9 pane. Both shipped 4D showcases are `cell600`, past the glass
+admission's 30-generator cap, so neither could be the 4D starter. The studio
+is not decoration: against the plain dark backdrop this glass is nearly
+invisible, and the checker bent and inverted through the pearls is what
+makes the curvature the subject.
+
+THE GATE is `scripts/sphere-inversion-glass.verify.mjs`, the family gate's
+sibling over the shared browser vocabulary. It reads the starters from
+`presets.ts` (`loadSiPresets({ glass: true })`; the family gate now takes
+only the classic showcases, so each gate's menu check compares one group).
+Per starter, FROM THE MENU: compute settle on a real adapter with
+`opticsBackend` "sphereInversion"; a covered, unexhausted census; every
+antialias sample's transport tally complete, with the resolved share
+recorded against a 90% bar; the `#v1=` block field for field; the Copy link
+string reproducing the settled frame byte for byte, and the reloaded
+session copying the same document; the whole-image export; a Classic
+control at the same pose, which the glass frame must differ from; and, in
+4D, the slab slider unavailable with its reason and a slice scrub that
+keeps the backend. Then the tiled export under `?surfacemaxrays`, which must
+cut finer than the whole export and match it byte for byte.
+
+It supplies `?surfacesamples=1` by default. A glass settle at the app's
+default eight antialias passes costs minutes in 3D (the routing section's
+~200-400 s at 900×600), and the identity legs compare like with like at any
+count; `--samples=8` reproduces the shipped settle, and the cost itself is
+the envelope work's to measure.
+
+MEASURED, RX 7900 XTX (radeonsi renderer line checked, WebGPU adapter "amd
+rdna-3", software=false), quiet baseline YES, 960×540, one antialias pass,
+1x export, tiled leg at `surfacemaxrays=200000` (3 bands). All legs PASS:
+
+| Starter      | Settle | Covered | Glass hits resolved / unresolved / invalid | vs Classic | Link reload | Whole export | Tiled (3 bands) |
+| ------------ | ------ | ------- | ------------------------------------------ | ---------- | ----------- | ------------ | --------------- |
+| glassPearls  | 86.3 s | 62.7%   | 91070 / 4105 / 0 (95.69%)                  | 22.3%      | max diff 0  | 82.6 s       | max diff 0      |
+| glassPearls4 | 14.4 s | 75.9%   | 88597 / 4870 / 0 (94.79%)                  | 12.2%      | max diff 0  | 8.1 s        | max diff 0      |
+
+The 4D slice scrub (0.11 → −0.3) kept the backend, resolved 95.77% and
+moved 15.4% of the pane; the slab slider read unavailable with its reason.
+WHICH POSES THE MATERIAL SURVIVES: every rotor and slice position, by the
+admission's own verdict (the field lifts the displayed point through the
+live pose on every query) and now observed across a slice scrub. The one
+refusal is slab thickness, which the family refuses for every session, and
+the gate asserts the disclosure. The unresolved ~5% is the transport's path
+cap and traversal refusals, rendered as their seeded backdrop; its cost and
+speckle are the envelope work's, as is the 3D starter's settle at the
+shipped eight passes. An earlier 2x run of the 3D starter took 405.9 s to
+export 1920×1080 at one pass, which is why the gate's default scale is 1.

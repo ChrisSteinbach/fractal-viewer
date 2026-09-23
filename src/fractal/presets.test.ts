@@ -841,6 +841,8 @@ describe("PRESET_SPHERE_INVERSIONS", () => {
   // every load with no entry, so the table is exactly the family's showcases.
   it("carries a block only for the sphere-inversion showcases", () => {
     expect(blockPresets.sort()).toEqual([
+      "glassPearls",
+      "glassPearls4",
       "inversionCubePearls",
       "inversionDodecaWindows",
       "inversionIcosidodecaStar",
@@ -872,6 +874,28 @@ describe("PRESET_SPHERE_INVERSIONS", () => {
       }
       expect(resolution.eligibility.status, preset).toBe("eligible");
     }
+  });
+
+  // The curved-glass starters author EXACTLY the Material row's Glass entry
+  // (sphere-inversion-controls.ts's glassMaterials), so the select reads
+  // "Glass" on arrival rather than "Authored materials", and they are the
+  // only entries that author a material at all: the family's showcases stay
+  // classic, byte-identical to documents predating the field.
+  it("authors the Glass material on the curved-glass starters, one of each dimension, and nowhere else", () => {
+    const glass = blockPresets.filter(
+      (p) => PRESET_SPHERE_INVERSIONS[p]!().materials !== undefined,
+    );
+    expect(glass.sort()).toEqual(["glassPearls", "glassPearls4"]);
+    for (const preset of glass) {
+      expect(PRESET_SPHERE_INVERSIONS[preset]!().materials, preset).toEqual([
+        { optics: { model: "dielectric" } },
+      ]);
+    }
+    expect(
+      glass.map((p) =>
+        sphereInversionAuthoredDimension(PRESET_SPHERE_INVERSIONS[p]!()),
+      ),
+    ).toEqual([3, 4]);
   });
 
   it("builds a fresh block per load, so the document never aliases the table", () => {

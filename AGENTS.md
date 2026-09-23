@@ -220,12 +220,12 @@ on screen. It still does NOT separate project-then-invert from
 invert-then-project; that needs a rotor pose where they visibly disagree. The
 wrong-radius correction and measured record live in the script header.
 
-The sphere-inversion family gate: `npm run build && npm run preview &` then
+Sphere-inversion gates (built, `npm run preview`):
 `node scripts/sphere-inversion-family.verify.mjs --mode=x11::0` (`--mode=sw`
-subset). Every preset FROM THE MENU: compute settle, distinct objects, the
-`#v1=` block, byte-exact share-link reload, tiled 2x export, `?surfacegl`
-IoU, the Flame/Solid and 4D refusals. Record:
-`docs/sphere-inversion-family.md`.
+subset): each preset FROM THE MENU through compute settle, distinct objects,
+`#v1=` block, byte-exact link reload, tiled export, `?surfacegl` IoU,
+Flame/Solid/4D refusals; `-glass.verify.mjs` the Glass starters + glass
+backend, Classic control, 4D slice scrub. Record: the family doc.
 
 The panel's exact-numeric-companion gate (not an npm script — it needs
 layout and TRUSTED touch, neither of which jsdom has):
@@ -532,8 +532,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `sphereInv`/`sphereInv4`; `SURFACE_SPHERE_INVERSION` (3D GLSL fallback)
     admits PER CONSTRUCTION (WebGL2's block); 4D, `icosidodec30` and GLASS
     are COMPUTE-ONLY under one subject phrase. GLASS: `materials` keyed on
-    GENERATION (last entry covers deeper); backend `sphereInversion` (signed
-    field + membership gate) for ball/shell seeds to depth 8.
+    GENERATION; backend `sphereInversion` (signed field + membership gate)
+    for ball/shell seeds to depth 8.
     Kaleidoscope/lens/per-transform finishes DORMANT; tiling, balloon, trap,
     slab REFUSE. POINTS draws the same set; Flame/Solid REFUSE. Cost flat in
     depth/generator count; ids all public. CONTROLS: Scene / Look

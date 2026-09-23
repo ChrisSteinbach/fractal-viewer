@@ -313,6 +313,15 @@ describe("the Material row", () => {
     ).toBe(SPHERE_INVERSION_AUTHORED_OPTION);
   });
 
+  it("reads Glass on the curved-glass starters, so they arrive on the row's own choice", () => {
+    for (const preset of ["glassPearls", "glassPearls4"] as const) {
+      expect(
+        sphereInversionMaterialValue(PRESET_SPHERE_INVERSIONS[preset]!()),
+        preset,
+      ).toBe("glass");
+    }
+  });
+
   it("Classic removes the field, so the block is byte-identical to one that never carried it", () => {
     const glass = withSphereInversionMaterial(pearls, "glass");
     expect(glass).not.toBe(pearls);

@@ -28,6 +28,8 @@ export const PRESET_BACKGROUNDS: Partial<
 > = {
   glassMenger: createGlassStudioBackground,
   glassMenger4: createGlassStudioBackground,
+  glassPearls: createGlassStudioBackground,
+  glassPearls4: createGlassStudioBackground,
 };
 
 /** Install the composition's active backdrop while retaining unrelated

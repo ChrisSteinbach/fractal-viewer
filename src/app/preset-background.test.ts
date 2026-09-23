@@ -6,8 +6,16 @@ import { applyPresetBackground } from "./preset-background";
 import { initialState } from "./state";
 import { createSurfaceTransmissionStarter } from "./surface-transmission-starters";
 
+/** Every glass composition installs the same studio backdrop. */
+const GLASS_PRESETS = [
+  "glassMenger",
+  "glassMenger4",
+  "glassPearls",
+  "glassPearls4",
+] as const;
+
 describe("preset backgrounds", () => {
-  it.each(["glassMenger", "glassMenger4"] as const)(
+  it.each(GLASS_PRESETS)(
     "%s replaces an inherited Flame/radial backdrop with the glass studio",
     (preset) => {
       const state = initialState(true);
@@ -41,12 +49,12 @@ describe("preset backgrounds", () => {
       custom: { top: [0.2, 0.4, 0.6], bottom: [1, 0, 0] },
     };
     for (const preset of PRESET_NAMES) {
-      if (preset === "glassMenger" || preset === "glassMenger4") continue;
+      if ((GLASS_PRESETS as readonly string[]).includes(preset)) continue;
       expect(applyPresetBackground(state, preset)).toBe(state);
     }
   });
 
-  it.each(["glassMenger", "glassMenger4"] as const)(
+  it.each(GLASS_PRESETS)(
     "%s keeps identical gradient colors across a share-link reload",
     (preset) => {
       const loaded = applyPresetBackground(initialState(true), preset);

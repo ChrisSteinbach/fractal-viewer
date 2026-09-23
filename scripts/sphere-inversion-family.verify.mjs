@@ -95,6 +95,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
 import {
+  CLIPBOARD_STUB,
   READ_DOCUMENT,
   READ_MENU_GROUP,
   loadSiPresets,
@@ -107,7 +108,10 @@ import {
   imageContent,
   loadPreset,
   openApp,
+  openPanelSection,
   sameJson,
+  savePng,
+  settleFromLink,
   TOAST_RECORDER,
   toastText,
   waitDocument,
@@ -167,79 +171,6 @@ function parseArgs(argv) {
 
 const log = (line) => console.error(`[si-family] ${line}`);
 const secs = (ms) => `${(ms / 1000).toFixed(1)}s`;
-
-/** Record the Copy link button's string instead of writing the desktop
- * clipboard (a headed run shares `:0`'s clipboard with the user). */
-const CLIPBOARD_STUB = () => {
-  const record = async (text) => {
-    window.__copiedLink = String(text);
-  };
-  try {
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: {
-        writeText: record,
-        readText: async () => window.__copiedLink ?? "",
-      },
-    });
-  } catch {
-    /* the app then reports "Couldn't copy the link", which the leg catches */
-  }
-};
-
-async function openPanelSection(page, id) {
-  await page.evaluate((sectionId) => {
-    const el = document.getElementById(sectionId);
-    if (el && !el.open) el.open = true;
-  }, id);
-}
-
-/** Save PNG at `scale`; resolves the bytes, the wall time and the tile
- * count the capture disclosed. */
-async function savePng(page, consoleLines, scale, timeoutMs) {
-  await openPanelSection(page, "captureSection");
-  await page.selectOption("#exportScale", String(scale));
-  const from = consoleLines.length;
-  const download = page.waitForEvent("download", { timeout: timeoutMs });
-  const t0 = Date.now();
-  await page.click("#savePngBtn");
-  const file = await (await download).path();
-  const bytes = fs.readFileSync(file);
-  const tiles = consoleLines
-    .slice(from)
-    .map((l) => /Surface compute export tile (\d+)\/(\d+)/.exec(l))
-    .filter(Boolean);
-  return {
-    bytes,
-    ms: Date.now() - t0,
-    tileCount: tiles.length === 0 ? 0 : Number(tiles[0][2]),
-    tileLines: tiles.length,
-  };
-}
-
-/** Boot a document from a link in a fresh context and settle it. */
-async function settleFromLink(browser, args, link, query = "") {
-  const hash = link.slice(link.indexOf("#"));
-  const app = await openApp(browser, {
-    url: args.url,
-    query,
-    hash,
-    initScripts: [[CLIPBOARD_STUB]],
-  });
-  const { page } = app;
-  await page.waitForFunction(
-    () => {
-      const b = document.getElementById("modeSurfaceBtn");
-      return b && !b.disabled;
-    },
-    undefined,
-    { timeout: 60_000, polling: 200 },
-  );
-  const t0 = Date.now();
-  await page.click("#modeSurfaceBtn");
-  const settled = await waitSettled(page, args.settle);
-  return { ...app, settled, ms: Date.now() - t0 };
-}
 
 /** One link hop: boot `link` fresh, settle, capture the frame as
  * `si-qual-<key>-reload[2].png`, and copy the link the reloaded session
