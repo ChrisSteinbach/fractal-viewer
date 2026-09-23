@@ -10,6 +10,11 @@
  * repeats at a point already evaluated. The GPU runs the same schedule, so
  * the shares transfer even where the absolute cost does not.
  *
+ * The second test is a REFUTED lever's record: stopping a trace as soon as
+ * its residual passes the per-sample budget (it could no longer be accepted
+ * at its theta). Outcomes agree on every glass hit and it saves 0.4% of the
+ * evaluations, because the expensive traces fail rather than overrun.
+ *
  * Run: npx vitest run --config scripts/vitest.harness.config.ts \
  *        scripts/sphere-inversion-glass-cost.harness.ts
  */
@@ -297,5 +302,138 @@ describe("sphere-inversion glass: the transport's evaluation profile", () => {
       );
     }
     expect(glass).toBeGreaterThan(0);
+  });
+
+  it("prices stopping a trace once its residual passes the budget", () => {
+    // The production schedule (a failure is final), traced twice per glass
+    // hit: whole traces, and traces stopped as soon as the residual passes
+    // the per-sample budget. A residual only grows, so a stopped trace
+    // could not have been accepted at its theta; the per-ray outcomes must
+    // agree exactly, and the evaluations are what the stop would save.
+    const authored = PRESET_SPHERE_INVERSIONS.glassPearls!();
+    const resolved = resolveSphereInversion(authored);
+    if (!resolved.ok || resolved.construction.dim !== 3)
+      throw new Error("glassPearls did not resolve to a 3D construction");
+    const de = buildSphereInversionDE(resolved.construction);
+    const radius = de.boundingRadius;
+    let evals = 0;
+    // The kernel's call count (the first test's ring rule).
+    const ring: ({ p: Vec3; v: number } | undefined)[] = [];
+    let ringAt = 0;
+    const system: TransportFixtureSystem = {
+      estimate: (p) => {
+        const back = ring[ringAt % 4];
+        if (
+          back !== undefined &&
+          back.p[0] === p[0] &&
+          back.p[1] === p[1] &&
+          back.p[2] === p[2]
+        ) {
+          ringAt++;
+          return back.v;
+        }
+        evals++;
+        const v = sphereInversionSignedDistance(de, p);
+        ring[ringAt % 4] = { p: [p[0], p[1], p[2]], v };
+        ringAt++;
+        return v;
+      },
+      contains: (p) => {
+        evals++;
+        return sphereInversionContains(de, p);
+      },
+      stepScale: 1,
+      visibleRadius: radius,
+    };
+    const material: DielectricMaterial = {
+      ior: DIELECTRIC_IOR,
+      absorption: DIELECTRIC_ABSORPTION,
+      radius,
+    };
+    const query = (
+      origin: Vec3,
+      dir: Vec3,
+      anchorPresent: boolean,
+      anchorPoint: Vec3,
+      inside: boolean,
+      eps: number,
+    ) =>
+      transportSolidBoundaryQueryCPU(
+        system,
+        origin,
+        dir,
+        anchorPresent,
+        anchorPoint,
+        inside,
+        eps,
+      );
+    const schedule = (start: Vec3, rd: Vec3, stop: boolean): string => {
+      let theta = DIELECTRIC_INITIAL_BRANCH_THETA;
+      for (let pass = 0; pass < DIELECTRIC_REPLAY_PASSES; pass++) {
+        const res = transportTraceCPU(
+          system,
+          start,
+          rd,
+          theta,
+          material,
+          [0.2, 0.2, 0.2],
+          {
+            maxProcessedPaths: 2048,
+            maxInterfaces: 2048,
+            ...(stop ? { stopResidual: DIELECTRIC_ERROR_BUDGET } : {}),
+          },
+          query,
+        );
+        if (
+          (res.status === "complete" || res.status === "residual") &&
+          res.residual <= DIELECTRIC_ERROR_BUDGET
+        )
+          return `accepted ${res.radiance.join(",")}`;
+        if (res.status === "invalid") return "invalid";
+        if (res.status === "unresolved") return "unresolved";
+        theta *= 0.5;
+      }
+      return "unresolved";
+    };
+    let glass = 0;
+    let differ = 0;
+    let evalsWhole = 0;
+    let evalsStopped = 0;
+    const view = PRESET_VIEWS.glassPearls!;
+    renderPreview(
+      {
+        de: (p) => estimateSphereInversionDistance(de, p, 0),
+        boundingRadius: radius,
+        stepScale: 1,
+        eye: [...view.camera.eye] as Vec3,
+        target: [...view.camera.target] as Vec3,
+        zoom: Math.tan((view.camera.fov * Math.PI) / 360),
+        maxSteps: 400,
+        ao: false,
+        shadow: false,
+        rayLinear: (ray) => {
+          if (ray.status !== PREVIEW_HIT) return [0, 0, 0];
+          glass++;
+          const start: Vec3 = [
+            ray.origin[0] + ray.rd[0] * ray.distance,
+            ray.origin[1] + ray.rd[1] * ray.distance,
+            ray.origin[2] + ray.rd[2] * ray.distance,
+          ];
+          evals = 0;
+          const whole = schedule(start, ray.rd, false);
+          evalsWhole += evals;
+          evals = 0;
+          const stopped = schedule(start, ray.rd, true);
+          evalsStopped += evals;
+          if (whole !== stopped) differ++;
+          return [0, 0, 0];
+        },
+      },
+      SIZE,
+    );
+    console.log(
+      `early stop: ${String(glass)} glass hits, outcomes differing ${String(differ)}, evaluations ${String(evalsWhole)} whole -> ${String(evalsStopped)} stopped (${((100 * evalsStopped) / Math.max(1, evalsWhole)).toFixed(1)}%)`,
+    );
+    expect(differ).toBe(0);
   });
 });

@@ -394,6 +394,7 @@ import { wSupport } from "../rotor4";
 import {
   SURFACE_COMPUTE_INITIAL_RAY_STEP_US,
   SURFACE_COMPUTE_TRANSPORT_RECORD_BYTES,
+  SURFACE_COMPUTE_TRANSPORT_POOL_SLOTS,
   SURFACE_COMPUTE_WORKGROUP_SIZE,
   SurfaceComputeRenderer,
 } from "../surface-compute";
@@ -12322,7 +12323,16 @@ async function runSurfaceTransportEnvelopeLeg(
         (SURFACE_COMPUTE_TRANSPORT_RECORD_BYTES + 8) +
       materials.slots.length * 32 +
       (finite ? finiteTransportWorkBytes(4096) + 4 : 0) +
-      (si ? transportWorkBytes(4096, TRANSPORT_PATH_BYTES) + 4 : 0);
+      (si
+        ? transportWorkBytes(
+            Math.min(
+              SURFACE_TRANSPORT_ENVELOPE_SETTLE_WIDTH *
+                SURFACE_TRANSPORT_ENVELOPE_SETTLE_HEIGHT,
+              SURFACE_COMPUTE_TRANSPORT_POOL_SLOTS,
+            ),
+            TRANSPORT_PATH_BYTES,
+          ) + 4
+        : 0);
 
     activity.setState("gpu", `Surface transport envelope — ${core}`);
     status(`transport envelope ${core}: creating SurfaceComputeRenderer…`);

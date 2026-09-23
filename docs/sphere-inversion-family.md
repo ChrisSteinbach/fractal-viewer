@@ -2925,3 +2925,41 @@ lane at any quantum, and passes 1 and 2 of each 3D sample, a handful of
 residual rays each, cost ~1.2 s apiece for exactly that reason. Only
 running those traces BESIDE other work can hide them, which is a batch-refill
 design (a finished slot takes the next pending ray), not a quantum.
+
+THE THIRD LEVER: THE REFILL POOL. The sphere-inversion lane no longer runs
+batches. A slot that finishes takes the next queued ray at once, and a ray
+whose trace came back pending re-enters the queue at its next replay pass, so
+the long serial traces run beside the rest of the frame and the only drain is
+the frame's end. Each slot carries its own ray, pass and fresh start in the
+ray-list word (`finite-transport-work.ts`), and the pool is sized as the
+batches were, WIDTH FIRST. The first pool pinned at 256 rays: its quantum
+ladder grew before its width ladder could, starving the width ladder of the
+base-quantum chunks it learns from. That doubled the 3D settle to 88.7 s,
+and the rule since is that the quantum grows only while the pool cannot
+widen. The pool's capacity is 16,384 slots, measured against 4,096 (settle
+18.0 → 16.7 s in 3D and 5.1 → 3.9 s in 4D; the continuation buffer is then
+36.8 MiB, and retained state reads 42.4 MiB at the settle raster).
+
+MEASURED, same card and flags, quiet=YES, censuses identical, every chunk row
+byte-identical on its adaptive arm:
+
+| Line                                   | glassPearls (3D): start of this work → now | glassPearls4 (4D): start → now           |
+| -------------------------------------- | ------------------------------------------ | ---------------------------------------- |
+| Preview 256×144 1-spp, ≤ 1 s           | MISS: truncated at 2 s → MISS: truncated   | MISS: truncated → PASS 0.71 s            |
+| Settle 512×288 4-spp, ≤ 10 s           | MISS 51.2 s → MISS 16.8 s                  | MISS 24.3 s → PASS 4.0 s                 |
+| Depth curve D1 / D2 / D3, unbudgeted   | 4.2 / 6.5 / 8.0 s → 0.52 / 0.78 / 2.6 s    | 1.1 / 3.7 / 4.7 s → 0.47 / 0.68 / 0.71 s |
+| Depth curve D8, unbudgeted             | 12.1 s → 4.5 s                             | 4.7 s → 0.84 s                           |
+| Worst submission (checkpoint ≤ 600 ms) | 50 ms → 77 ms                              | 61 ms → 59 ms                            |
+| Retained additional state ≤ 128 MiB    | 14.8 → 42.4 MiB                            | 14.8 → 42.4 MiB                          |
+
+The 4D starter is now inside every time line. In 3D, depths 1 and 2 preview
+inside the 1 s line; the starters' depth 3 does not. What remains per 3D
+sample (~3.8 s of transport at the settle) is dense work (~2.7 s) plus one
+drain (~1.1 s), the serial trace of the frame's longest glass rays.
+
+A REFUTED LEVER: stopping a trace once its residual passes the budget. A
+residual only grows, so such a trace cannot be accepted at its theta, and
+the rest of it looked like waste. The cost sheet's second test traces every
+glass hit both ways under the production schedule. Outcomes agree on all
+2,137 hits, and the stop saves 0.4% of the evaluations: the expensive traces
+FAIL (a refusal or the path guard) rather than overrun the budget. Not taken.

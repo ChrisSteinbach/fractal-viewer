@@ -116,6 +116,10 @@ import {
 } from "../fractal/surface-lighting";
 import {
   FINITE_TRANSPORT_RUNNING,
+  SPHERE_INVERSION_POOL_FRESH_BIT,
+  SPHERE_INVERSION_POOL_PASS_MASK,
+  SPHERE_INVERSION_POOL_RAY_BITS,
+  SPHERE_INVERSION_POOL_RAY_MASK,
   TRANSPORT_PATH_BYTES,
   finiteTransportWorkBytes,
   transportWorkBytes,
@@ -3298,7 +3302,7 @@ function finiteContinuationHarness(
     kind?: "finite" | "finite4" | "sphereInversion";
     chunkPaths?: number;
     /** The sphere-inversion lane's quantum ladder (init field). */
-    quantumLadder?: boolean;
+    adaptiveSchedule?: boolean;
     maxPaths?: number;
     parkLabel?: string;
     outcome?: (dispatch: FiniteHostDispatch) => {
@@ -3555,7 +3559,7 @@ function finiteContinuationHarness(
     transportPipelineNoSlab: null,
     finiteTransportChunkPaths: opts.chunkPaths,
     sphereInversionTransportChunkPaths: opts.chunkPaths,
-    sphereInversionQuantumLadder: opts.quantumLadder,
+    sphereInversionAdaptiveSchedule: opts.adaptiveSchedule,
     transportMaxPaths: opts.maxPaths,
     opticsMapsBuf: plain(),
     seedPipeline: pipelines.seed,
@@ -4459,15 +4463,15 @@ describe("nextTransportQuantum", () => {
     expect(nextTransportQuantum(32, 32, T + 1, 2048)).toBe(32);
   });
 
-  it("is capped per batch by its full-width first chunk's per-path price", () => {
-    // Pearls-like: a 46 ms first chunk may grow five-fold at most.
+  it("is capped by a full-width base chunk's per-path price", () => {
+    // Pearls-like: a 46 ms full-width chunk may grow five-fold at most.
     expect(transportQuantumCap(32, 46, 2048)).toBe(160);
-    // 600-cell-like: a heavy first chunk pins the base.
+    // 600-cell-like: a heavy full-width chunk pins the base.
     expect(transportQuantumCap(32, 560, 2048)).toBe(32);
     expect(transportQuantumCap(32, Number.NaN, 2048)).toBe(32);
     // Never past the processed-path guard.
     expect(transportQuantumCap(32, 0, 2048)).toBe(2048);
-    // At the cap, the first chunk's per-path price stays under half the
+    // At the cap, that chunk's per-path price stays under half the
     // transport ceiling.
     const cap = transportQuantumCap(32, 46, 2048);
     expect((cap / 32) * 46).toBeLessThanOrEqual(
@@ -4619,7 +4623,7 @@ describe("SurfaceComputeRenderer sphere-inversion glass continuation", () => {
     }
   });
 
-  it("grows a draining batch's quantum from the base and never prices a grown chunk into the batch width", async () => {
+  it("grows a drained pool's quantum from the base", async () => {
     let now = 0;
     const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
     // A batch whose chunks each cost 5 ms and stay running for six chunks:
@@ -4628,7 +4632,7 @@ describe("SurfaceComputeRenderer sphere-inversion glass continuation", () => {
     const h = finiteContinuationHarness({
       kind: "sphereInversion",
       chunkPaths: 32,
-      quantumLadder: true,
+      adaptiveSchedule: true,
       outcome: (d) => {
         now += 5;
         const k = (chunks.get(d.generation) ?? 0) + 1;
@@ -4653,6 +4657,127 @@ describe("SurfaceComputeRenderer sphere-inversion glass continuation", () => {
     } finally {
       h.renderer.destroy();
       clock.mockRestore();
+    }
+  });
+
+  it("holds the base quantum while the pool can still widen (width first)", async () => {
+    let now = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    // Cheap chunks (5 ms, far under the growth line) over 5,000 hits: every
+    // trace pauses once. While rays wait in the queue and the width is
+    // under capacity, the quantum must stay at the base so the width
+    // ladder keeps its base-quantum chunks to learn from.
+    const seen = new Set<number>();
+    const h = finiteContinuationHarness({
+      kind: "sphereInversion",
+      chunkPaths: 32,
+      adaptiveSchedule: true,
+      outcome: (d) => {
+        now += 5;
+        const statuses = d.rayIds.map((w) => {
+          const ray = w & SPHERE_INVERSION_POOL_RAY_MASK;
+          if ((w & SPHERE_INVERSION_POOL_FRESH_BIT) !== 0) {
+            seen.add(ray);
+            return FINITE_TRANSPORT_RUNNING;
+          }
+          return SURFACE_GPU_TRANSPORT_COMPLETE;
+        });
+        return {
+          running: statuses.filter((v) => v === FINITE_TRANSPORT_RUNNING)
+            .length,
+          statuses,
+        };
+      },
+    });
+    try {
+      h.spec.width = 5000;
+      const frame = await h.renderer.renderFrame(h.spec);
+      expect(frame?.transport?.resolved).toBe(5000);
+      const widths = h.dispatches.map((d) => d.rayIds.length);
+      expect(widths.slice(0, 5)).toEqual([64, 128, 256, 512, 1024]);
+      expect(h.dispatches.slice(0, 5).map((d) => d.quantum)).toEqual([
+        32, 32, 32, 32, 32,
+      ]);
+    } finally {
+      h.renderer.destroy();
+      clock.mockRestore();
+    }
+  });
+
+  it("refills a finished pool slot with the next queued ray, fresh", async () => {
+    // 100 hits against a one-workgroup opening width: the first chunk
+    // holds 64 rays, every trace completes at once, and the next chunk's
+    // slots carry the remaining 36 rays with the fresh bit set.
+    const h = finiteContinuationHarness({
+      kind: "sphereInversion",
+      chunkPaths: 32,
+      adaptiveSchedule: true,
+      outcome: (d) => ({
+        running: 0,
+        statuses: d.rayIds.map(() => SURFACE_GPU_TRANSPORT_COMPLETE),
+      }),
+    });
+    try {
+      h.spec.width = 100;
+      const frame = await h.renderer.renderFrame(h.spec);
+      expect(frame?.transport?.resolved).toBe(100);
+      const fresh = SPHERE_INVERSION_POOL_FRESH_BIT;
+      const [first, second] = h.dispatches;
+      expect(first.rayIds).toHaveLength(64);
+      expect(first.rayIds.every((w) => (w & fresh) !== 0)).toBe(true);
+      expect(
+        first.rayIds.map((w) => w & SPHERE_INVERSION_POOL_RAY_MASK),
+      ).toEqual(Array.from({ length: 64 }, (_, i) => i));
+      expect(
+        second.rayIds
+          .filter((w) => (w & fresh) !== 0)
+          .map((w) => w & SPHERE_INVERSION_POOL_RAY_MASK),
+      ).toEqual(Array.from({ length: 36 }, (_, i) => 64 + i));
+    } finally {
+      h.renderer.destroy();
+    }
+  });
+
+  it("re-queues a pending trace at its next replay pass instead of waiting for the pass to end", async () => {
+    // Ray 0 comes back PENDING at pass 0 while ray 1 keeps running; the
+    // next chunk restarts ray 0 at pass 1 beside ray 1's continuation.
+    let chunk = 0;
+    const h = finiteContinuationHarness({
+      kind: "sphereInversion",
+      chunkPaths: 32,
+      adaptiveSchedule: true,
+      outcome: (d) => {
+        chunk++;
+        return {
+          running: chunk === 1 ? 1 : 0,
+          statuses: d.rayIds.map((w, i) => {
+            const ray = w & SPHERE_INVERSION_POOL_RAY_MASK;
+            if (chunk === 1)
+              return ray === 0
+                ? SURFACE_GPU_TRANSPORT_PENDING
+                : ray === 1
+                  ? FINITE_TRANSPORT_RUNNING
+                  : SURFACE_GPU_TRANSPORT_COMPLETE;
+            return i < 3 ? SURFACE_GPU_TRANSPORT_COMPLETE : null;
+          }),
+        };
+      },
+    });
+    try {
+      const frame = await h.renderer.renderFrame(h.spec);
+      expect(frame?.transport?.resolved).toBe(3);
+      expect(frame?.transport?.passes).toBe(2);
+      const second = h.dispatches[1].rayIds;
+      const pass = (w: number) =>
+        (w >>> SPHERE_INVERSION_POOL_RAY_BITS) &
+        SPHERE_INVERSION_POOL_PASS_MASK;
+      // Slot 0 restarts ray 0 at pass 1; slot 1 resumes ray 1 unflagged.
+      expect(second[0] & SPHERE_INVERSION_POOL_RAY_MASK).toBe(0);
+      expect(pass(second[0])).toBe(1);
+      expect(second[0] & SPHERE_INVERSION_POOL_FRESH_BIT).not.toBe(0);
+      expect(second[1]).toBe(1);
+    } finally {
+      h.renderer.destroy();
     }
   });
 

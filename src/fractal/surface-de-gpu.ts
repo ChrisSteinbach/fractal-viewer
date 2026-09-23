@@ -50,6 +50,9 @@ import {
 } from "./finite-solid";
 import {
   FINITE_TRANSPORT_BUFFER_HEADER_BYTES,
+  SPHERE_INVERSION_POOL_PASS_MASK,
+  SPHERE_INVERSION_POOL_RAY_BITS,
+  SPHERE_INVERSION_POOL_RAY_MASK,
   FINITE_TRANSPORT_RUNNING,
   FINITE_TRANSPORT_WORK_HEADER_BYTES,
   resolveFiniteTransportChunkPaths,
@@ -9941,8 +9944,14 @@ fn transportTrace(
   let eps = TRANSPORT_CROSSING_EPS_REL * radius;${
     transportChunk
       ? `
-  if (finiteWork.initialize == 0u) {
-    // Identity and bounds were checked by transportRays before this load.
+  if (${siGlassChunk ? "finiteWork.slots[workSlot].processed != 0u" : "finiteWork.initialize == 0u"}) {
+    // Identity and bounds were checked by transportRays before this load.${
+      siGlassChunk
+        ? `
+    // A pool slot starts fresh by its own word, not the header, and a
+    // reset slot is the only one with no processed path.`
+        : ""
+    }
     sp = finiteWork.slots[workSlot].sp;
     processed = finiteWork.slots[workSlot].processed;
     radiance = finiteWork.slots[workSlot].radiance;
@@ -10413,15 +10422,32 @@ fn transportRays(
   // every slot is done. Reject malformed lengths before addressing a slot.
   if (slotI >= arrayLength(&transportStatusOut)) {
     return;
+  }${
+    siGlassChunk
+      ? `
+  if (slotI >= arrayLength(&activeList)) {
+    finiteWorkReject(slotI, 0xffffffffu, 0u);
+    return;
   }
+  // THE POOL'S SLOT WORD (the host's transport pool): the ray in the low
+  // ${SPHERE_INVERSION_POOL_RAY_BITS} bits, its replay pass above them, and a fresh start in
+  // the top bit. A finished slot takes the next queued ray — a later
+  // pass's included — so each slot carries its own theta.
+  let slotWord = activeList[slotI];
+  let ray = slotWord & ${SPHERE_INVERSION_POOL_RAY_MASK}u;
+  let replayPass = (slotWord >> ${SPHERE_INVERSION_POOL_RAY_BITS}u) & ${SPHERE_INVERSION_POOL_PASS_MASK}u;
+  let slotStart = finiteWork.initialize == 1u || (slotWord >> 31u) == 1u;`
+      : `
   let replayPass = u32(shade.transport[0]);
   if (slotI >= arrayLength(&activeList)) {
     finiteWorkReject(slotI, 0xffffffffu, replayPass);
     return;
-  }`
-      : ""
   }
-  let ray = activeList[slotI];${
+  let ray = activeList[slotI];`
+  }`
+      : `
+  let ray = activeList[slotI];`
+  }${
     transportChunk
       ? `
   if (slotI >= arrayLength(&finiteWork.slots) ||
@@ -10429,15 +10455,19 @@ fn transportRays(
       finiteWork.rayCount > arrayLength(&finiteWork.slots) ||
       finiteWork.initialize > 1u || finiteWork.generation == 0u ||
       finiteWork.quantum == 0u ||
-      replayPass >= TRANSPORT_REPLAY_PASSES ||
-      shade.transport[0] != f32(replayPass) ||
+      replayPass >= TRANSPORT_REPLAY_PASSES ||${
+        siGlassChunk
+          ? ""
+          : `
+      shade.transport[0] != f32(replayPass) ||`
+      }
       ray >= arrayLength(&states) ||
       ray >= arrayLength(&transportState) / 2u ||
       ray >= arrayLength(&colorOut) || ray >= arrayLength(&layerOut)) {
     finiteWorkReject(slotI, ray, replayPass);
     return;
   }
-  if (finiteWork.initialize == 1u) {
+  if (${siGlassChunk ? "slotStart" : "finiteWork.initialize == 1u"}) {
     finiteWorkReset(slotI, ray, replayPass);
   } else {
     if (finiteWork.slots[slotI].pixel != ray ||
@@ -10475,7 +10505,7 @@ fn transportRays(
       prevStatus == TRANSPORT_STATUS_INVALID) {${
         transportChunk
           ? `
-    if (finiteWork.initialize == 0u) {
+    if (${siGlassChunk ? "!slotStart" : "finiteWork.initialize == 0u"}) {
       finiteWorkReject(slotI, ray, replayPass);
       return;
     }
@@ -10489,7 +10519,7 @@ fn transportRays(
   if (st.y != ${SURFACE_GPU_RAY_HIT}.0) {${
     transportChunk
       ? `
-    if (finiteWork.initialize == 0u) {
+    if (${siGlassChunk ? "!slotStart" : "finiteWork.initialize == 0u"}) {
       finiteWorkReject(slotI, ray, replayPass);
       return;
     }
@@ -10520,7 +10550,7 @@ fn transportRays(
     // A classic slot: shadeRays owns this pixel exactly as before.${
       transportChunk
         ? `
-    if (finiteWork.initialize == 0u) {
+    if (${siGlassChunk ? "!slotStart" : "finiteWork.initialize == 0u"}) {
       finiteWorkReject(slotI, ray, replayPass);
       return;
     }
