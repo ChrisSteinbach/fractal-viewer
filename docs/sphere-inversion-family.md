@@ -2656,6 +2656,8 @@ What this backend needed that the finite one did not:
 - A SMALL QUANTUM. A finite path is one exact DDA; a path here is an estimator
   march over the fold, up to depth × generators inversions per field tap. So
   `SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS` is 32, against the finite 2,048.
+  (Since "The transport's cost" below, 32 is the BASE of a per-submission
+  ladder, not a fixed quantum.)
 - PER-SUBMISSION SIZING. The finite lane prices a whole multi-chunk batch and
   never climbs the ladder. This lane keeps the one-workgroup pilot and the
   ladder, judged against its WORST CHUNK: a chunk is the submission, so it is
@@ -2878,3 +2880,48 @@ Every other sphere-inversion leg passed, including the glass chunk-identity
 rows and the transport agreement rows. The 4D half halves. In 3D the settle
 still needs four passes for its genuinely residual samples, so the gain is
 15%. The 3D line's remaining cost is the wall crawl the profile names.
+
+THE SECOND LEVER: THE BATCH TAIL. With failures final, the frame loop's own
+trace (`?surfacetrace`'s lines, summarized per frame by a temporary tally in
+the envelope leg) showed where the 3D settle's transport went. A
+continuation batch runs chunk after chunk until its SLOWEST trace finishes,
+and every batch of the settle held a trace that rode the 2,048-path guard, so
+every batch ran 65 chunks at the fixed quantum of 32. Chunks entered with
+under a tenth of the batch still running were about 640 of each 4-spp
+sample's ~900 submissions and about 45% of its ~10.5 s of transport wall,
+each one a few rays' work behind a ~4 ms counter round trip.
+
+So the quantum became PER SUBMISSION. The batch header carries it (32 bytes
+now, quantum at 16), and the host runs a ladder on it: every batch opens at
+the base of 32, doubles after a chunk under half of a 64 ms target, halves
+over it, and returns to the base past twice it. A second guard is
+independent of the first. Each batch caps the ladder from its own
+full-width first chunk: the multiple of the base at which that chunk's
+per-path price reaches half the 500 ms transport ceiling. A measured chunk
+is an average, and one path can cost a whole march, so the ladder alone
+could be fooled by a lane that turns expensive. Only base-quantum chunks
+price the batch width. A pinned quantum (`?surfacesichunk=N`, or the
+bench's fixed-quantum rows) switches the ladder off. A pause moves no pixel
+at any quantum, and the bench's new `ladder` arm pins that on the GPU on all
+three chunk rows, the 600-cell's included, where the heavy first chunk held
+the ladder at the base.
+
+MEASURED, same card and flags, quiet=YES, censuses identical to every run
+above:
+
+| Line                                   | 3D after failure-final → + ladder | 4D after failure-final → + ladder |
+| -------------------------------------- | --------------------------------- | --------------------------------- |
+| Preview 256×144 1-spp (2 s budget)     | truncated → truncated             | 1.69 s → 1.30 s                   |
+| Settle 512×288 4-spp                   | 43.8 s → 36.6 s                   | 12.1 s → 9.5 s, inside the line   |
+| Settle transport submissions/sample    | ~912 → ~233                       | —                                 |
+| Depth curve, D3 unbudgeted             | 5.7 s → 4.7 s                     | 1.7 s → 1.26 s                    |
+| Worst submission, settle / depth curve | 49 / 62 ms → 68 / 71 ms           | 59 / 66 ms → 52 / 68 ms           |
+
+Submissions fell fourfold and the 4D settle crossed its line, but the 3D
+transport wall fell only from ~10.5 s to ~8.8 s per sample. What remains of
+the tail is not round trips; it is the serial GPU time of the long traces
+themselves. A trace that rides the path guard costs about a second on one
+lane at any quantum, and passes 1 and 2 of each 3D sample, a handful of
+residual rays each, cost ~1.2 s apiece for exactly that reason. Only
+running those traces BESIDE other work can hide them, which is a batch-refill
+design (a finished slot takes the next pending ray), not a quantum.

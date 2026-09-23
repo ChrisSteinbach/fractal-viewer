@@ -15,6 +15,9 @@ import {
   shadeHitBatchSize,
   SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS,
   transportBatchSize,
+  nextTransportQuantum,
+  transportQuantumCap,
+  SURFACE_COMPUTE_TRANSPORT_QUANTUM_TARGET_MS,
   shadeHitAllowanceUs,
   shadeHitBudgetUs,
   SURFACE_COMPUTE_MARCH_CHUNK_MIN,
@@ -113,7 +116,6 @@ import {
 } from "../fractal/surface-lighting";
 import {
   FINITE_TRANSPORT_RUNNING,
-  SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS,
   TRANSPORT_PATH_BYTES,
   finiteTransportWorkBytes,
   transportWorkBytes,
@@ -3279,6 +3281,8 @@ interface FiniteHostDispatch {
   submission: number;
   initialize: number;
   counterBefore: number;
+  /** The header's per-submission scheduling quantum. */
+  quantum: number;
   generation: number;
   rayIds: number[];
   replayPass: number;
@@ -3293,6 +3297,8 @@ function finiteContinuationHarness(
   opts: {
     kind?: "finite" | "finite4" | "sphereInversion";
     chunkPaths?: number;
+    /** The sphere-inversion lane's quantum ladder (init field). */
+    quantumLadder?: boolean;
     maxPaths?: number;
     parkLabel?: string;
     outcome?: (dispatch: FiniteHostDispatch) => {
@@ -3473,6 +3479,7 @@ function finiteContinuationHarness(
                     submission: executingSubmission,
                     initialize: header[0],
                     counterBefore: header[1],
+                    quantum: header[4] ?? 0,
                     generation: header[2],
                     rayIds,
                     replayPass: new Float32Array(
@@ -3548,6 +3555,7 @@ function finiteContinuationHarness(
     transportPipelineNoSlab: null,
     finiteTransportChunkPaths: opts.chunkPaths,
     sphereInversionTransportChunkPaths: opts.chunkPaths,
+    sphereInversionQuantumLadder: opts.quantumLadder,
     transportMaxPaths: opts.maxPaths,
     opticsMapsBuf: plain(),
     seedPipeline: pipelines.seed,
@@ -4428,6 +4436,50 @@ describe("transportBatchSize", () => {
   });
 });
 
+describe("nextTransportQuantum", () => {
+  const T = SURFACE_COMPUTE_TRANSPORT_QUANTUM_TARGET_MS;
+
+  it("doubles only after a chunk under half the target", () => {
+    expect(nextTransportQuantum(32, 32, T / 2 - 1, 2048)).toBe(64);
+    expect(nextTransportQuantum(32, 32, T / 2, 2048)).toBe(32);
+  });
+
+  it("holds between half the target and the target", () => {
+    expect(nextTransportQuantum(256, 32, T, 2048)).toBe(256);
+  });
+
+  it("halves over the target and returns to the base past twice it", () => {
+    expect(nextTransportQuantum(256, 32, T + 1, 2048)).toBe(128);
+    expect(nextTransportQuantum(256, 32, 2 * T + 1, 2048)).toBe(32);
+    expect(nextTransportQuantum(256, 32, Number.NaN, 2048)).toBe(32);
+  });
+
+  it("stays inside [base, max]", () => {
+    expect(nextTransportQuantum(2048, 32, 0, 2048)).toBe(2048);
+    expect(nextTransportQuantum(32, 32, T + 1, 2048)).toBe(32);
+  });
+
+  it("is capped per batch by its full-width first chunk's per-path price", () => {
+    // Pearls-like: a 46 ms first chunk may grow five-fold at most.
+    expect(transportQuantumCap(32, 46, 2048)).toBe(160);
+    // 600-cell-like: a heavy first chunk pins the base.
+    expect(transportQuantumCap(32, 560, 2048)).toBe(32);
+    expect(transportQuantumCap(32, Number.NaN, 2048)).toBe(32);
+    // Never past the processed-path guard.
+    expect(transportQuantumCap(32, 0, 2048)).toBe(2048);
+    // At the cap, the first chunk's per-path price stays under half the
+    // transport ceiling.
+    const cap = transportQuantumCap(32, 46, 2048);
+    expect((cap / 32) * 46).toBeLessThanOrEqual(
+      SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS / 2,
+    );
+  });
+
+  it("targets far inside the transport ceiling", () => {
+    expect(4 * T).toBeLessThan(SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS);
+  });
+});
+
 describe("SurfaceComputeRenderer sphere-inversion glass continuation", () => {
   function glassTarget(): SurfaceComputeAnyTarget {
     return { kind: "sphereInversion", de: continuationSphereInversionDE() };
@@ -4458,7 +4510,7 @@ describe("SurfaceComputeRenderer sphere-inversion glass continuation", () => {
       "@group(0) @binding(16) var<storage, read_write> siWork: SiTransportBatch;",
     );
     expect(transport).toContain(
-      `const TRANSPORT_CHUNK_PATHS = ${SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS}u;`,
+      "processed - chunkStartProcessed >= siWork.quantum",
     );
     const allocate = Reflect.get(h.renderer, "allocateFrameBuffers") as (
       rays: number,
@@ -4494,7 +4546,7 @@ describe("SurfaceComputeRenderer sphere-inversion glass continuation", () => {
     expect(shadeLayout.some((e) => e.binding === 16)).toBe(false);
     for (const src of h.shaderSources) {
       expect(src).not.toContain("siWork");
-      expect(src).not.toContain("TRANSPORT_CHUNK_PATHS");
+      expect(src).not.toContain("Work.quantum");
     }
     const allocate = Reflect.get(h.renderer, "allocateFrameBuffers") as (
       rays: number,
@@ -4564,6 +4616,70 @@ describe("SurfaceComputeRenderer sphere-inversion glass continuation", () => {
     } finally {
       h.renderer.destroy();
       clock.mockRestore();
+    }
+  });
+
+  it("grows a draining batch's quantum from the base and never prices a grown chunk into the batch width", async () => {
+    let now = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    // A batch whose chunks each cost 5 ms and stay running for six chunks:
+    // far under the ladder's growth line, so every chunk doubles the next.
+    const chunks = new Map<number, number>();
+    const h = finiteContinuationHarness({
+      kind: "sphereInversion",
+      chunkPaths: 32,
+      quantumLadder: true,
+      outcome: (d) => {
+        now += 5;
+        const k = (chunks.get(d.generation) ?? 0) + 1;
+        chunks.set(d.generation, k);
+        const running = k < 6 ? d.rayIds.length : 0;
+        return {
+          running,
+          statuses: d.rayIds.map(() =>
+            running > 0
+              ? FINITE_TRANSPORT_RUNNING
+              : SURFACE_GPU_TRANSPORT_COMPLETE,
+          ),
+        };
+      },
+    });
+    try {
+      const frame = await h.renderer.renderFrame(h.spec);
+      expect(frame?.transport?.resolved).toBe(3);
+      expect(h.dispatches.map((d) => d.quantum)).toEqual([
+        32, 64, 128, 256, 512, 1024,
+      ]);
+    } finally {
+      h.renderer.destroy();
+      clock.mockRestore();
+    }
+  });
+
+  it("keeps a pinned quantum fixed: without the ladder every chunk runs the base", async () => {
+    const chunks = new Map<number, number>();
+    const h = finiteContinuationHarness({
+      kind: "sphereInversion",
+      chunkPaths: 32,
+      outcome: (d) => {
+        const k = (chunks.get(d.generation) ?? 0) + 1;
+        chunks.set(d.generation, k);
+        const running = k < 4 ? d.rayIds.length : 0;
+        return {
+          running,
+          statuses: d.rayIds.map(() =>
+            running > 0
+              ? FINITE_TRANSPORT_RUNNING
+              : SURFACE_GPU_TRANSPORT_COMPLETE,
+          ),
+        };
+      },
+    });
+    try {
+      await h.renderer.renderFrame(h.spec);
+      expect(h.dispatches.map((d) => d.quantum)).toEqual([32, 32, 32, 32]);
+    } finally {
+      h.renderer.destroy();
     }
   });
 });

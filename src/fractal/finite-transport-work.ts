@@ -8,10 +8,14 @@ export const FINITE_TRANSPORT_CHUNK_PATHS = 2048;
  * advance the outer refinement pass. Existing transport statuses stay frozen. */
 export const FINITE_TRANSPORT_RUNNING = 6;
 
-/** Batch buffer header: initialize, atomic running count, generation, ray count.
- * Host resets the first two words before each submission; generation changes
- * only for a new batch, whose ray-to-slot mapping stays fixed while paused. */
-export const FINITE_TRANSPORT_BUFFER_HEADER_BYTES = 16;
+/** Batch buffer header: initialize, atomic running count, generation, ray
+ * count, then the submission's scheduling quantum and three pad words. Host
+ * rewrites the first two words and the quantum before each submission;
+ * generation changes only for a new batch, whose ray-to-slot mapping stays
+ * fixed while paused. The quantum moves no pixel: a pause changes no path,
+ * term or arithmetic order, whatever the count between pauses. */
+export const FINITE_TRANSPORT_BUFFER_HEADER_BYTES = 32;
+export const FINITE_TRANSPORT_QUANTUM_OFFSET = 16;
 export const FINITE_TRANSPORT_RUNNING_OFFSET = 4;
 
 /** The existing finite path, including its complete canonical anchor. */
@@ -38,12 +42,16 @@ export function transportWorkSlotBytes(pathBytes: number): number {
   return FINITE_TRANSPORT_WORK_HEADER_BYTES + DIELECTRIC_MAX_STACK * pathBytes;
 }
 
-/** The sphere-inversion glass backend's scheduling quantum. Unlike the
+/** The sphere-inversion glass backend's BASE scheduling quantum. Unlike the
  * finite DDA, one processed path here is an estimator march over the
  * family's fold (up to depth x generators inversions per field tap), so the
- * quantum is small: it bounds ONE WORKGROUP's submission, which the
- * transport lane cannot shrink below. Measured on the RX 7900 XTX, recorded
- * in docs/sphere-inversion-family.md's glass envelope section. */
+ * base is small: it bounds a batch's full-width first chunk and ONE
+ * WORKGROUP's submission, which the transport lane cannot shrink below.
+ * The host grows each later chunk's quantum from it as the batch drains
+ * (`surface-compute.ts`'s `nextTransportQuantum`) unless a quantum is
+ * pinned. Measured on the RX 7900 XTX, recorded in
+ * docs/sphere-inversion-family.md's glass envelope and transport-cost
+ * sections. */
 export const SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS = 32;
 
 export function finiteTransportWorkBytes(capacity: number): number {

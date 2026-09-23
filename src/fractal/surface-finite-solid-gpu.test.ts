@@ -44,6 +44,7 @@ import {
 } from "./surface-dielectric";
 import {
   FINITE_TRANSPORT_BUFFER_HEADER_BYTES,
+  FINITE_TRANSPORT_QUANTUM_OFFSET,
   FINITE_TRANSPORT_CHUNK_PATHS,
   FINITE_TRANSPORT_PATH_BYTES,
   FINITE_TRANSPORT_RUNNING,
@@ -147,6 +148,10 @@ describe("finite-solid GPU sources", () => {
           running: FINITE_TRANSPORT_RUNNING_OFFSET,
           generation: 8,
           rayCount: 12,
+          quantum: FINITE_TRANSPORT_QUANTUM_OFFSET,
+          pad0: 20,
+          pad1: 24,
+          pad2: 28,
           slots: FINITE_TRANSPORT_BUFFER_HEADER_BYTES,
         },
         size: FINITE_TRANSPORT_BUFFER_HEADER_BYTES,
@@ -211,7 +216,7 @@ describe("finite-solid GPU sources", () => {
         source.indexOf("    var path = stack[sp - 1u];"),
       );
       expect(pause).toContain(
-        "processed - chunkStartProcessed >= TRANSPORT_CHUNK_PATHS",
+        "processed - chunkStartProcessed >= finiteWork.quantum",
       );
       for (const field of ["sp", "processed", "radiance", "residual"]) {
         expect(pause).toContain(
@@ -335,7 +340,7 @@ describe("finite-solid GPU sources", () => {
         surfaceDeKernelWgsl(
           baseOpts(core, { ...chunkOptions, finiteTransportChunkPaths: 1 }),
         ),
-      ).toContain("const TRANSPORT_CHUNK_PATHS = 1u;");
+      ).toContain("processed - chunkStartProcessed >= finiteWork.quantum");
     }
     for (const core of ["fold", "fold4"] as const) {
       const options = { ...baseOpts("finite"), core, optics: true };

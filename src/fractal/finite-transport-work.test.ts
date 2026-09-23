@@ -5,8 +5,8 @@ import {
 
 describe("finite transport scheduling storage", () => {
   it("allocates one reusable batch rather than one stack per image sample", () => {
-    expect(finiteTransportWorkBytes(1)).toBe(2752);
-    expect(finiteTransportWorkBytes(4096)).toBe(11_206_672);
+    expect(finiteTransportWorkBytes(1)).toBe(2768);
+    expect(finiteTransportWorkBytes(4096)).toBe(11_206_688);
   });
 
   it("rejects capacities that cannot address complete, exactly sized slots", () => {

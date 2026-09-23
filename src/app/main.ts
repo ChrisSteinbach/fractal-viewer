@@ -13103,8 +13103,8 @@ async function main(): Promise<void> {
   // shade cost model's own record demands of any per-unit cost claim.
   // `?surfacefencegroup=N` pins the fourth dial, how many dispatches one
   // fence stands behind, where N=1 is the pre-grouping loop exactly.
-  // `?surfacesichunk=N` pins the sphere-inversion glass continuation's
-  // quantum at session create (the kernel bakes it in).
+  // `?surfacesichunk=N` pins a FIXED sphere-inversion glass continuation
+  // quantum at session create, switching the per-submission ladder off.
   // `?surfacets=0` pins the measurement currency itself to the
   // fence-subtracted wall share, which is the GPU-side timestamp
   // instrument's A/B arm on a device that carries it. Diagnostics only,
