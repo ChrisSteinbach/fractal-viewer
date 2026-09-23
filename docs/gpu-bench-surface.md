@@ -656,6 +656,20 @@ MEASURED on 2026-09-23 on the RX 7900 XTX (`:0`, WebGPU `amd rdna-3`,
 | `siCell24Shell4`        | 32×18  | 0, 1, 32                        | 54 / 10               | 3,763                 | yes           |
 | `si600Medallion4@WKISS` | 16×9   | 1, 8, 32                        | 16 / 10               | 5,920                 | yes           |
 
+### The glass envelope (opt-in, measured not gated)
+
+`--surface-sphere-inversion-only=1 --surface-si-glass-envelope=1` adds the
+renderer-envelope leg's curved-glass arms: the `glassPearls`/`glassPearls4`
+starters as the menu loads them (Glass block, saved view, room, studio), at the
+envelope's 256×144 1-spp preview (the app's 2 s budget), its 512×288 4-spp
+settle, a mid-flight cancel and computed retained state. They are followed by
+a depth-versus-cost curve (depths 1–8, 256×144 1-spp, unbudgeted). It rides
+the heavy-leg wait cap. Each row's missed lines are printed as `MISS` and do
+NOT fail the run, because this record measures the envelope rather than gating
+it. A leg that throws does fail it. The preview line here is the curved-glass
+epic's 1 s, not the finite direction's 1.5 s. Measured rows and the verdict:
+`docs/sphere-inversion-family.md`, "The glass envelope".
+
 ## Mutation-testing the f32 twins
 
 A stale f32 twin does not disagree with its f64 CPU oracle — it makes the

@@ -2703,3 +2703,85 @@ The chunked kernel is pinned on the GPU by the sphere-inversion bench's glass
 chunk leg (`docs/gpu-bench-surface.md`): each row renders one small glass
 frame through the production renderer at quantum 0, 1 and 32, and all three
 must match byte for byte.
+
+### The glass envelope (2026-09-23)
+
+The envelope the epic inherits from the finite direction: preview 256×144 at
+most 1 s, settled 512×288 at most 10 s, 1920×1080 export at most 120 s,
+correct completion, and at most 128 MiB of additional state. The finite
+direction also held a cancellation checkpoint of 600 ms, and it is kept here.
+
+THE INSTRUMENT is the bench's renderer-envelope leg, the one the finite glass
+was measured with, given the curved-glass starters as arms
+(`--surface-sphere-inversion-only=1 --surface-si-glass-envelope=1`). Each arm
+is the starter's authored block with its Glass material, saved view, room,
+studio backdrop and checker floor, driven through the production
+`SurfaceComputeRenderer`. It renders the preview at 1 sample under the app's
+2 s preview budget, the settle at 4 samples unbudgeted, then a mid-flight
+cancel through the public `cancel()`. Retained state is computed from the
+shipped constants, the continuation's work buffer included. The rows are
+MEASURED, NOT GATED: a missed line is this record's finding. The export line
+is the glass gate at `--scale=2 --samples=4`, the real Save-PNG from click to
+download. RX 7900 XTX (radeonsi renderer line checked, WebGPU `amd rdna-3`,
+software=false), quiet=YES.
+
+| Line                                                        | glassPearls (3D, oct6 D3)                                  | glassPearls4 (4D, cross8 D3)      |
+| ----------------------------------------------------------- | ---------------------------------------------------------- | --------------------------------- |
+| Preview 256×144 1-spp, ≤ 1 s                                | MISS: truncated at the 2 s budget                          | MISS: truncated at the 2 s budget |
+| (the same preview, unbudgeted)                              | 8.0 s                                                      | 4.8 s                             |
+| Settle 512×288 4-spp, ≤ 10 s                                | MISS: 51.5 s                                               | MISS: 24.3 s                      |
+| Settle census resolved / unresolved / invalid               | 111,570 / 12,062 / 0 (90.2%)                               | 104,117 / 6,110 / 0 (94.5%)       |
+| Worst submission (checkpoint) ≤ 600 ms                      | PASS: 45.0 ms                                              | PASS: 60.8 ms                     |
+| Cancel (cancel() to null)                                   | PASS: 16.6 ms                                              | PASS: 4.0 ms                      |
+| Retained additional state ≤ 128 MiB                         | PASS: 14.8 MiB                                             | PASS: 14.8 MiB                    |
+| Export 1920×1080 4-AA, ≤ 120 s (Save-PNG click to download) | MISS: 344.8 s                                              | MISS: 197.3 s                     |
+| Retained at the export raster (computed)                    | PASS: 88.4 MiB (79.1 transport records + 9.2 continuation) | PASS: 88.4 MiB                    |
+
+CORRECT COMPLETION holds in the sense the transport contract defines. Every
+settle ran its six replay passes to completion, with zero invalid samples and
+zero truncation. Every unresolved ray is disclosed work: its seeded backdrop
+under the census, never an invented interior. The unresolved share is not
+zero, though, and the finite direction's settles reached zero, so this is
+the second difference from that record, after cost.
+
+THE DEPTH-VERSUS-COST CURVE: each starter's block at every admitted depth,
+with nothing else changed. One unbudgeted 256×144 1-spp frame per depth, on a
+fresh renderer per depth, since the construction, its table and its
+generation slots all follow the depth:
+
+| Depth | 3D wall | 3D glass hits resolved (share) | 4D wall | 4D glass hits resolved (share) |
+| ----: | ------: | ------------------------------ | ------: | ------------------------------ |
+|     1 |   4.3 s | 4,069 / 4,145 (98.2%)          |   1.1 s | 5,734 / 5,864 (97.8%)          |
+|     2 |   6.6 s | 5,720 / 5,898 (97.0%)          |   3.6 s | 6,190 / 6,484 (95.5%)          |
+|     3 |   8.0 s | 6,864 / 7,598 (90.3%)          |   4.8 s | 6,487 / 6,890 (94.2%)          |
+|     4 |  10.3 s | 7,760 / 8,728 (88.9%)          |   4.6 s | 6,749 / 7,212 (93.6%)          |
+|     5 |  11.7 s | 8,242 / 9,165 (89.9%)          |   4.4 s | 6,850 / 7,278 (94.1%)          |
+|     6 |  12.6 s | 8,364 / 9,324 (89.7%)          |   4.5 s | 6,845 / 7,295 (93.8%)          |
+|     7 |  11.9 s | 8,432 / 9,415 (89.6%)          |   4.5 s | 6,850 / 7,297 (93.9%)          |
+|     8 |  12.1 s | 8,562 / 9,505 (90.1%)          |   4.8 s | 6,850 / 7,298 (93.9%)          |
+
+Worst submissions along the curve stayed between 27 and 68 ms. Cost roughly
+TRIPLES from depth 1 to depth 5 in 3D and then plateaus, and in 4D it
+plateaus at depth 3. The plateau is the set's own convergence: the glass
+hits stop growing (9,165 → 9,505 across depths 5–8 in 3D; 7,278 → 7,298 in
+4D) because deeper generations are sub-pixel at this raster. Much of the
+depth-1 cost is the transport itself, not the fold. At the look gate's
+chosen depth 3, the starters sit at 1.9× (3D) and 4.3× (4D) their depth-1
+cost. Lowering depth therefore cannot bring either line inside its limit:
+even depth 1 misses the preview line by 4.3× in 3D and settles far past
+10 s at 512×288. The tension the child anticipated, a good-looking depth
+that is expensive, is real but secondary. The primary cost is the optical
+transport per glass hit, on every depth.
+
+THE 600-CELL, now admitted (the resumable trace above), sits far past every
+time line. At depth 8 and 240×135 it settles in 697 s at a 50.8% resolved
+share, and its state and checkpoint lines hold (worst submission 0.56 s).
+
+VERDICT: the curved glass is SAFE and CORRECT on this card. Every submission
+is bounded, cancellation is immediate, state is small, and nothing invalid
+reaches a pixel. It is NOT INTERACTIVE at the inherited lines. It misses the
+preview, settle and export lines in both dimensions: 4.8–8× unbudgeted on the
+preview, 2.4–5.2× on the settle, and 1.6–2.9× on the export. The same gate run
+at 960×540 and 4 AA settled the menu starters in 123.1 s (3D) and 68.0 s (4D),
+resolved 95.7% and 94.8%, and every identity leg held. Closing the time lines
+is a transport-cost problem, per glass hit, and depth is not the lever.
