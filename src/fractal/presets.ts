@@ -3143,8 +3143,9 @@ export const PRESET_SPHERE_INVERSIONS: Partial<
   // writes, so the Material select reads "Glass" on arrival. DEPTH 3 is the
   // look gate's verdict, not a cost choice: depth 1-3 read as clean glass,
   // 4 speckles, 6-8 read as lace. The 3D pair is Kissing Pearls' own
-  // construction at that depth; the 4D one is the gate's cross8 ball, since
-  // both 600-cell showcases are past the glass admission's 30-generator cap.
+  // construction at that depth; the 4D one is the gate's cross8 ball. The
+  // 600-cell showcases admit glass too (the transport's same-trace
+  // continuation lifted the generator cap), but settle in hours, not minutes.
   glassPearls: () => ({
     arrangement: "oct6",
     radiusFraction: 0.99,

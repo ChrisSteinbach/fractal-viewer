@@ -631,6 +631,31 @@ WHAT THE LEGS FOUND, both fixed in the kernel AND the twin before these rows
 2. The query could step past a real exit near a cusp, which is what the look
    gate's inside-miss mass was.
 
+### The glass continuation leg (the resumable trace)
+
+A glass trace here can outrun the watchdog from a single workgroup, so the
+transport pauses every `SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS` processed paths
+and resumes the same trace next submission (`docs/sphere-inversion-family.md`,
+"The resumable trace lifts the generator cap"). A pause changes the SCHEDULE,
+never the arithmetic, so the family legs' fifth leg renders one small glass
+frame per row through the production `SurfaceComputeRenderer` at several
+quanta and requires pixels AND the transport census to match the row's first
+quantum byte for byte. Each chunked arm must actually pause.
+
+The 600-cell row cannot have an uninterrupted control: at quantum 0 its 16×9
+glass frame lost the device (`VK_ERROR_DEVICE_LOST`) on this card, which is
+the defect itself. Its reference is quantum 1, the finest schedule.
+
+MEASURED on 2026-09-23 on the RX 7900 XTX (`:0`, WebGPU `amd rdna-3`,
+`software=false`), `quiet=YES`, `--surface-sphere-inversion-only=1`, verdict
+`skipped` (that mode's pass):
+
+| Row                     | Raster | Quanta (first is the reference) | Resolved / unresolved | Resumes at the finest | All identical |
+| ----------------------- | ------ | ------------------------------- | --------------------- | --------------------- | ------------- |
+| `siOct6Pearls3`         | 32×18  | 0, 1, 32                        | 19 / 2                | 12,288                | yes           |
+| `siCell24Shell4`        | 32×18  | 0, 1, 32                        | 54 / 10               | 3,763                 | yes           |
+| `si600Medallion4@WKISS` | 16×9   | 1, 8, 32                        | 16 / 10               | 5,920                 | yes           |
+
 ## Mutation-testing the f32 twins
 
 A stale f32 twin does not disagree with its f64 CPU oracle — it makes the

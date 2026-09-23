@@ -294,18 +294,6 @@ export const SPHERE_INVERSION_GLASS_SEED_KINDS: readonly string[] =
  * 6–8 lace, every one resolving. Deeper is unreviewed and costlier. */
 export const SPHERE_INVERSION_GLASS_MAX_DEPTH = 8;
 
-/**
- * The largest generator count glass is admitted at: the largest arrangement
- * MEASURED to keep every transport submission under the watchdog
- * (icosidodec30, 3D; RX 7900 XTX, 2026-09-23). The 600-cell (120) is past
- * it for a reason no host sizing can fix: a single WORKGROUP of its glass
- * trace ran 2.06 s and lost the device at the ~2.0 s job cut, and the
- * transport lane cannot dispatch less than one workgroup. Lifting it needs a
- * resumable trace (the finite backend's chunked continuation) for this
- * backend, not a larger number here.
- */
-export const SPHERE_INVERSION_GLASS_MAX_GENERATORS = 30;
-
 /** Why a sphere-inversion block that authors glass renders opaque instead,
  * or `null` when it resolves (and `undefined` when it authors no glass). */
 export type SphereInversionGlassAdmission =
@@ -325,8 +313,12 @@ export type SphereInversionGlassAdmission =
  *     The ARRANGEMENT is not restricted for the look — the field's
  *     soundness argument never reads it, the signed tests span
  *     oct6/cube8/ico12 and cell24/cross8/tess16, and the look is set by
- *     seed and depth (pearls versus lace) — but its generator COUNT is, by
- *     measurement: {@link SPHERE_INVERSION_GLASS_MAX_GENERATORS}.
+ *     seed and depth (pearls versus lace). Nor is its generator COUNT any
+ *     more: a single workgroup of 600-cell glass trace once outran the
+ *     watchdog, and the transport's same-trace continuation
+ *     (`SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS` processed paths per
+ *     submission) bounds every submission instead, measured on the
+ *     registry's largest arrangement (docs/sphere-inversion-family.md).
  *   - Compute: the backend is compute-only in both dimensions, so a missing
  *     adapter refuses glass (the gate refuses the SESSION — see
  *     `surface-eligibility.ts` — rather than silently rendering opaque).
@@ -348,7 +340,7 @@ export type SphereInversionGlassAdmission =
  */
 export function sphereInversionGlassAdmission(
   authored: SphereInversionAuthored,
-  construction: Pick<SphereInversionConstruction, "depth" | "generators">,
+  construction: Pick<SphereInversionConstruction, "depth">,
   computeAvailable: boolean,
 ): SphereInversionGlassAdmission | undefined {
   if (!sphereInversionAuthorsOptics(authored)) return undefined;
@@ -369,12 +361,6 @@ export function sphereInversionGlassAdmission(
     return {
       admitted: false,
       reason: `glass is available up to depth ${SPHERE_INVERSION_GLASS_MAX_DEPTH}`,
-    };
-  }
-  if (construction.generators.length > SPHERE_INVERSION_GLASS_MAX_GENERATORS) {
-    return {
-      admitted: false,
-      reason: `glass is available up to ${SPHERE_INVERSION_GLASS_MAX_GENERATORS} generators`,
     };
   }
   return { admitted: true };

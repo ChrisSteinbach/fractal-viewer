@@ -2465,18 +2465,17 @@ cannot disagree):
   reason disclosed.
 - Depth up to 8, the band the look gate swept. Deeper is unreviewed and
   costlier.
-- Up to 30 generators, BY MEASUREMENT. The arrangement is not restricted for
-  the look: the soundness argument never reads it, the signed tests span 3D
-  oct6/cube8/ico12 and 4D cell24/cross8/tess16, and the look is set by seed
-  and depth rather than by which polytope places the mirrors. Its generator
-  count is restricted for the watchdog. On the RX 7900 XTX a single WORKGROUP
-  of 600-cell glass trace (120 generators, shell, depth 2) ran 2.06 s and
-  lost the device at the box's ~2.0 s job cut, and the transport lane cannot
-  dispatch less than one workgroup. Every arrangement up to icosidodec30 (30)
-  kept its worst dispatch under 1.5 s. So the shipped 600-cell presets render
-  opaque with the reason disclosed, and lifting the cap needs a resumable
-  trace for this backend (the finite backend's chunked continuation), not a
-  larger number.
+- ANY generator count, since the resumable trace (below). The arrangement is
+  not restricted for the look: the soundness argument never reads it, the
+  signed tests span 3D oct6/cube8/ico12 and 4D cell24/cross8/tess16, and the
+  look is set by seed and depth rather than by which polytope places the
+  mirrors. Its generator count WAS restricted, to 30, for the watchdog: on the
+  RX 7900 XTX a single WORKGROUP of 600-cell glass trace (120 generators,
+  shell, depth 2) ran 2.06 s and lost the device at the box's ~2.0 s job cut,
+  and the transport lane cannot dispatch less than one workgroup. The same-
+  trace continuation now bounds every submission by a path count instead of
+  by a whole trace, and the cap is gone; the measurement is in
+  "The resumable trace lifts the generator cap".
 - Compute: the backend is compute-only in both dimensions, so glass the
   routing would admit is a compute-only SUBJECT (`sphereInversionComputeOnlySubject`
   names "sphere-inversion glass scenes"). Without compute the Surface gate
@@ -2631,3 +2630,76 @@ cap and traversal refusals, rendered as their seeded backdrop; its cost and
 speckle are the envelope work's, as is the 3D starter's settle at the
 shipped eight passes. An earlier 2x run of the 3D starter took 405.9 s to
 export 1920×1080 at one pass, which is why the gate's default scale is 1.
+
+### The resumable trace lifts the generator cap (2026-09-23)
+
+The admission used to stop glass at 30 generators because one WORKGROUP of
+600-cell glass trace outran the ~2.0 s job cut, and a workgroup is the least
+the transport lane can dispatch. No sizing rule reaches below that, so the fix
+is to make a submission smaller than a trace. The finite backend already had
+the mechanism, the same-trace continuation: a trace pauses BEFORE a pop after
+a bounded number of processed paths, stores its LIFO stack, radiance and
+residual in a work buffer, and resumes on the next dispatch at the same replay
+threshold. Nothing about the arithmetic or the path order changes at a pause,
+so a chunked frame is byte-identical to an uninterrupted one.
+
+What this backend needed that the finite one did not:
+
+- ITS OWN BINDING. The finite cores have no maps buffer and reuse binding 1;
+  these cores read `siTable` there, so the work buffer takes binding 16, the
+  transport stage's tenth storage buffer. Optics sessions already request the
+  adapter's per-stage ceiling: 16 on this card, 10 on SwiftShader.
+- THE GENERIC PATH STRIDE. The slot header is the finite one (48 B); the stack
+  holds the generic `TransportPath`, 96 B, not the finite 112 B that carries
+  the anchor contract (`transportWorkBytes(capacity, TRANSPORT_PATH_BYTES)`).
+  The kernel names it `siWork`/`SiTransportWork`; the finite text is unchanged.
+- A SMALL QUANTUM. A finite path is one exact DDA; a path here is an estimator
+  march over the fold, up to depth × generators inversions per field tap. So
+  `SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS` is 32, against the finite 2,048.
+- PER-SUBMISSION SIZING. The finite lane prices a whole multi-chunk batch and
+  never climbs the ladder. This lane keeps the one-workgroup pilot and the
+  ladder, judged against its WORST CHUNK: a chunk is the submission, so it is
+  what the watchdog sees (`docs/surface-compute-renderer.md`).
+
+MEASURED, RX 7900 XTX (radeonsi renderer line checked, WebGPU adapter "amd
+rdna-3", software=false, quiet baseline YES), `inversionMedallions4` (cell600,
+120 generators, shell) with the Material row set to Glass, one antialias pass,
+quantum 32:
+
+| Depth | Raster  | Outcome                          | Transport submissions | Worst chunk       | > 500 ms | > 1 s | Device lost |
+| ----- | ------- | -------------------------------- | --------------------- | ----------------- | -------- | ----- | ----------- |
+| 5     | 960×540 | not settled in 15 min            | (log unparsed)        | 522 ms, tail only | —        | —     | no          |
+| 5     | 480×270 | not settled in 60 min (pass 3/6) | 21,146                | 558.9 ms          | 239      | 0     | no          |
+| 8     | 240×135 | SETTLED in 697 s                 | 4,327                 | 555.7 ms          | 44       | 0     | no          |
+
+Every submission stayed under 0.56 s, about 3.6x inside the job cut, at both
+depths. The median chunk at depth 5 was 112 ms, and the per-chunk counter
+readback costs ~2 ms, so the pause costs under 2%. The chunks over the
+transport ceiling (500 ms) are the ladder's overshoot on a widened batch, not
+a single workgroup's. The generator cap is therefore GONE: the registry's
+largest arrangement is the measured one, and every smaller one is cheaper per
+path.
+
+THE VERDICT IS SAFETY, NOT SPEED. The 600-cell glass subject is admitted and
+safe, and it is very slow. At depth 8 and 240×135 the settled census was
+13,805 glass hits, 7,008 resolved (50.8%) and 6,797 unresolved, every one of
+them reason `f0/r0`: the replay schedule exhausted with a residual over the
+error budget, not a traversal refusal. At depth 5 and 480×270 the full frame
+was still on replay pass 3 of 6 after an hour, at about 33 trace-passes a
+second. The cost is the transport's own: each glass ray may process up to
+2,048 paths, each a march over 120 generators. That cost, and the resolved
+share, belong to the envelope work, not to this change.
+
+THE STARTERS, RERUN WITH EVERY GLASS SESSION CHUNKED (the glass gate, same
+card and flags as the starters' record above): all legs PASS, and both glass
+censuses are IDENTICAL to the pre-continuation record, 91,070 / 4,105 (3D) and
+88,597 / 4,870 (4D), as the schedule-only argument requires. The settles moved
+in opposite directions: 3D 86.3 s → 44.2 s, 4D 14.4 s → 27.0 s. Pricing each
+chunk instead of each whole batch lets the 3D lane's batches grow wider. The 4D
+starter's traces are short, so it pays the per-chunk counter readback without
+needing the pauses. Both are envelope figures, recorded here and not tuned.
+
+The chunked kernel is pinned on the GPU by the sphere-inversion bench's glass
+chunk leg (`docs/gpu-bench-surface.md`): each row renders one small glass
+frame through the production renderer at quantum 0, 1 and 32, and all three
+must match byte for byte.
