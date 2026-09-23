@@ -3775,6 +3775,10 @@ interface SurfaceSectionConfig {
    * transport pool per supersample (`?surfacesijoint=0`'s pin), the joint
    * pool's schedule A/B. */
   siJointOff: boolean;
+  /** `--surface-si-shape-off=1`: the glass envelope's renderers size the
+   * estimator's private arrays at the registry maxima
+   * (`?surfacesishape=0`'s pin), the session-shaped kernel's A/B. */
+  siShapeOff: boolean;
 }
 
 interface SurfaceKernelConfig {
@@ -5657,6 +5661,7 @@ function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
     siGlassEnvelope: params.get("surfaceSiGlassEnvelope") === "1",
     siExactNormal: params.get("surfaceSiExactNormal") === "1",
     siJointOff: params.get("surfaceSiJointOff") === "1",
+    siShapeOff: params.get("surfaceSiShapeOff") === "1",
     canaryTrip:
       Number.isInteger(canaryTripParsed) && canaryTripParsed >= 1
         ? canaryTripParsed
@@ -20089,6 +20094,7 @@ async function runSurfaceDeSection(
           setSurfaceComputeSchedulePins({
             siExactNormal: config.siExactNormal,
             siJointOff: config.siJointOff,
+            siShapeOff: config.siShapeOff,
           });
           if (config.siExactNormal)
             results.notes.push(
@@ -20097,6 +20103,10 @@ async function runSurfaceDeSection(
           if (config.siJointOff)
             results.notes.push(
               "glass envelope: JOINT POOL OFF (one pool per supersample, the schedule A/B)",
+            );
+          if (config.siShapeOff)
+            results.notes.push(
+              "glass envelope: SHAPE OFF (estimator arrays at the registry maxima, the codegen A/B)",
             );
           try {
             envelope.rows = await runSurfaceTransportEnvelopeLeg(
