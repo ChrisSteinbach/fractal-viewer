@@ -9,7 +9,6 @@ import { resolveSphereInversion } from "../fractal/sphere-inversion";
 import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
 import {
   SPHERE_INVERSION_GLASS_MAX_DEPTH,
-  SPHERE_INVERSION_GLASS_MAX_GENERATORS,
   sphereInversionGlassAdmission,
   surfaceClosedSolidAdmitted,
   surfaceOpticsOutlook,
@@ -346,7 +345,7 @@ describe("sphereInversionGlassAdmission (the sphere-inversion glass routing)", (
     ).toBeUndefined();
   });
 
-  it("pins every shipped preset's leaf: 3D ball and shell seeds admit, the cut-shell vaults and the 600-cell refuse", () => {
+  it("pins every shipped preset's leaf: 3D ball and shell seeds admit, the cut-shell vaults refuse, the 600-cell admits", () => {
     const leaves: Record<string, string | true> = {};
     for (const [name, factory] of Object.entries(PRESET_SPHERE_INVERSIONS)) {
       const verdict = admit({ ...factory(), materials: glass });
@@ -363,14 +362,14 @@ describe("sphereInversionGlassAdmission (the sphere-inversion glass routing)", (
       inversionRhombiLace: true,
       inversionIcosidodecaStar: true,
       inversionVault4: seeds,
-      inversionMedallions4: `glass is available up to ${SPHERE_INVERSION_GLASS_MAX_GENERATORS} generators`,
+      inversionMedallions4: true,
       glassPearls: true,
       glassPearls4: true,
     });
   });
 
-  it("admits every 4D arrangement below the generator cap", () => {
-    for (const arrangement of ["cross8", "tess16", "cell24"]) {
+  it("admits every 4D arrangement, the 600-cell's 120 generators included", () => {
+    for (const arrangement of ["cross8", "tess16", "cell24", "cell600"]) {
       expect(
         admit({
           arrangement,

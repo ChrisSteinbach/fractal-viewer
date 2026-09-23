@@ -5,8 +5,8 @@
  * section folds {@link SphereInversionBenchResults.failed} into its own
  * verdict and prints the rows through `scripts/gpu-flame-bench.mjs`.
  *
- * Five legs, each pinned against the f64 CPU estimator through the pure
- * module's comparators:
+ * Six legs, the first five pinned against the f64 CPU estimator through the
+ * pure module's comparators:
  *
  *   1. COMPILE MATRIX — both cores in every mode and every composition the
  *      plan admits (eval; the app's unproject march with `statusOut`; shade
@@ -27,7 +27,10 @@
  *      renderer (the per-frame repack). A real adapter must finish with a
  *      HIT/MISS mix, no exhausted or active rays, and a hit rate within the
  *      section's sanity band of a strided CPU march.
- *   5. TIMING — eval µs/query per row at a pilot-sized batch, beside the
+ *   5. GLASS CONTINUATION — the same-trace continuation is a schedule: a
+ *      glass frame traced at several quanta is byte-identical to its row's
+ *      reference ({@link runGlassChunks}).
+ *   6. TIMING — eval µs/query per row at a pilot-sized batch, beside the
  *      caller's timing subjects (existing cores on the same harness).
  *      Informational, never gating.
  */
@@ -49,6 +52,9 @@ import type {
 import { packSphereInversionGpuTables } from "../../fractal/surface-sphere-inversion-gpu";
 import type { SphereInversionGpuTables } from "../../fractal/surface-sphere-inversion-gpu";
 import type { Vec3 } from "../../fractal/types";
+import { SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS } from "../../fractal/finite-transport-work";
+import { sphereInversionGenerationSlots } from "../../fractal/sphere-inversion";
+import { sphereInversionShadeSlots } from "../surface-slots";
 import {
   SURFACE_COMPUTE_INITIAL_RAY_STEP_US,
   SURFACE_COMPUTE_WORKGROUP_SIZE,
@@ -161,12 +167,31 @@ export interface SiTimingRow {
   usPerQuery: number;
 }
 
+/** One glass frame through the production renderer at one continuation
+ * quantum, against its row's reference quantum. */
+export interface SiChunkRow {
+  system: string;
+  quantum: number;
+  width: number;
+  height: number;
+  wallMs: number;
+  resolved: number;
+  unresolved: number;
+  invalid: number;
+  continuationChunks: number;
+  /** Pixels and transport counts byte-identical to the row's reference. */
+  identical: boolean;
+  pass: boolean;
+  reason?: string;
+}
+
 export interface SphereInversionBenchResults {
   compile: SiCompileRow[];
   eval: SiEvalRow[];
   flat?: { n: number; maxDelta: number; mismatches: number };
   march: SiMarchRow[];
   frames: SiFrameRow[];
+  chunks: SiChunkRow[];
   timing: SiTimingRow[];
   notes: string[];
   failed: boolean;
@@ -837,6 +862,63 @@ function frameSanityRate(
   return hits / Math.max(1, sampled);
 }
 
+/** The frame legs' shared spec: the row's bench pose at this raster, a black
+ * backdrop, and the family's floor when asked for. */
+function siFrameSpec(
+  row: SiBenchRow,
+  width: number,
+  height: number,
+  view4: SurfaceGpu4View | null,
+  groundPlane: boolean,
+): SurfaceComputeFrameSpec {
+  const pose = sphereInversionBenchPose(row, width, height);
+  const inv = sphereInversionInvProjView(row, pose);
+  const R = row.R;
+  return {
+    width,
+    height,
+    invProjView: inv,
+    camPos: pose.ro,
+    camForward: pose.fwd,
+    focusDepth: -(
+      pose.ro[0] * pose.fwd[0] +
+      pose.ro[1] * pose.fwd[1] +
+      pose.ro[2] * pose.fwd[2]
+    ),
+    acceptPixelEps: SI_BENCH_PIXEL_EPS,
+    tracePixelEps: (2 * Math.tan((60 * Math.PI) / 360)) / height,
+    maxDepth: row.de.depth,
+    marchSteps: SI_BENCH_MARCH_STEPS,
+    shadowSteps: 32,
+    aoTaps: 5,
+    hitFloor: SURFACE_GPU_HIT_FLOOR,
+    lightDir: [0.5 / 1.0, 0.8, 0.3].map(
+      (v, _, a) => v / Math.hypot(...a),
+    ) as Vec3,
+    ambient: 0.25,
+    bgTop: [0, 0, 0],
+    bgBottom: [0, 0, 0],
+    colorSource: 0,
+    colorSpeed: 0.5,
+    lut: null,
+    lutVersion: 0,
+    dither: true,
+    ...(view4 ? { view4 } : {}),
+    ...(groundPlane
+      ? {
+          groundPlane: {
+            y: -R * 1.02,
+            fadeStart: R * 4,
+            fadeEnd: R * 10,
+            ballCenter: [0, 0, 0] as Vec3,
+            ballRadius: R,
+            albedo: [0.62, 0.62, 0.62] as Vec3,
+          },
+        }
+      : {}),
+  };
+}
+
 async function runFrames(
   ctx: SphereInversionBenchContext,
   rows: SiBenchRow[],
@@ -914,50 +996,7 @@ async function runFrames(
         const view4 = row.dim === 4 ? (view.view4 ?? row.view4) : null;
         const pose = sphereInversionBenchPose(row, width, height);
         const inv = sphereInversionInvProjView(row, pose);
-        const R = row.R;
-        const spec: SurfaceComputeFrameSpec = {
-          width,
-          height,
-          invProjView: inv,
-          camPos: pose.ro,
-          camForward: pose.fwd,
-          focusDepth: -(
-            pose.ro[0] * pose.fwd[0] +
-            pose.ro[1] * pose.fwd[1] +
-            pose.ro[2] * pose.fwd[2]
-          ),
-          acceptPixelEps: SI_BENCH_PIXEL_EPS,
-          tracePixelEps: (2 * Math.tan((60 * Math.PI) / 360)) / height,
-          maxDepth: row.de.depth,
-          marchSteps: SI_BENCH_MARCH_STEPS,
-          shadowSteps: 32,
-          aoTaps: 5,
-          hitFloor: SURFACE_GPU_HIT_FLOOR,
-          lightDir: [0.5 / 1.0, 0.8, 0.3].map(
-            (v, _, a) => v / Math.hypot(...a),
-          ) as Vec3,
-          ambient: 0.25,
-          bgTop: [0, 0, 0],
-          bgBottom: [0, 0, 0],
-          colorSource: 0,
-          colorSpeed: 0.5,
-          lut: null,
-          lutVersion: 0,
-          dither: true,
-          ...(view4 ? { view4 } : {}),
-          ...(plan.groundPlane
-            ? {
-                groundPlane: {
-                  y: -R * 1.02,
-                  fadeStart: R * 4,
-                  fadeEnd: R * 10,
-                  ballCenter: [0, 0, 0] as Vec3,
-                  ballRadius: R,
-                  albedo: [0.62, 0.62, 0.62] as Vec3,
-                },
-              }
-            : {}),
-        };
+        const spec = siFrameSpec(row, width, height, view4, plan.groundPlane);
         ctx.status(
           `sphere-inversion frame ${view.label}: rendering ${width}x${height}…`,
         );
@@ -1032,6 +1071,163 @@ async function runFrames(
       out.notes.push(`sphere-inversion frame ${plan.row}: ${describe(e)}`);
     } finally {
       renderer?.destroy();
+    }
+  }
+}
+
+/**
+ * THE GLASS CONTINUATION IS A SCHEDULE, NOT A RESULT: the same-trace
+ * continuation pauses a trace before a pop and resumes it at the same
+ * threshold, so a frame traced in chunks must be BYTE-IDENTICAL to the
+ * uninterrupted control. Each row renders one small glass frame through the
+ * production renderer at quantum 0 (the control), 1 (a pause after every
+ * processed path, the most resumes a trace can take) and the production
+ * quantum, and compares pixels and the transport census exactly; each
+ * row's FIRST quantum is its reference. The 600-cell row is the subject the
+ * continuation exists for, and it CANNOT run uninterrupted: its quantum-0
+ * control lost the device on the RX 7900 XTX even at 16×9 (one workgroup is
+ * one submission, whatever the raster). Its reference is therefore the
+ * finest schedule, a pause after every path, against which a coarser one
+ * and the production quantum must agree.
+ */
+const CHUNK_ROWS: {
+  row: string;
+  width: number;
+  height: number;
+  quanta: number[];
+}[] = [
+  {
+    row: "siOct6Pearls3",
+    width: 32,
+    height: 18,
+    quanta: [0, 1, SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS],
+  },
+  {
+    row: "siCell24Shell4",
+    width: 32,
+    height: 18,
+    quanta: [0, 1, SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS],
+  },
+  {
+    row: "si600Medallion4@WKISS",
+    width: 16,
+    height: 9,
+    quanta: [1, 8, SPHERE_INVERSION_TRANSPORT_CHUNK_PATHS],
+  },
+];
+const CHUNK_BUDGET_MS = 600_000;
+
+async function runGlassChunks(
+  ctx: SphereInversionBenchContext,
+  rows: SiBenchRow[],
+  out: SphereInversionBenchResults,
+): Promise<void> {
+  for (const plan of CHUNK_ROWS) {
+    const row = rows.find((r) => r.fixture.name === plan.row);
+    if (!row) {
+      out.failed = true;
+      out.notes.push(`sphere-inversion chunks ${plan.row}: row missing`);
+      continue;
+    }
+    const slots = sphereInversionShadeSlots(
+      sphereInversionGenerationSlots(row.de.depth),
+      {
+        arrangement: "oct6",
+        materials: [{ optics: { model: "dielectric" } }],
+      },
+      row.de.boundingRadius,
+      true,
+    );
+    let control: { pixels: Uint8Array; census: string } | null = null;
+    for (const quantum of plan.quanta) {
+      let renderer: SurfaceComputeRenderer | null = null;
+      try {
+        ctx.status(
+          `sphere-inversion chunks ${plan.row}: glass at quantum ${quantum}…`,
+        );
+        renderer = await SurfaceComputeRenderer.create(
+          row.dim === 3
+            ? { kind: "sphereInversion", de: row.de }
+            : { kind: "sphereInversion4", de: row.de },
+          slots.colors,
+          slots.trapIndices,
+          {
+            materials: slots.materials,
+            opticsBackend: "sphereInversion",
+            sphereInversionTransportChunkPaths: quantum,
+          },
+        );
+        const spec = siFrameSpec(
+          row,
+          plan.width,
+          plan.height,
+          row.view4,
+          false,
+        );
+        const t0 = performance.now();
+        const frame = await renderer.renderFrame(spec, {
+          budgetMs: CHUNK_BUDGET_MS,
+        });
+        if (!frame) throw new Error("renderFrame resolved null");
+        const t = frame.transport;
+        const census = JSON.stringify([
+          t?.resolved,
+          t?.unresolved,
+          t?.invalid,
+          frame.counts,
+        ]);
+        const reasons: string[] = [];
+        if (frame.truncated) reasons.push("truncated");
+        if (!t || t.resolved === 0) reasons.push("no resolved optical work");
+        if (quantum > 0 && !(t?.continuationChunks ?? 0))
+          reasons.push("no trace paused: the quantum was never reached");
+        let identical = true;
+        if (quantum === plan.quanta[0]) {
+          control = { pixels: frame.pixels.slice(), census };
+        } else if (!control) {
+          identical = false;
+          reasons.push("no control frame");
+        } else {
+          identical =
+            census === control.census &&
+            frame.pixels.length === control.pixels.length &&
+            frame.pixels.every((v, i) => v === control!.pixels[i]);
+          if (!identical)
+            reasons.push(
+              `differs from the quantum-${plan.quanta[0]} reference`,
+            );
+        }
+        const result: SiChunkRow = {
+          system: plan.row,
+          quantum,
+          width: plan.width,
+          height: plan.height,
+          wallMs: performance.now() - t0,
+          resolved: t?.resolved ?? 0,
+          unresolved: t?.unresolved ?? 0,
+          invalid: t?.invalid ?? 0,
+          continuationChunks: t?.continuationChunks ?? 0,
+          identical,
+          pass: reasons.length === 0,
+          ...(reasons.length ? { reason: reasons.join("; ") } : {}),
+        };
+        out.chunks.push(result);
+        if (!result.pass) {
+          out.failed = true;
+          out.notes.push(
+            `sphere-inversion chunks ${plan.row} q=${quantum}: ${result.reason}`,
+          );
+        }
+        ctx.update?.(out);
+      } catch (e) {
+        out.failed = true;
+        out.notes.push(
+          `sphere-inversion chunks ${plan.row} q=${quantum}: ${describe(e)}`,
+        );
+      } finally {
+        renderer?.destroy();
+      }
+      await yieldToPage();
     }
   }
 }
@@ -1196,6 +1392,7 @@ export async function runSphereInversionBench(
     eval: [],
     march: [],
     frames: [],
+    chunks: [],
     timing: [],
     notes: [],
     failed: false,
@@ -1233,6 +1430,7 @@ export async function runSphereInversionBench(
     await yieldToPage();
   }
   await runFrames(ctx, rows, out);
+  await runGlassChunks(ctx, rows, out);
   await runTiming(ctx, rows, out);
   return out;
 }
