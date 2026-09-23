@@ -2011,8 +2011,24 @@ export interface SurfaceGpuKernelOptions {
    * (the displayed cells ARE the optical solid — the co-extension rule)
    * and {@link SurfaceGpuKernelOptions.finiteSolid}'s construction; the
    * medium state is cross-checked at the anchored restart exactly as the
-   * closed-solid query's is. Shade mode only (it rides the optics gate). */
-  opticsBackend?: "estimator" | "closedSolid" | "finiteSolid";
+   * closed-solid query's is. Shade mode only (it rides the optics gate).
+   * `"sphereInversion"` is the CURVED-GLASS backend: the closed-solid
+   * query's march over the sphere-inversion family's SIGNED field — the
+   * shipped estimator outside, the transported certified clearance inside
+   * (`sphereInversionWgslSource`'s `signed` body, pinned to
+   * `sphereInversionSignedF32` and through it to the f64
+   * `sphereInversionSignedDistance`/`-4`) — plus the MEMBERSHIP GATE the f64
+   * twin (`surface-transport-fixture.ts`'s `contains`) carries: the field is
+   * a certified BOUND, not a signed distance, so its band also fires where
+   * the bound is merely loose (every near-kissing tangency), and a crossing
+   * is accepted only where exact membership FLIPS across the landing. The
+   * medium cross-check and the shadow march's crossings ask the same
+   * predicate. Requires the sphere-inversion cores (the displayed set IS the
+   * optical solid); COMPUTE-ONLY in both dimensions by decision, so no
+   * fragment arm has a twin. Absent, the closed-solid emission is
+   * byte-identical. */
+  opticsBackend?:
+    "estimator" | "closedSolid" | "finiteSolid" | "sphereInversion";
   /** The finite-solid construction wire (`core: "finite"` / `"finite4"`
    * and `opticsBackend: "finiteSolid"`): the authored level 0..2 of the
    * admitted document (`analyzeFiniteSolidSystem`'s verdict — the gate
@@ -4805,8 +4821,12 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
         "condensation, a hybrid schedule or xaos (transform-system features)",
       ],
       [
-        !!opts.pattern || !!opts.optics,
-        "pattern or optics (not in the first cut: pattern needs a source4 convention, optics ships dormant)",
+        !!opts.pattern,
+        "pattern (not in the first cut: pattern needs a source4 convention)",
+      ],
+      [
+        !!opts.optics && opts.opticsBackend !== "sphereInversion",
+        "optics except over its own signed field (the estimator query cannot march a refracted child, and the other backends describe other solids)",
       ],
       [
         !!opts.slabCover,
@@ -5224,7 +5244,18 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
       ? "closedSolid"
       : optics && opts.opticsBackend === "finiteSolid"
         ? "finiteSolid"
-        : "estimator";
+        : optics && opts.opticsBackend === "sphereInversion"
+          ? "sphereInversion"
+          : "estimator";
+  if (
+    opticsBackend === "sphereInversion" &&
+    core !== "sphereInv" &&
+    core !== "sphereInv4"
+  ) {
+    throw new Error(
+      "surface-de-gpu: the sphere-inversion transport backend needs the sphere-inversion cores — the displayed set IS the optical solid",
+    );
+  }
   if (opticsBackend === "finiteSolid") {
     if (core !== "finite" && core !== "finite4") {
       throw new Error(
@@ -8412,7 +8443,7 @@ fn surfaceDEHitInfo(pIn: vec3f, li: u32) -> SurfaceHitInfo {
   return info;
 }`;
   const siDescentText = siCore
-    ? /* wgsl */ `${sphereInversionWgslSource(core4 ? 4 : 3)}
+    ? /* wgsl */ `${sphereInversionWgslSource(core4 ? 4 : 3, opticsBackend === "sphereInversion")}
 ${
   core === "sphereInv4"
     ? `
@@ -8977,7 +9008,13 @@ ${surfacePatternShadeSourceWgsl()}`
   // the optics gate (every other kernel byte-identical). The backend
   // dispatch picks the boundary query: the estimator march (absent's
   // meaning, text unchanged) or the closed-solid signed query.
-  const solidQuery = opticsBackend === "closedSolid";
+  // The sphere-inversion glass backend RIDES the closed-solid query: the
+  // same signed-field march, field taps, medium cross-check and straight
+  // shadow visibility, over the family's own signed field — plus the
+  // membership gate (option doc), spliced only under this flag so the
+  // closed-solid emission stays byte-identical.
+  const siGlass = opticsBackend === "sphereInversion";
+  const solidQuery = opticsBackend === "closedSolid" || siGlass;
   // The finite-solid backend: the exact DDA over the construction. The
   // codegen gate above pinned it to the finite cores, so the display
   // source (and its finiteLift the DDA reads) is always in the same
@@ -8996,10 +9033,37 @@ ${surfacePatternShadeSourceWgsl()}`
   // member's measure vanishes identically and degrades to honest
   // refusals off it. Graph-directed selection and hybrid schedules are
   // refused for this backend, so the emitter loop needs neither gate.
+  const siLift = core === "sphereInv4" ? "liftSphereInv4(p)" : "p";
   const transportSolidFieldWgsl = !solidQuery
     ? ""
-    : core4
-      ? `// The closed-solid field (opticsBackend "closedSolid"), 4D form —
+    : siGlass
+      ? `// The sphere-inversion SIGNED field (opticsBackend "sphereInversion") —
+// sphere-inversion-de${core4 ? "-4d" : ""}.ts's sphereInversionSignedDistance${core4 ? "4" : ""} in f32
+// (surface-sphere-inversion-gpu.ts's sphereInversionSignedF32): the
+// shipped unsigned estimator outside, the member's transported certified
+// clearance inside, the untransported folded value at a negative
+// non-DOMAIN status exactly as on the CPU (unreachable by the fold
+// argument).${
+          core4
+            ? ` The displayed point lifts through the live rotor/slice: a
+// slice's clearance is at least the 4D clearance, so the 4D field is a
+// certified in-slice field with no slice-aware correction.`
+            : ""
+        }
+fn transportSolidField(p: vec3f) -> f32 {
+  let res = siEstimate(${siLift});
+  return select(res.d, -res.clear, res.clear >= 0.0);
+}
+
+// EXACT membership in the displayed set (sphereInversionContains${core4 ? "4" : ""}):
+// the fold reaches the domain and the folded point lies in the seed. Never
+// a threshold on the field. The crossing gate below asks this, not the sign
+// of a certified BOUND that also reaches ~0 at every near-kissing tangency.
+fn transportSolidContains(p: vec3f) -> bool {
+  return siEstimate(${siLift}).clear >= 0.0;
+}`
+      : core4
+        ? `// The closed-solid field (opticsBackend "closedSolid"), 4D form —
 // condensation-de.ts's condensationSignedDistance4 mirrored. The hypot
 // estimator's interior reads ZERO on the shape flat (hypot(max(sd,0), w)
 // = 0 whenever sd < 0 and w = 0), so it has no negative region for a
@@ -9029,7 +9093,7 @@ fn transportSolidField(p: vec3f) -> f32 {
   }
   return best * ${wgslFloatLit(SHAPE_MARCH_SAFETY)};
 }`
-      : `// The closed-solid field (opticsBackend "closedSolid"): the session's
+        : `// The closed-solid field (opticsBackend "closedSolid"): the session's
 // SIGNED closed-solid union — the condensation term at the root, the
 // same SAFETY-scaled certified bound the primary march reads, so the
 // query's crossing scale applies to the field the primary hit was
@@ -9103,7 +9167,14 @@ fn transportSolidField(p: vec3f) -> f32 {
     if (!(f > -1.0e30)) {
       break;
     }
-    if (abs(f) < eps) {
+    if (abs(f) < eps${
+      siGlass
+        ? ` &&
+        // The membership gate (the backend's option doc): a band fire is
+        // an interface only where exact membership flips across it.
+        transportSolidContains(sp + dir * (2.0 * eps)) != inside`
+        : ""
+    }) {
       // The declared crossing band: the boundary is here, within the
       // declared resolution. Fire the state's crossing (entry when the
       // march is outside, exit when inside), then leave the band — it
@@ -9152,6 +9223,17 @@ fn transportSolidField(p: vec3f) -> f32 {
         let fq = transportSolidField(origin + dir * ts);
         if (!(fq > -1.0e30) || abs(fq) >= eps) {
           break;
+        }${
+          siGlass
+            ? `
+        // The exact predicate ends the advance once the sample agrees with
+        // the medium the crossing established: a transported BOUND's band
+        // is many times wider in space than the interface (the measured
+        // band width is in docs/sphere-inversion-family.md).
+        if (transportSolidContains(origin + dir * ts) == inside) {
+          break;
+        }`
+            : ""
         }
         ts = ts + 2.0 * eps;
         bandGuard = bandGuard + 1u;
@@ -9161,7 +9243,9 @@ fn transportSolidField(p: vec3f) -> f32 {
       }
       continue;
     }
-    if ((f < 0.0) != inside) {
+    if ((f < 0.0) != inside${
+      siGlass ? " && transportSolidContains(sp) != inside" : ""
+    }) {
       // A stride jumped clean across the band: the crossing happened
       // between the samples; report it here (within one stride — the
       // strides step the field itself, so no far overshoot exists).
@@ -9521,7 +9605,15 @@ fn transportNextBoundary(
   result.t = 0.0;
   result.normal = vec3f(0.0);
   var p = origin;
-  var t = 0.0;
+  var t = 0.0;${
+    siGlass
+      ? `
+  // The membership gate re-anchors at a phantom landing, so the anchor is
+  // the march's own state here rather than the caller's argument.
+  var anchorOn = anchorPresent;
+  var anchorAt = anchorPoint;`
+      : ""
+  }
   if (anchorPresent == 1u) {
     // Same-boundary suppression, part 1 (the estimator query's rule).
     let skip = 2.0 * eps;
@@ -9534,7 +9626,15 @@ fn transportNextBoundary(
     let f0 = transportSolidField(p);
     if (f0 > -1.0e30 &&
         ((inside == 1u && f0 > TRANSPORT_ANCHOR_ENVELOPE_REL * eps) ||
-         (inside == 0u && f0 < -TRANSPORT_ANCHOR_ENVELOPE_REL * eps))) {
+         (inside == 0u && f0 < -TRANSPORT_ANCHOR_ENVELOPE_REL * eps))${
+           siGlass
+             ? ` &&
+        // With an exact predicate the cross-check asks IT rather than the
+        // sign of a bound, which reads the wrong side often enough outside
+        // the anchor envelope to refuse honest children.
+        transportSolidContains(p) != (inside == 1u)`
+             : ""
+         }) {
       result.reason = TRANSPORT_REASON_STATE_MISMATCH;
       return result;
     }
@@ -9579,9 +9679,25 @@ fn transportNextBoundary(
         // test alone ate an honest exit crossing there, hopped the
         // child outside with a stale medium, and stranded it (the
         // multi-cell inside-miss mass).
-        var suppress = false;
-        if (anchorPresent == 1u &&
-            distance(hitP, anchorPoint) <= TRANSPORT_ANCHOR_ENVELOPE_REL * eps) {
+        var suppress = false;${
+          siGlass
+            ? `
+        if (transportSolidContains(hitP + dir * (2.0 * eps)) == (inside == 1u)) {
+          // THE MEMBERSHIP GATE (option doc): the band fired where the
+          // certified bound is loose, not at a surface — membership does
+          // not flip across this landing, so there is no interface here.
+          // Step past it on the SAME budget; a phantom costs steps, never
+          // a crossing.
+          p = hitP + dir * (2.0 * eps);
+          t = tc + 2.0 * eps;
+          anchorOn = 1u;
+          anchorAt = hitP;
+          continue;
+        }`
+            : ""
+        }
+        if (${siGlass ? "anchorOn" : "anchorPresent"} == 1u &&
+            distance(hitP, ${siGlass ? "anchorAt" : "anchorPoint"}) <= TRANSPORT_ANCHOR_ENVELOPE_REL * eps) {
           let fBeyond = transportSolidField(hitP + dir * (2.0 * eps));
           suppress = (inside == 1u && fBeyond < 0.0) ||
             (inside == 0u && fBeyond > 0.0);

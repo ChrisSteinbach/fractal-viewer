@@ -2345,3 +2345,86 @@ tangency cusp, an exhausted fold — and each asserts the same thing: whatever
 the query returns, it never invents a crossing membership does not agree with.
 The 4D arm runs the same query over the 4D field through the app's own posed
 lift at zero slab thickness, and checks the flip on the DISPLAYED point.
+
+### The WGSL half (2026-09-23)
+
+The optical transport's fourth boundary backend, `opticsBackend:
+"sphereInversion"`, in both sphere-inversion cores. It RIDES the closed-solid
+query rather than restating it: the signed-field march, the tetrahedron taps,
+the medium cross-check and the floor corridor's straight shadow visibility are
+the closed-solid backend's text, over this family's field, and the membership
+gate the f64 twin carries is spliced into four places under this backend
+alone: the boundary landing, the anchored medium cross-check, the shadow band
+fire with its band advance, and the shadow march's stride-crossed branch.
+Nothing above the seam changed for any other backend.
+
+THE FIELD. `sphereInversionWgslSource(dim, signed)` adds one `SiResult.clear`
+member and one transport of the folded clearance when `signed` is set; the
+kernel's `transportSolidField` reads `-clear` for a member and the shipped
+`d` otherwise, and `transportSolidContains` reads `clear >= 0`, the membership
+bit off the SAME evaluation. `d` keeps its unsigned meaning, so the primary
+march and the hit-info read exactly what an opaque session reads. The 4D field
+lifts the displayed point through `liftSphereInv4`, the core's own view lift,
+at zero slab thickness (the core refuses a slab). Its f32 twin is
+`sphereInversionSignedF32`.
+
+THE f32 ARGUMENT, and a correction to the premise it was filed under. The
+worry was the Möbius ball factor `R²/(|c|² − r²)`, which cancels where a ball
+nearly swallows the inversion centre. NEITHER half emits that form: the
+transport is `inversionDistanceLowerBound`'s distance form, whose one division
+is by `R²/qr + v`, a sum of positives, so no ratio of clearance to fold radius
+cancels, including a clearance ball that swallows the centre. The one small
+divisor is `qr` inside `R²/qr`, and the POLE floor (`qr² <= 2^-40·R²` refuses
+to invert) already bounds it. So the guard the interior half needed exists
+already and is inherited, and the disclosed threshold is the slack itself: a
+member whose transported clearance is at most `1e-6` world units reads field
+0, inside the crossing band and never on the wrong side of it. The per-step
+rounding sits under the transport's `1 + 2^-20` margin, and the folded
+decision value's error comes back unamplified at its own step's scale. That is
+the argument that made the exterior's excess flat in depth, and nothing in it
+reads the sign, so the same absolute slack comes off the interior magnitude.
+
+MEASURED on the f32 twin, before the slack, against the f64
+`sphereInversionSignedDistance`/`-4`, over up to 3000 interior samples per
+fixture:
+
+| Fixture                                    | Worst f32 clearance excess |
+| ------------------------------------------ | -------------------------- |
+| oct6 ball .28, depth 3                     | 9.06e-8                    |
+| oct6 kissing, depth 6                      | 9.99e-8                    |
+| oct6 kissing, depth 12                     | 9.99e-8                    |
+| ico12 near-kissing ball .47, depth 4       | 5.63e-8                    |
+| oct6 generator-crossing ball 1.15, depth 2 | 1.39e-7                    |
+| cube8 shell, depth 7                       | 1.25e-7                    |
+| cell24 ball .3, depth 3 (4D)               | 4.16e-8                    |
+| cell24 near-kissing ball .5, depth 6 (4D)  | 9.34e-8                    |
+
+Flat in depth (kissing oct6 reads the same at 6 and 12), and the worst case is
+the centre-swallowing fixture, 7× under the slack. Without the slack the twin
+overshoots f64 on every fixture, so the slack is needed and sufficient, not
+decorative. The real-driver figure is owed. The exterior's measured pre-slack
+peak was `5.35e-7` on Iris against the CPU emulation's `3.3e-7`, so a driver
+may widen the interior's margin too.
+
+THE WIRE. No params offset moved and nothing was appended: the interior reads
+the same tables, the same `siRadii.w` slack and the same pole floor. Absent the
+backend, every generated kernel is byte-identical to the pre-change module:
+checked over eleven cores × three modes × twelve option sets (closed-solid and
+finite-solid backends included) before the commit, and pinned per dimension in
+the tests. The only differences are the reworded optics refusal for the
+sphere-inversion cores. Optics on those cores without this backend still
+refuses, and the backend on any other core refuses: the displayed set IS the
+optical solid.
+
+COMPILED on Chrome/Dawn (SwiftShader adapter, 2026-09-23): the 3D and 4D glass
+kernels, with and without the floor and finishes, build both the shade and the
+transport pipelines; a deliberately broken control is rejected, so the check
+sees errors. That is a WGSL validity check, not a real-driver measurement.
+Agreement with the twin on a device and the real-driver timing are the bench
+work that follows.
+
+COMPUTE-ONLY in both dimensions by decision: no GLSL twin exists, and the 3D
+fragment arm keeps rendering the family opaque, byte-identical. A glass session
+must therefore exit with the disclosed toast on a compute loss rather than fall
+back, which is a routing rule and lands with the routing admission, since
+nothing routes this backend yet.

@@ -307,6 +307,8 @@ describe("surfaceDeKernelWgsl sphere-inversion cores", () => {
       { balloon: true },
       { pattern: true },
       { optics: true },
+      { optics: true, opticsBackend: "closedSolid" },
+      { optics: true, opticsBackend: "finiteSolid" },
       { slabCover: true },
       { schedule: { mapCount: 1, scheduleMapCount: 1 } },
       { chaos: { activeStateCount: 2, predecessorMasks: [3, 3] } },
@@ -325,6 +327,154 @@ describe("surfaceDeKernelWgsl sphere-inversion cores", () => {
           surfaceDeKernelWgsl(opts(core, "shade", extra)),
         ).not.toThrow();
       }
+    }
+  });
+});
+
+describe("the sphere-inversion glass backend (opticsBackend sphereInversion)", () => {
+  const glass = (
+    core: "sphereInv" | "sphereInv4",
+    mode: "eval" | "march" | "shade" = "shade",
+    extra: Partial<SurfaceGpuKernelOptions> = {},
+  ): SurfaceGpuKernelOptions => ({
+    core,
+    mode,
+    width: 4,
+    workgroupSize: 16,
+    sharedFrontier: false,
+    bnbStage2: false,
+    optics: true,
+    opticsBackend: "sphereInversion",
+    ...extra,
+  });
+
+  it("compiles in both cores, emitting the signed body and the family's field and membership predicate", () => {
+    for (const [core, dim] of [
+      ["sphereInv", 3],
+      ["sphereInv4", 4],
+    ] as const) {
+      const src = surfaceDeKernelWgsl(glass(core));
+      expect(src).toContain(sphereInversionWgslSource(dim, true));
+      const lift = dim === 4 ? "liftSphereInv4(p)" : "p";
+      expect(src).toContain(
+        `fn transportSolidField(p: vec3f) -> f32 {\n  let res = siEstimate(${lift});\n  return select(res.d, -res.clear, res.clear >= 0.0);\n}`,
+      );
+      expect(src).toContain(
+        `fn transportSolidContains(p: vec3f) -> bool {\n  return siEstimate(${lift}).clear >= 0.0;\n}`,
+      );
+      // The primary march and the hit-info still read the unsigned value.
+      expect(src).toContain(
+        `return siEstimate(${dim === 4 ? "liftSphereInv4(pIn)" : "pIn"}).d;`,
+      );
+    }
+  });
+
+  it("rides the closed-solid query, with the medium carried and cross-checked against exact membership", () => {
+    const src = surfaceDeKernelWgsl(glass("sphereInv"));
+    expect(src).toContain("path.anchorPoint, path.inside, eps, li);");
+    expect(src).toContain(
+      "fn transportSolidNormal(p: vec3f, dir: vec3f, eps: f32) -> vec3f {",
+    );
+    expect(src).toContain("transportSolidContains(p) != (inside == 1u)");
+    expect(src).not.toContain("condensationTerm");
+  });
+
+  it("gates every crossing on a membership flip: the boundary landing re-anchors a phantom and keeps marching", () => {
+    const src = surfaceDeKernelWgsl(glass("sphereInv"));
+    expect(src).toContain(
+      "if (transportSolidContains(hitP + dir * (2.0 * eps)) == (inside == 1u)) {",
+    );
+    expect(src).toContain(
+      "anchorOn = 1u;\n          anchorAt = hitP;\n          continue;",
+    );
+    expect(src).toContain(
+      "if (anchorOn == 1u &&\n            distance(hitP, anchorAt) <= TRANSPORT_ANCHOR_ENVELOPE_REL * eps) {",
+    );
+  });
+
+  it("gates the straight shadow march's band fire, its band advance and its stride-crossed branch the same way", () => {
+    const src = surfaceDeKernelWgsl(
+      glass("sphereInv", "shade", { groundPlane: true }),
+    );
+    expect(src).toContain("fn transportShadowVisibility(");
+    expect(src).toContain(
+      "transportSolidContains(sp + dir * (2.0 * eps)) != inside) {",
+    );
+    expect(src).toContain(
+      "if (transportSolidContains(origin + dir * ts) == inside) {\n          break;\n        }",
+    );
+    expect(src).toContain(
+      "if ((f < 0.0) != inside && transportSolidContains(sp) != inside) {",
+    );
+    expect(src).toContain("var shadowV = transportShadowVisibility(");
+  });
+
+  it("is structurally inert outside shade mode, so the pair's march kernel is the opaque one", () => {
+    for (const core of ["sphereInv", "sphereInv4"] as const) {
+      for (const mode of ["eval", "march"] as const) {
+        const plain = surfaceDeKernelWgsl(
+          glass(core, mode, { optics: false, opticsBackend: undefined }),
+        );
+        expect(surfaceDeKernelWgsl(glass(core, mode))).toBe(plain);
+      }
+    }
+  });
+
+  it("leaves the closed-solid emission without the membership gate", () => {
+    const closed = surfaceDeKernelWgsl({
+      core: "affine",
+      mode: "shade",
+      width: 4,
+      workgroupSize: 16,
+      sharedFrontier: false,
+      bnbStage2: false,
+      optics: true,
+      opticsBackend: "closedSolid",
+      groundPlane: true,
+      condensation: {
+        mapCount: 0,
+        emitters: [
+          {
+            shape: {
+              parts: [
+                {
+                  primitive: { kind: "sphere", radius: 0.5 },
+                  combine: "union",
+                },
+              ],
+            },
+            shadeIndex: 0,
+          },
+        ],
+      },
+    });
+    expect(closed).not.toContain("transportSolidContains");
+    expect(closed).not.toContain("anchorOn");
+  });
+
+  it("is refused on every other core: the displayed set IS the optical solid", () => {
+    for (const core of [
+      "fold",
+      "affine",
+      "escape",
+      "bulb",
+      "affine4",
+      "fold4",
+      "escape4",
+    ] as const) {
+      expect(() =>
+        surfaceDeKernelWgsl({ ...glass("sphereInv"), core }),
+      ).toThrow(/needs the sphere-inversion cores/);
+    }
+  });
+
+  it("composes with the ground plane and finishes, as the opaque family does", () => {
+    for (const core of ["sphereInv", "sphereInv4"] as const) {
+      expect(() =>
+        surfaceDeKernelWgsl(
+          glass(core, "shade", { groundPlane: true, finish: true }),
+        ),
+      ).not.toThrow();
     }
   });
 });

@@ -2820,12 +2820,16 @@ export class SurfaceComputeRenderer {
        * query over the session's condensation union, which is what
        * resolves a refracted child; `"finiteSolid"` swaps the exact DDA
        * over the session's finite cell decomposition (finite targets
-       * only — the displayed cells ARE the optical solid). The codegen
+       * only — the displayed cells ARE the optical solid);
+       * `"sphereInversion"` swaps the family's signed field with the exact
+       * membership gate (sphere-inversion targets only, compute-only in
+       * both dimensions). The codegen
        * refuses the backend on sessions whose composition the field
        * cannot follow, so a caller may pass it whenever the session's
        * geometry is the backend's vocabulary and let the throw police
        * the rest. */
-      opticsBackend?: "estimator" | "closedSolid" | "finiteSolid";
+      opticsBackend?:
+        "estimator" | "closedSolid" | "finiteSolid" | "sphereInversion";
       /** Finite optics scheduling only, not an optical work limit.
        * Omitted selects the production quantum; zero is the uninterrupted
        * equivalence control. No document or user-facing setting. */
@@ -2928,7 +2932,8 @@ export class SurfaceComputeRenderer {
     adapterStatus: { label: string | undefined; software: boolean },
     materials: SurfaceMaterialSlots | null,
     lighting = false,
-    opticsBackend?: "estimator" | "closedSolid" | "finiteSolid",
+    opticsBackend?:
+      "estimator" | "closedSolid" | "finiteSolid" | "sphereInversion",
     finiteTransportChunkPaths?: number,
     transportMaxPaths?: number,
     finiteCacheCrossings?: boolean,
