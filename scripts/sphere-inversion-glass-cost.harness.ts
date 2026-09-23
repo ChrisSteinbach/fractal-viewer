@@ -26,6 +26,15 @@
  * failures it adds end traces the taps would have finished
  * (`docs/sphere-inversion-family.md`, "The exact normal").
  *
+ * THE REPLAY PASSES' CRITICAL PATH is priced too: per glass hit, the
+ * evaluations of each pass the kernel runs (0..the first accepted or failed
+ * one). A frame's tail is its longest serial trace, and a pending ray
+ * re-traces from scratch, so in order its passes cost their SUM and side by
+ * side their MAX. At 64 px: 24 of 2,137 hits run more than one pass; the
+ * worst sum is 119,747 evaluations and the worst max 52,262, 2.3x shorter —
+ * the evidence for running a pending-prone ray's passes speculatively
+ * (`docs/sphere-inversion-family.md`, "The glass tail is latency").
+ *
  * Run: npx vitest run --config scripts/vitest.harness.config.ts \
  *        scripts/sphere-inversion-glass-cost.harness.ts
  */
@@ -209,6 +218,9 @@ describe("sphere-inversion glass: the transport's evaluation profile", () => {
     let wastedEvals = 0;
     const firstFailure = new Map<number, number>();
     let resolvedCount = 0;
+    // Per glass hit, the evaluations of each replay pass the kernel runs:
+    // passes 0..final, where final is the first accepted or failed one.
+    const criticalPaths: number[][] = [];
     const view = PRESET_VIEWS.glassPearls!;
     renderPreview(
       {
@@ -231,6 +243,8 @@ describe("sphere-inversion glass: the transport's evaluation profile", () => {
           ];
           let theta = DIELECTRIC_INITIAL_BRANCH_THETA;
           let failedAt = -1;
+          const rayPasses: number[] = [];
+          criticalPaths.push(rayPasses);
           for (
             passIndex = 0;
             passIndex < DIELECTRIC_REPLAY_PASSES;
@@ -250,6 +264,10 @@ describe("sphere-inversion glass: the transport's evaluation profile", () => {
             );
             const row = byPass[passIndex];
             add(row, cur);
+            // The kernel's own schedule stops at the first failure
+            // (failure-is-final), so the critical path does too.
+            if (failedAt < 0)
+              rayPasses.push(cur.fieldIn + cur.fieldOut + cur.contains);
             if (failedAt >= 0)
               wastedEvals += cur.fieldIn + cur.fieldOut + cur.contains;
             row.traces++;
@@ -291,6 +309,25 @@ describe("sphere-inversion glass: the transport's evaluation profile", () => {
     );
     const evals = (t: Tally) => t.fieldIn + t.fieldOut + t.contains;
     const ns = (t: Tally) => t.fieldNsIn + t.fieldNsOut + t.containsNs;
+    {
+      // THE REPLAY PASSES' CRITICAL PATH. A frame's tail is its longest
+      // serial trace, and a ray that goes pending re-traces from scratch,
+      // so run in order its passes cost their SUM; run side by side (every
+      // pass of a ray started together, the first non-pending one kept)
+      // they cost their MAX. Evaluations stand in for a lone thread's time.
+      const seq = criticalPaths.map((p) => p.reduce((a, b) => a + b, 0));
+      const par = criticalPaths.map((p) => Math.max(0, ...p));
+      const top = (xs: number[], k: number) =>
+        [...xs].sort((a, b) => b - a).slice(0, k);
+      const multi = criticalPaths.filter((p) => p.length > 1).length;
+      const spec = criticalPaths.reduce(
+        (a, p) => a + p.reduce((x, y) => x + y, 0),
+        0,
+      );
+      console.log(
+        `critical path over ${String(criticalPaths.length)} glass hits (${String(multi)} ran >1 pass): sequential max ${String(Math.max(0, ...seq))} evals, top ${top(seq, 5).join("/")}; side by side max ${String(Math.max(0, ...par))}, top ${top(par, 5).join("/")}; total ${String(spec)}`,
+      );
+    }
     const all = zero();
     for (const p of byPass) add(all, p);
     const pct = (a: number, b: number) =>

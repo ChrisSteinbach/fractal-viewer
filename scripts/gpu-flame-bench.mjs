@@ -148,6 +148,9 @@ const SURFACE_PASSTHROUGH_FLAGS = {
   // With --surface-si-glass-envelope: the joint pool OFF (one pool per
   // supersample, the schedule before it; a schedule A/B, no pixel moves).
   "surface-si-joint-off": "surfaceSiJointOff",
+  // With --surface-si-glass-envelope: the estimator's private arrays at the
+  // registry maxima (the session-shaped kernel's codegen A/B).
+  "surface-si-shape-off": "surfaceSiShapeOff",
 };
 
 function parseArgs(argv) {
