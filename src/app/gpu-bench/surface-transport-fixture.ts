@@ -22,6 +22,7 @@ import {
 } from "../../fractal/surface-dielectric";
 import {
   SURFACE_GPU_TRANSPORT_MAX_INTERFACES,
+  SURFACE_GPU_TRANSPORT_MEMBERSHIP_BISECT_STEPS,
   SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS,
   SURFACE_GPU_TRANSPORT_REASON_INVALID_INPUT,
   SURFACE_GPU_TRANSPORT_REASON_STATE_MISMATCH,
@@ -279,6 +280,8 @@ export function transportSolidBoundaryQueryCPU(
     }
   }
   const tFar = domainExit(system, origin, dir);
+  // The last sample's t, for the membership-crossed branch's bisection.
+  let tPrev = t;
   for (let i = 0; i < TRANSPORT_QUERY_MAX_STEPS; i++) {
     if (tFar < 0 || t >= tFar) {
       return { kind: "miss", reason: 0, t, normal: [0, 0, 0] };
@@ -287,6 +290,32 @@ export function transportSolidBoundaryQueryCPU(
     if (!Number.isFinite(f) || f <= -1e30) {
       return { kind: "refused", reason: 2, t, normal: [0, 0, 0] };
     }
+    if (
+      system.contains &&
+      (inside ? f > 0 : f < 0) &&
+      (!anchorPresent ||
+        Math.hypot(
+          px - anchorPoint[0],
+          py - anchorPoint[1],
+          pz - anchorPoint[2],
+        ) >
+          DIELECTRIC_ANCHOR_ENVELOPE_REL * eps) &&
+      system.contains([px, py, pz]) !== inside
+    ) {
+      // THE MEMBERSHIP-CROSSED BRANCH (exact-predicate systems only): the
+      // march has LEFT the claimed medium without a band landing — the
+      // field's sign and exact membership now both contradict the claim.
+      // A transported BOUND's gradient degenerates near a tangency cusp,
+      // so the landing's "is the zero ahead" test can read backwards and
+      // step past a real exit; unrecovered, the path runs to the domain
+      // and fails the trace inside-miss (the near-cusp probe on oct6 at
+      // radius fraction 0.99, depth 3). The crossing lies between the
+      // previous sample and this one: bisect exact membership there and
+      // report it, the shadow march's stride-crossed rule with the
+      // crossing located rather than approximated.
+      return membershipCrossing(system, origin, dir, tPrev, t, inside, eps);
+    }
+    tPrev = t;
     if (Math.abs(f) < eps) {
       // Land the crossing ON the surface: one secant step along the ray
       // with the field's unit-normalized gradient at the query point (the
@@ -369,6 +398,44 @@ export function transportSolidBoundaryQueryCPU(
     t += stride;
   }
   return { kind: "refused", reason: 1, t, normal: [0, 0, 0] };
+}
+
+/** Locate a membership crossing bracketed by `[tLo, tHi]` (membership at
+ * `tLo` is the claimed medium, at `tHi` it is not) and report it as the
+ * query's boundary: the landing is the bracket's claimed-medium end, the
+ * normal the optical taps there. */
+function membershipCrossing(
+  system: TransportFixtureSystem,
+  origin: Vec3,
+  dir: Vec3,
+  tLo: number,
+  tHi: number,
+  inside: boolean,
+  eps: number,
+): TransportBoundaryResult {
+  let lo = tLo;
+  let hi = tHi;
+  for (let k = 0; k < SURFACE_GPU_TRANSPORT_MEMBERSHIP_BISECT_STEPS; k++) {
+    const mid = 0.5 * (lo + hi);
+    const q: Vec3 = [
+      origin[0] + dir[0] * mid,
+      origin[1] + dir[1] * mid,
+      origin[2] + dir[2] * mid,
+    ];
+    if (system.contains!(q) === inside) lo = mid;
+    else hi = mid;
+  }
+  const hit: Vec3 = [
+    origin[0] + dir[0] * lo,
+    origin[1] + dir[1] * lo,
+    origin[2] + dir[2] * lo,
+  ];
+  return {
+    kind: "boundary",
+    reason: 0,
+    t: lo,
+    normal: transportOpticalNormal(system, hit, dir, eps),
+  };
 }
 
 export type TransportTraceStatus =

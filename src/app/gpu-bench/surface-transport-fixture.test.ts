@@ -14,6 +14,7 @@ import {
   sphereInversionContains4,
   sphereInversionSignedDistance4,
 } from "../../fractal/sphere-inversion-de-4d";
+import { SURFACE_GPU_TRANSPORT_FAILURE_INSIDE_MISS } from "../../fractal/surface-de-gpu";
 import {
   SURFACE_GPU_TRANSPORT_REASON_INVALID_INPUT,
   SURFACE_GPU_TRANSPORT_REASON_STATE_MISMATCH,
@@ -1002,5 +1003,120 @@ describe("the sphere-inversion arm's transport", () => {
       expect(Math.hypot(...r.normal)).toBeGreaterThan(0.99);
     }
     expect(crossings).toBeGreaterThan(20);
+  });
+
+  describe("the membership-crossed branch", () => {
+    // Near a tangency cusp the transported bound's gradient degenerates,
+    // and the band landing's "is the zero ahead" test can read backwards:
+    // the query stepped past a real exit and the path ran to the domain,
+    // failing its trace inside-miss. The branch reports a crossing where
+    // the field's sign AND exact membership both contradict the claim,
+    // located by bisecting membership. These pin it at the session's own
+    // scales (the optical radius is the estimator's bounding radius).
+    const orbitSystem = (depth: number): TransportFixtureSystem => {
+      const de = buildSphereInversionDE(
+        authored({
+          arrangement: "oct6",
+          radiusFraction: 0.99,
+          seed: { size: 0.28 },
+          depth,
+        }),
+      );
+      return {
+        estimate: (p) => sphereInversionSignedDistance(de, p),
+        contains: (p) => sphereInversionContains(de, p),
+        stepScale: 1,
+        visibleRadius: de.boundingRadius,
+      };
+    };
+    const traceOf = (system: TransportFixtureSystem, origin: Vec3, dir: Vec3) =>
+      transportTraceCPU(
+        system,
+        origin,
+        dir,
+        DIELECTRIC_INITIAL_BRANCH_THETA,
+        { ...material, radius: system.visibleRadius },
+        [0.2, 0.3, 0.4],
+        { maxProcessedPaths: 512, maxInterfaces: 512 },
+        (o, d, ap, apt, ins, eps) =>
+          transportSolidBoundaryQueryCPU(system, o, d, ap, apt, ins, eps),
+      );
+    const firstHit = (
+      system: TransportFixtureSystem,
+      ro: Vec3,
+      target: Vec3,
+    ): { hit: Vec3; dir: Vec3 } | null => {
+      const v = [0, 1, 2].map((a) => target[a] - ro[a]);
+      const len = Math.hypot(v[0], v[1], v[2]);
+      const dir = v.map((x) => x / len) as Vec3;
+      let t = 0;
+      for (let i = 0; i < 4096; i++) {
+        const p = [0, 1, 2].map((a) => ro[a] + dir[a] * t) as Vec3;
+        const e = system.estimate(p);
+        if (e < system.visibleRadius * 1e-3) return { hit: p, dir };
+        t += Math.max(e, 0);
+        if (t > 4 * system.visibleRadius) return null;
+      }
+      return null;
+    };
+
+    it("resolves the near-cusp ray the query used to strand inside-miss", () => {
+      const system = orbitSystem(3);
+      const w = Math.sqrt(1 / 3);
+      const probe = firstHit(system, [3 * w, 3 * w, 3 * w], [0.5, 0.5, 0]);
+      expect(probe).not.toBeNull();
+      const r = traceOf(system, probe!.hit, probe!.dir);
+      expect(["complete", "residual"]).toContain(r.status);
+    });
+
+    it("leaves no inside-miss at depth 6 at the shipped crossing scale", () => {
+      const system = orbitSystem(6);
+      const visR = system.visibleRadius;
+      const ro: Vec3 = [0.9 * visR, 0.55 * visR, 1.7 * visR];
+      const rng = mulberry32(99);
+      let traced = 0;
+      let resolved = 0;
+      while (traced < 40) {
+        const target = [0, 1, 2].map(() => (rng() * 2 - 1) * 0.9) as Vec3;
+        const probe = firstHit(system, ro, target);
+        if (!probe) continue;
+        traced++;
+        const r = traceOf(system, probe.hit, probe.dir);
+        expect(r.failure).not.toBe(SURFACE_GPU_TRANSPORT_FAILURE_INSIDE_MISS);
+        if (r.status === "complete" || r.status === "residual") resolved++;
+      }
+      expect(resolved / traced).toBeGreaterThan(0.8);
+    });
+
+    it("never reports a crossing membership does not flip across", () => {
+      const system = orbitSystem(6);
+      const eps = DIELECTRIC_CROSSING_EPS_REL * system.visibleRadius;
+      const rng = mulberry32(7);
+      let crossings = 0;
+      for (let i = 0; i < 1200; i++) {
+        const origin = [0, 1, 2].map(() => (rng() * 2 - 1) * 1.2) as Vec3;
+        const v = [0, 1, 2].map(() => rng() * 2 - 1);
+        const len = Math.hypot(v[0], v[1], v[2]);
+        const dir = v.map((x) => x / len) as Vec3;
+        const inside = system.contains!(origin);
+        const r = transportSolidBoundaryQueryCPU(
+          system,
+          origin,
+          dir,
+          false,
+          origin,
+          inside,
+          eps,
+        );
+        if (r.kind !== "boundary") continue;
+        crossings++;
+        const at = (t: number) =>
+          system.contains!(
+            [0, 1, 2].map((a) => origin[a] + dir[a] * t) as Vec3,
+          );
+        expect(at(r.t + 2 * eps)).not.toBe(inside);
+      }
+      expect(crossings).toBeGreaterThan(80);
+    });
   });
 });

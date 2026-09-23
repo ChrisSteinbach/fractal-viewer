@@ -10,6 +10,7 @@ import {
   SURFACE_GPU_PARAMS4_SPHERE_INV_BYTES,
   SURFACE_GPU_PARAMS_PLANE_BYTES,
   SURFACE_GPU_PARAMS_SPHERE_INV_BYTES,
+  SURFACE_GPU_TRANSPORT_MEMBERSHIP_BISECT_STEPS,
   surfaceDeKernelWgsl,
 } from "./surface-de-gpu";
 import type {
@@ -409,6 +410,34 @@ describe("the sphere-inversion glass backend (opticsBackend sphereInversion)", (
     expect(src).toContain("var shadowV = transportShadowVisibility(");
   });
 
+  it("reports a crossing the march stepped over, bisecting exact membership between the last two samples", () => {
+    for (const core of ["sphereInv", "sphereInv4"] as const) {
+      const src = surfaceDeKernelWgsl(glass(core));
+      expect(src).toContain("var tPrev = t;");
+      expect(src).toContain(
+        "if (select((f < 0.0), (f > 0.0), inside == 1u) &&",
+      );
+      expect(src).toContain(
+        `for (var k = 0u; k < ${SURFACE_GPU_TRANSPORT_MEMBERSHIP_BISECT_STEPS}u; k++) {`,
+      );
+      expect(src).toContain(
+        "result.normal = transportSolidNormal(origin + dir * lo, dir, eps);",
+      );
+    }
+  });
+
+  it("splits the primary hit on the SIGNED field's normal, as the twin does", () => {
+    // This core's surfaceDE is the unsigned estimator; its interior values
+    // are folded member signals, so taps across the surface draw garbage.
+    for (const core of ["sphereInv", "sphereInv4"] as const) {
+      const src = surfaceDeKernelWgsl(glass(core));
+      expect(src).toContain("let n0 = transportSolidNormal(origin, dir, eps);");
+      expect(src).not.toContain(
+        "let n0 = transportOpticalNormal(origin, dir, eps, li);",
+      );
+    }
+  });
+
   it("is structurally inert outside shade mode, so the pair's march kernel is the opaque one", () => {
     for (const core of ["sphereInv", "sphereInv4"] as const) {
       for (const mode of ["eval", "march"] as const) {
@@ -450,6 +479,7 @@ describe("the sphere-inversion glass backend (opticsBackend sphereInversion)", (
     });
     expect(closed).not.toContain("transportSolidContains");
     expect(closed).not.toContain("anchorOn");
+    expect(closed).not.toContain("tPrev");
   });
 
   it("is refused on every other core: the displayed set IS the optical solid", () => {
