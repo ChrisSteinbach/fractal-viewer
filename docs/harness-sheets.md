@@ -1215,6 +1215,18 @@ RESOLUTION, and keeps the refuted `measured`-medium row. Verdict and measured
 rows: `docs/sphere-inversion-family.md`'s glass section. Writes
 `sphere-inversion-glass-{3d,depth,medium,eps,matched,4d}.png`.
 
+### condensation-glass
+
+`scripts/condensation-glass.harness.ts` — the general curved solid's look
+gate: glass on the condensation set of an ordinary IFS over a finite depth
+band (`condensation-solid.ts`), rendered through the shared
+`glass-preview.ts` renderer beside opaque controls, with a depth sweep and
+the word search's nodes per field evaluation. Verdict: sphere and torus
+emitters read as glass at every depth (97.6–100% resolved); the gear's
+conservative SDF leaves 47.7% unresolved. Record:
+`docs/surface-dielectric-transport.md`, "The general curved solid". Writes
+`scripts/out/condensation-glass*.png`.
+
 ### sphere-inversion-glass-cost
 
 `scripts/sphere-inversion-glass-cost.harness.ts` — where the curved-glass

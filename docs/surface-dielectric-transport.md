@@ -2072,6 +2072,77 @@ comparison it already was, still word-pinned against quota 0); every other
 positive quota in both dimensions must still pause and match bit for bit.
 No pause requirement was dropped.
 
+## The general curved solid: the signed field and its look gate (2026-09-24)
+
+The closed-solid backend admits emitter-only C0, because with recursive maps
+its field describes only the root term. The GENERAL curved solid is the
+condensation set over a finite depth band: every word of length in the band
+applied to every emitter shape, so an ordinary IFS stamping a sphere, a torus
+or a gear becomes a glass fractal. This work landed its CPU field and
+rendered its look gate. Nothing is wired: no kernel, wire, routing or panel
+change.
+
+THE FIELD (`src/fractal/condensation-solid.ts`, 3D). It is the min over the
+word tree's band nodes of the root term the descent already evaluates, scaled
+by the word's product of smallest singular values. It is signed and
+certified in both directions, and its SIGN IS EXACT: a term is negative only
+inside its member, because every shape SDF's sign is exact under the CSG
+min/max fold. Membership is therefore `field <= 0`, with no tangency cusp of
+the kind the sphere-inversion family's bound has. The search is a
+branch-and-bound against one invariant ball `B(c, R)` that every map carries
+into itself and that holds every emitter. A child sitting `δ` outside it
+certifies its whole subtree at world distance `s·δ`, which is sound for any
+shape SDF. The prune fires on the weaker threshold
+`S·s·δ·ρ^k·ρ_e`, which lower-bounds every term of the subtree when the shape
+SDFs are exact. So the pruned field EQUALS the brute-force union for exact
+shapes, pinned against an independent brute-force walk built from the
+transforms themselves (sphere and box emitters, similarity and non-uniform
+maps, a band that skips the root; relative 1e-12). A conservative shape (a
+sphere cut by a box) makes it never smaller than that union while keeping
+the sign exact. Sphere emitters under similarities reproduce the
+safety-scaled exact distance to the union of balls. Admission refuses a band
+without a finite ceiling at most `CONDENSATION_SOLID_MAX_DEPTH` (6), folds,
+graph-directed selection, hybrid schedules, any final but the identity, mesh
+emitters, and a map with `σ_max >= 1`. It admits kaleidoscope copies and
+per-map posts, folded into each edge's inverse.
+
+THE 4D HALF IS AN ARGUMENT, NOT A SECOND FIELD YET. A 4D emitter is a 3D
+solid embedded at local `w = 0`, a flat piece of 4D. A 3D slice meets a flat
+piece in zero volume unless the flat lies in the slice, so the only 4D pose
+holding a glass solid is the canonical one the C0 backend already admits.
+There the slice is exactly the 3D solid of the document's restriction. The
+4D form (the C0 penalty term per node) and the pose admission belong with
+the routing child.
+
+THE LOOK GATE (`scripts/condensation-glass.harness.ts`, through the shared
+`scripts/glass-preview.ts` renderer the sphere-inversion sheet now also uses,
+its PNGs byte-identical). 160 px, the transport oracle at the sheet's
+192-path budget and R/512 optical resolution:
+
+| Subject (Sierpinski corners + emitter) |                 Resolved | Paths/trace | Word nodes per evaluation (full tree)   | Look                               |
+| -------------------------------------- | -----------------------: | ----------: | --------------------------------------- | ---------------------------------- |
+| Glass beads (sphere), D2               |                     100% |        14.4 | 4.9 (21)                                | clean refracting pearls            |
+| Glass rings (torus), D2                |                    97.6% |        19.3 | 4.9 (21)                                | clean, a few unresolved rims       |
+| Gearworks (the shipped gear), D2       |                    52.3% |        47.6 | 3.8 (21)                                | black speckle across the gears     |
+| Glass beads, D0 / D1 / D2 / D3         | 100 / 99.9 / 100 / 99.9% |   11.2–16.5 | 1.0 / 3.0 / 4.9 / 7.4 (1 / 5 / 21 / 85) | the recursion reads at every level |
+
+Three findings:
+
+- ANALYTIC CURVED EMITTERS READ AS GLASS at every depth, resolving
+  essentially every hit. The branch-and-bound keeps the word search at a
+  small, slowly growing number of nodes per evaluation (7.4 of 85 at D3).
+- THE GEAR DOES NOT. 47.7% of its glass hits fail, `inside-miss` 3,439 of
+  them. The gear's SDF is conservative (a sector fold over an extruded
+  profile), and the closed-solid query's crossing band trusts the field as a
+  distance near walls. The membership gate removes most phantom crossings
+  (1.7 per trace) but not all. Which emitter shapes admit glass is therefore
+  a real admission question for the routing child: exact-SDF primitives
+  (sphere, box, torus, capsule) and their unions, or a gear-specific remedy.
+- THE LOOK IS THE OWNER'S CALL. These panels are the same register as the
+  approved sphere-inversion pearls, so the next children (the production
+  field's 4D form and admission, the WGSL mirror, routing and the panel)
+  should wait on the owner's look review of these two sheets.
+
 ## What is not yet qualified
 
 The backend and routing sections above record the current implementation;
