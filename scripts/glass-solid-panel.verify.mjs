@@ -46,6 +46,10 @@
  *      (the first kept under scripts/out/ for the owner's look review).
  *   7. The same flow one dimension up on the pentatope preset at depth 2
  *      (25 cells; "1 of 5"): the 4D half, native posed slice.
+ *   8. The owner's Menger document, Glass on maps 1 and 20 at depth 2.
+ *   Legs 6-8 are MIXED blocks, so each asserts the COMPOSITE route
+ *   (`finiteComposite` on the probe): the opaque maps render as the true
+ *   attractor under the glass cells (finite-composite-route.ts).
  *
  * A behavior gate: no timing rows, no screenshots, no appearance claims.
  * Exit 1 is a verdict failure; a browser/display failure says so (exit 2).
@@ -512,6 +516,11 @@ try {
   ) {
     fail(`the export dimensions read ${JSON.stringify(exports[0].dimensions)}`);
   }
+  mkdirSync("scripts/out", { recursive: true });
+  writeFileSync(
+    "scripts/out/glass-media-owner-glass.trace.txt",
+    [`hash ${glassHash}`, ...glassLeg.trace].join("\n"),
+  );
   log(
     `[owner-glass] export identity: ${exports[0].bytes} bytes ` +
       `${exports[0].dimensions?.width}x${exports[0].dimensions?.height} ` +
@@ -709,6 +718,13 @@ try {
         `${name}: optics backend read ${state.opticsBackend}, expected finiteSolid`,
       );
     }
+    // A mixed block renders its opaque maps as the attractor (the
+    // composite route, finite-composite-route.ts) — every leg here is mixed.
+    if (state.finiteComposite !== true) {
+      fail(
+        `${name}: the session did not take the composite route (finiteComposite=${state.finiteComposite})`,
+      );
+    }
     const legCensus = state.census;
     const covered = legCensus?.rays ? legCensus.covered / legCensus.rays : 0;
     if (covered < 0.05) {
@@ -725,12 +741,34 @@ try {
       fail(`${name}: ${message}`);
     }
     const lastToken = record.frames.at(-1)?.token;
-    const legTallies = record.frames
-      .filter((frame) => frame.token === lastToken)
-      .map((frame) => frame.tallies[0]);
+    const finalFrames = record.frames.filter(
+      (frame) => frame.token === lastToken,
+    );
+    const legTallies = finalFrames.map((frame) => frame.tallies[0]);
+    // Recorded, never gated: the settle's summed per-sample frame wall and
+    // its worst transport submission's GPU work (the watchdog question —
+    // every segment also marches the opaque term under the composite).
+    let token = null;
+    let worstTransportMs = 0;
+    for (const line of record.trace) {
+      const start = / frame start .*token=(\d+)/.exec(line);
+      if (start) token = Number(start[1]);
+      const work = /transport pass=\d+ .*workMs=([\d.]+)/.exec(line);
+      if (work && token === lastToken) {
+        worstTransportMs = Math.max(worstTransportMs, Number(work[1]));
+      }
+    }
+    record.settleWallMs = finalFrames.reduce(
+      (sum, frame) => sum + (frame.wallMs || 0),
+      0,
+    );
+    record.worstTransportMs = worstTransportMs;
     log(
       `[${name}] samples=${samples} rays=${legCensus?.rays} covered=${(covered * 100).toFixed(1)}% transport=` +
         JSON.stringify(legTallies.at(-1) ?? null),
+    );
+    log(
+      `[${name}] settle (summed sample walls) ${(record.settleWallMs / 1000).toFixed(2)} s; worst transport submission ${worstTransportMs.toFixed(1)} ms`,
     );
     // Export identity for the MIXED-MEDIA session (a glass subtree in front
     // of opaque ones), and the export kept for the owner's look review.
@@ -751,6 +789,12 @@ try {
     }
     mkdirSync("scripts/out", { recursive: true });
     writeFileSync(`scripts/out/glass-media-${name}.png`, shots[0].bytes);
+    // The leg's document and settle trace, for profiling a slow leg
+    // without rerunning the gate (regenerated, gitignored like the PNG).
+    writeFileSync(
+      `scripts/out/glass-media-${name}.trace.txt`,
+      [`hash ${hash}`, ...record.trace].join("\n"),
+    );
     log(
       `[${name}] export identity: ${shots[0].bytes.length} bytes sha ${shots[0].sha256.slice(0, 12)}… -> scripts/out/glass-media-${name}.png`,
     );
@@ -765,6 +809,10 @@ try {
     [0, 2],
   );
   await simplicialGlassLeg("pentatope-4d-glass", "pentatope", 2, 25, [0]);
+  // The owner's own document: the Menger maps with Glass on maps 1 and 20
+  // (two opposite corners) at depth 2 — under the composite the other 18
+  // maps render as the sponge itself, seen through the glass corners.
+  await simplicialGlassLeg("menger-corners-glass", "menger", 2, 400, [0, 19]);
 } catch (err) {
   checkingFailed = true;
   report.checkingFailure = err instanceof Error ? err.message : String(err);
