@@ -1757,8 +1757,8 @@ next section; the routing and panel are not built yet.
 ## The composite kernel (2026-09-24)
 
 The oracle above on the GPU: `finiteSolid.composite` on the finite general
-cores (`surface-finite-composite-gpu.ts`), in both dimensions. The app does
-not route to it yet.
+cores (`surface-finite-composite-gpu.ts`), in both dimensions. The app
+routes to it (next section).
 
 - **The descent is extracted, not restated.** The kernel generator builds
   the plain affine / affine4 shade kernel (`slabExt: false` in 4D; the
@@ -1827,9 +1827,79 @@ not route to it yet.
   On SwiftShader the composites compile in 12.7 s / 14.4 s, against
   6.5-8.6 s for the general kernels.
 
-- **Not yet measured:** the settle envelope, and whether the 32-path
-  transport quantum stays inside the 500 ms submission ceiling once every
-  segment also marches the opaque term. Both need a routed session.
+- **Measured once routed** (next section): the settle cost and the
+  32-path quantum's worst submission.
+
+## The composite route (2026-09-24)
+
+A general Glass solid (`{level}`) whose maps include BOTH a Glass map and
+an opaque one renders its opaque maps as the TRUE ATTRACTOR under the
+glass cells. `app/finite-composite-route.ts` decides it purely; main.ts's
+finite arm builds the attractor's `SurfaceDE` / `SurfaceDE4` from the same
+document, marks the general wire `glassOnly`, and hands the target a
+`composite` carrier, which the renderer bakes into the kernel's maps and
+packs into the opaque-descent block. `__surfaceState().finiteComposite`
+reports the route.
+
+- **The two ends keep the cells.** No glass map: the whole level-N solid
+  renders as opaque cells, unchanged — the block authors that solid, and
+  a document that wants the attractor alone is the ordinary Surface
+  render without the block; rerouting it would change the family behind
+  the panel. No opaque map: there is no attractor term (the kernel refuses
+  an empty branch table).
+- **One disclosed refusal.** The descent is the ordinary Surface render's,
+  so the route inherits that render's gate and its 24-map packing cap. A
+  block past either keeps its opaque maps as cells, and the session door
+  says so by toast; the Glass solid note says so for the map cap, which
+  is what the 48-map hyper-Menger hits.
+- **Depth is the attractor's.** The finite entry installed
+  `FINITE_SOLID_MAX_LEVEL` (4) as the session depth; the finite core
+  ignores it (its frozen block packs 0), but the composite's descent reads
+  it, and at depth 4 the attractor rendered as coarse sphere clusters. A
+  composite session installs the attractor's own `maxDepth` and certified
+  contraction, exactly as the ordinary IFS entries do (depth 14 on the
+  viewer's boot document, 9 on the Menger maps).
+- **The opaque march stops at the glass boundary.** It first marched to
+  the DOMAIN EXIT from every segment origin, so each short in-glass
+  segment marched the attractor across the whole solid, although only a
+  hit strictly before the walk's next boundary is a terminal. It now
+  stops there (the domain exit only on a walk miss), in the kernel and the
+  fixture alike. Every outcome the old march resolved is unchanged —
+  resolved counts were identical before and after on all three documents
+  — and a step-budget refusal past the boundary can no longer make a
+  path unresolved.
+
+THE COST (RX 7900 XTX, the Glass solid panel gate's 960x640 pane, eight
+antialias samples, summed sample walls; the cells column is the same
+documents with the composite forced off in a scratch build). The gate runs
+were quiet-certified; the A/B probe runs used the same otherwise idle
+machine between them, uncertified:
+
+| Document (Glass maps)        | cells  | composite, unbounded | composite |
+| ---------------------------- | ------ | -------------------- | --------- |
+| Menger L2 (maps 1, 20)       | 6.4 s  | 44.0 s               | 37.2 s    |
+| boot document L3 (maps 1, 3) | 60.9 s | 160.3 s              | 120.4 s   |
+| pentatope 4D L2 (map 1)      | 3.1 s  | 4.9 s                | 5.4 s     |
+
+Transport dominates (on Menger 3.1 s of a 4.7 s sample): every glass
+segment also marches the attractor, a descent per step. The worst
+transport submission read 262-277 ms on Menger and 45-58 ms on the boot
+document across runs, inside the 500 ms ceiling with the 32-path quantum
+unchanged. The final certified gate run (quiet, GPU busy 1%) settled
+Menger in 37.5 s, the boot document in 118.4 s and the pentatope in
+5.6 s, matching the probe column.
+Scaled by pixel-samples to the envelope's 512x288 four-sample settle
+(x0.12), Menger lands near 4.4 s and the boot document near 14 s — over
+the 10 s line, which the cells route (near 7 s) met. The settle stays
+progressive and interruptible, so nothing is refused; the preview tier is
+unmeasured.
+
+GATE: `scripts/glass-solid-panel.verify.mjs` legs 6-8 are mixed blocks
+(the boot document, the pentatope, and the owner's Menger document with
+Glass on maps 1 and 20) and assert `finiteComposite`, complete transport
+in every antialias sample and byte-identical Save-PNG pairs. Each leg keeps
+its PNG and settle trace under `scripts/out/` and logs its settle and
+worst transport submission (recorded, not gated).
 
 ## The finite routing (landed, 2026-09-19)
 

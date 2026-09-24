@@ -985,14 +985,14 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     alone (0..4) as the document's OWN maps' word tree (any contracting
     affine; root: an invariant hull simplex, else the invariant box; the
     prune rides level boxes; the 128-leaf cap refuses disclosed); the
-    hybrid DE shades. PER-MAP MEDIA: a Glass map's subtree is glass, the
-    rest opaque terminals; opaque owns overlaps.
-    Anchors snap to the clip's own planes (general: facet mask, envelope
-    scaled to the arithmetic, the anchor's own leaf exactly on-plane); a
-    split child's stale medium re-anchors once. One-cell anchor
-    differences fail agreement. Gates pin every AA sample, the copied
-    pose and export identity; the word tree's harness reference is an
-    independent simplex/box union, its Glass app gate seven legs.
+    hybrid DE shades. PER-MAP MEDIA: Glass maps' subtrees are glass
+    cells; beside them other maps render as the TRUE ATTRACTOR (the
+    composite kernel, <=24 maps), else opaque cells; opaque owns overlaps.
+    Anchors snap to the clip's planes (general: facet mask, envelope
+    scaled to the arithmetic, own leaf on-plane); a split child's stale
+    medium re-anchors once; one-cell anchor gaps fail agreement.
+    Gates pin every AA sample, copied pose and export identity; the word
+    tree's reference is an independent simplex/box union.
     Evidence: `docs/surface-dielectric-transport.md`.
   - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its
