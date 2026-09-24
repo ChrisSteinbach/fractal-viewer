@@ -207,6 +207,14 @@ export interface FiniteSolidBoundary {
   face: FiniteSolidFace;
   anchor: FiniteSolidAnchor;
   visits: number;
+  /** The general word tree's MEDIA transition (absent on the shaped
+   * grid): the medium code before and after the event
+   * (`FINITE_SOLID_MEDIUM_AIR`, a glass code >= 1, or
+   * `FINITE_SOLID_MEDIUM_OPAQUE`) and the branch — the top-level map —
+   * that owns the medium after it (-1 in air). */
+  fromMedium?: number;
+  toMedium?: number;
+  toBranch?: number;
 }
 
 export interface FiniteSolidMiss {
@@ -226,6 +234,10 @@ export interface FiniteSolidRefusal {
   kind: "refused";
   reason: FiniteSolidRefusalReason;
   visits: number;
+  /** On the general word tree's state-mismatch: the medium the GEOMETRY
+   * reads at the start — what a transport re-anchoring its split adopts
+   * (the corner class's one-query-deeper retry, medium-coded). */
+  geometryMedium?: number;
 }
 
 export type FiniteSolidBoundaryResult =
@@ -237,6 +249,15 @@ export interface FiniteSolidNextBoundaryOptions {
   tMin?: number;
   /** Only this same face may be suppressed, and only exactly at tMin. */
   previousFace?: FiniteSolidFace;
+}
+
+/** The general word tree's query options: the per-map `media` table
+ * (absent = every map glass code 1, the single-material solid) and the
+ * caller's claimed `medium` code, which replaces `inside` as the claim
+ * when media is present (`inside` stays required for the shared shape). */
+export interface FiniteSolidGeneralQueryOptions extends FiniteSolidNextBoundaryOptions {
+  media?: FiniteSolidGeneralMedia;
+  medium?: number;
 }
 
 /** The posed display: row-major world→intrinsic rows (the composed
@@ -1696,6 +1717,64 @@ export const FINITE_SOLID_GENERAL_SNAP_REL = 32 * 2 ** -23;
  * sit far above this; ulp-level twins (f64 ~1e-16, f32 ~1e-7) far below. */
 export const FINITE_SOLID_GENERAL_NORMAL_DEPENDENT_REL = 1e-3;
 
+/** The general word tree's MEDIA (per-map materials inside the glass
+ * solid). A leaf's material is its BRANCH's — the word's first map, the
+ * top-level subtree it belongs to (level 0's lone root cell is branch 0).
+ * `media[a]` is branch a's code: `FINITE_SOLID_MEDIUM_OPAQUE_MAP` (0) for
+ * an opaque map, else a GLASS code >= 1, equal codes meaning one material
+ * (so a crossing between two such subtrees is silent — equal IORs pass
+ * through). Absent media is every map glass code 1: the single-material
+ * solid, event for event. THE OWNER RULE partitions overlapping cells:
+ * any covering OPAQUE branch owns the point (opaque dominates — glass
+ * inside a wall is invisible anyway), else the LOWEST-INDEX covering glass
+ * branch does, else air. A deterministic partition is what makes every
+ * medium change a well-defined event. */
+export type FiniteSolidGeneralMedia = readonly number[];
+/** The per-map media code of an opaque map. */
+export const FINITE_SOLID_MEDIUM_OPAQUE_MAP = 0;
+/** The medium code of air (no covering leaf). */
+export const FINITE_SOLID_MEDIUM_AIR = 0;
+/** The medium code of an opaque region — past every glass code (at most
+ * FINITE_SOLID_GENERAL_MAX_MAPS) and u32-safe on the kernel wire. */
+export const FINITE_SOLID_MEDIUM_OPAQUE = 65535;
+
+/** The medium owning a point from its per-branch coverage counts (the
+ * owner rule above). */
+function generalMediumOf(
+  coverage: readonly number[],
+  media: FiniteSolidGeneralMedia | undefined,
+): { medium: number; branch: number } {
+  let glassBranch = -1;
+  for (let a = 0; a < coverage.length; a++) {
+    if (!(coverage[a] > 0)) continue;
+    const code = media ? media[a] : 1;
+    if (code === FINITE_SOLID_MEDIUM_OPAQUE_MAP) {
+      return { medium: FINITE_SOLID_MEDIUM_OPAQUE, branch: a };
+    }
+    if (glassBranch < 0) glassBranch = a;
+  }
+  if (glassBranch < 0) return { medium: FINITE_SOLID_MEDIUM_AIR, branch: -1 };
+  return { medium: media ? media[glassBranch] : 1, branch: glassBranch };
+}
+
+/** A media table must name every map with an integer code: 0 opaque or a
+ * glass code in 1..FINITE_SOLID_GENERAL_MAX_MAPS. */
+function validGeneralMedia(
+  c: FiniteSolidGeneralConstruction,
+  media: FiniteSolidGeneralMedia | undefined,
+): boolean {
+  return (
+    media === undefined ||
+    (media.length === c.mapCount &&
+      media.every(
+        (code) =>
+          Number.isInteger(code) &&
+          code >= 0 &&
+          code <= FINITE_SOLID_GENERAL_MAX_MAPS,
+      ))
+  );
+}
+
 /** The general construction: cells are the level-`level` images of the
  * root simplex under the document's own maps. Each map is a general
  * contracting affine baked row-major 4x4 (the 3D maps carry the w row and
@@ -2833,12 +2912,16 @@ function simplicialBoundaryEvent(
     t: number;
     before: number;
     after: number;
+    afterBranch: number;
     faces: Array<{ leaf: GeneralLeaf; mask: number }>;
   },
   t: number,
   visits: number,
 ): FiniteSolidBoundary | FiniteSolidRefusal {
-  const entering = group.after > 0;
+  // "Entering" is the medium after the event being anything but air: the
+  // outward normal then faces AGAINST the ray (an entry, a glass-to-glass
+  // interface, an opaque terminal), and along it on an exit into air.
+  const entering = group.after !== FINITE_SOLID_MEDIUM_AIR;
   const outwardNormal = simplicialBoundaryNormal(
     c,
     pose,
@@ -2947,6 +3030,9 @@ function simplicialBoundaryEvent(
       cellIndices,
     },
     visits,
+    fromMedium: group.before,
+    toMedium: group.after,
+    toBranch: group.afterBranch,
   };
 }
 
@@ -2965,10 +3051,11 @@ export function finiteSolidGeneralNextBoundary(
   pose: FiniteSolidPose,
   origin: Vec3,
   direction: Vec3,
-  options: FiniteSolidNextBoundaryOptions,
+  options: FiniteSolidGeneralQueryOptions,
 ): FiniteSolidBoundaryResult {
   if (
     !validGeneralConstruction(c) ||
+    !validGeneralMedia(c, options.media) ||
     typeof options.inside !== "boolean" ||
     !origin.every(Number.isFinite) ||
     !direction.every(Number.isFinite) ||
@@ -2996,9 +3083,18 @@ export function finiteSolidGeneralNextBoundaryFromAnchor(
   c: FiniteSolidGeneralConstruction,
   pose: FiniteSolidPose,
   direction: Vec3,
-  options: { inside: boolean; anchor: FiniteSolidAnchor },
+  options: {
+    inside: boolean;
+    anchor: FiniteSolidAnchor;
+    media?: FiniteSolidGeneralMedia;
+    medium?: number;
+  },
 ): FiniteSolidBoundaryResult {
-  if (!validGeneralConstruction(c) || !validGeneralAnchor(c, options.anchor)) {
+  if (
+    !validGeneralConstruction(c) ||
+    !validGeneralAnchor(c, options.anchor) ||
+    !validGeneralMedia(c, options.media)
+  ) {
     return { kind: "refused", reason: "invalid-input", visits: 0 };
   }
   if (
@@ -3012,6 +3108,8 @@ export function finiteSolidGeneralNextBoundaryFromAnchor(
     inside: options.inside,
     tMin: 0,
     anchor: options.anchor,
+    media: options.media,
+    medium: options.medium,
   });
 }
 
@@ -3020,7 +3118,7 @@ function finiteSolidGeneralNextBoundaryInternal(
   pose: FiniteSolidPose,
   origin: Vec3,
   direction: Vec3,
-  options: FiniteSolidNextBoundaryOptions & { anchor?: FiniteSolidAnchor },
+  options: FiniteSolidGeneralQueryOptions & { anchor?: FiniteSolidAnchor },
 ): FiniteSolidBoundaryResult {
   const anchor = options.anchor;
   const tMin = options.tMin ?? 0;
@@ -3091,9 +3189,14 @@ function finiteSolidGeneralNextBoundaryInternal(
   }
   // Endpoint sweep with the declared-resolution ties: consecutive
   // endpoints within the tie of a group's first endpoint are ONE boundary
-  // group. The union's coverage crosses zero exactly at a medium flip; a
-  // group with net zero (a shared face's exit tied with the neighbor's
-  // entry) is traversed silently.
+  // group. Coverage is counted PER BRANCH and the medium after each group
+  // is the owner rule's (generalMediumOf); an event is a MEDIUM CHANGE, so
+  // a group that leaves the medium unchanged (a shared face's exit tied
+  // with the neighbour's entry, an overlap's interior face, a crossing
+  // between equal-material glass subtrees) is traversed silently. Without
+  // media every branch is glass code 1 and this is the union's coverage
+  // crossing zero, exactly.
+  const media = options.media;
   const endpoints: GeneralEndpoint[] = [];
   for (const leaf of leaves) {
     endpoints.push({ t: leaf.enter, delta: 1, leaf, mask: leaf.enterMask });
@@ -3104,36 +3207,52 @@ function finiteSolidGeneralNextBoundaryInternal(
     t: number;
     before: number;
     after: number;
+    afterBranch: number;
     faces: Array<{ leaf: GeneralLeaf; mask: number }>;
   }
   const groups: GeneralGroup[] = [];
-  let coverage = 0;
+  const coverage = new Array<number>(c.mapCount).fill(0);
+  let medium: number = FINITE_SOLID_MEDIUM_AIR;
   let i = 0;
   while (i < endpoints.length) {
     const groupT = endpoints[i].t;
     const tie = generalTieAbs(groupT);
     const faces: Array<{ leaf: GeneralLeaf; mask: number }> = [];
-    let net = 0;
     while (i < endpoints.length && endpoints[i].t - groupT <= tie) {
-      net += endpoints[i].delta;
+      coverage[endpoints[i].leaf.word[0] ?? 0] += endpoints[i].delta;
       faces.push({ leaf: endpoints[i].leaf, mask: endpoints[i].mask });
       i++;
     }
-    const before = coverage;
-    coverage += net;
-    groups.push({ t: groupT, before, after: coverage, faces });
+    const before = medium;
+    const owner = generalMediumOf(coverage, media);
+    medium = owner.medium;
+    groups.push({
+      t: groupT,
+      before,
+      after: medium,
+      afterBranch: owner.branch,
+      faces,
+    });
   }
   // The state at tMin: the last group at or before it (within that
-  // group's tie); its after-coverage owns the point (half-open, the
+  // group's tie); its after-medium owns the point (half-open, the
   // entering side — the shipped ray-side convention).
   let startGroupIndex = -1;
   for (let g = 0; g < groups.length; g++) {
     if (groups[g].t <= tMin + generalTieAbs(groups[g].t)) startGroupIndex = g;
     else break;
   }
-  const stateAtStart = startGroupIndex >= 0 ? groups[startGroupIndex].after : 0;
-  const mediumInside = options.inside;
-  const stateMatches = stateAtStart > 0 === mediumInside;
+  const stateAtStart =
+    startGroupIndex >= 0
+      ? groups[startGroupIndex].after
+      : FINITE_SOLID_MEDIUM_AIR;
+  // The claim: a medium code when the caller carries one, else the
+  // single-material form's inside flag (glass code 1 / air).
+  const claimed =
+    options.medium ?? (options.inside ? 1 : FINITE_SOLID_MEDIUM_AIR);
+  const stateMatches = media
+    ? stateAtStart === claimed
+    : (stateAtStart !== FINITE_SOLID_MEDIUM_AIR) === options.inside;
   const startGroup = startGroupIndex >= 0 ? groups[startGroupIndex] : undefined;
   const atStartGroup =
     startGroup !== undefined &&
@@ -3142,18 +3261,25 @@ function finiteSolidGeneralNextBoundaryInternal(
     if (anchor || !atStartGroup) {
       // Off a boundary the claim must match the geometry; the anchored
       // continuation is the interior restart and takes no liberty with
-      // the claim at all.
-      return { kind: "refused", reason: "state-mismatch", visits: 0 };
+      // the claim at all. The geometry's own start medium rides the
+      // refusal for a transport re-anchoring its split.
+      return {
+        kind: "refused",
+        reason: "state-mismatch",
+        visits: 0,
+        geometryMedium: stateAtStart,
+      };
     }
     // The ray starts ON a boundary group with the claim anticipating the
-    // crossing (the display march's primary hit): emit the start event.
+    // crossing (the display march's primary hit): emit the start event,
+    // FROM the claimed medium.
     const event = simplicialBoundaryEvent(
       c,
       pose,
       q,
       qd,
       direction,
-      startGroup,
+      { ...startGroup, before: media ? claimed : startGroup.before },
       tMin,
       0,
     );
@@ -3166,18 +3292,13 @@ function finiteSolidGeneralNextBoundaryInternal(
     }
     return event;
   }
-  // Walk the groups after the start; the first zero-crossing of the
-  // coverage is the next medium flip. A tied group with net zero (an
-  // interior shared face) leaves the coverage unchanged and is traversed
-  // without an event.
+  // Walk the groups after the start; the first medium change is the next
+  // event.
   let visits = 0;
   for (let g = startGroupIndex + 1; g < groups.length; g++) {
     const group = groups[g];
     visits++;
-    const flips =
-      (group.before === 0 && group.after > 0) ||
-      (group.before > 0 && group.after === 0);
-    if (!flips) continue;
+    if (group.before === group.after) continue;
     const event = simplicialBoundaryEvent(
       c,
       pose,
@@ -3377,21 +3498,38 @@ export function finiteSolidGeneralOpticsRadius(
 
 /** Closed point membership in the level union — the primary ray's
  * ray-side state (a point on a shared face reads inside; the boundary
- * group's half-open sweep resolves the event either way). The same pruned
- * DFS as the walk: a node is skipped when the point lies outside its
- * word-image of the level box, a leaf tested against its own facets. */
+ * group's half-open sweep resolves the event either way). */
 export function finiteSolidGeneralContains(
   c: FiniteSolidGeneralConstruction,
   pose: FiniteSolidPose,
   p: Vec3,
 ): boolean {
+  return (
+    finiteSolidGeneralMediumAt(c, pose, p).medium !== FINITE_SOLID_MEDIUM_AIR
+  );
+}
+
+/** The medium owning a point, and its owning branch (-1 in air): the
+ * covering branches by closed membership — the same pruned DFS as the
+ * walk, a node skipped when the point lies outside its word-image of the
+ * level box, a leaf tested against its own facets — then the owner rule
+ * (`generalMediumOf`). The camera's claim and the hit's slot attribution
+ * both read this. */
+export function finiteSolidGeneralMediumAt(
+  c: FiniteSolidGeneralConstruction,
+  pose: FiniteSolidPose,
+  p: Vec3,
+  media?: FiniteSolidGeneralMedia,
+): { medium: number; branch: number } {
   const q = finiteSolidIntrinsicPoint(pose, p);
   const dimension = c.dimension;
+  const covered = new Array<number>(c.mapCount).fill(0);
   const inside = (facets: readonly GeneralFacet[] | null): boolean =>
     facets !== null &&
     facets.every((facet) => dotIntrinsic(facet.n, q, dimension) - facet.c <= 0);
   if (c.level === 0) {
-    return inside(facetsFromVertices(c.rootVertices, dimension));
+    if (inside(facetsFromVertices(c.rootVertices, dimension))) covered[0] = 1;
+    return generalMediumOf(covered, media);
   }
   const inBox = (box: { min: Vec4; max: Vec4 }, point: Vec4): boolean => {
     for (let axis = 0; axis < dimension; axis++) {
@@ -3401,8 +3539,9 @@ export function finiteSolidGeneralContains(
     }
     return true;
   };
-  if (!inBox(c.levelBoxes[c.level], q)) return false;
+  if (!inBox(c.levelBoxes[c.level], q)) return generalMediumOf(covered, media);
   const inverseMaps = finiteSolidGeneralInverseMaps(c);
+  // Whether some leaf of the subtree below this node contains the point.
   const walk = (
     matrix: number[],
     offset: Vec4,
@@ -3436,12 +3575,36 @@ export function finiteSolidGeneralContains(
     }
     return false;
   };
-  return walk(
-    identityMatrix4(),
-    [0, 0, 0, 0],
-    { m: identityMatrix4(), t: [0, 0, 0, 0] },
-    0,
-  );
+  // One walk per BRANCH (the branch's own subtree, prefix = its map), so
+  // the owner rule sees every covering branch.
+  for (let a = 0; a < c.mapCount; a++) {
+    const root = composeWordStep(identityMatrix4(), [0, 0, 0, 0], {
+      matrix: c.mapMatrix[a],
+      offset: c.mapOffset[a],
+    });
+    const rootInv = childInverse(inverseMaps[a].m, c.mapOffset[a], {
+      m: identityMatrix4(),
+      t: [0, 0, 0, 0],
+    });
+    if (c.level === 1) {
+      const vertices = c.rootVertices.map((v) => {
+        const image = applyMatrix4(root.matrix, v);
+        return [
+          image[0] + root.offset[0],
+          image[1] + root.offset[1],
+          image[2] + root.offset[2],
+          image[3] + root.offset[3],
+        ] as Vec4;
+      });
+      if (inside(facetsFromVertices(vertices, dimension))) covered[a] = 1;
+      continue;
+    }
+    const local = applyMatrix4(rootInv.m, q);
+    for (let axis = 0; axis < 4; axis++) local[axis] += rootInv.t[axis];
+    if (!inBox(c.levelBoxes[c.level - 1], local)) continue;
+    if (walk(root.matrix, root.offset, rootInv, 1)) covered[a] = 1;
+  }
+  return generalMediumOf(covered, media);
 }
 
 // ---------------------------------------------------------------------------
