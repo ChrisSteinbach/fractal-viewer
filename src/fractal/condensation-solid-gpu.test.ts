@@ -140,14 +140,20 @@ describe("the closed-solid kernel's condensationSolid option", () => {
     expect(shade4).toContain("fn csChild(e: u32, q: vec4f) -> CsChild {");
   });
 
-  it("splits the primary hit on the solid's own normal, not the display estimator's", () => {
-    // The display estimator is the IFS descent, not the band solid, and in
-    // 4D it reads zero inside the solid: its taps bent the primary child
-    // straight through (the 4D beads leg's measured divergence).
-    const shade = surfaceDeKernelWgsl(
+  it("hands the primary interface to the query instead of splitting at the march's hit", () => {
+    // A silhouette ray the display march accepts beside a bead it never
+    // enters was split there: its chord started outside the sphere, met
+    // the wall past the critical angle and circled by total internal
+    // reflection until the path capped. The signed query now owns the
+    // entry (a near-miss misses: background), in both dimensions.
+    for (const opts of [
+      solidOpts({ condensationSolid: wire3() }),
       solidOpts({ core: "affine4", condensationSolid: wire4() }),
-    );
-    expect(shade).toContain("let n0 = transportSolidNormal(origin, dir, eps);");
+    ]) {
+      const shade = surfaceDeKernelWgsl(opts);
+      expect(shade).toContain("primary.anchorPresent = 0u;");
+      expect(shade).not.toContain("the primary split (the march's own hit");
+    }
     const c0 = surfaceDeKernelWgsl(
       solidOpts({
         condensation: {
@@ -159,6 +165,18 @@ describe("the closed-solid kernel's condensationSolid option", () => {
     expect(c0).toContain(
       "let n0 = transportOpticalNormal(origin, dir, eps, li);",
     );
+  });
+
+  it("gates band crossings on a real sign flip of the curved solid's field", () => {
+    // The union's sub-eps gaps fire the band with no surface there; taken
+    // as crossings they flipped the medium (inside-miss, state-mismatch).
+    const shade = surfaceDeKernelWgsl(
+      solidOpts({ condensationSolid: wire3() }),
+    );
+    expect(shade).toContain(
+      "if (transportSolidContains(hitP + dir * (2.0 * eps)) == (inside == 1u)) {",
+    );
+    expect(shade).toContain("return transportSolidField(p) <= 0.0;");
   });
 
   it("leaves the emitter-only closed-solid emission byte-identical when absent", () => {

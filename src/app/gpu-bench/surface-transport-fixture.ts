@@ -93,6 +93,11 @@ export interface TransportFixtureSystem {
    * (the sphere-inversion family's Möbius normal — an A/B the kernel does
    * not ship). Null falls back to the taps. Absent is the kernel's rule. */
   normal?: (p: Vec3) => Vec3 | null;
+  /** The query owns the PRIMARY interface (the general curved solid's
+   * kernel rule): the trace starts with one unanchored outside path at the
+   * march's hit, whose miss is the rear scene, instead of splitting there.
+   * Absent is the split every other non-finite backend runs. */
+  ownsPrimary?: boolean;
 }
 
 export const TRANSPORT_QUERY_MAX_STEPS = 192;
@@ -611,9 +616,11 @@ export function transportTraceCPU(
     stack.push(child);
     return true;
   };
-  if (finiteQuery) {
+  if (finiteQuery || system.ownsPrimary) {
     // The finite path starts at the camera. Its exact boundary query owns
     // the primary interface and both children, as it does every later one.
+    // The general curved solid's starts at the march's hit (a silhouette
+    // near-miss the display march accepted then misses: background).
     push({
       origin: [...origin],
       dir: [...dir],
