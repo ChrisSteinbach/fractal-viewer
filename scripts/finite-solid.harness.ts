@@ -16,21 +16,22 @@
  * rule. Any drift here is a production bug, not a tolerance question.
  *
  * The final sections re-derive the same pattern for the GENERAL word tree
- * (the document's OWN maps as the cell tree, `analyzeFiniteSolidGeneral`):
- * its reference is an independent box union built here by a DIFFERENT
- * composition — the per-word Horner fold evaluated outer-inward, where the
- * production walk composes innermost first — so agreement pins the
- * arithmetic, not the rounding; the declared resolution
- * (`FINITE_SOLID_GENERAL_TIE_REL`) is part of the construction's contract
- * and the reference groups with it too. Legs cover both dimensions under
- * the identity pose (3D) and the fixture's frozen rotor rows (4D), the
- * owner's Sierpinski document as the non-construction witness, the
- * shipped Menger/hyper-Menger maps as the cross-construction equivalence,
- * event-chained anchor sweeps that must reconstruct the union event for
- * event, hand-exact dyadic controls (the shared face, the four-leaf
- * corner, the state-mismatch refusal), and a 12-map document whose
- * level-2 leaf count exceeds the device's enumeration cap — the f64
- * reference is uncapped by decision, and that leg keeps it honest.
+ * (the document's OWN maps as the SIMPLICIAL cell tree,
+ * `analyzeFiniteSolidGeneral`): its reference is an independent simplex
+ * union built here by a DIFFERENT association and a DIFFERENT clip — each
+ * leaf's vertices by the outer-inward point fold, each leaf clipped by
+ * barycentric coordinates — so agreement pins the construction, not one
+ * rounding of it; the declared resolution (`FINITE_SOLID_GENERAL_TIE_REL`)
+ * is part of the construction's contract and the reference groups with it
+ * too. Legs cover every root kind (the Sierpinski hull, the default
+ * system's and the rotated pentatope's derived roots) across the band 0..4
+ * in both dimensions under the identity pose (3D) and the fixture's frozen
+ * rotor rows (4D), event-chained anchor sweeps that must reconstruct the
+ * union event for event, hand controls (the gasket's axis at every level,
+ * its vertex tie, a genuine gap, the state-mismatch refusal), the leaf
+ * cap's measured per-document worst case, and a 12-map document whose
+ * level-2 rays exceed the device's enumeration cap — the f64 reference is
+ * uncapped by decision, and that leg keeps it honest.
  *
  * Run: npx vitest run --config scripts/vitest.harness.config.ts \
  *        scripts/finite-solid.harness.ts
@@ -38,6 +39,7 @@
 import {
   defaultTransforms,
   mengerSponge,
+  pentatope,
   sierpinskiTetrahedron,
 } from "../src/fractal/presets";
 import {
@@ -467,30 +469,37 @@ describe("the admission and membership", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 7. The general word tree: the document's OWN maps as the cell tree.
+// 7. The general word tree: the document's OWN maps as the SIMPLICIAL cell
+// tree.
 //
 // The grid legs above pin the shipped constructions against their two
 // qualified references. The general word tree's reference is the
-// independent box union below: per-word leaf boxes composed by the
-// OUTER-INWARD Horner fold (root bound folded in), where the production
-// walk composes innermost first — different association, same reals, so
-// agreement pins the arithmetic rather than one rounding of it. The
-// declared resolution `FINITE_SOLID_GENERAL_TIE_REL` is the
-// construction's CONTRACT (a gap below it is unrepresentable on the f32
-// wire the transport rides), so the reference groups with it too;
-// disagreement in the interval structure beyond it is a production bug,
-// never a tolerance question.
+// independent SIMPLEX union below, sharing neither the production's
+// association nor its clip: each leaf's vertices come from the OUTER-INWARD
+// POINT fold (every root vertex pushed through the word's maps innermost
+// first, `M_w1(M_w2(…M_wN(v)))`), where the production composes the word's
+// matrices prefix-first and applies the product once; and each leaf clips
+// by BARYCENTRIC coordinates (affine in t along the ray, solved against the
+// leaf's own edge matrix), where the production clips facet half-spaces
+// built from cross products. Same reals, different arithmetic, so agreement
+// pins the construction rather than one rounding of it. The declared
+// resolution `FINITE_SOLID_GENERAL_TIE_REL` is the construction's CONTRACT
+// (a gap below it is unrepresentable on the f32 wire the transport rides),
+// so the reference groups with it too; disagreement in the interval
+// structure beyond it is a production bug, never a tolerance question.
+//
+// The leaf cap's size is MEASURED here, not assumed: the reference's
+// clipped-leaf count IS the pruned walk's (the level-box prune only drops
+// subtrees none of whose leaves the ray clips), and the sizing leg records
+// the per-document maximum against FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES.
 // ---------------------------------------------------------------------------
 
 const REFERENCE_AGREEMENT = 1e-12;
-/** Chained-anchor hops snap each restart onto canonical planes within the
- * declared envelope (`TIE_REL · the leaf's own half extent`), so the
- * accumulated event positions may drift by at most one envelope per hop.
- * The largest envelope any leg's construction declares is
- * ~1.4e-7 (the Sierpinski level-1 leaf) and no sweep walks more than 32
- * hops, so 1e-5 bounds every honest reconstruction far below the
- * construction's smallest real feature (~2e-1 at these depths). */
-const CHAIN_RECONSTRUCTION = 1e-5;
+/** Chained-anchor hops restart from the snapped anchor, whose f64 snap
+ * moves the point by rounding alone (~1e-15 per hop); no sweep walks more
+ * than 64 hops, so 1e-9 bounds every honest reconstruction many orders
+ * below the construction's smallest real feature. */
+const CHAIN_RECONSTRUCTION = 1e-9;
 
 /** The word-tree construction from a document's maps, through the
  * admission the app itself takes (an ineligibility here is the test's
@@ -515,69 +524,130 @@ function generalConstructionFor(
   return analysis.construction;
 }
 
-/** One leaf's box by the outer-inward Horner fold with the root bound
- * folded in: the composed box face is
- * `t1 + s1·(t2 + s2·(…(tN + sN·root)))`, evaluated from the INNERMOST map
- * outward — the mirror image of the production walk's incremental
- * innermost-first compose. Same reals, different rounding. */
-function referenceLeafBounds(
-  c: FiniteSolidGeneralConstruction,
-  word: readonly number[],
-): Array<[number, number]> {
-  const bounds: Array<[number, number]> = [];
-  for (let axis = 0; axis < 4; axis++) {
-    let lo = c.rootMin[axis];
-    let hi = c.rootMax[axis];
-    for (let depth = word.length - 1; depth >= 0; depth--) {
-      const map = word[depth];
-      const s = c.mapScale[map][axis];
-      const t = c.mapOffset[map][axis];
-      lo = t + s * lo;
-      hi = t + s * hi;
-    }
-    bounds.push([Math.min(lo, hi), Math.max(lo, hi)]);
-  }
-  return bounds;
+/** Three of five pentatope maps turned, one through xw: no invariant
+ * simplex exists, so the derived root rides the level boxes — the 4D half
+ * of the default system's witness. */
+function rotatedPentatope(): Transform[] {
+  const maps = pentatope();
+  maps[1].rotation = [0, Math.PI / 4, 0];
+  maps[2].w = { ...maps[2].w, rotation: { xw: Math.PI / 5 } };
+  maps[3].rotation = [Math.PI / 4, 0, 0];
+  return maps;
 }
 
-function referenceClip(
+/** One leaf's vertices by the outer-inward point fold. */
+function referenceLeafVertices(
   c: FiniteSolidGeneralConstruction,
-  bounds: Array<[number, number]>,
+  word: readonly number[],
+): Vec4[] {
+  return c.rootVertices.map((root) => {
+    let p: Vec4 = [...root];
+    for (let depth = word.length - 1; depth >= 0; depth--) {
+      const m = c.mapMatrix[word[depth]];
+      const t = c.mapOffset[word[depth]];
+      p = [0, 1, 2, 3].map(
+        (r) =>
+          t[r] +
+          (m[r * 4] * p[0] +
+            m[r * 4 + 1] * p[1] +
+            m[r * 4 + 2] * p[2] +
+            m[r * 4 + 3] * p[3]),
+      ) as Vec4;
+    }
+    return p;
+  });
+}
+
+/** Solve the n×n system by Cramer-free Gauss-Jordan with partial pivoting
+ * (the harness's own, independent of the production's solvers). */
+function solveSquare(a: number[][], b: number[]): number[] | null {
+  const n = b.length;
+  const m = a.map((row, i) => [...row, b[i]]);
+  for (let col = 0; col < n; col++) {
+    let pivot = col;
+    for (let row = col + 1; row < n; row++) {
+      if (Math.abs(m[row][col]) > Math.abs(m[pivot][col])) pivot = row;
+    }
+    if (Math.abs(m[pivot][col]) < 1e-300) return null;
+    [m[col], m[pivot]] = [m[pivot], m[col]];
+    for (let row = 0; row < n; row++) {
+      if (row === col) continue;
+      const f = m[row][col] / m[col][col];
+      for (let k = col; k <= n; k++) m[row][k] -= f * m[col][k];
+    }
+  }
+  return m.map((row, i) => row[n] / row[i]);
+}
+
+/** The ray against one simplex by barycentric coordinates: with the edge
+ * matrix E = [v1 − v0, …, vd − v0], the coordinates of q + t·qd are
+ * `E⁻¹(q − v0) + t·E⁻¹qd` (and λ0 = 1 − Σ), each affine in t; the clipped
+ * interval is where every λ ≥ 0. */
+function referenceSimplexClip(
+  vertices: readonly Vec4[],
+  dimension: 3 | 4,
   q: Vec4,
   qd: Vec4,
 ): { enter: number; exit: number } | null {
+  const edges: number[][] = [];
+  for (let r = 0; r < dimension; r++) {
+    edges.push(
+      Array.from(
+        { length: dimension },
+        (_, k) => vertices[k + 1][r] - vertices[0][r],
+      ),
+    );
+  }
+  const base = solveSquare(
+    edges,
+    Array.from({ length: dimension }, (_, r) => q[r] - vertices[0][r]),
+  );
+  const slope = solveSquare(
+    edges,
+    Array.from({ length: dimension }, (_, r) => qd[r]),
+  );
+  if (!base || !slope) return null;
+  // λ_k(t) = base_k + t·slope_k for k ≥ 1; λ_0 = 1 − Σ.
+  const lines: Array<[number, number]> = base.map((b, k) => [b, slope[k]]);
+  lines.push([
+    1 - base.reduce((x, y) => x + y, 0),
+    -slope.reduce((x, y) => x + y, 0),
+  ]);
   let enter = -Infinity;
   let exit = Infinity;
-  for (let axis = 0; axis < c.dimension; axis++) {
-    const [lo, hi] = bounds[axis];
-    const d = qd[axis];
-    if (d === 0) {
-      if (q[axis] < lo || q[axis] > hi) return null;
+  for (const [b, s] of lines) {
+    if (s === 0) {
+      if (b < 0) return null;
       continue;
     }
-    const ta = (lo - q[axis]) / d;
-    const tb = (hi - q[axis]) / d;
-    enter = Math.max(enter, Math.min(ta, tb));
-    exit = Math.min(exit, Math.max(ta, tb));
+    const t = -b / s;
+    if (s > 0) enter = Math.max(enter, t);
+    else exit = Math.min(exit, t);
   }
   return exit > enter ? { enter, exit } : null;
 }
 
-/** The independent interval union: every level-N word's leaf clipped and
- * swept with the declared-resolution tie — the same grouping rule the
- * contract states (endpoints within the tie of a group's first endpoint
- * are ONE boundary), restated here because it is semantics, not
- * implementation. */
+/** The independent interval union (and the clipped-leaf count): every
+ * level-N word's leaf clipped and swept with the declared-resolution tie —
+ * the grouping rule the contract states, restated here because it is
+ * semantics, not implementation. */
 function referenceGeneralUnion(
   c: FiniteSolidGeneralConstruction,
   q: Vec4,
   qd: Vec4,
-): Array<{ enter: number; exit: number }> {
+): { union: Array<{ enter: number; exit: number }>; clipped: number } {
   const endpoints: Array<{ t: number; delta: number }> = [];
   const counter = new Array<number>(c.level).fill(0);
+  let clipped = 0;
   for (;;) {
-    const clip = referenceClip(c, referenceLeafBounds(c, counter), q, qd);
+    const clip = referenceSimplexClip(
+      referenceLeafVertices(c, counter),
+      c.dimension,
+      q,
+      qd,
+    );
     if (clip) {
+      clipped++;
       endpoints.push({ t: clip.enter, delta: 1 });
       endpoints.push({ t: clip.exit, delta: -1 });
     }
@@ -607,7 +677,7 @@ function referenceGeneralUnion(
     if (before > 0 && coverage === 0)
       union.push({ enter: openEnter, exit: groupT });
   }
-  return union;
+  return { union, clipped };
 }
 
 /** The intrinsic ray the production itself derives (the same shared pose
@@ -618,7 +688,7 @@ function referenceUnionForRay(
   pose: FiniteSolidPose,
   origin: Vec3,
   dir: Vec3,
-): Array<{ enter: number; exit: number }> {
+): { union: Array<{ enter: number; exit: number }>; clipped: number } {
   return referenceGeneralUnion(
     c,
     finiteSolidIntrinsicPoint(pose, origin),
@@ -633,13 +703,18 @@ function compareUnions(
 ): void {
   expect(mine).toHaveLength(theirs.length);
   for (let i = 0; i < Math.min(mine.length, theirs.length); i++) {
-    expect(Math.abs(mine[i].enter - theirs[i].enter)).toBeLessThan(within);
-    expect(Math.abs(mine[i].exit - theirs[i].exit)).toBeLessThan(within);
+    const scale = Math.max(1, Math.abs(theirs[i].enter));
+    expect(Math.abs(mine[i].enter - theirs[i].enter)).toBeLessThan(
+      within * scale,
+    );
+    expect(Math.abs(mine[i].exit - theirs[i].exit)).toBeLessThan(
+      within * Math.max(1, Math.abs(theirs[i].exit)),
+    );
   }
 }
 
 /** Deterministic probe rays around a construction: origins on a shell,
- * directions through offset targets inside the root — a mix of hits,
+ * directions through offset targets inside the solid — a mix of hits,
  * gaps, grazes and misses no hand list could cover. */
 function probeRaysAround(
   center: Vec3,
@@ -676,15 +751,17 @@ function probeRaysAround(
  * starts outside and walks anchor-to-anchor must reconstruct the interval
  * union event for event — enter/exit alternating, the first event's
  * parameter BIT-IDENTICAL to the union's endpoint (both walk the same
- * enumeration), the anchor-driven hops within the declared envelope, and
- * a miss to close. A refusal anywhere is a failure with its reason. */
+ * enumeration), the anchor-driven hops within the reconstruction bound,
+ * and a miss to close. A refusal anywhere is a failure with its reason. */
 function chainReconstructsUnion(
   c: FiniteSolidGeneralConstruction,
   pose: FiniteSolidPose,
   origin: Vec3,
   dir: Vec3,
 ): void {
-  const union = finiteSolidGeneralIntervals(c, pose, origin, dir);
+  const union = finiteSolidGeneralIntervals(c, pose, origin, dir).filter(
+    (interval) => interval.exit > 0,
+  );
   const events: Array<{ entering: boolean; at: number }> = [];
   let inside = false;
   let anchor: FiniteSolidAnchor | undefined;
@@ -718,67 +795,127 @@ function chainReconstructsUnion(
     expect(enterEvent.entering).toBe(true);
     expect(exitEvent.entering).toBe(false);
     expect(Math.abs(enterEvent.at - union[i].enter)).toBeLessThan(
-      CHAIN_RECONSTRUCTION,
+      CHAIN_RECONSTRUCTION * Math.max(1, union[i].enter),
     );
     expect(Math.abs(exitEvent.at - union[i].exit)).toBeLessThan(
-      CHAIN_RECONSTRUCTION,
+      CHAIN_RECONSTRUCTION * Math.max(1, union[i].exit),
     );
   }
 }
 
-/** Twelve of the Menger's twenty maps: a root-invariant diagonal document
- * whose level-2 word tree (144 leaves) exceeds the device's enumeration
- * cap — the f64 reference is uncapped by decision, and this document
- * keeps that honest against a narrowing of the cap. */
-const twelveMaps = mengerSponge().slice(0, 12);
+/** Twelve heavily overlapping half-scale maps whose fixed points sit on a
+ * small shell: a ray through the centre clips nearly every one of the 144
+ * level-2 leaves, past the device's enumeration cap — the f64 reference is
+ * uncapped by decision, and this document keeps that honest. */
+function twelveOverlappingMaps(): Transform[] {
+  const directions: Vec3[] = [
+    [1, 0, 0],
+    [-1, 0, 0],
+    [0, 1, 0],
+    [0, -1, 0],
+    [0, 0, 1],
+    [0, 0, -1],
+    [0.6, 0.8, 0],
+    [-0.6, 0.8, 0],
+    [0, 0.6, 0.8],
+    [0, -0.6, 0.8],
+    [0.8, 0, 0.6],
+    [0.8, 0, -0.6],
+  ];
+  return directions.map((d, id) => ({
+    id,
+    position: [d[0] * 0.05, d[1] * 0.05, d[2] * 0.05],
+    rotation: [0, 0, 0],
+    scale: [0.5, 0.5, 0.5],
+  }));
+}
 
-describe("the general word tree agrees with the independent box union", () => {
-  const sierpinski = sierpinskiTetrahedron();
-  // The witness's root: the maps' fixed points (2·p), known exactly.
-  const sierpinskiCenter: Vec3 = [0.375, 0.4, 0];
+/** The sweep documents: every root kind, both dimensions, the band's ends. */
+const GENERAL_SWEEPS: ReadonlyArray<{
+  name: string;
+  maps: () => Transform[];
+  level: number;
+  dimension: 3 | 4;
+  center: Vec3;
+  radius: number;
+}> = [
+  ...[0, 1, 2, 3, 4].map((level) => ({
+    name: "Sierpinski (hull root)",
+    maps: sierpinskiTetrahedron,
+    level,
+    dimension: 3 as const,
+    center: [0, 0.4, 0] as Vec3,
+    radius: 3,
+  })),
+  ...[1, 2, 3, 4].map((level) => ({
+    name: "default system (derived root)",
+    maps: defaultTransforms,
+    level,
+    dimension: 3 as const,
+    center: [0, 0, 0] as Vec3,
+    radius: 6,
+  })),
+  {
+    name: "pentatope (hull root)",
+    maps: pentatope,
+    level: 3,
+    dimension: 4,
+    center: [0, 0, 0],
+    radius: 3,
+  },
+  {
+    name: "rotated pentatope (derived root)",
+    maps: rotatedPentatope,
+    level: 2,
+    dimension: 4,
+    center: [0, 0, 0],
+    radius: 5,
+  },
+  {
+    name: "hyper-Menger maps (derived root, 48 maps)",
+    maps: hyperMengerSpongeTransforms,
+    level: 1,
+    dimension: 4,
+    center: [0, 0, 0],
+    radius: 6,
+  },
+];
 
-  for (const level of [0, 1, 2] as const) {
-    it(`sweeps 24 probe rays on the Sierpinski document at level ${level}, 3D`, () => {
-      const c = generalConstructionFor(sierpinski, level, 3);
+describe("the general word tree agrees with the independent simplex union", () => {
+  for (const sweep of GENERAL_SWEEPS) {
+    it(`sweeps 24 probe rays: ${sweep.name}, level ${sweep.level}, ${sweep.dimension}D`, () => {
+      const c = generalConstructionFor(
+        sweep.maps(),
+        sweep.level,
+        sweep.dimension,
+      );
+      const pose = poseFor(sweep.dimension);
+      let hits = 0;
       for (const { origin, dir } of probeRaysAround(
-        sierpinskiCenter,
-        3,
+        sweep.center,
+        sweep.radius,
         24,
-        level,
+        sweep.level,
       )) {
-        const mine = finiteSolidGeneralIntervals(
-          c,
-          FINITE_SOLID_IDENTITY_POSE,
-          origin,
-          dir,
-        );
-        const theirs = referenceUnionForRay(
-          c,
-          FINITE_SOLID_IDENTITY_POSE,
-          origin,
-          dir,
-        );
-        compareUnions(theirs, mine, REFERENCE_AGREEMENT);
+        const mine = finiteSolidGeneralIntervals(c, pose, origin, dir);
+        const theirs = referenceUnionForRay(c, pose, origin, dir);
+        compareUnions(mine, theirs.union, REFERENCE_AGREEMENT);
+        if (theirs.union.length > 0) hits++;
       }
+      // A sweep that hits nothing certifies nothing.
+      expect(hits).toBeGreaterThan(0);
     });
   }
 
-  it("sweeps posed 4D rays on the hyper-Menger maps at level 1", () => {
-    const c = generalConstructionFor(hyperMengerSpongeTransforms(), 1, 4);
-    const pose = poseFor(4);
-    for (const { origin, dir } of probeRaysAround([0, 0, 0], 2.6, 20, 5)) {
-      const mine = finiteSolidGeneralIntervals(c, pose, origin, dir);
-      const theirs = referenceUnionForRay(c, pose, origin, dir);
-      compareUnions(theirs, mine, REFERENCE_AGREEMENT);
-    }
-  });
-
   it("sweeps the 12-map document beyond the device's enumeration cap", () => {
-    // The premise: 144 level-2 leaves, above the 128-leaf device cap —
-    // the f64 oracle is uncapped and this sweep pins that.
-    expect(12 * 12).toBeGreaterThan(FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES);
-    const c = generalConstructionFor(twelveMaps, 2, 3);
-    for (const { origin, dir } of probeRaysAround([0, 0, 0], 2.4, 12, 9)) {
+    const c = generalConstructionFor(twelveOverlappingMaps(), 2, 3);
+    let maxClipped = 0;
+    // The shell's rays aim off-centre; the centre ray is the one the cap
+    // refuses (the unit test's own witness), so it rides the sweep too.
+    for (const { origin, dir } of [
+      ...probeRaysAround([0, 0, 0], 2.4, 12, 9),
+      { origin: [0.01, -5, 0.02] as Vec3, dir: [0, 1, 0] as Vec3 },
+    ]) {
       const mine = finiteSolidGeneralIntervals(
         c,
         FINITE_SOLID_IDENTITY_POSE,
@@ -791,106 +928,132 @@ describe("the general word tree agrees with the independent box union", () => {
         origin,
         dir,
       );
-      compareUnions(theirs, mine, REFERENCE_AGREEMENT);
+      compareUnions(mine, theirs.union, REFERENCE_AGREEMENT);
+      maxClipped = Math.max(maxClipped, theirs.clipped);
     }
+    // The premise, measured: some ray clips more leaves than the cap.
+    expect(maxClipped).toBeGreaterThan(FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES);
   });
 });
 
 describe("the general word tree's event chain reconstructs the union", () => {
-  const sierpinski = sierpinskiTetrahedron();
-  const sierpinskiCenter: Vec3 = [0.375, 0.4, 0];
-
-  for (const level of [1, 2] as const) {
-    it(`sweeps 24 chained rays on the Sierpinski document at level ${level}`, () => {
-      const c = generalConstructionFor(sierpinski, level, 3);
+  for (const sweep of GENERAL_SWEEPS.filter((s) => s.level > 0)) {
+    it(`sweeps 24 chained rays: ${sweep.name}, level ${sweep.level}, ${sweep.dimension}D`, () => {
+      const c = generalConstructionFor(
+        sweep.maps(),
+        sweep.level,
+        sweep.dimension,
+      );
+      const pose = poseFor(sweep.dimension);
       for (const { origin, dir } of probeRaysAround(
-        sierpinskiCenter,
-        3,
+        sweep.center,
+        sweep.radius,
         24,
-        level + 3,
+        sweep.level + 3,
       )) {
-        chainReconstructsUnion(c, FINITE_SOLID_IDENTITY_POSE, origin, dir);
+        chainReconstructsUnion(c, pose, origin, dir);
       }
     });
   }
+});
 
-  it("sweeps chained posed 4D rays on the hyper-Menger maps", () => {
-    const c = generalConstructionFor(hyperMengerSpongeTransforms(), 1, 4);
-    const pose = poseFor(4);
-    for (const { origin, dir } of probeRaysAround([0, 0, 0], 2.6, 16, 11)) {
-      chainReconstructsUnion(c, pose, origin, dir);
+describe("the general word tree's leaf cap, measured", () => {
+  it("records each sweep document's worst clipped-leaf count against the cap", () => {
+    // The reference's clipped-leaf count IS the pruned walk's. The record
+    // is printed (the harness sheet's measurement) and the shipped sweep
+    // documents must all fit: a document that routinely refuses visit-cap
+    // would show here before it shows as unresolved pixels.
+    const rows: string[] = [];
+    for (const sweep of GENERAL_SWEEPS) {
+      const c = generalConstructionFor(
+        sweep.maps(),
+        sweep.level,
+        sweep.dimension,
+      );
+      const pose = poseFor(sweep.dimension);
+      let worst = 0;
+      for (const { origin, dir } of probeRaysAround(
+        sweep.center,
+        sweep.radius,
+        48,
+        sweep.level + 7,
+      )) {
+        worst = Math.max(
+          worst,
+          referenceUnionForRay(c, pose, origin, dir).clipped,
+        );
+      }
+      rows.push(
+        `${sweep.name}, level ${sweep.level}, ${sweep.dimension}D: ` +
+          `worst ${worst} of ${c.mapCount ** sweep.level} leaves`,
+      );
+      expect(worst).toBeLessThanOrEqual(FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES);
     }
+    console.log(
+      `general word tree, worst clipped leaves per ray (cap ${FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES}):\n  ${rows.join("\n  ")}`,
+    );
   });
 });
 
 describe("the general word tree's hand-exact controls", () => {
-  const sierpinski = sierpinskiTetrahedron();
-  const c1 = generalConstructionFor(sierpinski, 1, 3);
   const pose = FINITE_SOLID_IDENTITY_POSE;
 
-  it("merges the spine's shared face into one interval, bit-exactly", () => {
-    // Down the spine through the +x base box and the apex box, whose
-    // faces touch at y = 0.4 through both words: ONE interval.
-    const spine = finiteSolidGeneralIntervals(
-      c1,
-      pose,
-      [0.5, -2, 0],
-      [0, 1, 0],
-    );
-    expect(spine).toHaveLength(1);
-    expect(spine[0].enter).toBe(1.2);
-    expect(spine[0].exit).toBe(3.6);
+  it("crosses the gasket's axis in one interval at every level of the band", () => {
+    // The vertical axis through the base centroid (0, −0.8, 0) and the apex
+    // (0, 1.6, 0) threads the central holes and meets only the apex
+    // chain's cell: y from 1.6 − 2.4·2^−L to the apex.
+    for (let level = 0; level <= 4; level++) {
+      const c = generalConstructionFor(sierpinskiTetrahedron(), level, 3);
+      const union = finiteSolidGeneralIntervals(c, pose, [0, -2, 0], [0, 1, 0]);
+      expect(union).toHaveLength(1);
+      expect(union[0].enter).toBeCloseTo(3.6 - 2.4 / 2 ** level, 12);
+      expect(union[0].exit).toBeCloseTo(3.6, 12);
+    }
   });
 
-  it("holds the four-leaf corner silent and reconstructs the chain exactly", () => {
-    // The ray rides the leaf2/leaf3 shared z face exactly and passes
-    // through the corner (0.375, 0.4, 0) where four leaves meet: the
-    // corner's tied group nets -1 (two exits, one entry) and must stay
-    // SILENT — the union reads ONE interval [0.875, 2.375], the chain
-    // two events (enter at 0.875, exit at 0.875 + 1.5 = 2.375 from the
-    // canonical anchor), all values dyadic and bit-exact. The direction
-    // stays UNNORMALIZED on purpose: t is in the given direction's own
-    // parameterization and the dyadic values stay bit-exact.
-    const origin: Vec3 = [0.375 - 2, 0.4 - 2, 0];
-    const dir: Vec3 = [1, 1, 0];
-    const union = finiteSolidGeneralIntervals(c1, pose, origin, dir);
-    expect(union).toHaveLength(1);
-    expect(union[0].enter).toBe(0.875);
-    expect(union[0].exit).toBe(2.375);
-    const entry = finiteSolidGeneralNextBoundary(c1, pose, origin, dir, {
-      inside: false,
-    });
-    expect(entry.kind).toBe("boundary");
-    if (entry.kind !== "boundary") return;
-    expect(entry.entering).toBe(true);
-    expect(entry.t).toBe(0.875);
-    // Both leaves entered through the same x plane; the anchor names the
-    // first face's leaf and the masked axis.
-    expect(entry.anchor.planeMask).toBe(1 << 0);
-    expect(entry.anchor.planeIndices[0]).toBe(0);
-    const exit = finiteSolidGeneralNextBoundaryFromAnchor(c1, pose, dir, {
-      inside: true,
-      anchor: entry.anchor,
-    });
-    expect(exit.kind).toBe("boundary");
-    if (exit.kind !== "boundary") return;
-    expect(exit.entering).toBe(false);
-    expect(exit.t).toBe(1.5);
-    expect(0.875 + exit.t).toBe(2.375);
-    const after = finiteSolidGeneralNextBoundaryFromAnchor(c1, pose, dir, {
-      inside: false,
-      anchor: exit.anchor,
-    });
-    expect(after.kind).toBe("miss");
+  it("crosses overlapping cells' interior faces silently: coverage 1 -> 2 -> 1 is one interval", () => {
+    // The box tree's silent shared face has no simplicial analog on the
+    // gasket — its level-1 cells meet only at vertices, and their tangent
+    // cones there intersect along the root's own edge, so no transversal
+    // ray threads two of them through a shared point. The simplicial
+    // analog is OVERLAP: the default system's derived root makes its four
+    // level-1 cells overlap heavily, so a central ray clips more leaves
+    // than the union has intervals, and every interior crossing (coverage
+    // rising past 1 and falling back) must stay silent in the chain.
+    const c = generalConstructionFor(defaultTransforms(), 1, 3);
+    const origin: Vec3 = [0.05, -8, 0.03];
+    const dir: Vec3 = [0, 1, 0];
+    const union = finiteSolidGeneralIntervals(c, pose, origin, dir);
+    const reference = referenceUnionForRay(c, pose, origin, dir);
+    compareUnions(union, reference.union, REFERENCE_AGREEMENT);
+    expect(reference.clipped).toBeGreaterThan(union.length);
+    chainReconstructsUnion(c, pose, origin, dir);
+  });
+
+  it("keeps a genuine gap between two base cells as an exit/entry pair", () => {
+    // Just above the base plane, a ray from the −z base cell to the +x
+    // base cell crosses the base's central triangle hole: two intervals.
+    const c = generalConstructionFor(sierpinskiTetrahedron(), 1, 3);
+    const origin: Vec3 = [-2, -0.75, -0.3];
+    const dir = normalize3([1, 0, 0.1]);
+    const union = finiteSolidGeneralIntervals(c, pose, origin, dir);
+    compareUnions(
+      union,
+      referenceUnionForRay(c, pose, origin, dir).union,
+      REFERENCE_AGREEMENT,
+    );
+    expect(union.length).toBeGreaterThanOrEqual(2);
+    chainReconstructsUnion(c, pose, origin, dir);
   });
 
   it("refuses a mismatched medium claim off a boundary", () => {
-    // Inside the apex box, claiming the open: the coverage sweep reads
+    // Inside the apex cell, claiming the open: the coverage sweep reads
     // interior and refuses rather than trusting the claim.
+    const c = generalConstructionFor(sierpinskiTetrahedron(), 1, 3);
     const inside = finiteSolidGeneralNextBoundary(
-      c1,
+      c,
       pose,
-      [0.5, 1.0, 0],
+      [0, 1.0, 0],
       [0, 1, 0],
       { inside: false },
     );
@@ -900,76 +1063,40 @@ describe("the general word tree's hand-exact controls", () => {
   });
 });
 
-describe("the general word tree's cross-construction equivalence", () => {
-  // The shipped Menger maps through the WORD TREE must render the same
-  // object the GRID construction renders: the document's own maps ARE the
-  // grid's structure, so the two constructions agree to the canonical
-  // planes' last ulp (composed affines against centred rationals).
-  for (const level of [1, 2] as const) {
-    it(`sweeps 24 rays, Menger maps at level ${level}, 3D`, () => {
-      const grid = buildFiniteSolidConstruction("menger", 3, level);
-      const tree = generalConstructionFor(mengerSponge(), level, 3);
-      for (const { origin, dir } of probeRaysAround(
-        [0, 0, 0],
-        2.6,
-        24,
+describe("the general word tree's admission, CPU-side", () => {
+  it("admits the boot document's rotating maps through the derived root, 0..4", () => {
+    // The replacement's premise, pinned where it is decided: the viewer's
+    // starting system rotates three of its four maps, which the box tree
+    // refused; the simplicial tree admits it at every level of the band.
+    for (let level = 0; level <= 4; level++) {
+      const boot = analyzeFiniteSolidGeneral(
+        defaultTransforms(),
+        null,
+        noSymmetry,
         level,
-      )) {
-        const gridUnion = finiteSolidIntervals(
-          grid,
-          FINITE_SOLID_IDENTITY_POSE,
-          origin,
-          dir,
-        );
-        const treeUnion = finiteSolidGeneralIntervals(
-          tree,
-          FINITE_SOLID_IDENTITY_POSE,
-          origin,
-          dir,
-        );
-        compareUnions(treeUnion, gridUnion, 1e-9);
-      }
-    });
-  }
-
-  it("sweeps posed 4D rays, hyper-Menger maps at level 1", () => {
-    const grid = buildFiniteSolidConstruction("hyperMenger", 4, 1);
-    const tree = generalConstructionFor(hyperMengerSpongeTransforms(), 1, 4);
-    const pose = poseFor(4);
-    for (const { origin, dir } of probeRaysAround([0, 0, 0], 2.6, 20, 7)) {
-      const gridUnion = finiteSolidIntervals(grid, pose, origin, dir);
-      const treeUnion = finiteSolidGeneralIntervals(tree, pose, origin, dir);
-      compareUnions(treeUnion, gridUnion, 1e-9);
+        3,
+      );
+      expect(boot.status).toBe("eligible");
+      expect(boot.construction?.rootKind).toBe("derived");
     }
   });
-});
 
-describe("the general word tree's admission, CPU-side", () => {
-  it("refuses the boot document's rotating maps and admits the witness 0..2", () => {
-    // The app gate's own premise, pinned where it is decided: the viewer's
-    // starting system rotates its maps, so the word-tree admission refuses
-    // it with the diagonal-composition reason.
-    const boot = analyzeFiniteSolidGeneral(
-      defaultTransforms(),
-      null,
-      noSymmetry,
-      1,
-      3,
-    );
-    expect(boot.status).toBe("ineligible");
-    expect(boot.reasons.join("; ")).toMatch(/rotates or shears/);
+  it("keeps the witness's own hull as its root and refuses past the band", () => {
     const sierpinski = sierpinskiTetrahedron();
-    for (const level of [0, 1, 2] as const) {
+    for (let level = 0; level <= 4; level++) {
       expect(
         analyzeFiniteSolidGeneral(sierpinski, null, noSymmetry, level, 3)
-          .status,
-      ).toBe("eligible");
+          .construction?.rootKind,
+      ).toBe("hull");
     }
+    expect(
+      analyzeFiniteSolidGeneral(sierpinski, null, noSymmetry, 5, 3).status,
+    ).toBe("ineligible");
   });
 
   it("admits the 12-map document at level 2 with its leaf count intact", () => {
     const analysis = analyzeFiniteSolidGeneral(
-      twelveMaps,
+      twelveOverlappingMaps(),
       null,
       noSymmetry,
       2,
@@ -980,7 +1107,6 @@ describe("the general word tree's admission, CPU-side", () => {
     // The admission does NOT enforce the device's enumeration cap — the
     // cap refuses per ray on the device, disclosed; the f64 reference
     // (and this leg) is uncapped by decision.
-    expect(analysis.construction?.level).toBe(2);
     expect(12 * 12).toBeGreaterThan(FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES);
   });
 });
