@@ -258,6 +258,22 @@ export interface FiniteSolidNextBoundaryOptions {
 export interface FiniteSolidGeneralQueryOptions extends FiniteSolidNextBoundaryOptions {
   media?: FiniteSolidGeneralMedia;
   medium?: number;
+  /** The GLASS-ONLY walk (requires `media`): only the glass branches'
+   * subtrees are cells — an opaque map's words drop out at the tree's first
+   * level, so the medium is a glass code or air and never opaque. The
+   * composite trace's glass half: opaque content is the attractor there,
+   * marched by its own estimator (`finite-solid-composite.ts`). */
+  glassOnly?: boolean;
+}
+
+/** The first-level keep predicate a glass-only walk reads (null = every
+ * branch). Level 0's lone root cell is branch 0. */
+function generalBranchKeep(
+  media: FiniteSolidGeneralMedia | undefined,
+  glassOnly: boolean | undefined,
+): ((branch: number) => boolean) | null {
+  if (!glassOnly || !media) return null;
+  return (branch) => media[branch] !== FINITE_SOLID_MEDIUM_OPAQUE_MAP;
 }
 
 /** The posed display: row-major world→intrinsic rows (the composed
@@ -2591,6 +2607,7 @@ function enumerateGeneralLeaves(
   qd: Vec4,
   cap: number,
   anchor?: FiniteSolidAnchor,
+  keep: ((branch: number) => boolean) | null = null,
 ): GeneralLeaf[] | null {
   const leaves: GeneralLeaf[] = [];
   const dimension = c.dimension;
@@ -2623,6 +2640,7 @@ function enumerateGeneralLeaves(
     depth: number,
   ): boolean => {
     for (let a = 0; a < c.mapCount; a++) {
+      if (depth === 0 && keep && !keep(a)) continue;
       const step = composeWordStep(matrix, offset, {
         matrix: c.mapMatrix[a],
         offset: c.mapOffset[a],
@@ -2717,7 +2735,7 @@ function enumerateGeneralLeaves(
   };
   if (c.level === 0) {
     const facets = cellFacets(c, identityFrame());
-    if (!facets) return leaves;
+    if (!facets || (keep && !keep(0))) return leaves;
     const clip = clipGeneralCell(facets, dimension, q, qd, onPlaneMask([]));
     if (clip) {
       leaves.push({
@@ -2758,10 +2776,12 @@ function enumerateAllSimplicialLeaves(
   c: FiniteSolidGeneralConstruction,
   q: Vec4,
   qd: Vec4,
+  keep: ((branch: number) => boolean) | null = null,
 ): GeneralLeaf[] {
   const leaves: GeneralLeaf[] = [];
   const word: number[] = new Array<number>(c.level).fill(0);
   const clipWord = (w: readonly number[]): void => {
+    if (keep && !keep(w.length === 0 ? 0 : w[0])) return;
     const facets = cellFacets(c, generalLeafFrames(c, w));
     if (!facets) return;
     const clip = clipGeneralCell(facets, c.dimension, q, qd);
@@ -2801,10 +2821,16 @@ export function finiteSolidGeneralIntervals(
   pose: FiniteSolidPose,
   origin: Vec3,
   dir: Vec3,
+  glassOnly?: { media: FiniteSolidGeneralMedia },
 ): Array<{ enter: number; exit: number }> {
   const q = finiteSolidIntrinsicPoint(pose, origin);
   const qd = finiteSolidIntrinsicDirection(pose, dir);
-  const leaves = enumerateAllSimplicialLeaves(c, q, qd);
+  const leaves = enumerateAllSimplicialLeaves(
+    c,
+    q,
+    qd,
+    generalBranchKeep(glassOnly?.media, glassOnly !== undefined),
+  );
   const endpoints: Array<{ t: number; delta: number }> = [];
   for (const leaf of leaves) {
     endpoints.push({ t: leaf.enter, delta: 1 });
@@ -3120,6 +3146,7 @@ export function finiteSolidGeneralNextBoundary(
   if (
     !validGeneralConstruction(c) ||
     !validGeneralMedia(c, options.media) ||
+    (options.glassOnly === true && options.media === undefined) ||
     typeof options.inside !== "boolean" ||
     !origin.every(Number.isFinite) ||
     !direction.every(Number.isFinite) ||
@@ -3152,12 +3179,18 @@ export function finiteSolidGeneralNextBoundaryFromAnchor(
     anchor: FiniteSolidAnchor;
     media?: FiniteSolidGeneralMedia;
     medium?: number;
+    glassOnly?: boolean;
   },
 ): FiniteSolidBoundaryResult {
+  const keep = generalBranchKeep(options.media, options.glassOnly);
   if (
     !validGeneralConstruction(c) ||
     !validGeneralAnchor(c, options.anchor) ||
-    !validGeneralMedia(c, options.media)
+    !validGeneralMedia(c, options.media) ||
+    (options.glassOnly === true && options.media === undefined) ||
+    // A glass-only anchor names a glass leaf: an opaque branch's word has
+    // no cell in that walk.
+    (keep !== null && !keep(c.level === 0 ? 0 : options.anchor.cellIndices[0]))
   ) {
     return { kind: "refused", reason: "invalid-input", visits: 0 };
   }
@@ -3174,6 +3207,7 @@ export function finiteSolidGeneralNextBoundaryFromAnchor(
     anchor: options.anchor,
     media: options.media,
     medium: options.medium,
+    glassOnly: options.glassOnly,
   });
 }
 
@@ -3245,7 +3279,14 @@ function finiteSolidGeneralNextBoundaryInternal(
     c.mapCount ** c.level,
     FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES,
   );
-  const leaves = enumerateGeneralLeaves(c, q, qd, leafCap, anchor);
+  const leaves = enumerateGeneralLeaves(
+    c,
+    q,
+    qd,
+    leafCap,
+    anchor,
+    generalBranchKeep(options.media, options.glassOnly),
+  );
   if (!leaves) {
     // The pruned enumeration overflowed its cap: a disclosed refusal —
     // never a truncation.
@@ -3420,14 +3461,16 @@ export function finiteSolidGeneralDisplayDistance(
   c: FiniteSolidGeneralConstruction,
   pose: FiniteSolidPose,
   p: Vec3,
+  glassOnly?: { media: FiniteSolidGeneralMedia },
 ): number {
   const q = finiteSolidIntrinsicPoint(pose, p);
   const dimension = c.dimension;
+  const keep = generalBranchKeep(glassOnly?.media, glassOnly !== undefined);
   const safety = (value: number): number =>
     value > 0 ? value * SHAPE_MARCH_SAFETY : value;
   if (c.level === 0) {
     const facets = cellFacets(c, identityFrame());
-    if (!facets) return 1e30;
+    if (!facets || (keep && !keep(0))) return 1e30;
     return safety(simplexSdf(facets, dimension, q));
   }
   // The branch stage: the word-images of levelBoxes[level − 1] — every
@@ -3439,6 +3482,7 @@ export function finiteSolidGeneralDisplayDistance(
   const tau = finiteSolidGeneralRefineTau(c);
   let result = Infinity;
   for (let a = 0; a < c.mapCount; a++) {
+    if (keep && !keep(a)) continue;
     const inv = inverseMaps[a];
     const d = orientedBoxSdf(
       inv.m,
@@ -3584,7 +3628,9 @@ export function finiteSolidGeneralMediumAt(
   pose: FiniteSolidPose,
   p: Vec3,
   media?: FiniteSolidGeneralMedia,
+  glassOnly = false,
 ): { medium: number; branch: number } {
+  const keep = generalBranchKeep(media, glassOnly);
   const q = finiteSolidIntrinsicPoint(pose, p);
   const dimension = c.dimension;
   const covered = new Array<number>(c.mapCount).fill(0);
@@ -3592,7 +3638,9 @@ export function finiteSolidGeneralMediumAt(
     facets !== null &&
     facets.every((facet) => dotIntrinsic(facet.n, q, dimension) - facet.c <= 0);
   if (c.level === 0) {
-    if (inside(cellFacets(c, identityFrame()))) covered[0] = 1;
+    if ((!keep || keep(0)) && inside(cellFacets(c, identityFrame()))) {
+      covered[0] = 1;
+    }
     return generalMediumOf(covered, media);
   }
   const inBox = (box: { min: Vec4; max: Vec4 }, point: Vec4): boolean => {
@@ -3635,6 +3683,7 @@ export function finiteSolidGeneralMediumAt(
   // One walk per BRANCH (the branch's own subtree, prefix = its map), so
   // the owner rule sees every covering branch.
   for (let a = 0; a < c.mapCount; a++) {
+    if (keep && !keep(a)) continue;
     const root = composeWordStep(identityMatrix4(), [0, 0, 0, 0], {
       matrix: c.mapMatrix[a],
       offset: c.mapOffset[a],
