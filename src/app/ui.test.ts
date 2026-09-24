@@ -5553,6 +5553,41 @@ describe("Ui finish editor", () => {
       }
     });
 
+    it("keeps a non-head transform's rows live under a general Glass solid, which reads every map", () => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      ui.renderTransformList(two, 1, null);
+      ui.renderTransformEditor(two[1], 1, 2);
+      ui.setSurfaceEligibility(
+        "degraded",
+        "Word-tree render",
+        "finiteSolid",
+        null,
+        undefined,
+        true,
+      );
+
+      expect(finishInputsDisabled().every((disabled) => !disabled)).toBe(true);
+      expect(finishNote().classList.contains("hidden")).toBe(true);
+    });
+
+    it("disables a non-head transform's rows under a shaped glass preset, naming the preset rule", () => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      ui.renderTransformList(two, 1, null);
+      ui.renderTransformEditor(two[1], 1, 2);
+      ui.setSurfaceEligibility(
+        "degraded",
+        "Finite-solid render",
+        "finiteSolid",
+      );
+
+      expect(finishInputsDisabled().every((disabled) => disabled)).toBe(true);
+      expect(finishNote().textContent).toMatch(
+        /Glass presets shade every cell/,
+      );
+    });
+
     it("keeps the head transform's rows live on the same document", () => {
       const ui = new Ui(document);
       ui.bind(noopHandlers());

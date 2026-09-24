@@ -2247,6 +2247,8 @@ describe("the finite-solid route", () => {
     );
     expect(result.status).toBe("degraded");
     expect(result.kind).toBe("finiteSolid");
+    // The general block shades every map with its own material.
+    expect(result.perMapMaterials).toBe(true);
   });
 
   it("refuses a general block without WebGPU compute", () => {

@@ -36,10 +36,12 @@
  *      shipped byte-identical path serving the preset's own construction).
  *   6. Glass on the viewer's own ROTATING boot document (the box tree
  *      refused it; the simplicial tree's derived root admits it) at depth
- *      3, authored from the panel on the HEAD map alone — under the per-map
- *      media a MIXED session, one glass subtree in front of three opaque
- *      ones: routed, the 64-cell depth note, the section note's "1 of 4
- *      maps are Glass", the finiteSolid optics backend LIVE, complete
+ *      3, Glass authored from the panel on the head map AND the third map
+ *      (the bundle must be ENABLED at each pick — a non-head map's Finish
+ *      was once refused under the general block) — under the per-map media
+ *      a MIXED session, two glass subtrees and two opaque: routed, the
+ *      64-cell depth note, the section note's "2 of 4 maps are Glass", the
+ *      finiteSolid optics backend LIVE, complete
  *      transport in every antialias sample, two Save-PNGs byte for byte
  *      (the first kept under scripts/out/ for the owner's look review).
  *   7. The same flow one dimension up on the pentatope preset at depth 2
@@ -572,7 +574,7 @@ try {
   // (the block, then Glass on the head map through the Finish bundle),
   // rebooted on the authored hash, and gated on the word tree's own optics
   // backend LIVE with complete transport in every antialias sample.
-  const simplicialGlassLeg = async (name, preset, depth, cells) => {
+  const simplicialGlassLeg = async (name, preset, depth, cells, glassMaps) => {
     const record = leg(name);
     record.trace = [];
     await boot();
@@ -603,41 +605,64 @@ try {
     }
     await page.click("#transformsSection > summary");
     await page.waitForTimeout(300);
-    await page.evaluate(() => {
-      document.getElementById("transformList").children[1].click();
-    });
-    await page.waitForTimeout(300);
-    await page.evaluate(() => {
-      const details = [
-        ...document.querySelectorAll("#transformEditor > details"),
-      ].find(
-        (d) => d.querySelector("summary")?.textContent?.trim() === "Finish",
-      );
-      if (details && !details.open) details.querySelector("summary")?.click();
-    });
-    await page.waitForTimeout(200);
-    await page.evaluate(() => {
-      const bundle = document.querySelector("#transformEditor .finish-bundle");
-      bundle.value = "glass";
-      bundle.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    await page.waitForTimeout(500);
+    // Glass on each listed map (list row = map index + 1; row 0 is the
+    // camera card). The bundle must be ENABLED at the pick: a scripted
+    // value write succeeds on a disabled select, so without this check the
+    // gate could not see a panel that refuses non-head maps (the owner's
+    // report — the general Glass solid reads every map's material).
+    for (const mapIndex of glassMaps) {
+      await page.evaluate((row) => {
+        document.getElementById("transformList").children[row].click();
+      }, mapIndex + 1);
+      await page.waitForTimeout(300);
+      await page.evaluate(() => {
+        const details = [
+          ...document.querySelectorAll("#transformEditor > details"),
+        ].find(
+          (d) => d.querySelector("summary")?.textContent?.trim() === "Finish",
+        );
+        if (details && !details.open) details.querySelector("summary")?.click();
+      });
+      await page.waitForTimeout(200);
+      const pickable = await page.evaluate(() => {
+        const bundle = document.querySelector(
+          "#transformEditor .finish-bundle",
+        );
+        if (!bundle || bundle.disabled) return false;
+        bundle.value = "glass";
+        bundle.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      });
+      if (!pickable) {
+        fail(
+          `${name}: map ${mapIndex + 1}'s Finish bundle is disabled at the Glass pick`,
+        );
+      }
+      await page.waitForTimeout(500);
+    }
     const authoredDoc = await decodeHash();
     if (JSON.stringify(authoredDoc?.finiteSolid) !== `{"level":${depth}}`) {
       fail(
         `${name}: the document carries ${JSON.stringify(authoredDoc?.finiteSolid)}, expected {level:${depth}}`,
       );
     }
-    if (authoredDoc?.transforms?.[0]?.optics?.model !== "dielectric") {
-      fail(`${name}: Glass did not land on the head map`);
+    const glassIndices = (authoredDoc?.transforms ?? [])
+      .map((t, i) => (t.optics?.model === "dielectric" ? i : -1))
+      .filter((i) => i >= 0);
+    if (JSON.stringify(glassIndices) !== JSON.stringify(glassMaps)) {
+      fail(
+        `${name}: Glass landed on maps ${JSON.stringify(glassIndices)}, expected ${JSON.stringify(glassMaps)}`,
+      );
     }
-    // The per-map media: Glass on the head map ALONE makes its own subtree
-    // glass and every other subtree opaque — the section note counts it.
+    // The per-map media: the listed maps' subtrees are glass and every
+    // other subtree opaque — the section note counts them.
     const mapCount = (authoredDoc?.transforms ?? []).length;
     const mediaNote = await page.evaluate(
       () => document.getElementById("glassSolidNote").textContent,
     );
-    if (!mediaNote.includes(`1 of ${mapCount} maps are Glass`)) {
+    if (
+      !mediaNote.includes(`${glassMaps.length} of ${mapCount} maps are Glass`)
+    ) {
       fail(
         `${name}: the section note did not count the glass maps: "${mediaNote}"`,
       );
@@ -732,8 +757,14 @@ try {
   };
   // The boot system is the "default" preset ("Twisted Tetrahedron"); load
   // it explicitly — a boot restores the previous leg's saved scene.
-  await simplicialGlassLeg("rotating-boot-document-glass", "default", 3, 64);
-  await simplicialGlassLeg("pentatope-4d-glass", "pentatope", 2, 25);
+  await simplicialGlassLeg(
+    "rotating-boot-document-glass",
+    "default",
+    3,
+    64,
+    [0, 2],
+  );
+  await simplicialGlassLeg("pentatope-4d-glass", "pentatope", 2, 25, [0]);
 } catch (err) {
   checkingFailed = true;
   report.checkingFailure = err instanceof Error ? err.message : String(err);
