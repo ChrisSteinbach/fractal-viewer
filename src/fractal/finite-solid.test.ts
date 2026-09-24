@@ -2,6 +2,8 @@ import {
   FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES,
   FINITE_SOLID_HALF_EXTENT,
   FINITE_SOLID_IDENTITY_POSE,
+  FINITE_SOLID_MEDIUM_AIR,
+  FINITE_SOLID_MEDIUM_OPAQUE,
   analyzeFiniteSolidGeneral,
   analyzeFiniteSolidSystem,
   buildFiniteSolidConstruction,
@@ -16,6 +18,7 @@ import {
   finiteSolidGeneralContains,
   finiteSolidGeneralDisplayDistance,
   finiteSolidGeneralIntervals,
+  finiteSolidGeneralMediumAt,
   finiteSolidGeneralNextBoundary,
   finiteSolidGeneralNextBoundaryFromAnchor,
   finiteSolidGridPlane,
@@ -1168,5 +1171,194 @@ describe("finite-solid general walk", () => {
         [0, 1, 0],
       ),
     ).toHaveLength(1);
+  });
+});
+
+describe("finite-solid general media (per-map materials)", () => {
+  /** Chain medium-coded events along a ray, continuing THROUGH opaque
+   * (a test walk: the transport terminates there, the geometry does not),
+   * and check every segment's midpoint medium against the chain's. */
+  const checkChain = (
+    c: FiniteSolidGeneralConstruction,
+    media: number[],
+    origin: Vec3,
+    dir: Vec3,
+  ): { events: number; opaqueHits: number } => {
+    const pose = FINITE_SOLID_IDENTITY_POSE;
+    const at = (t: number) =>
+      finiteSolidGeneralMediumAt(
+        c,
+        pose,
+        [
+          origin[0] + t * dir[0],
+          origin[1] + t * dir[1],
+          origin[2] + t * dir[2],
+        ],
+        media,
+      );
+    let medium = at(0).medium;
+    let result = finiteSolidGeneralNextBoundary(c, pose, origin, dir, {
+      inside: medium !== FINITE_SOLID_MEDIUM_AIR,
+      media,
+      medium,
+    });
+    let t = 0;
+    let events = 0;
+    let opaqueHits = 0;
+    for (let hop = 0; hop < 256; hop++) {
+      if (result.kind === "refused") {
+        throw new Error(`refused ${result.reason} at hop ${hop}`);
+      }
+      if (result.kind === "miss") {
+        expect(medium).toBe(FINITE_SOLID_MEDIUM_AIR);
+        return { events, opaqueHits };
+      }
+      expect(result.fromMedium).toBe(medium);
+      expect(result.toMedium).not.toBe(medium);
+      // The medium strictly between the previous event and this one.
+      if (result.t > 1e-6) {
+        expect(at(t + result.t / 2).medium).toBe(medium);
+      }
+      t += result.t;
+      events++;
+      medium = result.toMedium ?? -1;
+      if (medium === FINITE_SOLID_MEDIUM_OPAQUE) {
+        opaqueHits++;
+        expect(media[result.toBranch ?? -1]).toBe(0);
+      }
+      result = finiteSolidGeneralNextBoundaryFromAnchor(c, pose, dir, {
+        inside: medium !== FINITE_SOLID_MEDIUM_AIR,
+        anchor: result.anchor,
+        media,
+        medium,
+      });
+    }
+    throw new Error("runaway chain");
+  };
+
+  it("walks mixed glass/opaque media event for event against the point medium, both dimensions", () => {
+    for (const [maps, level, dimension, media] of [
+      [defaultTransforms(), 3, 3, [1, 0, 1, 0]],
+      [defaultTransforms(), 2, 3, [1, 2, 0, 2]],
+      [rotatedPentatope(), 2, 4, [0, 1, 1, 2, 0]],
+    ] as const) {
+      const c = analyzeFiniteSolidGeneral(
+        maps,
+        null,
+        noSymmetry,
+        level,
+        dimension,
+      ).construction;
+      if (!c) throw new Error("construction missing");
+      const rng = mulberry32(29);
+      const radius = finiteSolidGeneralBoundingRadius(c);
+      let opaque = 0;
+      let events = 0;
+      for (let i = 0; i < 24; i++) {
+        const [origin, dir] = sampledRay(rng, radius);
+        const chain = checkChain(c, [...media], origin, dir);
+        opaque += chain.opaqueHits;
+        events += chain.events;
+      }
+      // The sweep must actually exercise the opaque class.
+      expect(opaque).toBeGreaterThan(0);
+      expect(events).toBeGreaterThan(opaque);
+    }
+  });
+
+  it("reproduces the single-material solid exactly when every map shares one glass code", () => {
+    const c = analyzeFiniteSolidGeneral(
+      defaultTransforms(),
+      null,
+      noSymmetry,
+      3,
+      3,
+    ).construction;
+    if (!c) throw new Error("construction missing");
+    const rng = mulberry32(31);
+    const radius = finiteSolidGeneralBoundingRadius(c);
+    for (let i = 0; i < 24; i++) {
+      const [origin, dir] = sampledRay(rng, radius);
+      const inside = finiteSolidGeneralContains(
+        c,
+        FINITE_SOLID_IDENTITY_POSE,
+        origin,
+      );
+      const plain = finiteSolidGeneralNextBoundary(
+        c,
+        FINITE_SOLID_IDENTITY_POSE,
+        origin,
+        dir,
+        { inside },
+      );
+      const coded = finiteSolidGeneralNextBoundary(
+        c,
+        FINITE_SOLID_IDENTITY_POSE,
+        origin,
+        dir,
+        { inside, media: [3, 3, 3, 3], medium: inside ? 3 : 0 },
+      );
+      expect(coded.kind).toBe(plain.kind);
+      if (coded.kind === "boundary" && plain.kind === "boundary") {
+        expect(coded.t).toBe(plain.t);
+        expect(coded.outwardNormal).toEqual(plain.outwardNormal);
+        expect(coded.anchor).toEqual(plain.anchor);
+      }
+    }
+  });
+
+  it("lets an opaque branch own the points it shares with glass", () => {
+    const c = analyzeFiniteSolidGeneral(
+      defaultTransforms(),
+      null,
+      noSymmetry,
+      1,
+      3,
+    ).construction;
+    if (!c) throw new Error("construction missing");
+    // The derived root makes the level-1 cells overlap: somewhere a point
+    // is covered by both branch 0 (glass) and branch 1 (opaque).
+    const rng = mulberry32(37);
+    let shared = 0;
+    for (let i = 0; i < 4000 && shared === 0; i++) {
+      const p: Vec3 = [rng() * 4 - 2, rng() * 4 - 2, rng() * 4 - 2];
+      const glassOnly = finiteSolidGeneralMediumAt(
+        c,
+        FINITE_SOLID_IDENTITY_POSE,
+        p,
+        [1, 1, 1, 1],
+      );
+      const zeroGlass = finiteSolidGeneralMediumAt(
+        c,
+        FINITE_SOLID_IDENTITY_POSE,
+        p,
+        [1, 0, 1, 1],
+      );
+      if (glassOnly.branch === 0 && zeroGlass.branch === 1) {
+        expect(zeroGlass.medium).toBe(FINITE_SOLID_MEDIUM_OPAQUE);
+        shared++;
+      }
+    }
+    expect(shared).toBe(1);
+  });
+
+  it("refuses a media table that does not name every map", () => {
+    const c = analyzeFiniteSolidGeneral(
+      defaultTransforms(),
+      null,
+      noSymmetry,
+      1,
+      3,
+    ).construction;
+    if (!c) throw new Error("construction missing");
+    expect(
+      finiteSolidGeneralNextBoundary(
+        c,
+        FINITE_SOLID_IDENTITY_POSE,
+        [0, -8, 0],
+        [0, 1, 0],
+        { inside: false, media: [1, 0], medium: 0 },
+      ),
+    ).toMatchObject({ kind: "refused", reason: "invalid-input" });
   });
 });
