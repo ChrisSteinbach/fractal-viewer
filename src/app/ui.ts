@@ -89,6 +89,7 @@ import type {
 } from "../fractal/types";
 import { clone3, to255 } from "../fractal/vec";
 import { FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES } from "../fractal/surface-finite-solid-gpu";
+import { SURFACE_GPU_UNIFORM_MAP_SLOTS } from "../fractal/surface-de-gpu";
 import type { Preset } from "../fractal/presets";
 import {
   isLatticeTilingSpec,
@@ -658,9 +659,15 @@ function glassSolidGeneralNote(transforms: readonly Transform[]): string {
   const active = transforms.filter((t) => (t.weight ?? 1) > 0);
   const glass = active.filter((t) => t.optics?.model === "dielectric").length;
   const limit = "Maps must be plain contracting affines.";
+  // The composite route (finite-composite-route.ts): opaque maps render as
+  // the attractor, except past the attractor render's map cap.
+  const rest =
+    active.length > SURFACE_GPU_UNIFORM_MAP_SLOTS
+      ? `the rest render as opaque cells (over ${String(SURFACE_GPU_UNIFORM_MAP_SLOTS)} maps)`
+      : "the rest render as the fractal itself";
   return glass === 0
-    ? `No map is Glass, so the solid renders opaque; set a map's Finish to Glass. ${limit}`
-    : `${String(glass)} of ${String(active.length)} maps are Glass; the rest render opaque behind them. ${limit}`;
+    ? `No map is Glass, so the solid renders as opaque cells; set a map's Finish to Glass. ${limit}`
+    : `${String(glass)} of ${String(active.length)} maps are Glass; ${rest}. ${limit}`;
 }
 const GLASS_SOLID_SHAPED_NOTE =
   "The glass preset authors this exact construction; the depth control stays read-only.";

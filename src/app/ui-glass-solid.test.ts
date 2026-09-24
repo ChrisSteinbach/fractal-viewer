@@ -82,6 +82,18 @@ describe("Glass solid section", () => {
     expect(el("glassSolidDepthNote").textContent).toContain("refuse");
   });
 
+  it("says the opaque maps of a mixed block render as the fractal", () => {
+    const ui = new Ui(document);
+    const transforms = mengerSponge();
+    transforms[0] = { ...transforms[0], optics: { model: "dielectric" } };
+
+    ui.updateLabels(glassState({ level: 1 }, transforms));
+
+    expect(el("glassSolidNote").textContent).toContain(
+      "1 of 20 maps are Glass; the rest render as the fractal itself",
+    );
+  });
+
   it("reads a shaped block as a checked, disabled, disclosed construction", () => {
     const ui = new Ui(document);
 
