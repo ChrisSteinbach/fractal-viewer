@@ -357,8 +357,11 @@ export const SPHERE_INVERSION_SLAB_REFUSAL =
  * copies are not the construction), a shape trap, and a hybrid schedule
  * (the B maps would move the subject off the bare construction); refused
  * outright by the analyzer — kaleidoscopes above order 1, warping finals,
- * per-map variations/emitters/posts/chaos rows, and (general) maps that
- * rotate, shear or fail to contract. COMPOSES — the ground plane, authored
+ * per-map variations/emitters/chaos rows (shaped blocks also refuse
+ * posts), and (general) maps that fail to contract or collapse a
+ * direction, or whose fixed points span less than the scene's dimension —
+ * the general word tree admits rotations, shears and post-affines.
+ * COMPOSES — the ground plane, authored
  * finishes on the head map (the kernels' one shade slot), and the optical
  * transport through the finite DDA backend. ENGINE: WebGPU compute only —
  * no fragment arm exists for the finite cores (the escape4 verdict one

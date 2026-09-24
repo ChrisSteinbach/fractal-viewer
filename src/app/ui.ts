@@ -652,7 +652,7 @@ const FOG_FOUR_D_BALLOON_REASON =
  * flow through the Surface eligibility note); a shaped block is the glass
  * presets' authored construction and stays read-only here. */
 const GLASS_SOLID_GENERAL_NOTE =
-  "Every map must contract and stay axis-aligned; rotated or sheared maps refuse until the oriented-frame lift.";
+  "Every map must be a plain contracting affine: rotations, shears and posts build; variations and non-contracting maps refuse.";
 const GLASS_SOLID_SHAPED_NOTE =
   "The glass preset authors this exact construction; the depth control stays read-only.";
 
@@ -661,13 +661,13 @@ const GLASS_SOLID_SHAPED_NOTE =
  * (`surface-finite-solid-gpu.ts`'s walk refuses past the cap as
  * visit-cap, never truncates). */
 function glassSolidDepthNote(level: number, maps: number): string {
-  if (level === 0) return "Depth 0 renders the root box itself.";
-  if (level === 1) return "Depth 1 builds one box per map.";
-  const cells = maps * maps;
+  if (level === 0) return "Depth 0 renders the root simplex itself.";
+  if (level === 1) return "Depth 1 builds one simplex per map.";
+  const cells = maps ** level;
   const cap = FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES;
   return cells > cap
-    ? `Depth 2 builds ${String(cells)} cells; rays crossing more than ${String(cap)} leaves refuse as unresolved.`
-    : `Depth 2 builds ${String(cells)} cells, within the ${String(cap)}-leaf ray cap.`;
+    ? `Depth ${String(level)} builds ${String(cells)} cells; rays crossing more than ${String(cap)} leaves refuse as unresolved.`
+    : `Depth ${String(level)} builds ${String(cells)} cells, within the ${String(cap)}-leaf ray cap.`;
 }
 
 function foglessPointsStyleName(state: AppState): string {
