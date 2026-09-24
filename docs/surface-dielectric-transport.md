@@ -1694,6 +1694,66 @@ tetrahedron, so they always took that root.
   the per-path cost and is filed as open work, not part of this change;
   it does not by itself resolve depth 4's cap-bound traces.
 
+## The composite oracle: opaque maps as the attractor (2026-09-24)
+
+The owner's direction after the box root: under a Glass solid, a
+NON-glass map should render with the attractor's FINE DETAIL — what the
+ordinary IFS Surface render draws — visible directly and through the glass,
+not as cells. Glass maps stay cells (glass needs a closed interior). This
+section is the f64 oracle and the trace fixture; the kernel, routing and
+panel are not built yet.
+
+- **The opaque content** is `O = ∪_{a opaque} M_a(A)`, bounded by WRAPPING
+  the shipped IFS estimator (`finite-solid-composite.ts`):
+  `min_a σ_min(M_a)·DE(M_a⁻¹p)`, a lower bound of `dist(p, O)` for any
+  estimator that lower-bounds `dist(·, A)`, in both dimensions (the
+  refined affine ladders). The plan's first shape — a branch mask on the
+  descent's first level — would have edited the hot beam in 3D, 4D and both
+  shader mirrors for the same bound; the wrapper changes no estimator byte,
+  so every unmasked result is byte-identical by construction. Branches are
+  visited nearest first by a CERTIFIED image ball (the construction's
+  invariant box, never the estimator's probe-fitted ball) and pruned when
+  the ball cannot beat the running minimum; the cutoff contract carries
+  through each branch's `1/σ_min`. Measured near the attractor (points
+  within 0.025 of it, f64 on the dev box): 1.06x one plain descent for the
+  owner's Menger document with two glass corners, 0.70x for the default
+  system with two glass maps.
+- **The glass content** is the GLASS-ONLY walk (`glassOnly`, requires the
+  media table): an opaque map's words drop out at the tree's first level —
+  in the walk, the display estimate, the point medium and the uncapped
+  reference alike — so the medium is a glass code or air and never opaque.
+- **The composite trace** (the bench fixture's `opaqueMarch` hook): every
+  segment runs the glass-only walk AND marches the masked opaque estimator
+  from its origin — the estimator backend's own boundary query
+  (`transportBoundaryQueryCPU`: its step budget, domain exit, hit epsilon
+  and normal taps), unanchored because an opaque terminal ends its path. A
+  march hit strictly before the walk's next boundary (any, on a walk miss)
+  is an opaque terminal: shaded, with Beer over the glass it crossed. Opaque
+  content inside a glass cell is reached THROUGH the glass; where a glass
+  cell abuts opaque content (the Menger maps' shared faces) the march stops
+  within its epsilon of the contact and the opaque surface wins — the
+  physically right reading of glass pressed against an opaque body.
+- **Evidence.** Unit tests: the masked distance never exceeds the distance
+  to 20,000 sampled attractor points of the kept branches (3D rotating
+  default system, 4D pentatope); glass-branch attractor points a known
+  0.35 from any opaque sub-cube read as empty space; hits are attributed
+  to the owning branch; the cutoff contract holds. The composite trace:
+  all-glass media reproduce the cell trace exactly; an unobstructed opaque
+  ray ends on the attractor, never nearer than its containing cells beyond
+  the hit epsilon (also over 60 random rays on the default system); a ray
+  down a glass corner cube lands on the opaque cube behind it with
+  entry Fresnel and Beer over the 0.5 of glass; 4D chains through glass
+  onto the pentatope's opaque branches resolve. Harness
+  (`scripts/finite-solid.harness.ts`, 58 tests): the glass-only chain
+  reconstructs an independent glass-only reference event for event (the
+  default system L3, the Menger maps L3, the rotated pentatope L1).
+- **The normal is the shipped rule's.** Opaque terminals use the
+  estimator backend's tetrahedral taps at the trace's epsilon; on a
+  lower-bound field near the Menger cube's edges they read a normal a few
+  degrees off the face (z 0.968 at the measured contact) — the same
+  normal the ordinary Surface render's taps compute from the same
+  estimator, disclosed rather than corrected.
+
 ## The finite routing (landed, 2026-09-19)
 
 The finite-solid family's app routing LANDED: the document's optional
