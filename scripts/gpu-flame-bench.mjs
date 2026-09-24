@@ -138,6 +138,9 @@ const SURFACE_PASSTHROUGH_FLAGS = {
   // Run only the sphere-inversion legs (iteration and cost sweeps); the
   // section verdict is then "fail" or "skipped", never "pass".
   "surface-sphere-inversion-only": "surfaceSphereInversionOnly",
+  // Run only one backend's transport agreement legs (estimator,
+  // closedSolid or finiteSolid); verdict "fail" or "skipped", never "pass".
+  "surface-transport-only": "surfaceTransportOnly",
   // With --surface-sphere-inversion-only: the curved-glass starters'
   // renderer envelope and depth curve (measured, not gated; minutes of
   // settles, so it rides the heavy-leg wait cap below).
