@@ -1526,6 +1526,101 @@ finiteSolid`), real driver RX 7900 XTX certified quiet AND SwiftShader,
   The per-map media (Glass on a subtree, opaque elsewhere) lands on this
   construction next.
 
+## Per-map media inside the glass solid (2026-09-24)
+
+The owner's acceptance review asked that the Glass finish become the
+per-map MEDIA selector inside the glass solid: a map with Glass authored
+renders ITS SUBTREE as glass, every other map's subtree renders as an
+opaque surface shaded with its own classic finish, and rays through glass
+refract and transmit the opaque parts behind them. Before this change the
+finite material wire was ONE slot (the head map's optics decided the whole
+solid). Scope: the GENERAL word tree (`{level}` alone); the shaped grid
+path (`{shape, level}`, the glass presets) keeps its one slot and is
+untouched, byte for byte.
+
+- **The medium model.** A leaf's material is its BRANCH's — the word's
+  first map (level 0's lone root cell is branch 0) — carried as a per-map
+  code table (`FiniteSolidGeneralMedia`): 0 opaque, a glass code >= 1,
+  equal codes one material. THE OWNER RULE partitions overlapping cells
+  (derived roots overlap heavily): any covering opaque branch owns the
+  point, else the LOWEST-INDEX covering glass branch, else air. The walk
+  counts coverage per branch and an event is a MEDIUM CHANGE, reporting
+  the from/to medium and the owning branch; a shared face, an overlap's
+  interior face and a crossing between equal-material subtrees stay
+  silent. Absent media is every map glass code 1 — the single-material
+  solid event for event (pinned bit-exact against the plain query).
+- **The host's codes.** A general session packs one material slot per
+  active map (document order, weight-0 maps have no subtree), and codes
+  each glass slot by 1 + the FIRST slot carrying an identical medium —
+  index, Beer radius and absorption; distortion only displaces the rear
+  seam, so it never splits a medium — so every code names a glass slot of
+  its own material, which is where the kernel reads it (code k at slot
+  k - 1). No Glass anywhere codes every map opaque: the classic solid,
+  now shaded PER BRANCH (each subtree its own map's finish and color)
+  instead of one slot.
+- **The kernel.** The word tree's hit-info attributes a hit to its OWNING
+  BRANCH (`finiteGeneralPointMedium`, falling back to the display DE's
+  nearest branch for a hit accepted just outside every leaf), so the
+  shared routing needs no change: a pixel whose first surface is opaque is
+  shaded classically by the shade entry, one whose first surface is glass
+  goes to the transport. Paths carry MEDIUM CODES; each glass medium reads
+  its own index, absorption and Beer radius from its slot's optics lanes
+  (a glass-glass interface between two materials refracts with both
+  indices, Fresnel and TIR included; equal materials never meet); an
+  OPAQUE event terminates the path with that face's radiance, shaded by
+  `transportOpaqueRadiance` — built from the shade entry's OWN text (the
+  material block with the slot forced to the owning branch and the
+  optics hand-off removed, then the normal, shadow, AO and lighting lines
+  verbatim), so an opaque surface seen through glass lights exactly like
+  one seen directly. A state-mismatch refusal carries the geometry's own
+  start medium, which the corner class's one-query-deeper retry adopts.
+  Every media emission is gated on the wire carrying a media table, so
+  every other kernel's text is byte-identical (the digest pins hold).
+- **Disclosed limits.** (1) Per-map optics has NO authorable index — only
+  model, scale and distortion — so two glass maps can differ in Beer
+  scale (a different medium, a silent-by-index interface with its own
+  absorption) but not yet in index; the kernel and the bench exercise
+  unequal indices, the authoring does not reach them. (2) An opaque
+  terminal seen through glass is not fogged (its radiance already rides
+  the glass path's attenuation), and under the cinematic lighting rig it
+  keeps the classic entry's lighting. (3) Glass subtrees cast the display
+  DE's shadows onto opaque ones (the shade entry's shadow march reads the
+  union's display field).
+- **A defect the host fixed on the way.** The finite target's params
+  packed the SHAPED grid's radius (1.3) for a general session; the shade
+  entry's AO/shadow scales and the shadow march's exit read it, so a
+  derived-root solid (level-box radius up to ~5) lost its shadows past
+  1.3. The packer and the cinematic runtime now read the general
+  construction's own level-box radius.
+- **Evidence.** f64 oracle: mixed chains against the sampled point medium
+  (glass/opaque, two glass codes, the rotated pentatope in 4D), opaque
+  dominance at a shared point. f32 twin: the oracle's media transitions
+  and owning branches reproduced on every hop of 72 mixed chains, t
+  within 4e-6 of the arithmetic's scale. Bench legs (control opaque
+  terminal `finiteOpaqueControl`, mirrored by the fixture), each measured
+  to exercise what it names on its own probes: glass/opaque 3D (4 glass
+  entries, 1 opaque terminal), two glass materials 3D (20 glass-glass
+  interfaces, 16 opaque terminals; glass B at index 1.7 and HALF the Beer
+  radius), three materials on the rotated pentatope 4D (5 entries, 9
+  glass-glass interfaces, 4 opaque terminals). Real driver RX 7900 XTX
+  (quiet) maxRadianceDelta 1.74e-8 / 6.25e-8 / 3.33e-8, every older
+  finite leg unchanged; SwiftShader every leg green too (1.64e-8 / 1.02e-7 / 1.84e-8). App gate
+  (`scripts/glass-solid-panel.verify.mjs`): verdict pass, seven legs, real driver, certified quiet. Its legs 6 and
+  7 author Glass on the HEAD map alone, so under the per-map media they
+  are MIXED sessions — one glass subtree in front of the opaque rest: the
+  section note reads "1 of 4 maps are Glass" / "1 of 5", the rotating
+  boot document at depth 3 resolves 139,139 glass paths with 43,847
+  opaque-first pixels shaded classically and 0 unresolved, the 4D
+  pentatope 7,469 and 4,980 with 0 unresolved, and each session's two
+  Save-PNGs are byte for byte (kept as scripts/out/glass-media-*.png for
+  the owner's look review). The completion contract now counts a frame's
+  SKIPPED hits (`transport.skipped`, the trace feed's `skipped=`): a hit
+  whose slot resolves no optics is shadeRays' pixel, and resolved +
+  unresolved + invalid + skipped = hits partitions the frame exactly.
+  The gate also caught a stale panel note (a committed Finish edit
+  repainted the transform list, not the section) — the commit now
+  repaints the Glass solid section.
+
 ## The finite routing (landed, 2026-09-19)
 
 The finite-solid family's app routing LANDED: the document's optional
