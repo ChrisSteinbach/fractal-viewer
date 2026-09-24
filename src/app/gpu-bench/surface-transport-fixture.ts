@@ -1,10 +1,20 @@
 import type { Vec3 } from "../../fractal/types";
 import {
+  finiteSolidOpaqueDistance,
+  type FiniteSolidOpaqueContent,
+} from "../../fractal/finite-solid-composite";
+import {
   type FiniteSolidAnchor,
   type FiniteSolidConstruction,
   type FiniteSolidPose,
   finiteSolidNextBoundary,
+  finiteSolidGeneralNextBoundary,
+  finiteSolidGeneralNextBoundaryFromAnchor,
+  finiteSolidIntrinsicPoint,
   finiteSolidNextBoundaryFromAnchor,
+  type FiniteSolidBoundaryResult,
+  type FiniteSolidGeneralConstruction,
+  type FiniteSolidGeneralMedia,
 } from "../../fractal/finite-solid";
 import {
   DIELECTRIC_ANCHOR_ENVELOPE_REL,
@@ -526,7 +536,72 @@ export interface TransportFixtureMedia {
     radius?: number;
   };
   opaque: (pos: Vec3, dir: Vec3, n: Vec3, branch: number) => Vec3;
+  /** THE COMPOSITE (absent = the cell media): the opaque maps render as
+   * the ATTRACTOR (`finite-solid-composite.ts`), so the finite query is
+   * the GLASS-ONLY walk and every segment also marches the masked opaque
+   * estimator from its origin. A march hit nearer than the walk's next
+   * boundary (any, on a walk miss) ends the path there — an opaque
+   * terminal shaded by `opaque`, with Beer over the glass it crossed.
+   * `eps` is the trace's own crossing epsilon, the estimator backend's
+   * hit contract. */
+  opaqueMarch?: (
+    origin: Vec3,
+    dir: Vec3,
+    eps: number,
+  ) => TransportOpaqueMarchResult;
 }
+
+/** The composite's opaque march as the trace consumes it: the estimator
+ * backend's own boundary query ({@link transportBoundaryQueryCPU}) over the
+ * masked opaque distance — its step budget, domain exit, hit epsilon and
+ * normal taps unchanged — unanchored (an opaque terminal ends its path, so
+ * no segment restarts on the opaque surface), then the owning branch read
+ * at the hit. `pose` maps the world point to the construction's intrinsic
+ * one (the 4D slice); `visibleRadius` is the construction's marching ball,
+ * which contains the attractor. */
+export function transportCompositeOpaqueMarch(
+  content: FiniteSolidOpaqueContent,
+  pose: FiniteSolidPose,
+  visibleRadius: number,
+): NonNullable<TransportFixtureMedia["opaqueMarch"]> {
+  const intrinsic = (p: Vec3) => finiteSolidIntrinsicPoint(pose, p);
+  const system: TransportFixtureSystem = {
+    estimate: (p) => finiteSolidOpaqueDistance(content, intrinsic(p)).d,
+    stepScale: 1,
+    visibleRadius,
+  };
+  return (origin, dir, eps) => {
+    if (content.branches.length === 0) return { kind: "miss" };
+    const r = transportBoundaryQueryCPU(
+      system,
+      origin,
+      dir,
+      false,
+      origin,
+      eps,
+    );
+    if (r.kind === "refused") return { kind: "refused", reason: r.reason };
+    if (r.kind === "miss") return { kind: "miss" };
+    const hitPoint: Vec3 = [
+      origin[0] + r.t * dir[0],
+      origin[1] + r.t * dir[1],
+      origin[2] + r.t * dir[2],
+    ];
+    return {
+      kind: "hit",
+      t: r.t,
+      normal: r.normal,
+      branch: finiteSolidOpaqueDistance(content, intrinsic(hitPoint)).branch,
+    };
+  };
+}
+
+/** One segment's opaque march: a hit (t, normal, owning branch), a miss,
+ * or a refusal (the step budget) that leaves the trace unresolved. */
+export type TransportOpaqueMarchResult =
+  | { kind: "hit"; t: number; normal: Vec3; branch: number }
+  | { kind: "miss" }
+  | { kind: "refused"; reason: number };
 
 /** The medium code of an opaque region on the finite wire. */
 export const TRANSPORT_MEDIUM_OPAQUE = 65535;
@@ -606,6 +681,71 @@ export function transportFiniteBoundaryQueryCPU(
               ? SURFACE_GPU_TRANSPORT_REASON_DEGENERATE_NORMAL
               : SURFACE_GPU_TRANSPORT_REASON_INVALID_INPUT;
   return { kind: "refused", reason, t: 0, normal: [0, 0, 0], anchor: null };
+}
+
+/** The general word tree's boundary query, f64, as the trace consumes it:
+ * the claim is a MEDIUM CODE under `media` (a flag without), `glassOnly`
+ * selects the composite's glass-only walk, and a state-mismatch refusal
+ * carries the geometry's own start medium as `toMedium` (the corner
+ * class's re-anchor). */
+export function transportFiniteGeneralBoundaryQueryCPU(
+  construction: FiniteSolidGeneralConstruction,
+  pose: FiniteSolidPose,
+  media: FiniteSolidGeneralMedia | undefined,
+  glassOnly: boolean,
+  origin: Vec3,
+  dir: Vec3,
+  anchor: FiniteSolidAnchor | null,
+  claim: boolean | number,
+): TransportFiniteBoundaryResult {
+  const medium = typeof claim === "number" ? claim : claim ? 1 : 0;
+  const options = {
+    inside: medium !== 0,
+    ...(media ? { media, medium, glassOnly } : {}),
+  };
+  const result: FiniteSolidBoundaryResult = anchor
+    ? finiteSolidGeneralNextBoundaryFromAnchor(construction, pose, dir, {
+        ...options,
+        anchor,
+      })
+    : finiteSolidGeneralNextBoundary(construction, pose, origin, dir, options);
+  if (result.kind === "boundary") {
+    return {
+      kind: "boundary",
+      reason: 0,
+      t: result.t,
+      normal: result.outwardNormal,
+      anchor: result.anchor,
+      fromMedium: result.fromMedium,
+      toMedium: result.toMedium,
+      toBranch: result.toBranch,
+    };
+  }
+  if (result.kind === "miss") {
+    return { kind: "miss", reason: 0, t: 0, normal: [0, 0, 0], anchor: null };
+  }
+  const reason =
+    result.reason === "visit-cap"
+      ? SURFACE_GPU_TRANSPORT_REASON_VISIT_CAP
+      : result.reason === "state-mismatch"
+        ? SURFACE_GPU_TRANSPORT_REASON_STATE_MISMATCH
+        : result.reason === "ambiguous-anchor"
+          ? SURFACE_GPU_TRANSPORT_REASON_AMBIGUOUS_ANCHOR
+          : result.reason === "nonmonotone-crossing"
+            ? SURFACE_GPU_TRANSPORT_REASON_NONMONOTONE
+            : result.reason === "degenerate-projected-normal"
+              ? SURFACE_GPU_TRANSPORT_REASON_DEGENERATE_NORMAL
+              : SURFACE_GPU_TRANSPORT_REASON_INVALID_INPUT;
+  return {
+    kind: "refused",
+    reason,
+    t: 0,
+    normal: [0, 0, 0],
+    anchor: null,
+    ...(result.geometryMedium !== undefined
+      ? { toMedium: result.geometryMedium }
+      : {}),
+  };
 }
 
 /** The kernel's `transportTrace`, f64: the primary split at the march's
@@ -837,6 +977,49 @@ export function transportTraceCPU(
       failure = 4;
       reason = hit.reason;
       break;
+    }
+    if (media?.opaqueMarch) {
+      // The composite's opaque half: the attractor along this segment, in
+      // air or inside glass (reached through it), strictly before the
+      // glass walk's next boundary.
+      const march = media.opaqueMarch(path.origin, path.dir, eps);
+      if (march.kind === "refused") {
+        residual += path.bound;
+        status = "unresolved";
+        failure = 4;
+        reason = march.reason;
+        break;
+      }
+      if (march.kind === "hit" && (hit.kind === "miss" || march.t < hit.t)) {
+        const inGlass = (path.medium ?? 0) !== 0;
+        const segMaterial = inGlass ? media.material(path.medium ?? 0) : null;
+        const absorption = segMaterial?.absorption ?? material.absorption;
+        const radius = segMaterial?.radius ?? material.radius;
+        const throughput = (axis: number): number =>
+          inGlass
+            ? dielectricBeerThroughput(absorption[axis], march.t, radius)
+            : 1;
+        const shaded = media.opaque(
+          [
+            path.origin[0] + march.t * path.dir[0],
+            path.origin[1] + march.t * path.dir[1],
+            path.origin[2] + march.t * path.dir[2],
+          ],
+          path.dir,
+          march.normal,
+          march.branch,
+        );
+        radiance = [
+          radiance[0] + shaded[0] * path.energy[0] * throughput(0),
+          radiance[1] + shaded[1] * path.energy[1] * throughput(1),
+          radiance[2] + shaded[2] * path.energy[2] * throughput(2),
+        ];
+        if (!radiance.every(Number.isFinite)) {
+          status = "invalid";
+          break;
+        }
+        continue;
+      }
     }
     if (hit.kind === "miss") {
       const insideNow = media ? (path.medium ?? 0) !== 0 : path.inside;
