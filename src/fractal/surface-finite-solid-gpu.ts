@@ -45,6 +45,7 @@ import {
   FINITE_SOLID_GENERAL_MAX_MAPS,
   FINITE_SOLID_GENERAL_NORMAL_DEPENDENT_REL,
   FINITE_SOLID_GENERAL_SNAP_REL,
+  FINITE_SOLID_MEDIUM_OPAQUE,
   finiteSolidGeneralInverseMaps,
   finiteSolidGeneralRefineTau,
   type FiniteSolidAnchor,
@@ -928,7 +929,14 @@ ${crossingTime}    }`
 export type FiniteSolidGeneralWire = Pick<
   FiniteSolidGeneralConstruction,
   "mapMatrix" | "mapOffset" | "rootVertices" | "levelBoxes"
->;
+> & {
+  /** The per-map media codes (`FiniteSolidGeneralMedia`: 0 opaque, a glass
+   * code >= 1, equal codes one material), baked beside the maps — the
+   * session freezes its materials with its construction (the transform
+   * editor hides for a Surface session's whole lifetime). Absent = every
+   * map glass code 1, the single-material solid. */
+  media?: readonly number[];
+};
 
 const generalVec4Lit = (v: readonly number[]): string =>
   `vec4f(${floatLit(v[0])}, ${floatLit(v[1])}, ${floatLit(v[2])}, ${floatLit(v[3])})`;
@@ -950,10 +958,18 @@ function validateGeneralWire(
     count > FINITE_SOLID_GENERAL_MAX_MAPS ||
     g.mapOffset.length !== count ||
     g.rootVertices.length !== dim + 1 ||
-    g.levelBoxes.length !== level + 1
+    g.levelBoxes.length !== level + 1 ||
+    (g.media !== undefined &&
+      (g.media.length !== count ||
+        !g.media.every(
+          (code) =>
+            Number.isInteger(code) &&
+            code >= 0 &&
+            code <= FINITE_SOLID_GENERAL_MAX_MAPS,
+        )))
   ) {
     throw new RangeError(
-      `surface-finite-solid-gpu: a general wire needs 1..${FINITE_SOLID_GENERAL_MAX_MAPS} maps, ${dim + 1} root vertices and ${level + 1} level boxes at level ${level} (0..${FINITE_SOLID_GENERAL_MAX_LEVEL})`,
+      `surface-finite-solid-gpu: a general wire needs 1..${FINITE_SOLID_GENERAL_MAX_MAPS} maps, ${dim + 1} root vertices, ${level + 1} level boxes at level ${level} (0..${FINITE_SOLID_GENERAL_MAX_LEVEL}) and, when present, one media code per map`,
     );
   }
 }
@@ -1013,6 +1029,16 @@ ${vecs(g.levelBoxes.map((box) => box.max))}
 const FIN_TAU = array<f32, ${count}>(
 ${tau.map((value) => `    ${floatLit(value)}`).join(",\n")}
 );
+// The per-map media (0 opaque, a glass code >= 1; equal codes one material)
+// and the medium codes the walk reports (air 0, opaque the sentinel).
+const FIN_MEDIA = array<u32, ${count}>(
+${Array.from({ length: count }, (_, a) => `    ${String(g.media?.[a] ?? 1)}u`).join(",\n")}
+);
+const FIN_MEDIUM_OPAQUE = ${FINITE_SOLID_MEDIUM_OPAQUE}u;
+// Per-branch coverage — the sweep's counts and the point medium's flags,
+// read by the owner rule (finMediumOfCoverage). Private scratch, written
+// before read.
+var<private> finBranchCov: array<i32, ${count}>;
 const FIN_TIE_REL = ${finiteEnvelopeLiteral};
 const FIN_SNAP_REL = ${floatLit(FINITE_SOLID_GENERAL_SNAP_REL)};
 const FIN_NORMAL_DEPENDENT_REL = ${floatLit(FINITE_SOLID_GENERAL_NORMAL_DEPENDENT_REL)};
@@ -1283,6 +1309,108 @@ fn finiteDisplayDE(qa: array<f32, 4>) -> f32 {
 ${body}
 }
 
+// The branch whose display term is least (the hit-info's fallback slot for
+// a point the march accepted just OUTSIDE every leaf): the display DE's
+// own argmin, unrefined.
+fn finiteDisplayBranch(qa: array<f32, 4>) -> i32 {
+${
+  level === 0
+    ? "  return 0;"
+    : `  let q = vec4f(qa[0], qa[1], qa[2], qa[3]);
+  var best = 1.0e30;
+  var branch = 0;
+  for (var a = 0u; a < FIN_MAP_COUNT; a++) {
+    let d = finOrientedBoxSdf(finInverseMap(a), FIN_BOX_MIN[${level - 1}], FIN_BOX_MAX[${level - 1}], q);
+    if (d < best) {
+      best = d;
+      branch = i32(a);
+    }
+  }
+  return branch;`
+}
+}
+
+// The owner rule (generalMediumOf) over finBranchCov: any covering OPAQUE
+// branch owns the point, else the lowest-index covering glass branch, else
+// air. Returns (medium code, owning branch; -1 in air).
+fn finMediumOfCoverage() -> vec2i {
+  var glass = -1;
+  for (var a = 0; a < i32(FIN_MAP_COUNT); a++) {
+    if (finBranchCov[a] <= 0) {
+      continue;
+    }
+    if (FIN_MEDIA[a] == 0u) {
+      return vec2i(i32(FIN_MEDIUM_OPAQUE), a);
+    }
+    if (glass < 0) {
+      glass = a;
+    }
+  }
+  if (glass < 0) {
+    return vec2i(0, -1);
+  }
+  return vec2i(i32(FIN_MEDIA[glass]), glass);
+}
+
+// Closed membership helpers: the point in an axis box, the point in a
+// leaf's facet half-spaces.
+fn finBoxContains(lo: vec4f, hi: vec4f, p: vec4f) -> bool {
+  for (var axis = 0; axis < ${dim}; axis++) {
+    if (p[axis] < lo[axis] || p[axis] > hi[axis]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+fn finFacetsContain(facets: FinFacets, q: vec4f) -> bool {
+  if (!facets.ok) {
+    return false;
+  }
+  for (var k = 0; k < ${dim + 1}; k++) {
+    if (finDot(facets.n[k], q) - facets.c[k] > 0.0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The point's medium and owning branch (finiteSolidGeneralMediumAt): each
+// branch's covering flag by closed membership over the same pruned nests
+// as the walk (a branch already found covering skips its remaining
+// subtree), then the owner rule. The camera's medium claim and the hit's
+// slot attribution both read this.
+fn finiteGeneralPointMedium(qa: array<f32, 4>) -> vec2i {
+  let q = vec4f(qa[0], qa[1], qa[2], qa[3]);
+  for (var a = 0; a < i32(FIN_MAP_COUNT); a++) {
+    finBranchCov[a] = 0;
+  }
+${
+  level === 0
+    ? `  if (finFacetsContain(finFacets(finCell(finIdentity())), q)) {
+    finBranchCov[0] = 1;
+  }`
+    : `  if (finBoxContains(FIN_BOX_MIN[${level}], FIN_BOX_MAX[${level}], q)) {
+${generalNestSource(
+  level,
+  (inv, remaining) =>
+    `finBranchCov[a0] == 0 && finBoxContains(FIN_BOX_MIN[${remaining}], FIN_BOX_MAX[${remaining}], finApply(${inv}, q) + ${inv}.t)`,
+  (
+    forwardVar,
+  ) => `if (finBranchCov[a0] == 0 && finFacetsContain(finFacets(finCell(${forwardVar})), q)) {
+  finBranchCov[a0] = 1;
+}
+`,
+)}  }`
+}
+  return finMediumOfCoverage();
+}
+
+// Point membership (finiteSolidGeneralContains): any medium but air.
+fn finiteGeneralPointInside(qa: array<f32, 4>) -> bool {
+  return finiteGeneralPointMedium(qa).x != 0;
+}
+
 fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   return finiteDisplayDE(finiteLift(pIn));
 }
@@ -1475,6 +1603,14 @@ ${generalNestSource(
   anchorMask: u32,
   anchorPlanes: vec4i,
   anchorCells: vec4i,
+  // The MEDIA transition (finiteSolidGeneralNextBoundary's from/to): the
+  // medium codes before and after the event (air 0, a glass code, or
+  // FIN_MEDIUM_OPAQUE) and the branch owning the medium after it (-1 in
+  // air). On a state-mismatch refusal toMedium carries the medium the
+  // GEOMETRY reads at the start (the refusal's geometryMedium).
+  fromMedium: u32,
+  toMedium: u32,
+  toBranch: i32,
 }
 
 // The axis-aligned slab clip (clipAxisAlignedBox) — the node prune. The
@@ -1731,24 +1867,30 @@ fn finRefusal(reason: u32) -> FiniteBoundary {
   result.anchorMask = 0u;
   result.anchorPlanes = vec4i(-1);
   result.anchorCells = vec4i(-1);
+  result.fromMedium = 0u;
+  result.toMedium = 0u;
+  result.toBranch = -1;
   return result;
 }
 
-// One occupancy transition of the union along the ray
+// One medium transition along the ray
 // (simplicialBoundaryEvent): the tied faces' span carries the projected
-// normal; the entering side is the group's AFTER-coverage (the actual
-// geometry, never the claim); the anchor names the INCIDENT leaf — the
-// group's sorted-first endpoint's leaf — whose own crossed facets are the
-// mask and whose composed facet planes are the snap targets.
+// normal, facing against the ray unless the medium after is air; the anchor
+// names the INCIDENT leaf — the group's sorted-first endpoint's leaf — whose
+// own crossed facets are the mask and whose composed facet planes are the
+// snap targets.
 fn finEvent(
   q: vec4f,
   qd: vec4f,
   dir: vec3f,
   t: f32,
-  entering: bool,
+  before: u32,
+  after: u32,
+  afterBranch: i32,
   groupLo: u32,
   groupHi: u32,
 ) -> FiniteBoundary {
+  let entering = after != 0u;
   let normal = finGroupNormal(dir, groupLo, groupHi, entering);
   if (all(normal == vec3f(0.0))) {
     return finRefusal(6u);
@@ -1768,6 +1910,9 @@ fn finEvent(
   result.anchorMask = mask;
   result.anchorPlanes = vec4i(-1);
   result.anchorCells = word;
+  result.fromMedium = before;
+  result.toMedium = after;
+  result.toBranch = afterBranch;
   return result;
 }
 
@@ -1803,25 +1948,34 @@ fn finSortEndpoints() {
 }
 
 // The endpoint sweep (the reference's group walk): greedy groups from each
-// group's first t within FIN_TIE_REL; the state at tMin (always 0 on the
-// transport — the fresh and anchored queries both start there) is the last
-// at-or-before group's AFTER-coverage; the first later zero-crossing of
-// the coverage is the event. A net-zero group (an interior shared face)
-// traverses silently.
-fn finSweep(q: vec4f, qd: vec4f, dir: vec3f, inside: u32, anchored: bool) -> FiniteBoundary {
-  var coverage = 0;
+// group's first t within FIN_TIE_REL, coverage counted PER BRANCH and the
+// medium after each group the owner rule's; the state at tMin (always 0 on
+// the transport — the fresh and anchored queries both start there) is the
+// last at-or-before group's AFTER-medium; the first later MEDIUM CHANGE is
+// the event. A group that leaves the medium unchanged (a shared face, an
+// overlap's interior face, a crossing between equal-material glass
+// subtrees) traverses silently. The claim is a medium code — the
+// single-material solid's 0/1 is its glass-code-1 case.
+fn finSweep(q: vec4f, qd: vec4f, dir: vec3f, claim: u32, anchored: bool) -> FiniteBoundary {
+  for (var a = 0; a < i32(FIN_MAP_COUNT); a++) {
+    finBranchCov[a] = 0;
+  }
+  var medium = 0u;
   var idx = 0u;
   var haveStart = false;
-  var startAfter = 0;
+  var startMedium = 0u;
+  var startBranch = -1;
   var startAtGroup = false;
   var startLo = 0u;
   var startHi = 0u;
-  // The first zero-crossing AFTER the start, held until the claim check
+  // The first medium change AFTER the start, held until the claim check
   // has admitted the walk (the reference's order: a mismatching claim
   // refuses before any walk event is emitted).
   var haveFlip = false;
   var flipT = 0.0;
-  var flipEntering = false;
+  var flipBefore = 0u;
+  var flipAfter = 0u;
+  var flipBranch = -1;
   var flipLo = 0u;
   var flipHi = 0u;
   var started = false;
@@ -1829,16 +1983,18 @@ fn finSweep(q: vec4f, qd: vec4f, dir: vec3f, inside: u32, anchored: bool) -> Fin
     let groupT = finEndpointT(idx);
     let tie = FIN_TIE_REL * max(1.0, abs(groupT));
     var j = idx;
-    var net = 0;
     while (j < finTotal && finEndpointT(j) - groupT <= tie) {
-      net = net + select(-1, 1, (finE[j].y & 1u) == 1u);
+      let branch = max(finEndpointWord(j)[0], 0);
+      finBranchCov[branch] = finBranchCov[branch] + select(-1, 1, (finE[j].y & 1u) == 1u);
       j = j + 1u;
     }
-    let before = coverage;
-    coverage = coverage + net;
+    let before = medium;
+    let owner = finMediumOfCoverage();
+    medium = u32(owner.x);
     if (!started && groupT <= tie) {
       haveStart = true;
-      startAfter = coverage;
+      startMedium = medium;
+      startBranch = owner.y;
       startAtGroup = abs(groupT) <= tie;
       startLo = idx;
       startHi = j;
@@ -1846,10 +2002,12 @@ fn finSweep(q: vec4f, qd: vec4f, dir: vec3f, inside: u32, anchored: bool) -> Fin
       continue;
     }
     started = true;
-    if (!haveFlip && ((before == 0 && coverage > 0) || (before > 0 && coverage == 0))) {
+    if (!haveFlip && before != medium) {
       haveFlip = true;
       flipT = groupT;
-      flipEntering = coverage > 0;
+      flipBefore = before;
+      flipAfter = medium;
+      flipBranch = owner.y;
       flipLo = idx;
       flipHi = j;
     }
@@ -1857,64 +2015,22 @@ fn finSweep(q: vec4f, qd: vec4f, dir: vec3f, inside: u32, anchored: bool) -> Fin
   }
   // The claim check: off a boundary the claim must match; ON the start
   // group the UNANCHORED query may anticipate the crossing (the display
-  // march's primary hit); the anchored continuation takes no liberty.
-  if ((startAfter > 0) != (inside == 1u)) {
+  // march's primary hit), FROM the claimed medium; the anchored
+  // continuation takes no liberty.
+  if (startMedium != claim) {
     if (haveStart && startAtGroup && !anchored) {
-      return finEvent(q, qd, dir, 0.0, startAfter > 0, startLo, startHi);
+      return finEvent(q, qd, dir, 0.0, claim, startMedium, startBranch, startLo, startHi);
     }
-    return finRefusal(3u);
+    var mismatch = finRefusal(3u);
+    mismatch.toMedium = startMedium;
+    return mismatch;
   }
   if (haveFlip) {
-    return finEvent(q, qd, dir, flipT, flipEntering, flipLo, flipHi);
+    return finEvent(q, qd, dir, flipT, flipBefore, flipAfter, flipBranch, flipLo, flipHi);
   }
   var miss = finRefusal(0u);
   miss.kind = 2u;
   return miss;
-}
-
-// Closed point membership (finiteSolidGeneralContains) — the primary ray's
-// ray-side state: the level union covers the point exactly when some leaf
-// contains it (a point on a shared face reads inside, and the boundary
-// group's half-open sweep at that origin resolves the event either way).
-fn finBoxContains(lo: vec4f, hi: vec4f, p: vec4f) -> bool {
-  for (var axis = 0; axis < ${dim}; axis++) {
-    if (p[axis] < lo[axis] || p[axis] > hi[axis]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-fn finFacetsContain(facets: FinFacets, q: vec4f) -> bool {
-  if (!facets.ok) {
-    return false;
-  }
-  for (var k = 0; k < ${dim + 1}; k++) {
-    if (finDot(facets.n[k], q) - facets.c[k] > 0.0) {
-      return false;
-    }
-  }
-  return true;
-}
-
-fn finiteGeneralPointInside(qa: array<f32, 4>) -> bool {
-  let q = vec4f(qa[0], qa[1], qa[2], qa[3]);
-${
-  level === 0
-    ? `  return finFacetsContain(finFacets(finCell(finIdentity())), q);`
-    : `  if (!finBoxContains(FIN_BOX_MIN[${level}], FIN_BOX_MAX[${level}], q)) {
-    return false;
-  }
-${generalNestSource(
-  level,
-  (inv, remaining) =>
-    `finBoxContains(FIN_BOX_MIN[${remaining}], FIN_BOX_MAX[${remaining}], finApply(${inv}, q) + ${inv}.t)`,
-  (forwardVar) => `if (finFacetsContain(finFacets(finCell(${forwardVar})), q)) {
-  return true;
-}
-`,
-)}  return false;`
-}
 }
 
 // The word-tree boundary query (finiteSolidGeneralNextBoundary /
@@ -1930,7 +2046,7 @@ fn transportFiniteBoundary(
   anchorMask: u32,
   anchorPlanesIn: vec4i,
   anchorCellsIn: vec4i,
-  inside: u32,
+  claim: u32,
 ) -> FiniteBoundary {
   if (!all(abs(dir) <= vec3f(3.402823466e38)) || !(dot(dir, dir) > 0.0)) {
     return finRefusal(2u);
@@ -1984,7 +2100,7 @@ fn transportFiniteBoundary(
     return finRefusal(1u);
   }
   finSortEndpoints();
-  return finSweep(q, qd, dir, inside, anchorPresent == 1u);
+  return finSweep(q, qd, dir, claim, anchorPresent == 1u);
 }
 `;
 }
@@ -2072,6 +2188,12 @@ export interface FiniteSolidDdaF32Result {
   t: number;
   normal: Vec3;
   anchor: FiniteSolidAnchor | null;
+  /** The general walk's media transition (the WGSL FiniteBoundary's
+   * fields; absent from the grid DDA's twin). On a state-mismatch refusal
+   * `toMedium` is the geometry's own start medium. */
+  fromMedium?: number;
+  toMedium?: number;
+  toBranch?: number;
 }
 
 export function finiteSolidDdaF32(
@@ -2548,8 +2670,11 @@ export function finiteSolidGeneralDdaF32(
   origin: Vec3,
   dirIn: Vec3,
   anchor: FiniteSolidAnchor | null,
-  inside: boolean,
+  /** The claimed medium: a medium code, or the single-material form's
+   * inside flag (true = glass code 1). */
+  inside: boolean | number,
 ): FiniteSolidDdaF32Result {
+  const claim = typeof inside === "number" ? inside : inside ? 1 : 0;
   validateGeneralWire(dim, g, level);
   const f = Math.fround;
   const v4 = (v: readonly number[]): F32Vec4 => [
@@ -2605,7 +2730,27 @@ export function finiteSolidGeneralDdaF32(
     t: 0,
     normal: [0, 0, 0],
     anchor: null,
+    fromMedium: 0,
+    toMedium: 0,
+    toBranch: -1,
   });
+  // The owner rule over per-branch coverage (finMediumOfCoverage).
+  const media = Array.from({ length: mapCount }, (_, a) => g.media?.[a] ?? 1);
+  const mediumOf = (
+    coverage: readonly number[],
+  ): { medium: number; branch: number } => {
+    let glass = -1;
+    for (let a = 0; a < mapCount; a++) {
+      if (coverage[a] <= 0) continue;
+      if (media[a] === 0) {
+        return { medium: FINITE_SOLID_MEDIUM_OPAQUE, branch: a };
+      }
+      if (glass < 0) glass = a;
+    }
+    return glass < 0
+      ? { medium: 0, branch: -1 }
+      : { medium: media[glass], branch: glass };
+  };
 
   // The algebra (finDot / finApply / finRowTimes / finCompose /
   // finChildInverse), left-associated in the oracle's term order.
@@ -3058,10 +3203,13 @@ export function finiteSolidGeneralDdaF32(
   // The event (finEvent).
   const event = (
     t: number,
-    entering: boolean,
+    before: number,
+    after: number,
+    afterBranch: number,
     groupLo: number,
     groupHi: number,
   ): FiniteSolidDdaF32Result => {
+    const entering = after !== 0;
     const normal = groupNormal(groupLo, groupHi, entering);
     if (!normal) return refused(6);
     const incident = endpoints[groupLo];
@@ -3083,21 +3231,28 @@ export function finiteSolidGeneralDdaF32(
         planeIndices: [-1, -1, -1, -1],
         cellIndices: [...incident.word] as [number, number, number, number],
       },
+      fromMedium: before,
+      toMedium: after,
+      toBranch: afterBranch,
     };
   };
-  // The sweep (finSweep): greedy tie groups, the start state at tMin = 0,
-  // the first later zero-crossing of the coverage.
+  // The sweep (finSweep): greedy tie groups, coverage per branch, the
+  // start medium at tMin = 0, the first later medium change.
   const total = endpoints.length;
-  let coverage = 0;
+  const coverage = new Array<number>(mapCount).fill(0);
+  let medium = 0;
   let idx = 0;
   let haveStart = false;
-  let startAfter = 0;
+  let startMedium = 0;
+  let startBranch = -1;
   let startAtGroup = false;
   let startLo = 0;
   let startHi = 0;
   let haveFlip = false;
   let flipT = 0;
-  let flipEntering = false;
+  let flipBefore = 0;
+  let flipAfter = 0;
+  let flipBranch = -1;
   let flipLo = 0;
   let flipHi = 0;
   let started = false;
@@ -3105,16 +3260,18 @@ export function finiteSolidGeneralDdaF32(
     const groupT = endpoints[idx].t;
     const tie = f(tieRel * Math.max(1, Math.abs(groupT)));
     let j = idx;
-    let net = 0;
     while (j < total && f(endpoints[j].t - groupT) <= tie) {
-      net += endpoints[j].delta === 1 ? 1 : -1;
+      coverage[Math.max(endpoints[j].word[0], 0)] +=
+        endpoints[j].delta === 1 ? 1 : -1;
       j++;
     }
-    const before = coverage;
-    coverage += net;
+    const before = medium;
+    const owner = mediumOf(coverage);
+    medium = owner.medium;
     if (!started && groupT <= tie) {
       haveStart = true;
-      startAfter = coverage;
+      startMedium = medium;
+      startBranch = owner.branch;
       startAtGroup = Math.abs(groupT) <= tie;
       startLo = idx;
       startHi = j;
@@ -3122,24 +3279,25 @@ export function finiteSolidGeneralDdaF32(
       continue;
     }
     started = true;
-    if (
-      !haveFlip &&
-      ((before === 0 && coverage > 0) || (before > 0 && coverage === 0))
-    ) {
+    if (!haveFlip && before !== medium) {
       haveFlip = true;
       flipT = groupT;
-      flipEntering = coverage > 0;
+      flipBefore = before;
+      flipAfter = medium;
+      flipBranch = owner.branch;
       flipLo = idx;
       flipHi = j;
     }
     idx = j;
   }
-  if (startAfter > 0 !== inside) {
+  if (startMedium !== claim) {
     if (haveStart && startAtGroup && !anchor) {
-      return event(0, startAfter > 0, startLo, startHi);
+      return event(0, claim, startMedium, startBranch, startLo, startHi);
     }
-    return refused(3);
+    return { ...refused(3), toMedium: startMedium };
   }
-  if (haveFlip) return event(flipT, flipEntering, flipLo, flipHi);
+  if (haveFlip) {
+    return event(flipT, flipBefore, flipAfter, flipBranch, flipLo, flipHi);
+  }
   return miss();
 }
