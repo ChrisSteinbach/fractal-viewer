@@ -45,6 +45,7 @@ import {
 import {
   FINITE_SOLID_GENERAL_TIE_REL,
   FINITE_SOLID_IDENTITY_POSE,
+  FINITE_SOLID_MEDIUM_OPAQUE,
   analyzeFiniteSolidGeneral,
   analyzeFiniteSolidSystem,
   buildFiniteSolidConstruction,
@@ -1109,4 +1110,156 @@ describe("the general word tree's admission, CPU-side", () => {
     // (and this leg) is uncapped by decision.
     expect(12 * 12).toBeGreaterThan(FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES);
   });
+});
+
+/** The per-map MEDIA reference: the same independent leaf clips, swept
+ * with coverage PER BRANCH (the word's first map) and the owner rule
+ * restated here — any covering opaque branch (code 0) owns the point, else
+ * the lowest-index covering glass branch, else air — emitting every medium
+ * change. Restated because it is the contract, not an implementation. */
+function referenceMediumEvents(
+  c: FiniteSolidGeneralConstruction,
+  media: readonly number[],
+  q: Vec4,
+  qd: Vec4,
+): Array<{ t: number; from: number; to: number }> {
+  const endpoints: Array<{ t: number; delta: number; branch: number }> = [];
+  const counter = new Array<number>(c.level).fill(0);
+  for (;;) {
+    const clip = referenceSimplexClip(
+      referenceLeafVertices(c, counter),
+      c.dimension,
+      q,
+      qd,
+    );
+    const branch = c.level === 0 ? 0 : counter[0];
+    if (clip) {
+      endpoints.push({ t: clip.enter, delta: 1, branch });
+      endpoints.push({ t: clip.exit, delta: -1, branch });
+    }
+    let digit = c.level - 1;
+    for (; digit >= 0; digit--) {
+      if (++counter[digit] < c.mapCount) break;
+      counter[digit] = 0;
+    }
+    if (digit < 0) break;
+  }
+  endpoints.sort((a, b) => a.t - b.t);
+  const coverage = new Array<number>(c.mapCount).fill(0);
+  const owner = (): number => {
+    let glass = -1;
+    for (let a = 0; a < c.mapCount; a++) {
+      if (coverage[a] <= 0) continue;
+      if (media[a] === 0) return FINITE_SOLID_MEDIUM_OPAQUE;
+      if (glass < 0) glass = a;
+    }
+    return glass < 0 ? 0 : media[glass];
+  };
+  const events: Array<{ t: number; from: number; to: number }> = [];
+  let medium = 0;
+  let i = 0;
+  while (i < endpoints.length) {
+    const groupT = endpoints[i].t;
+    const tie = FINITE_SOLID_GENERAL_TIE_REL * Math.max(1, Math.abs(groupT));
+    while (i < endpoints.length && endpoints[i].t - groupT <= tie) {
+      coverage[endpoints[i].branch] += endpoints[i].delta;
+      i++;
+    }
+    const next = owner();
+    if (next !== medium) events.push({ t: groupT, from: medium, to: next });
+    medium = next;
+  }
+  return events;
+}
+
+describe("the general word tree's per-map media chain reconstructs the reference", () => {
+  // Rays from outside: the chained medium-coded query (continuing THROUGH
+  // opaque — a geometry walk; the transport terminates there) must emit the
+  // reference's medium changes event for event, the first t bit-identical
+  // in structure and every event within the reconstruction bound.
+  for (const { name, maps, level, dimension, media, center, radius } of [
+    {
+      name: "default system, glass/opaque",
+      maps: defaultTransforms,
+      level: 3,
+      dimension: 3 as const,
+      media: [1, 0, 1, 0],
+      center: [0, 0, 0] as Vec3,
+      radius: 6,
+    },
+    {
+      name: "default system, two glass materials",
+      maps: defaultTransforms,
+      level: 2,
+      dimension: 3 as const,
+      media: [1, 2, 0, 2],
+      center: [0, 0, 0] as Vec3,
+      radius: 6,
+    },
+    {
+      name: "rotated pentatope, three materials",
+      maps: rotatedPentatope,
+      level: 2,
+      dimension: 4 as const,
+      media: [1, 2, 3, 0, 1],
+      center: [0, 0, 0] as Vec3,
+      radius: 5,
+    },
+  ]) {
+    it(`sweeps 24 chained rays: ${name}, ${dimension}D`, () => {
+      const c = generalConstructionFor(maps(), level, dimension);
+      const pose = poseFor(dimension);
+      let opaque = 0;
+      for (const { origin, dir } of probeRaysAround(center, radius, 24, 13)) {
+        const expected = referenceMediumEvents(
+          c,
+          media,
+          finiteSolidIntrinsicPoint(pose, origin),
+          finiteSolidIntrinsicDirection(pose, dir),
+        ).filter((event) => event.t > 0);
+        const got: Array<{ t: number; from: number; to: number }> = [];
+        let medium = 0;
+        let anchor: FiniteSolidAnchor | undefined;
+        let accumulated = 0;
+        for (let hop = 0; hop < 128; hop++) {
+          const result = anchor
+            ? finiteSolidGeneralNextBoundaryFromAnchor(c, pose, dir, {
+                inside: medium !== 0,
+                anchor,
+                media,
+                medium,
+              })
+            : finiteSolidGeneralNextBoundary(c, pose, origin, dir, {
+                inside: false,
+                media,
+                medium: 0,
+              });
+          if (result.kind === "refused") {
+            throw new Error(
+              `the media chain refused at hop ${hop}: ${result.reason}`,
+            );
+          }
+          if (result.kind === "miss") break;
+          accumulated += result.t;
+          got.push({
+            t: accumulated,
+            from: result.fromMedium ?? -1,
+            to: result.toMedium ?? -1,
+          });
+          if (result.toMedium === FINITE_SOLID_MEDIUM_OPAQUE) opaque++;
+          medium = result.toMedium ?? 0;
+          anchor = result.anchor;
+        }
+        expect(got).toHaveLength(expected.length);
+        got.forEach((event, k) => {
+          expect(event.from).toBe(expected[k].from);
+          expect(event.to).toBe(expected[k].to);
+          expect(Math.abs(event.t - expected[k].t)).toBeLessThan(
+            CHAIN_RECONSTRUCTION * Math.max(1, expected[k].t),
+          );
+        });
+      }
+      expect(opaque).toBeGreaterThan(0);
+    });
+  }
 });
