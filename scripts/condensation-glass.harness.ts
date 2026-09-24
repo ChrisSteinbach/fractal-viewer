@@ -91,6 +91,9 @@ function solidOf(subject: Subject): CondensationSolid3 {
     buildSurfaceDE(subject.transforms, null, undefined, {
       condensationDepthBand: { maxDepth: subject.maxDepth },
     }),
+    // The gear panel is the emitter rule's own evidence: a conservative
+    // shape, built as an instrument the router refuses.
+    { admitConservativeShapes: true },
   );
 }
 

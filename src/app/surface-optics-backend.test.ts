@@ -4,13 +4,18 @@ import { buildSurfaceDE4 } from "../fractal/surface-de-4d";
 import type { Transform } from "../fractal/types";
 import { identityRotorPair, rotorMatrix } from "./rotor4";
 import { createSurfaceTransmissionStarter } from "./surface-transmission-starters";
-import { PRESET_SPHERE_INVERSIONS } from "../fractal/presets";
+import { GEAR_SHAPE } from "../fractal/shapes";
+import {
+  PRESET_SPHERE_INVERSIONS,
+  sierpinskiTetrahedron,
+} from "../fractal/presets";
 import { resolveSphereInversion } from "../fractal/sphere-inversion";
 import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
 import {
   SPHERE_INVERSION_GLASS_MAX_DEPTH,
   sphereInversionGlassAdmission,
   surfaceClosedSolidAdmitted,
+  surfaceCondensationSolidAdmitted,
   surfaceOpticsOutlook,
   type Surface4OpticsPose,
 } from "./surface-optics-backend";
@@ -188,6 +193,69 @@ describe("surfaceClosedSolidAdmitted", () => {
     // The same pose with the slice OFF the flats erodes every member.
     expect(
       surfaceClosedSolidAdmitted(de, {}, { ...canonicalPose4, w0: 0 }),
+    ).toBe(false);
+  });
+});
+
+describe("surfaceCondensationSolidAdmitted (the general curved solid)", () => {
+  const beads = (shape = emitterOnly[0].emitter!): Transform[] => [
+    ...sierpinskiTetrahedron(),
+    { ...emitterOnly[0], id: 9, emitter: shape },
+  ];
+  const band = { condensationDepthBand: { maxDepth: 2 } };
+  const noSym = { order: 1, plane: "xy" as const };
+
+  it("admits an IFS of exact-SDF emitters over a finite band, both dimensions", () => {
+    expect(
+      surfaceCondensationSolidAdmitted(
+        buildSurfaceDE(beads(), null, noSym, band),
+        {},
+      ),
+    ).toBe(true);
+    expect(
+      surfaceCondensationSolidAdmitted(
+        buildSurfaceDE4(beads(), null, noSym, band),
+        {},
+        canonicalPose4,
+      ),
+    ).toBe(true);
+  });
+
+  it("leaves emitter-only C0 to the closed-solid backend: the two are disjoint", () => {
+    const de = buildSurfaceDE(emitterOnly, null, noSym, band);
+    expect(surfaceClosedSolidAdmitted(de, {})).toBe(true);
+    expect(surfaceCondensationSolidAdmitted(de, {})).toBe(false);
+  });
+
+  it("refuses an unbounded band, a gear emitter, tiling and balloon", () => {
+    expect(
+      surfaceCondensationSolidAdmitted(
+        buildSurfaceDE(beads(), null, noSym, {}),
+        {},
+      ),
+    ).toBe(false);
+    expect(
+      surfaceCondensationSolidAdmitted(
+        buildSurfaceDE(beads(GEAR_SHAPE), null, noSym, band),
+        {},
+      ),
+    ).toBe(false);
+    const de = buildSurfaceDE(beads(), null, noSym, band);
+    expect(surfaceCondensationSolidAdmitted(de, { tiling: true })).toBe(false);
+    expect(surfaceCondensationSolidAdmitted(de, { balloon: true })).toBe(false);
+  });
+
+  it("refuses a 4D pose off the canonical slice", () => {
+    const de = buildSurfaceDE4(beads(), null, noSym, band);
+    expect(
+      surfaceCondensationSolidAdmitted(de, {}, { ...canonicalPose4, w0: 0.2 }),
+    ).toBe(false);
+    expect(
+      surfaceCondensationSolidAdmitted(
+        de,
+        {},
+        { ...canonicalPose4, sliceHalfW: 0.05 },
+      ),
     ).toBe(false);
   });
 });

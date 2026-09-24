@@ -2102,17 +2102,28 @@ sphere cut by a box) makes it never smaller than that union while keeping
 the sign exact. Sphere emitters under similarities reproduce the
 safety-scaled exact distance to the union of balls. Admission refuses a band
 without a finite ceiling at most `CONDENSATION_SOLID_MAX_DEPTH` (6), folds,
-graph-directed selection, hybrid schedules, any final but the identity, mesh
-emitters, and a map with `σ_max >= 1`. It admits kaleidoscope copies and
+graph-directed selection, hybrid schedules, any final but the identity, an
+emitter outside the exact-SDF rule below, and a map with `σ_max >= 1`. It admits kaleidoscope copies and
 per-map posts, folded into each edge's inverse.
 
-THE 4D HALF IS AN ARGUMENT, NOT A SECOND FIELD YET. A 4D emitter is a 3D
+THE 4D HALF (`src/fractal/condensation-solid-4d.ts`). A 4D emitter is a 3D
 solid embedded at local `w = 0`, a flat piece of 4D. A 3D slice meets a flat
 piece in zero volume unless the flat lies in the slice, so the only 4D pose
 holding a glass solid is the canonical one the C0 backend already admits.
-There the slice is exactly the 3D solid of the document's restriction. The
-4D form (the C0 penalty term per node) and the pose admission belong with
-the routing child.
+The 4D field is the 3D search over the C0 backend's own penalty term
+(`σ_min·sd + |local w|`) at every node, origin-anchored like the 4D descent,
+with the 3D twin's constants, depth ceiling and emitter rule imported rather
+than restated. `condensationSolidPoseAdmission4` states the pose: zero slab,
+a w-preserving rotor, every composed map (kaleidoscope copies and posts
+included) w-untouched and fixing `w0`, and every emitter's flat in the
+slice. The lift of a 3D document at `w0 = 0` passes it. There every node
+keeps `w = w0`, the penalty vanishes identically, and the tests pin the 4D
+field on the slice to the 3D field of the restriction (plain, a band
+skipping the root, and an order-3 kaleidoscope; relative 1e-12) and to an
+independent 4D brute-force walk. Off the pose the penalty is a lens-shaped
+slab, neither a lower bound nor an exact sign, and a prune can drop a lens
+term the brute-force union keeps. That is the C0 backend's own off-pose
+state, and the transport answers it the same way, with honest refusals.
 
 THE LOOK GATE (`scripts/condensation-glass.harness.ts`, through the shared
 `scripts/glass-preview.ts` renderer the sphere-inversion sheet now also uses,
@@ -2138,10 +2149,24 @@ Three findings:
   (1.7 per trace) but not all. Which emitter shapes admit glass is therefore
   a real admission question for the routing child: exact-SDF primitives
   (sphere, box, torus, capsule) and their unions, or a gear-specific remedy.
-- THE LOOK IS THE OWNER'S CALL. These panels are the same register as the
-  approved sphere-inversion pearls, so the next children (the production
-  field's 4D form and admission, the WGSL mirror, routing and the panel)
-  should wait on the owner's look review of these two sheets.
+- THE LOOK WAS APPROVED, EXACT-SDF EMITTERS ONLY (decided 2026-09-24 on
+  the owner's delegation). The bead and ring sheets read as curved glass in
+  the same register as the approved sphere-inversion pearls, so the rest of
+  the production work goes ahead. The emitter rule follows from the gear
+  row: an admitted emitter is a UNION of analytic primitives with exact
+  SDFs (sphere, box, torus with `minor <= major`, capsule). Intersect
+  parts (exact sign, conservative distance), the gear and meshes refuse
+  with named reasons (`condensationSolidShapeRefusal`, shared by both
+  dimensions). No gear remedy is scheduled. The look sheet still renders
+  its gear panel, as the rule's evidence, through the module's explicit
+  `admitConservativeShapes` instrument option, which routing never passes.
+
+THE ROUTING PREDICATE (`surface-optics-backend.ts`'s
+`surfaceCondensationSolidAdmitted`) reads both admissions and, in 4D, the
+pose at entry, plus the router's own tiling and balloon refusals. It is
+DISJOINT from `surfaceClosedSolidAdmitted` by the map count: emitter-only
+C0 stays the closed-solid backend's. Nothing selects it yet. It waits on
+the kernel mirror.
 
 ## What is not yet qualified
 

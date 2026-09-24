@@ -12,6 +12,12 @@ import type {
 import type { Transform } from "../fractal/types";
 import type { SurfaceDE } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
+import { condensationSolidAdmission3 } from "../fractal/condensation-solid";
+import {
+  buildCondensationSolid4,
+  condensationSolidAdmission4,
+  condensationSolidPoseAdmission4,
+} from "../fractal/condensation-solid-4d";
 
 /**
  * The app-side decision for the optical transport's boundary backend —
@@ -208,6 +214,35 @@ export function surfaceClosedSolidAdmitted(
     }
   }
   return true;
+}
+
+/**
+ * THE GENERAL CURVED SOLID'S ROUTING ADMISSION — the sibling of
+ * {@link surfaceClosedSolidAdmitted} for the depth-band condensation solid
+ * (`condensation-solid.ts` / `-4d.ts`): an ordinary IFS WITH maps whose
+ * emitters are the exact-SDF shapes, every word of a finite band. The two
+ * predicates are DISJOINT by the map count: emitter-only C0 stays the
+ * closed-solid backend's, so this one never claims a root-only union.
+ *
+ * It reads the modules' own admissions (the composition in both
+ * dimensions, and in 4D the canonical pose at entry), plus the two
+ * composition refusals only the router sees: tiling and balloon. `pose4`
+ * given means a 4D session, exactly as the closed-solid predicate reads it.
+ */
+export function surfaceCondensationSolidAdmitted(
+  de: SurfaceDE | SurfaceDE4,
+  composition: { balloon?: boolean; tiling?: boolean },
+  pose4?: Surface4OpticsPose | null,
+): boolean {
+  if (de.maps.length === 0) return false;
+  if (composition.tiling || composition.balloon) return false;
+  if (pose4) {
+    const de4 = de as SurfaceDE4;
+    if (!condensationSolidAdmission4(de4).ok) return false;
+    return condensationSolidPoseAdmission4(buildCondensationSolid4(de4), pose4)
+      .ok;
+  }
+  return condensationSolidAdmission3(de as SurfaceDE).ok;
 }
 
 /** Which side of the transmission boundary a document sits on, as the

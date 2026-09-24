@@ -55,6 +55,9 @@ function solidOf(transforms: Transform[], band: CondensationDepthBand) {
     buildSurfaceDE(transforms, null, undefined, {
       condensationDepthBand: band,
     }),
+    // The soundness tests build a conservative shape on purpose (the
+    // emitter rule refuses it for routing, not for the field).
+    { admitConservativeShapes: true },
   );
 }
 

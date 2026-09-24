@@ -3100,6 +3100,14 @@ a drop-in for it. Adopting the exact normal would mean re-deriving that
 machinery around it, and it would change the approved look. That is a
 design for the owner to commission, not a schedule change to take here.
 
+VERDICT, 2026-09-24 (decided on the owner's delegation): WON'T DO. The
+tetrahedron-tap normal stays. The exact normal's only prize was speed, and
+the settle line has since been met (~4.2 s against 10 s, the joint pool and
+the pending chain below). Its price is fewer resolved traces and 8.3% of
+settle pixels moved by more than 8/255 against the approved look. The
+opt-in arm (`?surfacesinormal=exact`, `sphereInversionExactNormal`) stays
+as this measurement's executable record.
+
 WHERE THE 3D GAP STANDS: preview 2.0 s truncated (2.6 s unbudgeted) against
 1 s, and settle 16.8 s against 10 s, both unchanged. The two measured
 remainders are the per-sample serial DRAIN (~1.1 s a sample, which needs
@@ -3449,8 +3457,15 @@ A 512-path guard puts the 3D cold preview inside the 1 s line and costs 397
 of 7,598 glass hits (5.2%), which turn from glass to unresolved black. That
 changes the rendered glass, and a preview-only budget would be a per-ray
 truncation of the preview, which the standing no-automatic-give-up verdict
-rules on. Either is an owner decision. It is recorded with this curve, not
-taken.
+rules on.
+
+VERDICT, 2026-09-24 (decided on the owner's delegation): THE GUARD STAYS
+2,048 everywhere, with no preview-only guard. Lowering it turns 1.8% (1,024)
+to 5.2% (512) of glass hits black in the approved look, and a preview-tier
+guard is a per-ray truncation of the preview, which the no-automatic-give-up
+verdict rules out. The ~2 s cold first 3D preview is an ACCEPTED MISS of the
+1 s line: warm previews are inside it, the app's first preview stays at the
+full rung (below), and 4D meets every line.
 
 THE APP'S GOVERNOR, measured in the built app by
 `scripts/si-glass-preview-rungs.probe.mjs` (each starter from the menu at
@@ -3484,9 +3499,10 @@ preset load leaves an invalidation waiting.
 WHERE THE 3D PREVIEW STANDS. Warm previews are inside the line (0.83–0.85 s),
 the settle improved to ~4.2 s, and in the app the whole preview is now the
 full rung. The cold first preview stays at ~2.0 s,
-bounded below by the path guard's traces. Moving that floor needs a cheaper
-path (a kernel question, whose per-path latency is measured but not
-explained) or a lower guard (an owner decision, priced above).
+bounded below by the path guard's traces, and that is the accepted miss
+(the verdict above). Moving that floor would need a cheaper path, a kernel
+question whose per-path latency is measured but not explained; a lower
+guard is decided against.
 
 ### Where a cold frame's lanes lose their time (2026-09-24)
 
