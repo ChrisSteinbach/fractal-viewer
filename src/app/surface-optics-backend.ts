@@ -12,7 +12,19 @@ import type {
 import type { Transform } from "../fractal/types";
 import type { SurfaceDE } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
-import { condensationSolidAdmission3 } from "../fractal/condensation-solid";
+import {
+  CONDENSATION_SOLID_MAX_DEPTH,
+  condensationSolidAdmission3,
+  condensationSolidShapeRefusal,
+} from "../fractal/condensation-solid";
+import { CONDENSATION_SOLID_GPU_MAX_EDGES } from "../fractal/condensation-solid-gpu";
+import {
+  resolveCondensationDepthBand,
+  type CondensationDepthBand,
+} from "../fractal/condensation-de";
+import { planeHasW } from "../fractal/affine4";
+import { singularValues3 } from "../fractal/surface-de";
+import type { SymmetryParams } from "../fractal/types";
 import {
   buildCondensationSolid4,
   condensationSolidAdmission4,
@@ -236,6 +248,10 @@ export function surfaceCondensationSolidAdmitted(
 ): boolean {
   if (de.maps.length === 0) return false;
   if (composition.tiling || composition.balloon) return false;
+  // The kernel bakes one edge per (base map, sector); past its ceiling the
+  // codegen refuses, so routing refuses first.
+  if (de.maps.length * de.symmetry.order > CONDENSATION_SOLID_GPU_MAX_EDGES)
+    return false;
   if (pose4) {
     const de4 = de as SurfaceDE4;
     if (!condensationSolidAdmission4(de4).ok) return false;
@@ -251,12 +267,15 @@ export function surfaceCondensationSolidAdmitted(
  * DOCUMENT level (the session predicate stays the authority at entry; this
  * is its authoring-time voice, and a disagreement between the two is a bug
  * in this mirror). `"finite-cells"` is the finiteSolid route's backend by
- * construction; `"closed-solid"` is the emitter-only C0 family, with
+ * construction; `"closed-solid"` is the emitter-only C0 family and the
+ * general curved solid (maps beside exact-SDF emitters over a finite band,
+ * {@link surfaceCondensationSolidAdmitted}), with
  * `sliceCoupled` naming the 4D route's live-pose coupling the document
  * cannot prove (the saved pose passes at entry, but scrubbing the slice or
  * turning a w-plane rotor mid-session moves the object off the composition
  * the field describes). Everything else — forward routes, sphere
- * inversion's replaced subject, mixed maps and emitters, and every
+ * inversion's replaced subject, mixed maps and emitters the curved solid
+ * does not admit, and every
  * composition refusal — keeps the classic finish, the estimator backend's
  * disclosed vacuous state on IFS geometry. */
 export type SurfaceOpticsOutlook =
@@ -271,6 +290,66 @@ export interface SurfaceOpticsDocumentView {
   schedulePresent: boolean;
   tilingPresent: boolean;
   balloonOn: boolean;
+  /** The general curved solid's two extra document terms: the band it
+   * describes and the kaleidoscope its edges sweep. Absent reads as the
+   * unbounded band and no kaleidoscope. */
+  condensationDepthBand?: CondensationDepthBand;
+  symmetry?: Pick<SymmetryParams, "order" | "plane" | "twist">;
+}
+
+/** Does a transform's `w` block only scale w (no w translation, rotation
+ * or shear)? Then its lift fixes the w = 0 hyperplane, the canonical
+ * pose's own condition; any other w term moves a flat off it. */
+function wScaleOnly(t: Transform): boolean {
+  const w = t.w;
+  if (!w) return true;
+  const zeroish = (v: number | undefined) => v === undefined || v === 0;
+  return (
+    zeroish(w.position) &&
+    zeroish(w.rotation?.xw) &&
+    zeroish(w.rotation?.yw) &&
+    zeroish(w.rotation?.zw) &&
+    zeroish(w.shear?.xw) &&
+    zeroish(w.shear?.yw) &&
+    zeroish(w.shear?.zw)
+  );
+}
+
+/** The document-level mirror of the general curved solid's admission
+ * (`condensation-solid.ts`'s refusal list plus the kernel's edge ceiling),
+ * CONSERVATIVE where the document cannot see the built DE: a map with any
+ * variation or a live post refuses, where the DE would admit a post. */
+function curvedSolidDocumentAdmits(
+  active: readonly Transform[],
+  view: SurfaceOpticsDocumentView,
+  fourD: boolean,
+): boolean {
+  const band = resolveCondensationDepthBand(view.condensationDepthBand);
+  if (band.maxDepth > CONDENSATION_SOLID_MAX_DEPTH) return false;
+  const maps = active.filter((t) => !transformHasEmitter(t));
+  const order = Math.max(1, view.symmetry?.order ?? 1);
+  if (maps.length * order > CONDENSATION_SOLID_GPU_MAX_EDGES) return false;
+  // 4D: the canonical pose needs w-untouched maps and a kaleidoscope that
+  // keeps w; a document that authors either off cannot pass at entry.
+  if (fourD) {
+    if (active.some((t) => !wScaleOnly(t))) return false;
+    if (
+      order > 1 &&
+      view.symmetry &&
+      (planeHasW(view.symmetry.plane) || (view.symmetry.twist ?? 0) !== 0)
+    )
+      return false;
+  }
+  for (const map of maps) {
+    if ((map.variations?.length ?? 0) > 0) return false;
+    if (map.post !== undefined && !isIdentityAffine(map.post)) return false;
+    if (!(singularValues3(composeAffine(map).m).max < 1)) return false;
+  }
+  for (const emitter of active) {
+    if (emitter.emitter && condensationSolidShapeRefusal(emitter.emitter))
+      return false;
+  }
+  return true;
 }
 
 export function surfaceOpticsOutlook(
@@ -292,7 +371,15 @@ export function surfaceOpticsOutlook(
   if (view.balloonOn) return { resolves: false };
   const active = view.transforms.filter((t) => (t.weight ?? 1) > 0);
   if (active.length === 0) return { resolves: false };
-  if (active.some((t) => !transformHasEmitter(t))) return { resolves: false };
+  if (!active.some((t) => transformHasEmitter(t))) return { resolves: false };
+  // Maps beside the emitters are the GENERAL curved solid's
+  // (surfaceCondensationSolidAdmitted), mirrored conservatively.
+  if (
+    active.some((t) => !transformHasEmitter(t)) &&
+    !curvedSolidDocumentAdmits(active, view, routeKind === "ifs4")
+  ) {
+    return { resolves: false };
+  }
   // Mesh-bearing emitter shapes refuse (the mesh lattice's interior band
   // is not a certified stepping bound — the DE-level predicate's own term).
   for (const emitter of active) {

@@ -260,6 +260,69 @@ describe("surfaceCondensationSolidAdmitted (the general curved solid)", () => {
   });
 });
 
+describe("surfaceOpticsOutlook — the general curved solid's document mirror", () => {
+  const beads = (emitter = emitterOnly[0].emitter!): Transform[] => [
+    ...sierpinskiTetrahedron(),
+    { ...emitterOnly[0], id: 9, emitter },
+  ];
+  const view = (
+    transforms: Transform[],
+    extra: Partial<Parameters<typeof surfaceOpticsOutlook>[1]> = {},
+  ) => ({
+    transforms,
+    finalTransform: null,
+    schedulePresent: false,
+    tilingPresent: false,
+    balloonOn: false,
+    condensationDepthBand: { maxDepth: 2 },
+    symmetry: { order: 1, plane: "xy" as const },
+    ...extra,
+  });
+
+  it("resolves maps beside exact-SDF emitters over a finite band", () => {
+    expect(surfaceOpticsOutlook("ifs", view(beads()))).toEqual({
+      resolves: "closed-solid",
+      sliceCoupled: false,
+    });
+  });
+
+  it("keeps classic for an unbounded band, a gear, a map variation and past the edge ceiling", () => {
+    expect(
+      surfaceOpticsOutlook(
+        "ifs",
+        view(beads(), { condensationDepthBand: undefined }),
+      ),
+    ).toEqual({ resolves: false });
+    expect(surfaceOpticsOutlook("ifs", view(beads(GEAR_SHAPE)))).toEqual({
+      resolves: false,
+    });
+    const swirled = beads();
+    swirled[0] = { ...swirled[0], variations: [{ type: "swirl", weight: 1 }] };
+    expect(surfaceOpticsOutlook("ifs", view(swirled))).toEqual({
+      resolves: false,
+    });
+    expect(
+      surfaceOpticsOutlook(
+        "ifs",
+        view(beads(), { symmetry: { order: 17, plane: "xy" } }),
+      ),
+    ).toEqual({ resolves: false });
+  });
+
+  it("keeps classic in 4D for a map that turns into w", () => {
+    const turned = beads();
+    turned[1] = { ...turned[1], w: { rotation: { xw: 0.3 } } };
+    expect(surfaceOpticsOutlook("ifs4", view(turned))).toEqual({
+      resolves: false,
+    });
+    const scaled = beads().map((t) => ({ ...t, w: { scale: 0.5 } }));
+    expect(surfaceOpticsOutlook("ifs4", view(scaled))).toEqual({
+      resolves: "closed-solid",
+      sliceCoupled: true,
+    });
+  });
+});
+
 describe("surfaceClosedSolidAdmitted — the identity final", () => {
   it("admits an enabled-but-identity final transform (the lens nobody moved)", () => {
     const identityLens: Transform = {

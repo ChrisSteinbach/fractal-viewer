@@ -117,6 +117,7 @@ import {
 import {
   sphereInversionGlassAdmission,
   surfaceClosedSolidAdmitted,
+  surfaceCondensationSolidAdmitted,
   surfaceOpticsOutlook,
   type SurfaceOpticsBackend,
 } from "./surface-optics-backend";
@@ -6516,17 +6517,32 @@ async function main(): Promise<void> {
             // field describes; the transport degrades to its own honest
             // refusals and the panel's optics note discloses the coupling.
             const support4 = scene.fourDWSupport();
-            const opticsAdmitted = surfaceClosedSolidAdmitted(
-              de,
-              { balloon: state.balloonEcho, tiling: surfaceTiling !== null },
-              {
-                rotor: fourDView.matrix(),
-                w0: fourDView.sliceW ?? liveSliceCenter() * support4,
-                sliceHalfW: surface4SlabAvailable
-                  ? fourDView.sliceThickness * support4
-                  : 0,
-              },
-            );
+            const opticsComposition = {
+              balloon: state.balloonEcho,
+              tiling: surfaceTiling !== null,
+            };
+            const opticsPose = {
+              rotor: fourDView.matrix(),
+              w0: fourDView.sliceW ?? liveSliceCenter() * support4,
+              sliceHalfW: surface4SlabAvailable
+                ? fourDView.sliceThickness * support4
+                : 0,
+            };
+            // Emitter-only C0 or the GENERAL curved solid (maps beside
+            // exact-SDF emitters over a finite band): the two predicates
+            // are disjoint by map count, and both ride the closed-solid
+            // backend, the compute renderer deriving the word-tree wire.
+            // The curved solid is COMPUTE-ONLY (the GLSL closed-solid twin
+            // traces the root term alone), so without compute it strips
+            // to classic like any other refused glass.
+            const opticsAdmitted =
+              surfaceClosedSolidAdmitted(de, opticsComposition, opticsPose) ||
+              (surfaceComputeAvailable() &&
+                surfaceCondensationSolidAdmitted(
+                  de,
+                  opticsComposition,
+                  opticsPose,
+                ));
             const authoredWire = gatedSlotMaterials(
               ifsShadeSlots(de),
               de.patternCalibration,
@@ -6535,7 +6551,7 @@ async function main(): Promise<void> {
             );
             if (authoredWire?.optics && !opticsAdmitted) {
               console.info(
-                "Surface render: glass transmits only on emitter (condensation) scenes at the canonical slice — see the Glass starters; rendering classic.",
+                "Surface render: glass transmits only on emitter (condensation) scenes — emitter-only, or exact-SDF emitters over a depth band of 6 or less — at the canonical slice; see the Glass starters. Rendering classic.",
               );
               sessionMaterials = gatedSlotMaterials(
                 ifsShadeSlots(de),
@@ -6981,10 +6997,18 @@ async function main(): Promise<void> {
           // the old fold check: an emitter-only system has no maps to
           // carry fold variations, and a fold-final lens is refused
           // outright.
-          const opticsAdmitted = surfaceClosedSolidAdmitted(de, {
+          const opticsComposition = {
             balloon: state.balloonEcho,
             tiling: surfaceTiling !== null,
-          });
+          };
+          // The general curved solid rides the closed-solid backend on
+          // compute only (the GLSL twin traces the root term alone), so
+          // ?surfacegl, a missing adapter or a lost device strips it to
+          // classic, disclosed like any other refused glass.
+          const opticsAdmitted =
+            surfaceClosedSolidAdmitted(de, opticsComposition) ||
+            (surfaceComputeAvailable() &&
+              surfaceCondensationSolidAdmitted(de, opticsComposition));
           const authoredWire = gatedSlotMaterials(
             ifsShadeSlots(de),
             de.patternCalibration,
@@ -6993,7 +7017,7 @@ async function main(): Promise<void> {
           );
           if (authoredWire?.optics && !opticsAdmitted) {
             console.info(
-              "Surface render: glass transmits only on emitter (condensation) scenes — see the Glass starters; rendering classic.",
+              "Surface render: glass transmits only on emitter (condensation) scenes — emitter-only, or exact-SDF emitters over a depth band of 6 or less; see the Glass starters. Rendering classic.",
             );
             sessionMaterials = gatedSlotMaterials(
               ifsShadeSlots(de),
@@ -7660,6 +7684,8 @@ async function main(): Promise<void> {
       schedulePresent: state.schedule !== null && state.schedule !== undefined,
       tilingPresent: state.tiling !== null && state.tiling !== undefined,
       balloonOn: state.balloonEcho,
+      condensationDepthBand: state.condensationDepthBand,
+      symmetry: state.symmetry,
     });
     ui.setSurfaceEligibility(
       eligibility.status,
