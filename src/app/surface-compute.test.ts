@@ -135,7 +135,6 @@ import {
   FINITE_SOLID_HALF_EXTENT,
   analyzeFiniteSolidGeneral,
 } from "../fractal/finite-solid";
-import { sierpinskiTetrahedron } from "../fractal/presets";
 import {
   finiteSolidTransportSource,
   type FiniteSolidGeneralWire,
@@ -2004,21 +2003,16 @@ describe("SurfaceComputeRenderer finite-tiling target integration", () => {
 describe("SurfaceComputeRenderer general finite target", () => {
   const noSymmetry = { order: 1, plane: "xz" as const };
   const construction = analyzeFiniteSolidGeneral(
-    sierpinskiTetrahedron(),
+    defaultTransforms(),
     null,
     noSymmetry,
     1,
     3,
   );
   if (construction.status !== "eligible" || !construction.construction) {
-    throw new Error("the Sierpinski fixture must admit");
+    throw new Error("the default-system fixture must admit");
   }
-  const wire: FiniteSolidGeneralWire = {
-    mapScale: construction.construction.mapScale,
-    mapOffset: construction.construction.mapOffset,
-    rootMin: construction.construction.rootMin,
-    rootMax: construction.construction.rootMax,
-  };
+  const wire: FiniteSolidGeneralWire = construction.construction;
 
   it("bakes the document's own maps into the emitted kernels and leaves the shipped construction alone", async () => {
     const general = await createPaletteResourceHarness(false, {
@@ -2028,8 +2022,8 @@ describe("SurfaceComputeRenderer general finite target", () => {
     });
     expect(general.shaderSources.length).toBeGreaterThan(0);
     for (const source of general.shaderSources) {
-      expect(source).toContain("const FIN_SCALE = array<vec4f, 4>(");
-      expect(source).toContain("const FIN_ROOT_MIN = vec4f(");
+      expect(source).toContain("const FIN_M = array<vec4f, 16>(");
+      expect(source).toContain("const FIN_ROOT = array<vec4f, 4>(");
       expect(source).toContain("fn finCompose(");
     }
     general.renderer.destroy();
@@ -2041,7 +2035,7 @@ describe("SurfaceComputeRenderer general finite target", () => {
       // The shipped grid construction's own display body is present; the
       // baked word tree is not.
       expect(source).toContain("fn finiteBoxSdf(");
-      expect(source).not.toContain("const FIN_SCALE");
+      expect(source).not.toContain("const FIN_M ");
       expect(source).not.toContain("fn finCompose(");
     }
     shipped.renderer.destroy();

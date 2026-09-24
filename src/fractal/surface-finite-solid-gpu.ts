@@ -40,8 +40,20 @@
 
 import {
   FINITE_SOLID_DISPLAY_REFINE_REL,
+  FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES,
+  FINITE_SOLID_GENERAL_MAX_LEVEL,
+  FINITE_SOLID_GENERAL_MAX_MAPS,
+  FINITE_SOLID_GENERAL_NORMAL_DEPENDENT_REL,
+  FINITE_SOLID_GENERAL_SNAP_REL,
+  finiteSolidGeneralInverseMaps,
+  finiteSolidGeneralRefineTau,
   type FiniteSolidAnchor,
+  type FiniteSolidGeneralConstruction,
 } from "./finite-solid";
+
+// The leaf cap moved to the oracle (the f64 walk refuses past it too); the
+// re-export keeps the harness's import path.
+export { FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES };
 import { SHAPE_MARCH_SAFETY } from "./shapes";
 import type { Vec3, Vec4 } from "./types";
 
@@ -872,30 +884,34 @@ ${crossingTime}    }`
 }
 
 // ---------------------------------------------------------------------------
-// The GENERAL construction: the document's OWN maps as the word tree.
+// The GENERAL construction: the document's OWN maps as the SIMPLICIAL word
+// tree.
 //
-// The CPU oracle is `finite-solid.ts`'s general section (`analyzeFiniteSolidGeneral`
-// through `finiteSolidGeneralDisplayDistance` / `finiteSolidGeneralNextBoundary`),
-// landed one commit before this half. The construction rides the SOURCE, not
-// the wire: the maps and the root box bake as `const` WGSL (the tiling clip's
-// and `shapes.ts`'s baked-constant pattern), so the shipped params tail and
-// the bindingless design survive untouched — a general session recompiles its
-// kernels per enter (the session freezes its construction), exactly the
-// discipline the shipped cores already carry. The packers are the shipped
-// ones verbatim (`packSurfaceGpuParamsFinite` / `Finite4`): the params tail
-// keeps the frozen 16-byte finite block (level live, half/grid unread) and
-// the only new wire is the marching ball the packer already carries.
+// The CPU oracle is `finite-solid.ts`'s general section
+// (`analyzeFiniteSolidGeneral` through `finiteSolidGeneralDisplayDistance` /
+// `finiteSolidGeneralNextBoundary` / `finiteSolidGeneralContains`); its
+// module doc carries the construction and every soundness argument (the
+// root simplex, the level boxes the pruning rides, the branch-box display
+// hybrid). The construction rides the SOURCE, not the wire: the maps, their
+// f64 inverses, the root simplex's vertices, the level boxes and the
+// display's per-branch refine margins bake as `const` WGSL (the tiling
+// clip's and `shapes.ts`'s baked-constant pattern), so the shipped params
+// tail and the bindingless design survive untouched — a general session
+// recompiles its kernels per enter (the session freezes its construction),
+// the discipline the shipped cores already carry. The inverses are the
+// ORACLE's f64 values rounded once at bake, never an f32 inversion.
 //
-// THE WALK is the reference's endpoint sweep, pruned: the DFS descends only
-// into subtrees whose box the ray clips (a descendant's box nests inside its
-// parent's, so a pruned subtree contributes no endpoints anywhere), collects
-// the hit leaves' intervals, sorts their endpoints by t (stable — the DFS
-// order breaks ties, matching the reference's stable sort), and groups
-// greedily from each group's first endpoint within
-// FINITE_SOLID_GENERAL_TIE_REL — the reference's declared resolution. The
-// enumeration is capped: a ray that clips more than
-// `FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES` pruned leaves refuses visit-cap
-// (the shipped DDA's own resource-refusal shape), never truncates.
+// THE LEVEL IS BAKED INTO THE CODE SHAPE, not only a constant: the DFS is
+// emitted as `level` explicit nests carrying the composed forward map and
+// the composed inverse, and every const-array index the emission writes is
+// in range for that level (WGSL refuses a constant out-of-range index at
+// shader creation, so a runtime `if (FIN_LEVEL == ...)` guard around a
+// `FIN_BOX_MIN[FIN_LEVEL - 2]` is not an option).
+//
+// THE ARITHMETIC ORDER IS THE ORACLE'S: every dot product and matrix step
+// is written left-associated in the oracle's term order (`finDot`,
+// `finRowTimes`), so the f32 twin below can mirror it op for op. A driver
+// may still fuse multiply-adds; that is the tie-edge class disclosed next.
 //
 // TIE-EDGE DISCLOSURE: the reference groups endpoints greedily from each
 // group's first t in f64; the WGSL realizes the same arithmetic in f32, and
@@ -905,218 +921,366 @@ ${crossingTime}    }`
 // excludes the probe and counts it, never a raised tolerance.
 // ---------------------------------------------------------------------------
 
-/** The general construction over the kernel wire: the document's own maps
- * as signed per-axis diagonal scales + offsets, and the maps' fixed
- * points' bounding box (verified invariant at admission). Plain number
- * arrays — the values are f64 on the CPU and quantize to f32 at bake. */
-export interface FiniteSolidGeneralWire {
-  mapScale: Vec4[];
-  mapOffset: Vec4[];
-  rootMin: Vec4;
-  rootMax: Vec4;
-}
+/** The general construction over the kernel wire — the admission's own
+ * construction fields, read verbatim (a `FiniteSolidGeneralConstruction`
+ * IS a wire). Plain number arrays: the values are f64 on the CPU and
+ * quantize to f32 at bake. */
+export type FiniteSolidGeneralWire = Pick<
+  FiniteSolidGeneralConstruction,
+  "mapMatrix" | "mapOffset" | "rootVertices" | "levelBoxes"
+>;
 
-/** The general construction's marching ball: the root box's farthest
- * corner's norm (the box need not be origin-centred — the fixed points'
- * bounding box is whatever the document's maps make it). The norm is
- * monotone in each |coordinate|, so the maximizing corner takes each
- * axis's larger magnitude — exact, not a bound. The packer's
- * bounding/visible pair and the fixture's domain gate read this ONE
- * number, the shipped construction's `finiteSolidBoundingRadius` role. */
-export function finiteSolidGeneralBoundingRadius(wire: {
-  rootMin: Vec4;
-  rootMax: Vec4;
-}): number {
-  let sum = 0;
-  for (let axis = 0; axis < 4; axis++) {
-    const reach = Math.max(
-      Math.abs(wire.rootMin[axis]),
-      Math.abs(wire.rootMax[axis]),
-    );
-    sum += reach * reach;
-  }
-  return Math.sqrt(sum);
-}
-
-/** The pruned enumeration's leaf cap: the walk refuses past it (visit-cap)
- * rather than truncating. The codegen bakes the smaller of this and the
- * construction's own worst case (K^level), so small constructions allocate
- * exactly their own bound. */
-export const FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES = 128;
-
-const generalVec4Lit = (v: Vec4): string =>
+const generalVec4Lit = (v: readonly number[]): string =>
   `vec4f(${floatLit(v[0])}, ${floatLit(v[1])}, ${floatLit(v[2])}, ${floatLit(v[3])})`;
 
+/** The wire's shape for `level` in `dim`: the codegen and the twin index
+ * the level boxes by level and the root by dimension, so a malformed wire
+ * throws here rather than emitting an out-of-range const index. */
+function validateGeneralWire(
+  dim: 3 | 4,
+  g: FiniteSolidGeneralWire,
+  level: number,
+): void {
+  const count = g.mapMatrix.length;
+  if (
+    !Number.isInteger(level) ||
+    level < 0 ||
+    level > FINITE_SOLID_GENERAL_MAX_LEVEL ||
+    count < 1 ||
+    count > FINITE_SOLID_GENERAL_MAX_MAPS ||
+    g.mapOffset.length !== count ||
+    g.rootVertices.length !== dim + 1 ||
+    g.levelBoxes.length !== level + 1
+  ) {
+    throw new RangeError(
+      `surface-finite-solid-gpu: a general wire needs 1..${FINITE_SOLID_GENERAL_MAX_MAPS} maps, ${dim + 1} root vertices and ${level + 1} level boxes at level ${level} (0..${FINITE_SOLID_GENERAL_MAX_LEVEL})`,
+    );
+  }
+}
+
 const generalConstBlock = (
+  dim: 3 | 4,
   g: FiniteSolidGeneralWire,
   level: number,
 ): string => {
-  const count = g.mapScale.length;
-  const rows = (source: Vec4[]): string =>
+  validateGeneralWire(dim, g, level);
+  const count = g.mapMatrix.length;
+  const inverses = finiteSolidGeneralInverseMaps(g);
+  const tau = finiteSolidGeneralRefineTau({
+    dimension: dim,
+    level,
+    mapMatrix: g.mapMatrix,
+    levelBoxes: g.levelBoxes,
+  });
+  const rows = (matrices: readonly (readonly number[])[]): string =>
+    matrices
+      .flatMap((m) =>
+        [0, 1, 2, 3].map(
+          (r) => `    ${generalVec4Lit(m.slice(r * 4, r * 4 + 4))}`,
+        ),
+      )
+      .join(",\n");
+  const vecs = (source: readonly (readonly number[])[]): string =>
     source.map((v) => `    ${generalVec4Lit(v)}`).join(",\n");
   return `// The construction, baked (the general admission's own maps — the
 // session freezes its construction at enter, the shipped cores' discipline):
-// signed per-axis diagonal scales + offsets, and the fixed points' root box.
+// row-major forward maps and their f64 inverses (four rows per map), the
+// root simplex, the level boxes (k = remaining depth) and the display's
+// per-branch refine margins.
 const FIN_LEVEL = ${level}u;
 const FIN_MAP_COUNT = ${count}u;
-const FIN_ROOT_MIN = ${generalVec4Lit(g.rootMin)};
-const FIN_ROOT_MAX = ${generalVec4Lit(g.rootMax)};
-const FIN_SCALE = array<vec4f, ${count}>(
-${rows(g.mapScale)}
+const FIN_M = array<vec4f, ${4 * count}>(
+${rows(g.mapMatrix)}
 );
-const FIN_OFFSET = array<vec4f, ${count}>(
-${rows(g.mapOffset)}
+const FIN_T = array<vec4f, ${count}>(
+${vecs(g.mapOffset)}
+);
+const FIN_IM = array<vec4f, ${4 * count}>(
+${rows(inverses.map((inv) => inv.m))}
+);
+const FIN_IT = array<vec4f, ${count}>(
+${vecs(inverses.map((inv) => inv.t))}
+);
+const FIN_ROOT = array<vec4f, ${dim + 1}>(
+${vecs(g.rootVertices)}
+);
+const FIN_BOX_MIN = array<vec4f, ${level + 1}>(
+${vecs(g.levelBoxes.map((box) => box.min))}
+);
+const FIN_BOX_MAX = array<vec4f, ${level + 1}>(
+${vecs(g.levelBoxes.map((box) => box.max))}
+);
+const FIN_TAU = array<f32, ${count}>(
+${tau.map((value) => `    ${floatLit(value)}`).join(",\n")}
 );
 const FIN_TIE_REL = ${finiteEnvelopeLiteral};
-const FIN_REFINE_REL = ${finiteRefineLiteral};
+const FIN_SNAP_REL = ${floatLit(FINITE_SOLID_GENERAL_SNAP_REL)};
+const FIN_NORMAL_DEPENDENT_REL = ${floatLit(FINITE_SOLID_GENERAL_NORMAL_DEPENDENT_REL)};
 const FIN_SAFETY = ${finiteSafetyLiteral};
 `;
 };
 
-/** The word's composed map — the reference's DFS accumulation, depth-major
- * (the FIRST map index most significant): offset accumulates against the
- * INCOMING scale, then the scale multiplies. Fresh per word (no undo
- * arithmetic) — the reference's undo-restored siblings differ from a fresh
- * compose only in the last ulp, which the declared tie absorbs. */
-const generalComposeWgsl = `
-struct FinWord {
-  scale: vec4f,
-  offset: vec4f,
+/** The affine algebra both general sources share, in the oracle's term
+ * order: `finDot` is `finite-solid.ts`'s `m0·v0 + m1·v1 + m2·v2 + m3·v3`
+ * left-associated, `finRowTimes` one row of `multiplyMatrix4`,
+ * `finCompose` `composeWordStep` (the prefix ∘ map step), and
+ * `finChildInverse` the walk's `childInverse` (M_a⁻¹ ∘ parent⁻¹). The 3D
+ * maps carry the w row/column identity, so the fourth terms add exact
+ * zeros. */
+const generalAlgebraWgsl = (dim: 3 | 4): string => `
+struct FinAff {
+  r0: vec4f,
+  r1: vec4f,
+  r2: vec4f,
+  r3: vec4f,
+  t: vec4f,
 }
 
-fn finCompose(w0: i32, w1: i32, depth: i32) -> FinWord {
-  var scale = vec4f(1.0);
-  var offset = vec4f(0.0);
-  if (depth >= 1) {
-    let s = FIN_SCALE[w0];
-    let t = FIN_OFFSET[w0];
-    offset = offset + scale * t;
-    scale = scale * s;
+fn finDot(a: vec4f, b: vec4f) -> f32 {
+  return ((a.x * b.x + a.y * b.y) + a.z * b.z) + a.w * b.w;
+}
+
+fn finApply(m: FinAff, v: vec4f) -> vec4f {
+  return vec4f(finDot(m.r0, v), finDot(m.r1, v), finDot(m.r2, v), finDot(m.r3, v));
+}
+
+fn finRowTimes(row: vec4f, m: FinAff) -> vec4f {
+  return ((row.x * m.r0 + row.y * m.r1) + row.z * m.r2) + row.w * m.r3;
+}
+
+fn finIdentity() -> FinAff {
+  return FinAff(
+    vec4f(1.0, 0.0, 0.0, 0.0),
+    vec4f(0.0, 1.0, 0.0, 0.0),
+    vec4f(0.0, 0.0, 1.0, 0.0),
+    vec4f(0.0, 0.0, 0.0, 1.0),
+    vec4f(0.0),
+  );
+}
+
+fn finMap(a: u32) -> FinAff {
+  return FinAff(FIN_M[4u * a], FIN_M[4u * a + 1u], FIN_M[4u * a + 2u], FIN_M[4u * a + 3u], FIN_T[a]);
+}
+
+fn finInverseMap(a: u32) -> FinAff {
+  return FinAff(FIN_IM[4u * a], FIN_IM[4u * a + 1u], FIN_IM[4u * a + 2u], FIN_IM[4u * a + 3u], FIN_IT[a]);
+}
+
+// The prefix ∘ map step (composeWordStep): the offset accumulates the map's
+// translation through the INCOMING prefix, then the matrices multiply.
+fn finCompose(acc: FinAff, a: u32) -> FinAff {
+  let m = finMap(a);
+  let offset = vec4f(
+    finDot(acc.r0, m.t) + acc.t.x,
+    finDot(acc.r1, m.t) + acc.t.y,
+    finDot(acc.r2, m.t) + acc.t.z,
+    finDot(acc.r3, m.t) + acc.t.w,
+  );
+  return FinAff(
+    finRowTimes(acc.r0, m),
+    finRowTimes(acc.r1, m),
+    finRowTimes(acc.r2, m),
+    finRowTimes(acc.r3, m),
+    offset,
+  );
+}
+
+// The child node's inverse (childInverse): (parent ∘ M_b)⁻¹ = M_b⁻¹ ∘
+// parent⁻¹ — {invM_b·parentInvM, invM_b·(parentInvT − t_b)}.
+fn finChildInverse(parent: FinAff, b: u32) -> FinAff {
+  let im = finInverseMap(b);
+  let d = parent.t - FIN_T[b];
+  return FinAff(
+    finRowTimes(im.r0, parent),
+    finRowTimes(im.r1, parent),
+    finRowTimes(im.r2, parent),
+    finRowTimes(im.r3, parent),
+    finApply(im, d),
+  );
+}
+
+// A word's composed forward map, replayed from the identity in the DFS's
+// own op sequence (generalLeafVertices) — the anchor's snap targets must
+// be the clip's own planes bit for bit.
+fn finWordAff(word: vec4i, depth: i32) -> FinAff {
+  var acc = finIdentity();
+  for (var slot = 0; slot < depth; slot++) {
+    acc = finCompose(acc, u32(word[slot]));
   }
-  if (depth >= 2) {
-    let s = FIN_SCALE[w1];
-    let t = FIN_OFFSET[w1];
-    offset = offset + scale * t;
-    scale = scale * s;
+  return acc;
+}
+
+// The cell: the root simplex's vertices through the composed word.
+struct FinCell {
+  v: array<vec4f, ${dim + 1}>,
+}
+
+fn finCell(m: FinAff) -> FinCell {
+  var cell: FinCell;
+  for (var i = 0; i < ${dim + 1}; i++) {
+    cell.v[i] = finApply(m, FIN_ROOT[i]) + m.t;
   }
-  return FinWord(scale, offset);
+  return cell;
+}
+
+// The cell's facets (facetsFromVertices): facet k opposite vertex k, its
+// vertices ascending, the normal the edge fan's (generalized) cross oriented
+// AWAY from the opposite vertex and normalized. ok = false is the degenerate
+// leaf the walk skips (a zero or non-finite cross, or the opposite vertex
+// ON the facet plane).
+struct FinFacets {
+  ok: bool,
+  n: array<vec4f, ${dim + 1}>,
+  c: array<f32, ${dim + 1}>,
+}
+
+${
+  dim === 4
+    ? `// cross4's minor: the 3x3 of rows (a_i, b_i, c_i) over the kept axes.
+fn finMinor(a: vec4f, b: vec4f, c: vec4f, i0: i32, i1: i32, i2: i32) -> f32 {
+  return a[i0] * (b[i1] * c[i2] - b[i2] * c[i1])
+    - b[i0] * (a[i1] * c[i2] - a[i2] * c[i1])
+    + c[i0] * (a[i1] * b[i2] - a[i2] * b[i1]);
+}
+
+fn finCross(e1: vec4f, e2: vec4f, e3: vec4f) -> vec4f {
+  return vec4f(
+    -finMinor(e1, e2, e3, 1, 2, 3),
+    finMinor(e1, e2, e3, 0, 2, 3),
+    -finMinor(e1, e2, e3, 0, 1, 3),
+    finMinor(e1, e2, e3, 0, 1, 2),
+  );
+}
+`
+    : `fn finCross(e1: vec4f, e2: vec4f) -> vec4f {
+  return vec4f(
+    e1.y * e2.z - e1.z * e2.y,
+    e1.z * e2.x - e1.x * e2.z,
+    e1.x * e2.y - e1.y * e2.x,
+    0.0,
+  );
+}
+`
+}
+fn finFacets(cell: FinCell) -> FinFacets {
+  var out: FinFacets;
+  out.ok = false;
+  for (var k = 0; k < ${dim + 1}; k++) {
+    var idx: array<i32, ${dim}>;
+    var fill = 0;
+    for (var i = 0; i < ${dim + 1}; i++) {
+      if (i != k) {
+        idx[fill] = i;
+        fill = fill + 1;
+      }
+    }
+    let a = cell.v[idx[0]];
+    let e1 = cell.v[idx[1]] - a;
+    let e2 = cell.v[idx[2]] - a;
+    var n = ${dim === 4 ? "finCross(e1, e2, cell.v[idx[3]] - a)" : "finCross(e1, e2)"};
+    let magnitude = sqrt(finDot(n, n));
+    if (!(magnitude > 0.0) || !(magnitude <= 3.402823466e38)) {
+      return out;
+    }
+    n = n / magnitude;
+    let side = finDot(cell.v[k] - a, n);
+    if (!(side < 0.0)) {
+      if (side > 0.0) {
+        n = -n;
+      } else {
+        return out;
+      }
+    }
+    out.n[k] = n;
+    out.c[k] = finDot(n, a);
+  }
+  out.ok = true;
+  return out;
+}
+
+// The cell's radius (generalCellRadius): the farthest vertex from the
+// centroid — the anchor envelope's scale.
+fn finCellRadius(cell: FinCell) -> f32 {
+  var centroid = vec4f(0.0);
+  for (var i = 0; i < ${dim + 1}; i++) {
+    centroid = centroid + cell.v[i];
+  }
+  centroid = centroid / ${floatLit(dim + 1)};
+  var radius = 0.0;
+  for (var i = 0; i < ${dim + 1}; i++) {
+    let d = cell.v[i] - centroid;
+    radius = max(radius, sqrt(finDot(d, d)));
+  }
+  return radius;
 }
 `;
 
-/** The word's box: lo/hi per axis from the composed map and the root, and
- * the center/half form the box SDF and the anchor snap read. The signed
- * scale keeps boxes axis-aligned through reflections. */
-const generalBoxWgsl = (dim: number): string => `
-struct FinBox {
-  center: vec4f,
-  half: vec4f,
-}
-
-fn finBoxCenterHalf(scale: vec4f, offset: vec4f) -> FinBox {
-  var center: vec4f;
-  var half: vec4f;
-  for (var axis = 0; axis < ${dim}; axis++) {
-    let lo = offset[axis] + scale[axis] * FIN_ROOT_MIN[axis];
-    let hi = offset[axis] + scale[axis] * FIN_ROOT_MAX[axis];
-    center[axis] = (lo + hi) * 0.5;
-    half[axis] = abs(hi - lo) * 0.5;
-  }
-  return FinBox(center, half);
-}
-
-struct FinBounds {
-  lo: vec4f,
-  hi: vec4f,
-}
-
-// The word's COMPOSED face bounds — the exact values the clip clips
-// against. The anchor snap targets these, never center±half: that
-// reconstruction does not round-trip in f32 (an ulp off the composed
-// face), and an anchor off its own leaf's face breaks the tied start —
-// an honest re-entering continuation (the TIR child's own face) reads
-// the leaf 1 ulp outside and refuses state-mismatch.
-fn finBoxBounds(scale: vec4f, offset: vec4f) -> FinBounds {
-  var lo: vec4f;
-  var hi: vec4f;
-  for (var axis = 0; axis < ${dim}; axis++) {
-    let lo0 = offset[axis] + scale[axis] * FIN_ROOT_MIN[axis];
-    let hi0 = offset[axis] + scale[axis] * FIN_ROOT_MAX[axis];
-    lo[axis] = min(lo0, hi0);
-    hi[axis] = max(lo0, hi0);
-  }
-  return FinBounds(lo, hi);
-}
-
-fn finBoxSdf(center: vec4f, half: vec4f, q: array<f32, 4>) -> f32 {
-  var outsideSq = 0.0;
-  var inside = -1.0e30;
-  for (var axis = 0; axis < ${dim}; axis++) {
-    let gap = abs(q[axis] - center[axis]) - half[axis];
-    outsideSq = outsideSq + max(gap, 0.0) * max(gap, 0.0);
-    inside = max(inside, gap);
-  }
-  return sqrt(outsideSq) + min(inside, 0.0);
-}
-`;
-
-/** The word-tree display DE: the certified hybrid one tree up — the
- * level-1 boxes' min, the nearest refined into its K children within tau
- * of its own boundary (the seal-hazard argument carries: the level-1
- * boxes' own faces are their SDF's zero set, and the deeper structure
- * pierces those faces). Level 0 is the root box; level 1 the plain min. */
+/** The word-tree display DE (`finiteSolidGeneralDisplayDistance`): the
+ * certified branch-box hybrid — each level-1 branch's oriented box
+ * `M_a(levelBoxes[level − 1])`, REPLACED by its children's boxes within
+ * that branch's own refine margin (the seal-hazard argument one box up).
+ * Level 0 is the root simplex's own SDF; level 1 the plain branch min. */
 export function finiteSolidGeneralDisplaySource(
   dim: 3 | 4,
   g: FiniteSolidGeneralWire,
   level: number,
 ): string {
   const lift = generalLiftSource(dim);
-  return `${generalConstBlock(g, level)}${lift}
-${generalComposeWgsl}
-${generalBoxWgsl(dim)}
-fn finiteDisplayDE(q: array<f32, 4>) -> f32 {
-  if (FIN_LEVEL == 0u) {
-    let halfRoot = abs(FIN_ROOT_MAX - FIN_ROOT_MIN) * 0.5;
-    let centerRoot = (FIN_ROOT_MAX + FIN_ROOT_MIN) * 0.5;
-    let d = finBoxSdf(centerRoot, halfRoot, q);
-    return select(d, d * FIN_SAFETY, d > 0.0);
+  const body =
+    level === 0
+      ? `  let facets = finFacets(finCell(finIdentity()));
+  if (!facets.ok) {
+    return 1.0e30;
   }
-  var best = 1.0e30;
-  var bestWord = 0u;
+  var d = -1.0e30;
+  for (var k = 0; k < ${dim + 1}; k++) {
+    d = max(d, finDot(facets.n[k], q) - facets.c[k]);
+  }
+  return select(d, d * FIN_SAFETY, d > 0.0);`
+      : `  var result = 1.0e30;
   for (var a = 0u; a < FIN_MAP_COUNT; a++) {
-    let word = finCompose(i32(a), -1, 1);
-    let box = finBoxCenterHalf(word.scale, word.offset);
-    let d = finBoxSdf(box.center, box.half, q);
-    if (d < best) {
-      best = d;
-      bestWord = a;
+    let inv = finInverseMap(a);
+    let d = finOrientedBoxSdf(inv, FIN_BOX_MIN[${level - 1}], FIN_BOX_MAX[${level - 1}], q);
+    var term = d;${
+      level > 1
+        ? `
+    if (d < FIN_TAU[a]) {
+      var refined = 1.0e30;
+      for (var b = 0u; b < FIN_MAP_COUNT; b++) {
+        let grand = finChildInverse(inv, b);
+        refined = min(refined, finOrientedBoxSdf(grand, FIN_BOX_MIN[${level - 2}], FIN_BOX_MAX[${level - 2}], q));
+      }
+      term = refined;
+    }`
+        : ""
     }
+    result = min(result, term);
   }
-  if (FIN_LEVEL == 1u) {
-    return select(best, best * FIN_SAFETY, best > 0.0);
-  }
-  // Refine the nearest level-1 box into its children when the estimate is
-  // within the margin of that box's own surface (tau relative to its
-  // largest half-extent — the shipped constant's role, per box).
-  let nearWord = finCompose(i32(bestWord), -1, 1);
-  let nearBox = finBoxCenterHalf(nearWord.scale, nearWord.offset);
-  var halfMax = 0.0;
+  return select(result, result * FIN_SAFETY, result > 0.0);`;
+  return `${generalConstBlock(dim, g, level)}${lift}
+${generalAlgebraWgsl(dim)}
+// The oriented box M(box) as the max of its facet half-space distances
+// (orientedBoxSdf): the i-th pre-image coordinate is row_i(invM)·q + invT_i,
+// so each axis's two planes have normal row i (length |row|). A certified
+// lower bound outside, the exact interior depth inside.
+fn finOrientedBoxSdf(inv: FinAff, lo: vec4f, hi: vec4f, q: vec4f) -> f32 {
+  var rows = array<vec4f, 4>(inv.r0, inv.r1, inv.r2, inv.r3);
+  var best = -1.0e30;
   for (var axis = 0; axis < ${dim}; axis++) {
-    halfMax = max(halfMax, abs(nearBox.half[axis]));
-  }
-  if (best >= FIN_REFINE_REL * halfMax) {
-    return select(best, best * FIN_SAFETY, best > 0.0);
-  }
-  var refined = 1.0e30;
-  for (var a = 0u; a < FIN_MAP_COUNT; a++) {
-    let word = finCompose(i32(bestWord), i32(a), 2);
-    let box = finBoxCenterHalf(word.scale, word.offset);
-    let d = finBoxSdf(box.center, box.half, q);
-    if (d < refined) {
-      refined = d;
+    let row = rows[axis];
+    let scale = sqrt(${dim === 4 ? "finDot(row, row)" : "(row.x * row.x + row.y * row.y) + row.z * row.z"});
+    if (!(scale > 0.0)) {
+      return 1.0e30;
     }
+    let value = finDot(row, q) + inv.t[axis];
+    best = max(best, max((lo[axis] - value) / scale, (value - hi[axis]) / scale));
   }
-  let result = min(best, refined);
-  return select(result, result * FIN_SAFETY, result > 0.0);
+  return best;
+}
+
+fn finiteDisplayDE(qa: array<f32, 4>) -> f32 {
+  let q = vec4f(qa[0], qa[1], qa[2], qa[3]);
+${body}
 }
 
 fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
@@ -1186,91 +1350,73 @@ fn finiteLiftDir(d: vec3f) -> array<f32, 4> {
 `;
 }
 
-/** One node's clip against the intrinsic ray: the box interval with the
- * binding axes at each end (the atomic-event candidates), empty when the
- * ray misses the box. The leaf's interval is the same arithmetic at
- * depth == FIN_LEVEL. */
-const generalClipWgsl = (dim: number): string => `
-struct FinClip {
-  ok: bool,
-  enter: f32,
-  exit: f32,
-  enterAxes: u32,
-  exitAxes: u32,
-}
-
-fn finClipNode(scale: vec4f, offset: vec4f, q: array<f32, 4>, qd: array<f32, 4>) -> FinClip {
-  var result: FinClip;
-  result.ok = false;
-  result.enter = -1.0e30;
-  result.exit = 1.0e30;
-  result.enterAxes = 0u;
-  result.exitAxes = 0u;
-  var enter = -1.0e30;
-  var exit = 1.0e30;
-  var enterAxes = 0u;
-  var exitAxes = 0u;
-  for (var axis = 0; axis < ${dim}; axis++) {
-    let s = scale[axis];
-    let lo0 = offset[axis] + s * FIN_ROOT_MIN[axis];
-    let hi0 = offset[axis] + s * FIN_ROOT_MAX[axis];
-    let lo = min(lo0, hi0);
-    let hi = max(lo0, hi0);
-    let d = qd[axis];
-    if (d == 0.0) {
-      if (q[axis] < lo || q[axis] > hi) {
-        return result;
-      }
-      continue;
-    }
-    let ta = (lo - q[axis]) / d;
-    let tb = (hi - q[axis]) / d;
-    let near = min(ta, tb);
-    let far = max(ta, tb);
-    if (near > enter) {
-      enter = near;
-      enterAxes = 1u << u32(axis);
-    } else if (near == enter) {
-      enterAxes = enterAxes | (1u << u32(axis));
-    }
-    if (far < exit) {
-      exit = far;
-      exitAxes = 1u << u32(axis);
-    } else if (far == exit) {
-      exitAxes = exitAxes | (1u << u32(axis));
-    }
-  }
-  if (!(exit > enter)) {
-    return result;
-  }
-  result.ok = true;
-  result.enter = enter;
-  result.exit = exit;
-  result.enterAxes = enterAxes;
-  result.exitAxes = exitAxes;
-  return result;
-}
+/** The pruned DFS as `level` explicit nests (the level is baked into the
+ * code shape): each nest composes the child's forward map and — above the
+ * leaves — its inverse, and prunes the subtree when the query misses the
+ * child's word-image of its level box (`levelBoxes[level − depth]`). The
+ * innermost nest is the leaf body, `leaf(forwardVar, wordExpr)`. */
+function generalNestSource(
+  level: number,
+  nodeTest: (inverseVar: string, remaining: number) => string,
+  leaf: (forwardVar: string, word: string) => string,
+): string {
+  const indent = (depth: number): string => "  ".repeat(depth + 1);
+  const wordOf = (depth: number): string => {
+    const slots = [0, 1, 2, 3].map((slot) =>
+      slot < depth ? `i32(a${slot})` : "-1",
+    );
+    return `vec4i(${slots.join(", ")})`;
+  };
+  let open = "";
+  let close = "";
+  for (let depth = 0; depth < level; depth++) {
+    const pad = indent(depth);
+    const parentF = depth === 0 ? "finIdentity()" : `f${depth - 1}`;
+    const parentI = depth === 0 ? "finIdentity()" : `i${depth - 1}`;
+    const childDepth = depth + 1;
+    open += `${pad}for (var a${depth} = 0u; a${depth} < FIN_MAP_COUNT; a${depth}++) {
+${pad}  let f${depth} = finCompose(${parentF}, a${depth});
 `;
+    if (childDepth < level) {
+      open += `${pad}  let i${depth} = finChildInverse(${parentI}, a${depth});
+${pad}  if (!(${nodeTest(`i${depth}`, level - childDepth)})) {
+${pad}    continue;
+${pad}  }
+`;
+    } else {
+      open += leaf(`f${depth}`, wordOf(level))
+        .split("\n")
+        .map((line) => (line.length > 0 ? `${pad}  ${line}` : line))
+        .join("\n");
+    }
+    close = `${pad}}\n${close}`;
+  }
+  return `${open}${close}`;
+}
 
 /**
- * The general transport half: the word-tree boundary query as the
- * `opticsBackend: "finiteSolid"` emission, the full anchor contract in and
- * out — the reference's `finiteSolidGeneralNextBoundary` /
+ * The general transport half: the simplicial word-tree boundary query as
+ * the `opticsBackend: "finiteSolid"` emission, the full anchor contract in
+ * and out — the reference's `finiteSolidGeneralNextBoundary` /
  * `NextBoundaryFromAnchor` endpoint sweep, pruned, in f32. The walk
- * consumes the display source's lift/compose/box helpers (always co-emitted
- * — the shipped transport's `finiteLiftDir` dependence, one tree up). The
+ * consumes the display source's lift and algebra (always co-emitted — the
+ * shipped transport's `finiteLiftDir` dependence, one tree up). The
  * anchor's word depth reads the PARAMS tail's live `finiteLevel` lane (the
  * shipped grid DDA's own convention), which keeps one live params
  * dependency in every kernel that includes this source — the bench's
  * control kernel derives its bind group from the auto layout, and a
  * bindingless-everywhere 3D walk silently drops binding 0 from it. The DFS
- * structure itself (the enumeration nests, the capacity) stays baked, since
- * the codegen sizes the private arrays from the level.
+ * shape itself stays baked, since the codegen sizes the nests and the
+ * private arrays from the level.
+ *
+ * The anchor's face vocabulary is the cell's FACET INDICES: the mask names
+ * the incident leaf's crossed facets (5 bits in 4D), `planeIndices` stays
+ * unused (all −1 — the facet identity rides the mask and the planes
+ * recompute from the leaf's vertices), and `cellIndices` is the word.
  *
  * The refusal reasons are the transport's shared vocabulary, identical to
  * the shipped DDA's emission: 1 visit-cap (here: the pruned enumeration's
- * leaf cap), 2 invalid-input, 3 state-mismatch, 4 ambiguous-anchor (the
- * anchor's zero-|qd| masked axis), 5 nonmonotone-crossing, 6
+ * leaf cap), 2 invalid-input, 3 state-mismatch, 6
  * degenerate-projected-normal. A zero normal is the exact-corner
  * convention's rank-zero refusal sentinel.
  */
@@ -1279,12 +1425,41 @@ export function finiteSolidGeneralTransportSource(
   g: FiniteSolidGeneralWire,
   level: number,
 ): string {
-  const count = g.mapScale.length;
+  validateGeneralWire(dim, g, level);
+  const count = g.mapMatrix.length;
   const leafCap = Math.min(
     count ** level,
     FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES,
   );
   const endpointCap = leafCap * 2;
+  const facetRange = (1 << (dim + 1)) - 1;
+  const pushLeaf = (forwardVar: string, word: string): string =>
+    `let facets = finFacets(finCell(${forwardVar}));
+if (facets.ok) {
+  let clip = finClipSimplex(facets, q, qd, select(0u, finAnchorMask, all(${word} == finAnchorWord)));
+  if (clip.ok) {
+    if (finTotal + 2u > ${endpointCap}u) {
+      return false;
+    }
+    finPushEndpoint(clip.enter, 1u, ${word}, clip.enterMask);
+    finPushEndpoint(clip.exit, 0u, ${word}, clip.exitMask);
+  }
+}
+`;
+  const enumerate =
+    level === 0
+      ? `  ${pushLeaf("finIdentity()", "vec4i(-1)").split("\n").join("\n  ")}
+  return true;`
+      : `  // The entry prune: the whole tree sits inside levelBoxes[level].
+  if (!finClipAxisBox(FIN_BOX_MIN[${level}], FIN_BOX_MAX[${level}], q, qd)) {
+    return true;
+  }
+${generalNestSource(
+  level,
+  (inv, remaining) =>
+    `finClipAxisBox(FIN_BOX_MIN[${remaining}], FIN_BOX_MAX[${remaining}], finApply(${inv}, q) + ${inv}.t, finApply(${inv}, qd))`,
+  pushLeaf,
+)}  return true;`;
   return `struct FiniteBoundary {
   // 1 boundary, 2 miss, 3 refused — TransportBoundary's vocabulary.
   kind: u32,
@@ -1292,81 +1467,247 @@ export function finiteSolidGeneralTransportSource(
   t: f32,
   normal: vec3f,
   // The full anchor out (the walk's continuation state): the snapped
-  // intrinsic point, the crossed-axes mask, the crossed faces as LOCAL
-  // leaf sides {0 = the leaf's min face, 1 = its max face}, and the
-  // incident leaf's WORD. The next query reconstructs the leaf box from
-  // the word and snaps/clamps onto it — the same contract the grid DDA's
-  // anchor carries, one tree up.
+  // intrinsic point, the incident leaf's crossed FACETS, the unused plane
+  // slots (all −1) and the incident leaf's WORD. The next query rebuilds
+  // the leaf's facets from the word and snaps/clamps onto them — the grid
+  // DDA's anchor contract, one tree up.
   anchorIntrinsic: vec4f,
   anchorMask: u32,
   anchorPlanes: vec4i,
   anchorCells: vec4i,
 }
 
-${generalClipWgsl(dim)}
-
-// The incident leaf's box, from the anchor's word (the event's snap target
-// and the anchored restart's canonical faces). The word's depth is the
-// PARAMS tail's level lane — the packer's live wire, read the way the
-// shipped grid DDA reads its finite block, so the general core keeps one
-// live params dependency and its uniform binding stays in the layout.
-fn finLeafBox(w0: i32, w1: i32) -> FinBox {
-  let word = finCompose(w0, w1, i32(params.finiteLevel));
-  return finBoxCenterHalf(word.scale, word.offset);
-}
-
-fn finLeafBounds(w0: i32, w1: i32) -> FinBounds {
-  let word = finCompose(w0, w1, i32(params.finiteLevel));
-  return finBoxBounds(word.scale, word.offset);
-}
-
-fn finBoxHalfMax(box: FinBox) -> f32 {
-  var halfMax = 0.0;
+// The axis-aligned slab clip (clipAxisAlignedBox) — the node prune. The
+// ray's parameter survives the inverse transform, so the node's line
+// interval contains its subtree's leaf intervals exactly.
+fn finClipAxisBox(lo: vec4f, hi: vec4f, p: vec4f, d: vec4f) -> bool {
+  var enter = -1.0e30;
+  var exit = 1.0e30;
   for (var axis = 0; axis < ${dim}; axis++) {
-    halfMax = max(halfMax, abs(box.half[axis]));
+    let da = d[axis];
+    if (da == 0.0) {
+      if (p[axis] < lo[axis] || p[axis] > hi[axis]) {
+        return false;
+      }
+      continue;
+    }
+    let ta = (lo[axis] - p[axis]) / da;
+    let tb = (hi[axis] - p[axis]) / da;
+    enter = max(enter, min(ta, tb));
+    exit = min(exit, max(ta, tb));
+    if (exit < enter) {
+      return false;
+    }
   }
-  return halfMax;
+  return exit > enter;
 }
 
-${generalRowXyzSource(dim)}fn finiteBoundaryNormal(dir: vec3f, planeMask: u32, entering: bool) -> vec3f {
-  if (planeMask > 0u && (planeMask & (planeMask - 1u)) == 0u) {
-    var axis = 0;
-    var m = planeMask;
-    loop {
-      if (m <= 1u) {
-        break;
+struct FinClip {
+  ok: bool,
+  enter: f32,
+  exit: f32,
+  enterMask: u32,
+  exitMask: u32,
+}
+
+// Ray ∩ simplex by its facet half-spaces (clipGeneralSimplex): a crossing
+// is an entry when the ray moves inward, an exit when outward; a parallel
+// facet requires the ray inside its half-space. No epsilon — only equal
+// crossing times tie, and the binding facets ride the masks. onPlane
+// names the facets an anchored restart's own leaf sits ON: their residual
+// reads exactly zero (the oracle's rule — the snap's rounding, amplified
+// by a grazing denominator, would otherwise move the leaf's own crossing
+// off t = 0 and the restart would misread its starting side).
+fn finClipSimplex(f: FinFacets, q: vec4f, qd: vec4f, onPlane: u32) -> FinClip {
+  var result: FinClip;
+  result.ok = false;
+  result.enter = -1.0e30;
+  result.exit = 1.0e30;
+  result.enterMask = 0u;
+  result.exitMask = 0u;
+  var enter = -1.0e30;
+  var exit = 1.0e30;
+  var enterMask = 0u;
+  var exitMask = 0u;
+  for (var k = 0; k < ${dim + 1}; k++) {
+    let denom = finDot(f.n[k], qd);
+    let s = select(finDot(f.n[k], q) - f.c[k], 0.0, (onPlane & (1u << u32(k))) != 0u);
+    if (denom == 0.0) {
+      if (s > 0.0) {
+        return result;
       }
-      m = m >> 1u;
-      axis = axis + 1;
+      continue;
     }
-    let row = finiteRowXyz(axis);
-    let magnitude = length(row);
-    if (!(magnitude > 0.0)) {
-      return vec3f(0.0);
+    let t = -s / denom;
+    if (denom > 0.0) {
+      if (t < exit) {
+        exit = t;
+        exitMask = 1u << u32(k);
+      } else if (t == exit) {
+        exitMask = exitMask | (1u << u32(k));
+      }
+    } else {
+      if (t > enter) {
+        enter = t;
+        enterMask = 1u << u32(k);
+      } else if (t == enter) {
+        enterMask = enterMask | (1u << u32(k));
+      }
     }
-    let intrinsicDirection =
-      row.x * dir.x + row.y * dir.y + row.z * dir.z;
-    let directionSign = select(-1.0, 1.0, intrinsicDirection > 0.0);
-    let faceSign = select(directionSign, -directionSign, entering);
-    return (faceSign * row) / magnitude;
   }
+  if (!(exit > enter)) {
+    return result;
+  }
+  result.ok = true;
+  result.enter = enter;
+  result.exit = exit;
+  result.enterMask = enterMask;
+  result.exitMask = exitMask;
+  return result;
+}
+
+${generalRowXyzSource(dim)}
+// The pruned enumeration's storage: one record per leaf ENDPOINT —
+// (bits(t), packed) with packed bit 0 the delta (1 enter / 0 exit), bits
+// 1..24 the word (six bits per level, four levels), bits 25..29 the
+// endpoint's binding facets. Integer storage: the packed word is never
+// routed through an f32 (a denormal or NaN pattern could be canonicalized).
+// Module-scope private: per-invocation state, written before read.
+var<private> finE: array<vec2u, ${endpointCap}>;
+var<private> finTotal = 0u;
+// The anchored restart's own leaf (its word and masked facets; mask 0 on a
+// fresh query) — the enumeration's exact-zero residuals.
+var<private> finAnchorWord = vec4i(-1);
+var<private> finAnchorMask = 0u;
+
+fn finPushEndpoint(t: f32, delta: u32, word: vec4i, facets: u32) {
+  var packed = (delta & 1u) | ((facets & 31u) << 25u);
+  for (var slot = 0; slot < 4; slot++) {
+    if (word[slot] >= 0) {
+      packed = packed | ((u32(word[slot]) & 63u) << (1u + 6u * u32(slot)));
+    }
+  }
+  finE[finTotal] = vec2u(bitcast<u32>(t), packed);
+  finTotal = finTotal + 1u;
+}
+
+fn finEndpointT(i: u32) -> f32 {
+  return bitcast<f32>(finE[i].x);
+}
+
+fn finEndpointWord(i: u32) -> vec4i {
+  let packed = finE[i].y;
+  var word = vec4i(-1);
+  for (var slot = 0; slot < i32(FIN_LEVEL); slot++) {
+    word[slot] = i32((packed >> (1u + 6u * u32(slot))) & 63u);
+  }
+  return word;
+}
+
+fn finEndpointFacets(i: u32) -> u32 {
+  return (finE[i].y >> 25u) & 31u;
+}
+
+// The anchor reconstruction (the event's snap and the anchored restart's):
+// snap the point onto the leaf's masked COMPOSED facet planes, then clamp
+// the rest into the leaf by the bounded violated-facet projection, every
+// move within the declared envelope — FIN_SNAP_REL of the larger of 1, the
+// cell's radius and the SCALE of the arithmetic that produced the point
+// (FINITE_SOLID_GENERAL_SNAP_REL's argument). ok = false is the
+// invalid-input refusal.
+// The ∞-norm over the construction's axes (intrinsicMagnitude).
+fn finMagnitude(p: vec4f) -> f32 {
+  var magnitude = 0.0;
+  for (var axis = 0; axis < ${dim}; axis++) {
+    magnitude = max(magnitude, abs(p[axis]));
+  }
+  return magnitude;
+}
+
+struct FinSnap {
+  ok: bool,
+  p: vec4f,
+}
+
+fn finSnapToLeaf(word: vec4i, mask: u32, pIn: vec4f, scale: f32) -> FinSnap {
+  var out: FinSnap;
+  out.ok = false;
+  out.p = pIn;
+  let cell = finCell(finWordAff(word, i32(params.finiteLevel)));
+  let facets = finFacets(cell);
+  if (!facets.ok) {
+    return out;
+  }
+  let envelope = FIN_SNAP_REL * max(max(1.0, finCellRadius(cell)), scale);
+  var p = pIn;
+  for (var k = 0; k < ${dim + 1}; k++) {
+    if ((mask & (1u << u32(k))) == 0u) {
+      continue;
+    }
+    let correction = facets.c[k] - finDot(facets.n[k], p);
+    if (abs(correction) > envelope) {
+      return out;
+    }
+    p = p + correction * facets.n[k];
+  }
+  for (var sweep = 0; sweep <= ${dim + 1}; sweep++) {
+    var worst = -1;
+    var worstS = 0.0;
+    for (var k = 0; k < ${dim + 1}; k++) {
+      if ((mask & (1u << u32(k))) != 0u) {
+        continue;
+      }
+      let s = finDot(facets.n[k], p) - facets.c[k];
+      if (s > worstS) {
+        worstS = s;
+        worst = k;
+      }
+    }
+    if (worst < 0) {
+      break;
+    }
+    if (worstS > envelope) {
+      return out;
+    }
+    p = p - worstS * facets.n[worst];
+  }
+  out.ok = true;
+  out.p = p;
+  return out;
+}
+
+// The exact-corner normal (simplicialBoundaryNormal): reflect/refract
+// against the incident ray's projection onto the span of every tied face's
+// DISPLAYED facet normal, Gram-Schmidt in the group's sorted-endpoint order
+// (each face's masked facets ascending), a facet dependent below the
+// declared rank ratio. A zero vector is the rank-zero refusal sentinel.
+fn finGroupNormal(dir: vec3f, groupLo: u32, groupHi: u32, entering: bool) -> vec3f {
   var basis: array<vec3f, 3>;
   var basisCount = 0;
-  for (var axis = 0; axis < ${dim} && basisCount < 3; axis++) {
-    if ((planeMask & (1u << u32(axis))) == 0u) {
-      continue;
+  for (var m = groupLo; m < groupHi && basisCount < 3; m++) {
+    let mask = finEndpointFacets(m);
+    let facets = finFacets(finCell(finWordAff(finEndpointWord(m), i32(FIN_LEVEL))));
+    if (!facets.ok) {
+      return vec3f(0.0);
     }
-    var vector = finiteRowXyz(axis);
-    for (var bi = 0; bi < basisCount; bi++) {
-      let projection = dot(vector, basis[bi]);
-      vector = vector - projection * basis[bi];
+    for (var k = 0; k < ${dim + 1} && basisCount < 3; k++) {
+      if ((mask & (1u << u32(k))) == 0u) {
+        continue;
+      }
+      let n = facets.n[k];
+      var vector = ((finiteRowXyz(0) * n.x + finiteRowXyz(1) * n.y) + finiteRowXyz(2) * n.z) + finiteRowXyz(3) * n.w;
+      let full = length(vector);
+      for (var bi = 0; bi < basisCount; bi++) {
+        let projection = dot(vector, basis[bi]);
+        vector = vector - projection * basis[bi];
+      }
+      let magnitude = length(vector);
+      if (!(magnitude > FIN_NORMAL_DEPENDENT_REL * full)) {
+        continue;
+      }
+      basis[basisCount] = vector / magnitude;
+      basisCount = basisCount + 1;
     }
-    let magnitude = length(vector);
-    if (!(magnitude > 0.0)) {
-      continue;
-    }
-    basis[basisCount] = vector / magnitude;
-    basisCount = basisCount + 1;
   }
   var projected = vec3f(0.0);
   for (var bi = 0; bi < basisCount; bi++) {
@@ -1380,246 +1721,78 @@ ${generalRowXyzSource(dim)}fn finiteBoundaryNormal(dir: vec3f, planeMask: u32, e
   return (faceSign * projected) / magnitude;
 }
 
-// The pruned enumeration's storage: one record per leaf ENDPOINT —
-// (t, packed) with packed bit 0 the delta (1 enter / 0 exit), bits 1..6 the
-// word's first map, bits 7..12 the second, bits 13..16 the endpoint's
-// binding axes. Module-scope private: per-invocation state, written
-// before read.
-const FIN_LEAF_CAP = ${leafCap}u;
-var<private> finE: array<vec2f, ${endpointCap}>;
-var<private> finTotal = 0u;
-
-fn finPushEndpoint(t: f32, delta: u32, w0: i32, w1: i32, axes: u32) {
-  let packed = (delta & 1u) | ((u32(w0) & 63u) << 1u) | ((u32(w1) & 63u) << 7u) | ((axes & 15u) << 13u);
-  finE[finTotal] = vec2f(t, bitcast<f32>(packed));
-  finTotal = finTotal + 1u;
-}
-
-// One occupancy transition of the union along the ray (the reference's
-// generalBoundaryEvent): the tied faces' span carries the projected
-// normal; the entering side is the group's AFTER-coverage (the actual
-// geometry, never the claim); the anchor names the INCIDENT leaf (the
-// group's sorted-first endpoint's leaf), whose canonical faces the
-// anchored restart snaps onto. A mixed group (one leaf's exit tied with
-// another's entry) encodes every crossed face from the group's ONE
-// entering and the per-axis ray sign — the reference's own convention.
-fn finEvent(
-  q: array<f32, 4>,
-  qd: array<f32, 4>,
-  dir: vec3f,
-  t: f32,
-  entering: bool,
-  groupLo: u32,
-  groupHi: u32,
-  incidentWord0: i32,
-  incidentWord1: i32,
-) -> FiniteBoundary {
+fn finRefusal(reason: u32) -> FiniteBoundary {
   var result: FiniteBoundary;
-  result.kind = 1u;
-  result.reason = 0u;
-  result.t = t;
+  result.kind = 3u;
+  result.reason = reason;
+  result.t = 0.0;
   result.normal = vec3f(0.0);
   result.anchorIntrinsic = vec4f(0.0);
   result.anchorMask = 0u;
   result.anchorPlanes = vec4i(-1);
   result.anchorCells = vec4i(-1);
-  // The crossed axes, in the group's sorted-endpoint order (each face's
-  // own axes ascending) — chooseAxis's tie-break reads that order: the
-  // largest |qd| wins, ties keep the first.
-  var planeMask = 0u;
-  var axis = 0;
-  var firstAxis = true;
-  for (var m = groupLo; m < groupHi; m++) {
-    let axes = (bitcast<u32>(finE[m].y) >> 13u) & 15u;
-    for (var a = 0; a < ${dim}; a++) {
-      if ((axes & (1u << u32(a))) == 0u) {
-        continue;
-      }
-      planeMask = planeMask | (1u << u32(a));
-      if (firstAxis) {
-        axis = a;
-        firstAxis = false;
-      } else if (abs(qd[a]) > abs(qd[axis])) {
-        axis = a;
-      }
-    }
-  }
-  let normal = finiteBoundaryNormal(dir, planeMask, entering);
-  if (all(normal == vec3f(0.0))) {
-    result.kind = 3u;
-    result.reason = 6u;
-    return result;
-  }
-  result.normal = normal;
-  let box = finLeafBox(incidentWord0, incidentWord1);
-  let envelope = FIN_TIE_REL * finBoxHalfMax(box);
-  let faceBounds = finLeafBounds(incidentWord0, incidentWord1);
-  var intrinsic: array<f32, 4>;
-  var anchorPlanes: array<i32, 4> = array<i32, 4>(-1, -1, -1, -1);
-  var anchorCells: array<i32, 4> = array<i32, 4>(-1, -1, -1, -1);
-  for (var a = 0; a < ${dim}; a++) {
-    intrinsic[a] = q[a] + t * qd[a];
-    if (a < i32(FIN_LEVEL)) {
-      anchorCells[a] = select(incidentWord0, incidentWord1, a == 1);
-    }
-  }
-  for (var a = 0; a < ${dim}; a++) {
-    if ((planeMask & (1u << u32(a))) == 0u) {
-      continue;
-    }
-    anchorPlanes[a] = select(0, 1, entering != (qd[a] > 0.0));
-    intrinsic[a] = select(faceBounds.lo[a], faceBounds.hi[a], anchorPlanes[a] == 1);
-  }
-  for (var a = 0; a < ${dim}; a++) {
-    if ((planeMask & (1u << u32(a))) != 0u) {
-      continue;
-    }
-    let lower = faceBounds.lo[a];
-    let upper = faceBounds.hi[a];
-    if (intrinsic[a] < lower) {
-      if (lower - intrinsic[a] > envelope) {
-        result.kind = 3u;
-        result.reason = 2u;
-        return result;
-      }
-      intrinsic[a] = lower;
-    } else if (intrinsic[a] > upper) {
-      if (intrinsic[a] - upper > envelope) {
-        result.kind = 3u;
-        result.reason = 2u;
-        return result;
-      }
-      intrinsic[a] = upper;
-    }
-  }
-  result.anchorIntrinsic = vec4f(
-    intrinsic[0],
-    intrinsic[1],
-    intrinsic[2],
-    intrinsic[3],
-  );
-  result.anchorMask = planeMask;
-  result.anchorPlanes = vec4i(
-    anchorPlanes[0],
-    anchorPlanes[1],
-    anchorPlanes[2],
-    anchorPlanes[3],
-  );
-  result.anchorCells = vec4i(
-    anchorCells[0],
-    anchorCells[1],
-    anchorCells[2],
-    anchorCells[3],
-  );
   return result;
 }
 
-// The walk's DFS in explicit nests (level <= 2): the word tree's leaves in
-// lexicographic word order, each subtree pruned when the ray misses its
-// box — a descendant's box nests inside its parent's, so the pruned
-// subtree's leaves contribute no endpoints anywhere and the pruned
-// enumeration equals the reference's unpruned one endpoint for endpoint.
-fn finEnumerate(q: array<f32, 4>, qd: array<f32, 4>) -> bool {
-  if (i32(FIN_LEVEL) == 0) {
-    if (finTotal + 2u > ${endpointCap}u) {
-      return false;
-    }
-    let clip = finClipNode(vec4f(1.0), vec4f(0.0), q, qd);
-    if (clip.ok) {
-      finPushEndpoint(clip.enter, 1u, -1, -1, clip.enterAxes);
-      finPushEndpoint(clip.exit, 0u, -1, -1, clip.exitAxes);
-    }
-    return true;
+// One occupancy transition of the union along the ray
+// (simplicialBoundaryEvent): the tied faces' span carries the projected
+// normal; the entering side is the group's AFTER-coverage (the actual
+// geometry, never the claim); the anchor names the INCIDENT leaf — the
+// group's sorted-first endpoint's leaf — whose own crossed facets are the
+// mask and whose composed facet planes are the snap targets.
+fn finEvent(
+  q: vec4f,
+  qd: vec4f,
+  dir: vec3f,
+  t: f32,
+  entering: bool,
+  groupLo: u32,
+  groupHi: u32,
+) -> FiniteBoundary {
+  let normal = finGroupNormal(dir, groupLo, groupHi, entering);
+  if (all(normal == vec3f(0.0))) {
+    return finRefusal(6u);
   }
-  for (var a0 = 0; a0 < i32(FIN_MAP_COUNT); a0++) {
-    let word1 = finCompose(a0, -1, 1);
-    if (i32(FIN_LEVEL) == 1) {
-      let clip = finClipNode(word1.scale, word1.offset, q, qd);
-      if (clip.ok) {
-        if (finTotal + 2u > ${endpointCap}u) {
-          return false;
-        }
-        finPushEndpoint(clip.enter, 1u, a0, -1, clip.enterAxes);
-        finPushEndpoint(clip.exit, 0u, a0, -1, clip.exitAxes);
-      }
-      continue;
-    }
-    // Level 2: the level-1 box prunes its whole subtree.
-    let node = finClipNode(word1.scale, word1.offset, q, qd);
-    if (!node.ok) {
-      continue;
-    }
-    for (var a1 = 0; a1 < i32(FIN_MAP_COUNT); a1++) {
-      let word2 = finCompose(a0, a1, 2);
-      let clip = finClipNode(word2.scale, word2.offset, q, qd);
-      if (clip.ok) {
-        if (finTotal + 2u > ${endpointCap}u) {
-          return false;
-        }
-        finPushEndpoint(clip.enter, 1u, a0, a1, clip.enterAxes);
-        finPushEndpoint(clip.exit, 0u, a0, a1, clip.exitAxes);
-      }
-    }
+  let word = finEndpointWord(groupLo);
+  let mask = finEndpointFacets(groupLo);
+  let snap = finSnapToLeaf(word, mask, q + t * qd, max(finMagnitude(q), abs(t)));
+  if (!snap.ok) {
+    return finRefusal(2u);
   }
-  return true;
+  var result: FiniteBoundary;
+  result.kind = 1u;
+  result.reason = 0u;
+  result.t = t;
+  result.normal = normal;
+  result.anchorIntrinsic = snap.p;
+  result.anchorMask = mask;
+  result.anchorPlanes = vec4i(-1);
+  result.anchorCells = word;
+  return result;
 }
 
-// Point membership for the primary ray's ray-side classification (the
-// shipped march body's finiteRaySideIndex + finiteOccupied, one tree up):
-// the coverage at a point is > 0 exactly when some leaf's box contains it
-// (closed — a point on a shared face reads inside, and the boundary
-// group's half-open sweep at that origin resolves the event either way).
-fn finBoxContains(scale: vec4f, offset: vec4f, q: array<f32, 4>) -> bool {
-  for (var axis = 0; axis < ${dim}; axis++) {
-    let lo0 = offset[axis] + scale[axis] * FIN_ROOT_MIN[axis];
-    let hi0 = offset[axis] + scale[axis] * FIN_ROOT_MAX[axis];
-    let lo = min(lo0, hi0);
-    let hi = max(lo0, hi0);
-    if (q[axis] < lo || q[axis] > hi) {
-      return false;
-    }
-  }
-  return true;
-}
-
-fn finiteGeneralPointInside(q: array<f32, 4>) -> bool {
-  if (i32(FIN_LEVEL) == 0) {
-    return finBoxContains(vec4f(1.0), vec4f(0.0), q);
-  }
-  for (var a0 = 0; a0 < i32(FIN_MAP_COUNT); a0++) {
-    let word1 = finCompose(a0, -1, 1);
-    if (i32(FIN_LEVEL) == 1) {
-      if (finBoxContains(word1.scale, word1.offset, q)) {
-        return true;
-      }
-      continue;
-    }
-    // The level-1 box prunes its whole subtree.
-    if (!finBoxContains(word1.scale, word1.offset, q)) {
-      continue;
-    }
-    for (var a1 = 0; a1 < i32(FIN_MAP_COUNT); a1++) {
-      let word2 = finCompose(a0, a1, 2);
-      if (finBoxContains(word2.scale, word2.offset, q)) {
-        return true;
-      }
-    }
-  }
-  return false;
+// The walk's DFS in explicit nests (the level baked): the word tree's
+// leaves in lexicographic word order, each subtree pruned when the ray
+// misses its word-image of the level box — the box contains the subtree by
+// construction, so the pruned enumeration equals the reference's unpruned
+// one endpoint for endpoint. Capped: past the leaf cap the walk refuses.
+fn finEnumerate(q: vec4f, qd: vec4f) -> bool {
+${enumerate}
 }
 
 // The stable sort (by t; ties keep the DFS enumeration order — the
 // reference's stable sort, which is what makes the group's sorted-first
-// endpoint and the axis order reproducible).
+// endpoint and the facet order reproducible).
 fn finSortEndpoints() {
   for (var i = 1u; i < finTotal; i++) {
     let key = finE[i];
+    let keyT = bitcast<f32>(key.x);
     var j = i;
     loop {
       if (j == 0u) {
         break;
       }
-      if (!(finE[j - 1u].x > key.x)) {
+      if (!(finEndpointT(j - 1u) > keyT)) {
         break;
       }
       finE[j] = finE[j - 1u];
@@ -1634,29 +1807,10 @@ fn finSortEndpoints() {
 // transport — the fresh and anchored queries both start there) is the last
 // at-or-before group's AFTER-coverage; the first later zero-crossing of
 // the coverage is the event. A net-zero group (an interior shared face)
-// traverses silently. The flags capture the start group's own data for the
-// claim-anticipation event and the sweep's next-flip search captures the
-// group range for the event's faces.
-fn finSweep(
-  q: array<f32, 4>,
-  qd: array<f32, 4>,
-  dir: vec3f,
-  inside: u32,
-  anchored: bool,
-) -> FiniteBoundary {
-  var miss: FiniteBoundary;
-  miss.kind = 2u;
-  miss.reason = 0u;
-  miss.t = 0.0;
-  miss.normal = vec3f(0.0);
-  miss.anchorIntrinsic = vec4f(0.0);
-  miss.anchorMask = 0u;
-  miss.anchorPlanes = vec4i(-1);
-  miss.anchorCells = vec4i(-1);
+// traverses silently.
+fn finSweep(q: vec4f, qd: vec4f, dir: vec3f, inside: u32, anchored: bool) -> FiniteBoundary {
   var coverage = 0;
   var idx = 0u;
-  // The start group (the last group anchored at or before tMin): its
-  // AFTER-coverage owns tMin (half-open, the entering side).
   var haveStart = false;
   var startAfter = 0;
   var startAtGroup = false;
@@ -1672,19 +1826,17 @@ fn finSweep(
   var flipHi = 0u;
   var started = false;
   while (idx < finTotal) {
-    let groupT = finE[idx].x;
+    let groupT = finEndpointT(idx);
     let tie = FIN_TIE_REL * max(1.0, abs(groupT));
     var j = idx;
     var net = 0;
-    while (j < finTotal && finE[j].x - groupT <= tie) {
-      let delta = select(-1, 1, (bitcast<u32>(finE[j].y) & 1u) == 1u);
-      net = net + delta;
+    while (j < finTotal && finEndpointT(j) - groupT <= tie) {
+      net = net + select(-1, 1, (finE[j].y & 1u) == 1u);
       j = j + 1u;
     }
     let before = coverage;
     coverage = coverage + net;
     if (!started && groupT <= tie) {
-      // Anchored at or before tMin: the start group (so far).
       haveStart = true;
       startAfter = coverage;
       startAtGroup = abs(groupT) <= tie;
@@ -1694,10 +1846,7 @@ fn finSweep(
       continue;
     }
     started = true;
-    if (
-      !haveFlip &&
-      ((before == 0 && coverage > 0) || (before > 0 && coverage == 0))
-    ) {
+    if (!haveFlip && ((before == 0 && coverage > 0) || (before > 0 && coverage == 0))) {
       haveFlip = true;
       flipT = groupT;
       flipEntering = coverage > 0;
@@ -1706,51 +1855,73 @@ fn finSweep(
     }
     idx = j;
   }
-  // The claim check: the geometry's state at tMin must match the caller's
-  // medium, exactly the reference's rule — off a boundary the claim must
-  // match; ON the start group the UNANCHORED query may anticipate the
-  // crossing (the display march's primary hit); the anchored continuation
-  // takes no liberty at all.
-  let stateMatches = (startAfter > 0) == (inside == 1u);
-  if (!stateMatches) {
+  // The claim check: off a boundary the claim must match; ON the start
+  // group the UNANCHORED query may anticipate the crossing (the display
+  // march's primary hit); the anchored continuation takes no liberty.
+  if ((startAfter > 0) != (inside == 1u)) {
     if (haveStart && startAtGroup && !anchored) {
-      return finEvent(q, qd, dir, 0.0, startAfter > 0, startLo, startHi,
-        i32((bitcast<u32>(finE[startLo].y) >> 1u) & 63u),
-        i32((bitcast<u32>(finE[startLo].y) >> 7u) & 63u));
+      return finEvent(q, qd, dir, 0.0, startAfter > 0, startLo, startHi);
     }
-    var result: FiniteBoundary;
-    result.kind = 3u;
-    result.reason = 3u;
-    result.t = 0.0;
-    result.normal = vec3f(0.0);
-    result.anchorIntrinsic = vec4f(0.0);
-    result.anchorMask = 0u;
-    result.anchorPlanes = vec4i(-1);
-    result.anchorCells = vec4i(-1);
-    return result;
+    return finRefusal(3u);
   }
   if (haveFlip) {
-    let meta0 = bitcast<u32>(finE[flipLo].y);
-    return finEvent(
-      q,
-      qd,
-      dir,
-      flipT,
-      flipEntering,
-      flipLo,
-      flipHi,
-      i32((meta0 >> 1u) & 63u),
-      i32((meta0 >> 7u) & 63u),
-    );
+    return finEvent(q, qd, dir, flipT, flipEntering, flipLo, flipHi);
   }
+  var miss = finRefusal(0u);
+  miss.kind = 2u;
   return miss;
 }
 
-// The word-tree boundary query (the reference's
-// finiteSolidGeneralNextBoundary / NextBoundaryFromAnchor, pruned): the
-// intrinsic anchor is authoritative (the rounded display coordinate cannot
-// replace the canonical boundary origin); the anchor's word names the
-// post-incident leaf and the masked axes its incident faces.
+// Closed point membership (finiteSolidGeneralContains) — the primary ray's
+// ray-side state: the level union covers the point exactly when some leaf
+// contains it (a point on a shared face reads inside, and the boundary
+// group's half-open sweep at that origin resolves the event either way).
+fn finBoxContains(lo: vec4f, hi: vec4f, p: vec4f) -> bool {
+  for (var axis = 0; axis < ${dim}; axis++) {
+    if (p[axis] < lo[axis] || p[axis] > hi[axis]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+fn finFacetsContain(facets: FinFacets, q: vec4f) -> bool {
+  if (!facets.ok) {
+    return false;
+  }
+  for (var k = 0; k < ${dim + 1}; k++) {
+    if (finDot(facets.n[k], q) - facets.c[k] > 0.0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+fn finiteGeneralPointInside(qa: array<f32, 4>) -> bool {
+  let q = vec4f(qa[0], qa[1], qa[2], qa[3]);
+${
+  level === 0
+    ? `  return finFacetsContain(finFacets(finCell(finIdentity())), q);`
+    : `  if (!finBoxContains(FIN_BOX_MIN[${level}], FIN_BOX_MAX[${level}], q)) {
+    return false;
+  }
+${generalNestSource(
+  level,
+  (inv, remaining) =>
+    `finBoxContains(FIN_BOX_MIN[${remaining}], FIN_BOX_MAX[${remaining}], finApply(${inv}, q) + ${inv}.t)`,
+  (forwardVar) => `if (finFacetsContain(finFacets(finCell(${forwardVar})), q)) {
+  return true;
+}
+`,
+)}  return false;`
+}
+}
+
+// The word-tree boundary query (finiteSolidGeneralNextBoundary /
+// NextBoundaryFromAnchor, pruned): the intrinsic anchor is authoritative
+// (the rounded display coordinate cannot replace the canonical boundary
+// origin); the anchor's word names the incident leaf and its mask the
+// crossed facets.
 fn transportFiniteBoundary(
   origin: vec3f,
   dir: vec3f,
@@ -1761,29 +1932,20 @@ fn transportFiniteBoundary(
   anchorCellsIn: vec4i,
   inside: u32,
 ) -> FiniteBoundary {
-  var result: FiniteBoundary;
-  result.kind = 3u;
-  result.reason = 1u;
-  result.t = 0.0;
-  result.normal = vec3f(0.0);
-  result.anchorIntrinsic = vec4f(0.0);
-  result.anchorMask = 0u;
-  result.anchorPlanes = vec4i(-1);
-  result.anchorCells = vec4i(-1);
   if (!all(abs(dir) <= vec3f(3.402823466e38)) || !(dot(dir, dir) > 0.0)) {
-    result.reason = 2u;
-    return result;
+    return finRefusal(2u);
   }
-  var q = array<f32, 4>(0.0, 0.0, 0.0, 0.0);
-  let qd = finiteLiftDir(dir);
+  let qdA = finiteLiftDir(dir);
+  let qd = vec4f(qdA[0], qdA[1], qdA[2], qdA[3]);
+  var q: vec4f;
   if (anchorPresent == 1u) {
-    // The anchor's word must name real maps at the construction's depth,
-    // the masked faces must be the leaf box's own sides, and at least one
-    // face must be masked — the reference's validGeneralAnchor.
-    if (anchorMask == 0u || (anchorMask & ~${(1 << dim) - 1}u) != 0u ||
-        !all(abs(anchorIntrinsic) <= vec4f(3.402823466e38))) {
-      result.reason = 2u;
-      return result;
+    // validGeneralAnchor: the mask within the cell's facet range and
+    // nonzero, every plane slot unused, the word naming real maps at the
+    // construction's depth.
+    if (anchorMask == 0u || (anchorMask & ~${facetRange}u) != 0u ||
+        !all(abs(anchorIntrinsic) <= vec4f(3.402823466e38)) ||
+        any(anchorPlanesIn != vec4i(-1))) {
+      return finRefusal(2u);
     }
     var depth = 0;
     for (var slot = 0; slot < 4; slot++) {
@@ -1792,80 +1954,34 @@ fn transportFiniteBoundary(
         break;
       }
       if (index < 0 || index >= i32(FIN_MAP_COUNT)) {
-        result.reason = 2u;
-        return result;
+        return finRefusal(2u);
       }
       depth = depth + 1;
     }
     if (depth != i32(params.finiteLevel)) {
-      result.reason = 2u;
-      return result;
+      return finRefusal(2u);
     }
     for (var slot = depth; slot < 4; slot++) {
       if (anchorCellsIn[slot] != -1) {
-        result.reason = 2u;
-        return result;
+        return finRefusal(2u);
       }
     }
-    var masked = 0;
-    for (var a = 0; a < 4; a++) {
-      if ((anchorMask & (1u << u32(a))) == 0u) {
-        if (anchorPlanesIn[a] != -1) {
-          result.reason = 2u;
-          return result;
-        }
-        continue;
-      }
-      masked = masked + 1;
-      if (a >= ${dim} || (anchorPlanesIn[a] != 0 && anchorPlanesIn[a] != 1)) {
-        result.reason = 2u;
-        return result;
-      }
+    let snap = finSnapToLeaf(anchorCellsIn, anchorMask, anchorIntrinsic, finMagnitude(anchorIntrinsic));
+    if (!snap.ok) {
+      return finRefusal(2u);
     }
-    if (masked == 0) {
-      result.reason = 2u;
-      return result;
-    }
-    // The anchor's intrinsic point seeds the reconstruction (the
-    // reference's authoritative coordinate): snap the masked coordinates
-    // onto the leaf's canonical face planes — the COMPOSED bounds the
-    // clip clips against (see finBoxBounds) — and clamp the rest into
-    // the leaf box under the declared envelope.
-    for (var a = 0; a < 4; a++) {
-      q[a] = anchorIntrinsic[a];
-    }
-    let box = finLeafBox(anchorCellsIn[0], anchorCellsIn[1]);
-    let envelope = FIN_TIE_REL * finBoxHalfMax(box);
-    let faceBounds = finLeafBounds(anchorCellsIn[0], anchorCellsIn[1]);
-    for (var a = 0; a < ${dim}; a++) {
-      let lower = faceBounds.lo[a];
-      let upper = faceBounds.hi[a];
-      if ((anchorMask & (1u << u32(a))) != 0u) {
-        q[a] = select(lower, upper, anchorPlanesIn[a] == 1);
-      } else if (q[a] < lower) {
-        if (lower - q[a] > envelope) {
-          result.reason = 2u;
-          return result;
-        }
-        q[a] = lower;
-      } else if (q[a] > upper) {
-        if (q[a] - upper > envelope) {
-          result.reason = 2u;
-          return result;
-        }
-        q[a] = upper;
-      }
-    }
+    q = snap.p;
+  } else {
+    let qA = finiteLift(origin);
+    q = vec4f(qA[0], qA[1], qA[2], qA[3]);
   }
   finTotal = 0u;
-  if (anchorPresent != 1u) {
-    q = finiteLift(origin);
-  }
+  finAnchorWord = anchorCellsIn;
+  finAnchorMask = select(0u, anchorMask, anchorPresent == 1u);
   if (!finEnumerate(q, qd)) {
     // The pruned enumeration overflowed its cap: a disclosed refusal, the
     // shipped DDA's own resource-refusal shape — never a truncation.
-    result.reason = 1u;
-    return result;
+    return finRefusal(1u);
   }
   finSortEndpoints();
   return finSweep(q, qd, dir, inside, anchorPresent == 1u);
@@ -2388,7 +2504,7 @@ export function finiteSolidDdaF32(
 // up. The WGSL walk re-executes in TypeScript with every arithmetic result
 // rounded to f32 (`sphereInversionF32`'s discipline): the sweep's group
 // formation and the event's anchor reconstruction are decided by tie tests
-// and clamped recompositions, which an f64 twin does not bracket. WGSL
+// and clamped projections, which an f64 twin does not bracket. WGSL
 // permits differences from this per-operation rounding, including fused
 // arithmetic and division/square-root accuracy; the bench legs treat the
 // tie-edge class the escape legs' way (an ensemble + a capped absolution),
@@ -2396,20 +2512,28 @@ export function finiteSolidDdaF32(
 // wire's own contract.
 // ---------------------------------------------------------------------------
 
+type F32Vec4 = [number, number, number, number];
+
+interface F32Aff {
+  r: [F32Vec4, F32Vec4, F32Vec4, F32Vec4];
+  t: F32Vec4;
+}
+
 interface GeneralEndpointF32 {
   t: number;
   delta: number;
-  w0: number;
-  w1: number;
-  axes: number;
+  word: [number, number, number, number];
+  facets: number;
 }
 
 /**
  * The WGSL general walk re-executed in TypeScript with every arithmetic
  * result rounded to f32 — the general bench legs' twin, mirroring
- * {@link finiteSolidGeneralTransportSource}'s emission term for term. The
- * f64 oracle (`finite-solid.ts`'s general section, pinned by its harness)
- * stays the soundness record.
+ * {@link finiteSolidGeneralTransportSource}'s emission term for term (the
+ * `finDot`/`finRowTimes`/`finCompose`/`finChildInverse` algebra, the facet
+ * construction, the pruned nests, the stable sort, the sweep and the
+ * snap). The f64 oracle (`finite-solid.ts`'s general section, pinned by
+ * its harness) stays the soundness record.
  *
  * `poseRows` is the 4D world→intrinsic pose (row-major, one Vec4 per row)
  * and `w0` the slice; 3D passes null (the identity pose, the lift exact).
@@ -2426,19 +2550,48 @@ export function finiteSolidGeneralDdaF32(
   anchor: FiniteSolidAnchor | null,
   inside: boolean,
 ): FiniteSolidDdaF32Result {
+  validateGeneralWire(dim, g, level);
   const f = Math.fround;
+  const v4 = (v: readonly number[]): F32Vec4 => [
+    f(v[0]),
+    f(v[1]),
+    f(v[2]),
+    f(v[3]),
+  ];
   const dir = dirIn.map(f) as Vec3;
-  const poseRows = poseRowsIn?.map((row) => row.map(f) as Vec4) ?? null;
-  const mapCount = g.mapScale.length;
-  const mapScale = g.mapScale.map((v) => v.map(f));
-  const mapOffset = g.mapOffset.map((v) => v.map(f));
-  const rootMin = g.rootMin.map(f);
-  const rootMax = g.rootMax.map(f);
+  const poseRows = poseRowsIn?.map(v4) ?? null;
+  const mapCount = g.mapMatrix.length;
+  const inverses = finiteSolidGeneralInverseMaps(g);
+  const affOf = (m: readonly number[], t: readonly number[]): F32Aff => ({
+    r: [
+      v4(m.slice(0, 4)),
+      v4(m.slice(4, 8)),
+      v4(m.slice(8, 12)),
+      v4(m.slice(12, 16)),
+    ],
+    t: v4(t),
+  });
+  const maps = g.mapMatrix.map((m, i) => affOf(m, g.mapOffset[i]));
+  const inverseMaps = inverses.map((inv) => affOf(inv.m, inv.t));
+  const root = g.rootVertices.map(v4);
+  const boxMin = g.levelBoxes.map((box) => v4(box.min));
+  const boxMax = g.levelBoxes.map((box) => v4(box.max));
   const tieRel = f(FINITE_ENVELOPE_REL);
+  const dependentRel = f(FINITE_SOLID_GENERAL_NORMAL_DEPENDENT_REL);
+  const snapRel = f(FINITE_SOLID_GENERAL_SNAP_REL);
+  const magnitude = (p: readonly number[]): number => {
+    let value = 0;
+    for (let axis = 0; axis < dim; axis++) {
+      value = Math.max(value, Math.abs(p[axis]));
+    }
+    return value;
+  };
   const leafCap = Math.min(
     mapCount ** level,
     FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES,
   );
+  const endpointCap = leafCap * 2;
+  const facetCount = dim + 1;
   const miss = (): FiniteSolidDdaF32Result => ({
     kind: 2,
     reason: 0,
@@ -2453,283 +2606,233 @@ export function finiteSolidGeneralDdaF32(
     normal: [0, 0, 0],
     anchor: null,
   });
+
+  // The algebra (finDot / finApply / finRowTimes / finCompose /
+  // finChildInverse), left-associated in the oracle's term order.
+  const dot4 = (a: readonly number[], b: readonly number[]): number =>
+    f(f(f(f(a[0] * b[0]) + f(a[1] * b[1])) + f(a[2] * b[2])) + f(a[3] * b[3]));
+  const add4 = (a: readonly number[], b: readonly number[]): F32Vec4 => [
+    f(a[0] + b[0]),
+    f(a[1] + b[1]),
+    f(a[2] + b[2]),
+    f(a[3] + b[3]),
+  ];
+  const sub4 = (a: readonly number[], b: readonly number[]): F32Vec4 => [
+    f(a[0] - b[0]),
+    f(a[1] - b[1]),
+    f(a[2] - b[2]),
+    f(a[3] - b[3]),
+  ];
+  const scale4 = (s: number, a: readonly number[]): F32Vec4 => [
+    f(s * a[0]),
+    f(s * a[1]),
+    f(s * a[2]),
+    f(s * a[3]),
+  ];
+  const apply = (m: F32Aff, v: readonly number[]): F32Vec4 => [
+    dot4(m.r[0], v),
+    dot4(m.r[1], v),
+    dot4(m.r[2], v),
+    dot4(m.r[3], v),
+  ];
+  const rowTimes = (row: readonly number[], m: F32Aff): F32Vec4 =>
+    add4(
+      add4(
+        add4(scale4(row[0], m.r[0]), scale4(row[1], m.r[1])),
+        scale4(row[2], m.r[2]),
+      ),
+      scale4(row[3], m.r[3]),
+    );
+  const identity = (): F32Aff => ({
+    r: [
+      [1, 0, 0, 0],
+      [0, 1, 0, 0],
+      [0, 0, 1, 0],
+      [0, 0, 0, 1],
+    ],
+    t: [0, 0, 0, 0],
+  });
+  const compose = (acc: F32Aff, a: number): F32Aff => {
+    const m = maps[a];
+    return {
+      r: [
+        rowTimes(acc.r[0], m),
+        rowTimes(acc.r[1], m),
+        rowTimes(acc.r[2], m),
+        rowTimes(acc.r[3], m),
+      ],
+      t: [
+        f(dot4(acc.r[0], m.t) + acc.t[0]),
+        f(dot4(acc.r[1], m.t) + acc.t[1]),
+        f(dot4(acc.r[2], m.t) + acc.t[2]),
+        f(dot4(acc.r[3], m.t) + acc.t[3]),
+      ],
+    };
+  };
+  const childInverse = (parent: F32Aff, b: number): F32Aff => {
+    const im = inverseMaps[b];
+    const d = sub4(parent.t, maps[b].t);
+    return {
+      r: [
+        rowTimes(im.r[0], parent),
+        rowTimes(im.r[1], parent),
+        rowTimes(im.r[2], parent),
+        rowTimes(im.r[3], parent),
+      ],
+      t: apply(im, d),
+    };
+  };
+  const wordAff = (word: readonly number[], depth: number): F32Aff => {
+    let acc = identity();
+    for (let slot = 0; slot < depth; slot++) acc = compose(acc, word[slot]);
+    return acc;
+  };
+  const cellOf = (m: F32Aff): F32Vec4[] =>
+    root.slice(0, facetCount).map((v) => add4(apply(m, v), m.t));
+
+  // The facets (finFacets / finCross / finMinor).
+  const cross = (e1: F32Vec4, e2: F32Vec4, e3: F32Vec4 | null): F32Vec4 => {
+    if (!e3) {
+      return [
+        f(f(e1[1] * e2[2]) - f(e1[2] * e2[1])),
+        f(f(e1[2] * e2[0]) - f(e1[0] * e2[2])),
+        f(f(e1[0] * e2[1]) - f(e1[1] * e2[0])),
+        0,
+      ];
+    }
+    const minor = (i0: number, i1: number, i2: number): number =>
+      f(
+        f(
+          f(e1[i0] * f(f(e2[i1] * e3[i2]) - f(e2[i2] * e3[i1]))) -
+            f(e2[i0] * f(f(e1[i1] * e3[i2]) - f(e1[i2] * e3[i1]))),
+        ) + f(e3[i0] * f(f(e1[i1] * e2[i2]) - f(e1[i2] * e2[i1]))),
+      );
+    return [-minor(1, 2, 3), minor(0, 2, 3), -minor(0, 1, 3), minor(0, 1, 2)];
+  };
+  const facetsOf = (
+    cell: readonly F32Vec4[],
+  ): { n: F32Vec4[]; c: number[] } | null => {
+    const n: F32Vec4[] = [];
+    const c: number[] = [];
+    for (let k = 0; k < facetCount; k++) {
+      const idx: number[] = [];
+      for (let i = 0; i < facetCount; i++) if (i !== k) idx.push(i);
+      const a = cell[idx[0]];
+      const e1 = sub4(cell[idx[1]], a);
+      const e2 = sub4(cell[idx[2]], a);
+      let normal = cross(e1, e2, dim === 4 ? sub4(cell[idx[3]], a) : null);
+      const magnitude = f(Math.sqrt(dot4(normal, normal)));
+      if (!(magnitude > 0) || !(magnitude <= 3.402823466e38)) return null;
+      normal = [
+        f(normal[0] / magnitude),
+        f(normal[1] / magnitude),
+        f(normal[2] / magnitude),
+        f(normal[3] / magnitude),
+      ];
+      const side = dot4(sub4(cell[k], a), normal);
+      if (!(side < 0)) {
+        if (side > 0) {
+          normal = [-normal[0], -normal[1], -normal[2], -normal[3]];
+        } else {
+          return null;
+        }
+      }
+      n.push(normal);
+      c.push(dot4(normal, a));
+    }
+    return { n, c };
+  };
+  const cellRadius = (cell: readonly F32Vec4[]): number => {
+    let centroid: F32Vec4 = [0, 0, 0, 0];
+    for (const v of cell) centroid = add4(centroid, v);
+    centroid = [
+      f(centroid[0] / facetCount),
+      f(centroid[1] / facetCount),
+      f(centroid[2] / facetCount),
+      f(centroid[3] / facetCount),
+    ];
+    let radius = 0;
+    for (const v of cell) {
+      const d = sub4(v, centroid);
+      radius = Math.max(radius, f(Math.sqrt(dot4(d, d))));
+    }
+    return radius;
+  };
+
+  // The lift: 3D exact; 4D the row dots (FMA-sensitive on a real driver —
+  // the canonical identity pose the legs drive is exact).
+  let q: F32Vec4 = [0, 0, 0, 0];
+  const qd: F32Vec4 = [0, 0, 0, 0];
   if (
     !dir.every(Number.isFinite) ||
-    !(f(f(dir[0] * dir[0]) + f(f(dir[1] * dir[1]) + f(dir[2] * dir[2]))) > 0)
+    !(f(f(f(dir[0] * dir[0]) + f(dir[1] * dir[1])) + f(dir[2] * dir[2])) > 0)
   ) {
     return refused(2);
   }
-  // The lift: 3D exact; 4D the row dots (FMA-sensitive on a real driver —
-  // the canonical identity pose the legs drive is exact).
-  const q: number[] = [0, 0, 0, 0];
-  const qd: number[] = [0, 0, 0, 0];
   if (poseRows) {
-    const pv = anchor
-      ? null
-      : [f(origin[0]), f(origin[1]), f(origin[2]), f(w0)];
     for (let a = 0; a < 4; a++) {
       const row = poseRows[a];
-      if (pv) {
-        q[a] = f(
-          f(f(f(row[0] * pv[0]) + f(row[1] * pv[1])) + f(row[2] * pv[2])) +
-            f(row[3] * pv[3]),
-        );
-      }
       qd[a] = f(
         f(f(row[0] * dir[0]) + f(row[1] * dir[1])) + f(row[2] * dir[2]),
       );
     }
   } else {
-    if (!anchor) {
-      q[0] = f(origin[0]);
-      q[1] = f(origin[1]);
-      q[2] = f(origin[2]);
-      q[3] = 0;
-    }
-    qd[0] = f(dir[0]);
-    qd[1] = f(dir[1]);
-    qd[2] = f(dir[2]);
-    qd[3] = 0;
+    qd[0] = dir[0];
+    qd[1] = dir[1];
+    qd[2] = dir[2];
   }
-  // The word's composed map (finCompose): offset accumulates against the
-  // INCOMING scale, then the scale multiplies — per component, depth-major.
-  const compose = (
-    w0: number,
-    w1: number,
-    depth: number,
-  ): { scale: number[]; offset: number[] } => {
-    let scale = [1, 1, 1, 1];
-    let offset = [0, 0, 0, 0];
-    for (let slot = 0; slot < depth; slot++) {
-      const w = slot === 0 ? w0 : w1;
-      const nextScale: number[] = [];
-      const nextOffset: number[] = [];
-      for (let axis = 0; axis < 4; axis++) {
-        nextOffset.push(f(offset[axis] + f(scale[axis] * mapOffset[w][axis])));
-        nextScale.push(f(scale[axis] * mapScale[w][axis]));
-      }
-      scale = nextScale;
-      offset = nextOffset;
+
+  // The snap (finSnapToLeaf): masked facets snapped, the rest clamped by
+  // the bounded violated-facet projection, all within the envelope.
+  const snapToLeaf = (
+    word: readonly number[],
+    mask: number,
+    pIn: F32Vec4,
+    scale: number,
+  ): F32Vec4 | null => {
+    const cell = cellOf(wordAff(word, level));
+    const facets = facetsOf(cell);
+    if (!facets) return null;
+    const envelope = f(snapRel * Math.max(1, cellRadius(cell), scale));
+    let p = pIn;
+    for (let k = 0; k < facetCount; k++) {
+      if ((mask & (1 << k)) === 0) continue;
+      const correction = f(facets.c[k] - dot4(facets.n[k], p));
+      if (Math.abs(correction) > envelope) return null;
+      p = add4(p, scale4(correction, facets.n[k]));
     }
-    return { scale, offset };
-  };
-  // One node's clip (finClipNode): the box interval with the binding axes.
-  const clipNode = (
-    scale: number[],
-    offset: number[],
-  ): {
-    ok: boolean;
-    enter: number;
-    exit: number;
-    enterAxes: number;
-    exitAxes: number;
-  } => {
-    let enter = f(-1e30);
-    let exit = f(1e30);
-    let enterAxes = 0;
-    let exitAxes = 0;
-    for (let axis = 0; axis < dim; axis++) {
-      const s = scale[axis];
-      const lo0 = f(offset[axis] + f(s * rootMin[axis]));
-      const hi0 = f(offset[axis] + f(s * rootMax[axis]));
-      const lo = Math.min(lo0, hi0);
-      const hi = Math.max(lo0, hi0);
-      const d = qd[axis];
-      if (d === 0) {
-        if (q[axis] < lo || q[axis] > hi) {
-          return { ok: false, enter, exit, enterAxes, exitAxes };
+    for (let pass = 0; pass <= facetCount; pass++) {
+      let worst = -1;
+      let worstS = 0;
+      for (let k = 0; k < facetCount; k++) {
+        if ((mask & (1 << k)) !== 0) continue;
+        const s = f(dot4(facets.n[k], p) - facets.c[k]);
+        if (s > worstS) {
+          worstS = s;
+          worst = k;
         }
-        continue;
       }
-      const ta = f(f(lo - q[axis]) / d);
-      const tb = f(f(hi - q[axis]) / d);
-      const near = f(Math.min(ta, tb));
-      const far = f(Math.max(ta, tb));
-      if (near > enter) {
-        enter = near;
-        enterAxes = 1 << axis;
-      } else if (near === enter) {
-        enterAxes |= 1 << axis;
-      }
-      if (far < exit) {
-        exit = far;
-        exitAxes = 1 << axis;
-      } else if (far === exit) {
-        exitAxes |= 1 << axis;
-      }
+      if (worst < 0) break;
+      if (worstS > envelope) return null;
+      p = sub4(p, scale4(worstS, facets.n[worst]));
     }
-    if (!(exit > enter)) {
-      return { ok: false, enter, exit, enterAxes, exitAxes };
-    }
-    return { ok: true, enter, exit, enterAxes, exitAxes };
+    return p;
   };
-  // The leaf's box (finLeafBox / finBoxCenterHalf / finBoxHalfMax), plus
-  // the leaf's COMPOSED face bounds — the clip's own values. The snap
-  // sites must target these, never center±half: that reconstruction does
-  // not round-trip in f32 (f32(center) + f32(half) can sit 1 ulp off the
-  // composed face), and an anchor off its own leaf's face breaks the
-  // tied start — an honest re-entering continuation (the TIR child's own
-  // face) reads the leaf 1 ulp outside and refuses state-mismatch.
-  const leafBox = (
-    w0: number,
-    w1: number,
-  ): { center: number[]; half: number[]; halfMax: number } => {
-    const { scale, offset } = compose(w0, w1, level);
-    const center: number[] = [];
-    const half: number[] = [];
-    for (let axis = 0; axis < 4; axis++) {
-      const lo = f(offset[axis] + f(scale[axis] * rootMin[axis]));
-      const hi = f(offset[axis] + f(scale[axis] * rootMax[axis]));
-      center.push(f(f(lo + hi) * 0.5));
-      half.push(f(Math.abs(hi - lo) * 0.5));
-    }
-    let halfMax = 0;
-    for (let axis = 0; axis < dim; axis++) {
-      halfMax = Math.max(halfMax, Math.abs(half[axis]));
-    }
-    return { center, half, halfMax };
-  };
-  const leafFaceBounds = (
-    w0: number,
-    w1: number,
-  ): { lo: number[]; hi: number[] } => {
-    const { scale, offset } = compose(w0, w1, level);
-    const lo: number[] = [];
-    const hi: number[] = [];
-    for (let axis = 0; axis < 4; axis++) {
-      const lo0 = f(offset[axis] + f(scale[axis] * rootMin[axis]));
-      const hi0 = f(offset[axis] + f(scale[axis] * rootMax[axis]));
-      lo.push(Math.min(lo0, hi0));
-      hi.push(Math.max(lo0, hi0));
-    }
-    return { lo, hi };
-  };
-  // The exact-corner normal — the WGSL finiteBoundaryNormal's own
-  // arithmetic, fround per op (the shipped twin's text, one tree up).
-  const rowXyz = (axis: number): Vec3 => {
-    const row = poseRows
-      ? poseRows[axis]
-      : axis === 0
-        ? [1, 0, 0, 0]
-        : axis === 1
-          ? [0, 1, 0, 0]
-          : [0, 0, 1, 0];
-    return [f(row[0]), f(row[1]), f(row[2])];
-  };
-  const boundaryNormal = (
-    planeMask: number,
-    entering: boolean,
-  ): Vec3 | null => {
-    if (planeMask > 0 && (planeMask & (planeMask - 1)) === 0) {
-      let axis = 0;
-      let m = planeMask;
-      while (m > 1) {
-        m = m >> 1;
-        axis++;
-      }
-      const row = rowXyz(axis);
-      const magnitude = f(
-        Math.sqrt(
-          f(f(f(row[0] * row[0]) + f(row[1] * row[1])) + f(row[2] * row[2])),
-        ),
-      );
-      if (!(magnitude > 0)) return null;
-      const intrinsicDirection = f(
-        f(f(row[0] * dir[0]) + f(row[1] * dir[1])) + f(row[2] * dir[2]),
-      );
-      const directionSign = intrinsicDirection > 0 ? 1 : -1;
-      const faceSign = entering ? -directionSign : directionSign;
-      return [
-        f(f(faceSign * row[0]) / magnitude),
-        f(f(faceSign * row[1]) / magnitude),
-        f(f(faceSign * row[2]) / magnitude),
-      ];
-    }
-    const basis: Vec3[] = [];
-    for (let axis = 0; axis < dim && basis.length < 3; axis++) {
-      if ((planeMask & (1 << axis)) === 0) continue;
-      let vector = [...rowXyz(axis)];
-      for (const unit of basis) {
-        const projection = f(
-          f(f(vector[0] * unit[0]) + f(vector[1] * unit[1])) +
-            f(vector[2] * unit[2]),
-        );
-        vector = [
-          f(vector[0] - f(projection * unit[0])),
-          f(vector[1] - f(projection * unit[1])),
-          f(vector[2] - f(projection * unit[2])),
-        ];
-      }
-      const magnitude = f(
-        Math.sqrt(
-          f(
-            f(f(vector[0] * vector[0]) + f(vector[1] * vector[1])) +
-              f(vector[2] * vector[2]),
-          ),
-        ),
-      );
-      if (!(magnitude > 0)) continue;
-      basis.push([
-        f(vector[0] / magnitude),
-        f(vector[1] / magnitude),
-        f(vector[2] / magnitude),
-      ]);
-    }
-    const projected: Vec3 = [0, 0, 0];
-    for (const unit of basis) {
-      const amount = f(
-        f(f(dir[0] * unit[0]) + f(dir[1] * unit[1])) + f(dir[2] * unit[2]),
-      );
-      projected[0] = f(projected[0] + f(amount * unit[0]));
-      projected[1] = f(projected[1] + f(amount * unit[1]));
-      projected[2] = f(projected[2] + f(amount * unit[2]));
-    }
-    const magnitude = f(
-      Math.sqrt(
-        f(
-          f(f(projected[0] * projected[0]) + f(projected[1] * projected[1])) +
-            f(projected[2] * projected[2]),
-        ),
-      ),
-    );
-    if (!(magnitude > 0)) return null;
-    const sign = entering ? -1 : 1;
-    return [
-      f(f(sign * projected[0]) / magnitude),
-      f(f(sign * projected[1]) / magnitude),
-      f(f(sign * projected[2]) / magnitude),
-    ];
-  };
-  // The anchor's validation and reconstruction — validGeneralAnchor plus
-  // the leaf-box snap/clamp, the WGSL anchor path term for term.
+
   if (anchor) {
+    // validGeneralAnchor, then the anchored reconstruction.
     if (
       !Number.isInteger(anchor.planeMask) ||
       anchor.planeMask <= 0 ||
-      (anchor.planeMask & ~((1 << dim) - 1)) !== 0 ||
+      (anchor.planeMask & ~((1 << facetCount) - 1)) !== 0 ||
       anchor.intrinsicPoint.length !== 4 ||
       anchor.planeIndices.length !== 4 ||
-      anchor.cellIndices.length !== 4
+      anchor.cellIndices.length !== 4 ||
+      !anchor.intrinsicPoint.every((value) => Number.isFinite(f(value))) ||
+      !anchor.planeIndices.every((value) => value === -1) ||
+      !anchor.cellIndices.every((value) => Number.isInteger(value))
     ) {
       return refused(2);
-    }
-    for (let a = 0; a < 4; a++) {
-      const point = f(anchor.intrinsicPoint[a]);
-      const plane = anchor.planeIndices[a];
-      const cell = anchor.cellIndices[a];
-      if (
-        !Number.isFinite(point) ||
-        !Number.isInteger(plane) ||
-        !Number.isInteger(cell)
-      ) {
-        return refused(2);
-      }
-      if ((anchor.planeMask & (1 << a)) !== 0) {
-        if (plane !== 0 && plane !== 1) return refused(2);
-        if (a >= dim) return refused(2);
-      } else if (plane !== -1) {
-        return refused(2);
-      }
     }
     let depth = 0;
     for (let slot = 0; slot < 4; slot++) {
@@ -2742,75 +2845,131 @@ export function finiteSolidGeneralDdaF32(
     for (let slot = depth; slot < 4; slot++) {
       if (anchor.cellIndices[slot] !== -1) return refused(2);
     }
-    let masked = 0;
-    for (let a = 0; a < 4; a++) {
-      if ((anchor.planeMask & (1 << a)) === 0) continue;
-      masked++;
-    }
-    if (masked === 0) return refused(2);
-    const box = leafBox(anchor.cellIndices[0], anchor.cellIndices[1]);
-    const envelope = f(tieRel * box.halfMax);
-    // The anchor's intrinsic point seeds the reconstruction (the
-    // reference's authoritative coordinate) before the snap/clamp. The
-    // snap targets the COMPOSED face bounds — the clip's own values —
-    // never the center/half reconstruction (see leafFaceBounds).
-    const faceBounds = leafFaceBounds(
-      anchor.cellIndices[0],
-      anchor.cellIndices[1],
+    const anchorPoint = v4(anchor.intrinsicPoint);
+    const snapped = snapToLeaf(
+      anchor.cellIndices,
+      anchor.planeMask,
+      anchorPoint,
+      magnitude(anchorPoint),
     );
+    if (!snapped) return refused(2);
+    q = snapped;
+  } else if (poseRows) {
+    const pv = [f(origin[0]), f(origin[1]), f(origin[2]), f(w0)];
     for (let a = 0; a < 4; a++) {
-      q[a] = f(anchor.intrinsicPoint[a]);
+      const row = poseRows[a];
+      q[a] = f(
+        f(f(f(row[0] * pv[0]) + f(row[1] * pv[1])) + f(row[2] * pv[2])) +
+          f(row[3] * pv[3]),
+      );
     }
-    for (let a = 0; a < dim; a++) {
-      const lower = faceBounds.lo[a];
-      const upper = faceBounds.hi[a];
-      if ((anchor.planeMask & (1 << a)) !== 0) {
-        q[a] = anchor.planeIndices[a] === 0 ? lower : upper;
-      } else if (q[a] < lower) {
-        if (f(lower - q[a]) > envelope) return refused(2);
-        q[a] = lower;
-      } else if (q[a] > upper) {
-        if (f(q[a] - upper) > envelope) return refused(2);
-        q[a] = upper;
-      }
-    }
-  } else if (!anchor) {
-    if (!origin.every(Number.isFinite)) return refused(2);
-  }
-  // The pruned enumeration (finEnumerate): the leaves in lexicographic
-  // word order, subtrees pruned when the ray misses their box, capped.
-  const endpoints: GeneralEndpointF32[] = [];
-  const pushLeaf = (
-    w0: number,
-    w1: number,
-    clip: ReturnType<typeof clipNode>,
-  ): boolean => {
-    // The cap check precedes the pair, exactly the WGSL's.
-    if (endpoints.length + 2 > leafCap * 2) return false;
-    endpoints.push({ t: clip.enter, delta: 1, w0, w1, axes: clip.enterAxes });
-    endpoints.push({ t: clip.exit, delta: 0, w0, w1, axes: clip.exitAxes });
-    return true;
-  };
-  if (level === 0) {
-    const clip = clipNode([1, 1, 1, 1], [0, 0, 0, 0]);
-    if (clip.ok && !pushLeaf(-1, -1, clip)) return refused(1);
   } else {
-    for (let a0 = 0; a0 < mapCount; a0++) {
-      const word1 = compose(a0, -1, 1);
-      if (level === 1) {
-        const clip = clipNode(word1.scale, word1.offset);
-        if (clip.ok && !pushLeaf(a0, -1, clip)) return refused(1);
+    q = [f(origin[0]), f(origin[1]), f(origin[2]), 0];
+  }
+
+  // The node prune (finClipAxisBox) and the leaf clip (finClipSimplex).
+  const clipAxisBox = (
+    lo: readonly number[],
+    hi: readonly number[],
+    p: readonly number[],
+    d: readonly number[],
+  ): boolean => {
+    let enter = f(-1e30);
+    let exit = f(1e30);
+    for (let axis = 0; axis < dim; axis++) {
+      const da = d[axis];
+      if (da === 0) {
+        if (p[axis] < lo[axis] || p[axis] > hi[axis]) return false;
         continue;
       }
-      const node = clipNode(word1.scale, word1.offset);
-      if (!node.ok) continue;
-      for (let a1 = 0; a1 < mapCount; a1++) {
-        const word2 = compose(a0, a1, 2);
-        const clip = clipNode(word2.scale, word2.offset);
-        if (clip.ok && !pushLeaf(a0, a1, clip)) return refused(1);
+      const ta = f(f(lo[axis] - p[axis]) / da);
+      const tb = f(f(hi[axis] - p[axis]) / da);
+      enter = Math.max(enter, Math.min(ta, tb));
+      exit = Math.min(exit, Math.max(ta, tb));
+      if (exit < enter) return false;
+    }
+    return exit > enter;
+  };
+  const endpoints: GeneralEndpointF32[] = [];
+  const pushLeaf = (m: F32Aff, word: number[]): boolean => {
+    const facets = facetsOf(cellOf(m));
+    if (!facets) return true;
+    // The anchor's own leaf reads its masked residuals as exact zeros
+    // (enumerateSimplicialLeaves's rule, finClipSimplex's `onPlane`).
+    const forced =
+      anchor && word.every((w, slot) => w === anchor.cellIndices[slot])
+        ? anchor.planeMask
+        : 0;
+    let enter = f(-1e30);
+    let exit = f(1e30);
+    let enterMask = 0;
+    let exitMask = 0;
+    for (let k = 0; k < facetCount; k++) {
+      const denom = dot4(facets.n[k], qd);
+      const s =
+        (forced & (1 << k)) !== 0 ? 0 : f(dot4(facets.n[k], q) - facets.c[k]);
+      if (denom === 0) {
+        if (s > 0) return true;
+        continue;
+      }
+      const t = f(-s / denom);
+      if (denom > 0) {
+        if (t < exit) {
+          exit = t;
+          exitMask = 1 << k;
+        } else if (t === exit) {
+          exitMask |= 1 << k;
+        }
+      } else if (t > enter) {
+        enter = t;
+        enterMask = 1 << k;
+      } else if (t === enter) {
+        enterMask |= 1 << k;
       }
     }
+    if (!(exit > enter)) return true;
+    // The cap check precedes the pair, exactly the WGSL's.
+    if (endpoints.length + 2 > endpointCap) return false;
+    const slots: [number, number, number, number] = [-1, -1, -1, -1];
+    for (let slot = 0; slot < word.length; slot++) slots[slot] = word[slot];
+    endpoints.push({ t: enter, delta: 1, word: slots, facets: enterMask });
+    endpoints.push({ t: exit, delta: 0, word: [...slots], facets: exitMask });
+    return true;
+  };
+  // The pruned nests (finEnumerate): the leaves in lexicographic word
+  // order, subtrees pruned when the ray misses their level box, capped.
+  if (level === 0) {
+    if (!pushLeaf(identity(), [])) return refused(1);
+  } else if (clipAxisBox(boxMin[level], boxMax[level], q, qd)) {
+    const word: number[] = [];
+    const walk = (forward: F32Aff, inverse: F32Aff, depth: number): boolean => {
+      for (let a = 0; a < mapCount; a++) {
+        const childForward = compose(forward, a);
+        word.push(a);
+        if (depth + 1 < level) {
+          const childInverse_ = childInverse(inverse, a);
+          const remaining = level - (depth + 1);
+          if (
+            clipAxisBox(
+              boxMin[remaining],
+              boxMax[remaining],
+              add4(apply(childInverse_, q), childInverse_.t),
+              apply(childInverse_, qd),
+            ) &&
+            !walk(childForward, childInverse_, depth + 1)
+          ) {
+            return false;
+          }
+        } else if (!pushLeaf(childForward, word)) {
+          return false;
+        }
+        word.pop();
+      }
+      return true;
+    };
+    if (!walk(identity(), identity(), 0)) return refused(1);
   }
+
   // The stable sort (finSortEndpoints): by t, ties keep the DFS order.
   for (let i = 1; i < endpoints.length; i++) {
     const key = endpoints[i];
@@ -2821,81 +2980,108 @@ export function finiteSolidGeneralDdaF32(
     }
     endpoints[j] = key;
   }
-  // The event construction (finEvent), fround per op.
+
+  // The rows the displayed normal reads (finiteRowXyz).
+  const rowXyz = (axis: number): Vec3 => {
+    if (poseRows) {
+      const row = poseRows[axis];
+      return [row[0], row[1], row[2]];
+    }
+    return axis === 0
+      ? [1, 0, 0]
+      : axis === 1
+        ? [0, 1, 0]
+        : axis === 2
+          ? [0, 0, 1]
+          : [0, 0, 0];
+  };
+  const dot3 = (a: readonly number[], b: readonly number[]): number =>
+    f(f(f(a[0] * b[0]) + f(a[1] * b[1])) + f(a[2] * b[2]));
+  const length3 = (a: readonly number[]): number => f(Math.sqrt(dot3(a, a)));
+  const madd3 = (acc: Vec3, s: number, v: readonly number[]): Vec3 => [
+    f(acc[0] + f(v[0] * s)),
+    f(acc[1] + f(v[1] * s)),
+    f(acc[2] + f(v[2] * s)),
+  ];
+  // The exact-corner normal (finGroupNormal).
+  const groupNormal = (
+    groupLo: number,
+    groupHi: number,
+    entering: boolean,
+  ): Vec3 | null => {
+    const basis: Vec3[] = [];
+    for (let m = groupLo; m < groupHi && basis.length < 3; m++) {
+      const facets = facetsOf(cellOf(wordAff(endpoints[m].word, level)));
+      if (!facets) return null;
+      for (let k = 0; k < facetCount && basis.length < 3; k++) {
+        if ((endpoints[m].facets & (1 << k)) === 0) continue;
+        const n = facets.n[k];
+        let vector: Vec3 = [
+          f(rowXyz(0)[0] * n[0]),
+          f(rowXyz(0)[1] * n[0]),
+          f(rowXyz(0)[2] * n[0]),
+        ];
+        vector = madd3(vector, n[1], rowXyz(1));
+        vector = madd3(vector, n[2], rowXyz(2));
+        vector = madd3(vector, n[3], rowXyz(3));
+        const full = length3(vector);
+        for (const unit of basis) {
+          const projection = dot3(vector, unit);
+          vector = [
+            f(vector[0] - f(projection * unit[0])),
+            f(vector[1] - f(projection * unit[1])),
+            f(vector[2] - f(projection * unit[2])),
+          ];
+        }
+        const magnitude = length3(vector);
+        if (!(magnitude > f(dependentRel * full))) continue;
+        basis.push([
+          f(vector[0] / magnitude),
+          f(vector[1] / magnitude),
+          f(vector[2] / magnitude),
+        ]);
+      }
+    }
+    let projected: Vec3 = [0, 0, 0];
+    for (const unit of basis) {
+      projected = madd3(projected, dot3(dir, unit), unit);
+    }
+    const magnitude = length3(projected);
+    if (!(magnitude > 0)) return null;
+    const sign = entering ? -1 : 1;
+    return [
+      f(f(sign * projected[0]) / magnitude),
+      f(f(sign * projected[1]) / magnitude),
+      f(f(sign * projected[2]) / magnitude),
+    ];
+  };
+  // The event (finEvent).
   const event = (
     t: number,
     entering: boolean,
     groupLo: number,
     groupHi: number,
   ): FiniteSolidDdaF32Result => {
-    let planeMask = 0;
-    let axis = 0;
-    let firstAxis = true;
-    for (let m = groupLo; m < groupHi; m++) {
-      const axes = endpoints[m].axes;
-      for (let a = 0; a < dim; a++) {
-        if ((axes & (1 << a)) === 0) continue;
-        planeMask |= 1 << a;
-        if (firstAxis) {
-          axis = a;
-          firstAxis = false;
-        } else if (Math.abs(qd[a]) > Math.abs(qd[axis])) {
-          axis = a;
-        }
-      }
-    }
-    const normal = boundaryNormal(planeMask, entering);
+    const normal = groupNormal(groupLo, groupHi, entering);
     if (!normal) return refused(6);
-    const incidentW0 = endpoints[groupLo].w0;
-    const incidentW1 = endpoints[groupLo].w1;
-    const box = leafBox(incidentW0, incidentW1);
-    const envelope = f(tieRel * box.halfMax);
-    // The event's snap targets the COMPOSED face bounds (the clip's own
-    // values — see leafFaceBounds), so the minted anchor sits exactly on
-    // the leaf's face and the next hop's tied start merges.
-    const faceBounds = leafFaceBounds(incidentW0, incidentW1);
-    const intrinsic = [0, 0, 0, 0];
-    const anchorPlanes = [-1, -1, -1, -1];
-    const anchorCells = [-1, -1, -1, -1];
-    for (let a = 0; a < dim; a++) {
-      intrinsic[a] = f(q[a] + f(t * qd[a]));
-      if (a < level) {
-        anchorCells[a] = a === 0 ? incidentW0 : incidentW1;
-      }
-    }
-    for (let a = 0; a < dim; a++) {
-      if ((planeMask & (1 << a)) === 0) continue;
-      anchorPlanes[a] = entering !== qd[a] > 0 ? 1 : 0;
-      intrinsic[a] =
-        anchorPlanes[a] === 0 ? faceBounds.lo[a] : faceBounds.hi[a];
-    }
-    for (let a = 0; a < dim; a++) {
-      if ((planeMask & (1 << a)) !== 0) continue;
-      const lower = faceBounds.lo[a];
-      const upper = faceBounds.hi[a];
-      if (intrinsic[a] < lower) {
-        if (f(lower - intrinsic[a]) > envelope) return refused(2);
-        intrinsic[a] = lower;
-      } else if (intrinsic[a] > upper) {
-        if (f(intrinsic[a] - upper) > envelope) return refused(2);
-        intrinsic[a] = upper;
-      }
-    }
+    const incident = endpoints[groupLo];
+    const snapped = snapToLeaf(
+      incident.word,
+      incident.facets,
+      add4(q, scale4(t, qd)),
+      Math.max(magnitude(q), Math.abs(t)),
+    );
+    if (!snapped) return refused(2);
     return {
       kind: 1,
       reason: 0,
       t,
       normal,
       anchor: {
-        intrinsicPoint: [
-          intrinsic[0],
-          intrinsic[1],
-          intrinsic[2],
-          intrinsic[3],
-        ] as Vec4,
-        planeMask,
-        planeIndices: anchorPlanes as [number, number, number, number],
-        cellIndices: anchorCells as [number, number, number, number],
+        intrinsicPoint: [snapped[0], snapped[1], snapped[2], snapped[3]],
+        planeMask: incident.facets,
+        planeIndices: [-1, -1, -1, -1],
+        cellIndices: [...incident.word] as [number, number, number, number],
       },
     };
   };
@@ -2909,9 +3095,6 @@ export function finiteSolidGeneralDdaF32(
   let startAtGroup = false;
   let startLo = 0;
   let startHi = 0;
-  // The first zero-crossing AFTER the start, held until the claim check
-  // has admitted the walk (the reference's order: a mismatching claim
-  // refuses before any walk event is emitted).
   let haveFlip = false;
   let flipT = 0;
   let flipEntering = false;
@@ -2932,7 +3115,7 @@ export function finiteSolidGeneralDdaF32(
     if (!started && groupT <= tie) {
       haveStart = true;
       startAfter = coverage;
-      startAtGroup = f(Math.abs(groupT)) <= tie;
+      startAtGroup = Math.abs(groupT) <= tie;
       startLo = idx;
       startHi = j;
       idx = j;
@@ -2951,15 +3134,12 @@ export function finiteSolidGeneralDdaF32(
     }
     idx = j;
   }
-  const stateMatches = startAfter > 0 === inside;
-  if (!stateMatches) {
+  if (startAfter > 0 !== inside) {
     if (haveStart && startAtGroup && !anchor) {
       return event(0, startAfter > 0, startLo, startHi);
     }
     return refused(3);
   }
-  if (haveFlip) {
-    return event(flipT, flipEntering, flipLo, flipHi);
-  }
+  if (haveFlip) return event(flipT, flipEntering, flipLo, flipHi);
   return miss();
 }

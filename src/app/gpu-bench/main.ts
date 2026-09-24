@@ -157,6 +157,7 @@ import { buildPaletteLUT } from "../../fractal/palette";
 import type { FlamePaletteId } from "../../fractal/palette";
 import {
   barnsleyFern,
+  defaultTransforms,
   mengerSponge,
   doubleRotation,
   fernSpongeIsolated,
@@ -298,6 +299,7 @@ import {
   buildFiniteSolidConstruction,
   finiteSolidDisplayDistance,
   finiteSolidBoundingRadius,
+  finiteSolidGeneralBoundingRadius,
   finiteSolidGeneralDisplayDistance,
   finiteSolidIntervals,
   finiteSolidPose,
@@ -307,8 +309,6 @@ import {
 import {
   finiteSolidDdaF32,
   finiteSolidGeneralDdaF32,
-  finiteSolidGeneralBoundingRadius,
-  type FiniteSolidGeneralWire,
 } from "../../fractal/surface-finite-solid-gpu";
 import {
   transportBoundaryQueryCPU,
@@ -9484,19 +9484,24 @@ async function runSurfaceTransportAgreementLegs(
   pushFiniteSolidLeg(false);
   pushFiniteSolidLeg(true);
 
-  // The general word-tree legs (the document's OWN maps as the cell tree —
-  // the general-construction work's GPU half, both dimensions). Each leg's
-  // construction comes from `analyzeFiniteSolidGeneral` over a REAL document
-  // (the owner's Sierpinski tetrahedron; the shipped Menger maps as the
-  // cross-construction witness; the hyper-Menger maps one dimension up), so
-  // the leg pins the kernel against the SAME realization the CPU chain
-  // pins: the general twin mirrors the WGSL walk term for term, the f64
-  // oracle stays the soundness record, and the shipped-grid cross-check
-  // lives in the CPU tests (the word tree with the grid's own maps
-  // reproduces the grid's union). The construction bakes into the source,
-  // so the params wire and packers are the shipped finite ones verbatim;
-  // the marching ball is the root box's farthest corner — the fixture's
-  // domain gate reads the same number the packer carries.
+  // The general word-tree legs (the document's OWN maps as the SIMPLICIAL
+  // cell tree — both dimensions). Each leg's construction comes from
+  // `analyzeFiniteSolidGeneral` over a REAL document: the owner's Sierpinski
+  // tetrahedron (the hull root), the viewer's default system (three of four
+  // maps rotate — the derived root, the documents the box tree refused),
+  // the hyper-Menger's 48 maps (the map cap), the pentatope and a rotated
+  // pentatope one dimension up — so the leg pins the kernel against the
+  // SAME realization the CPU chain pins: the general twin mirrors the WGSL
+  // walk term for term, and the f64 oracle stays the soundness record. (The
+  // shipped Menger maps no longer ride a general leg: the box tree's
+  // cross-construction witness does not survive simplicial cells, and
+  // their derived-root lump runs probe traces into the path cap, where
+  // SwiftShader's rounding moves which paths fit — agreement to 7e-7 on
+  // the real driver, a false failure on CI's software device.) The construction
+  // bakes into the source, so the params wire and packers are the shipped
+  // finite ones verbatim; the marching ball is the level box's farthest
+  // corner — the fixture's domain gate reads the same number the packer
+  // carries.
   const pushFiniteGeneralLeg = (
     fourD: boolean,
     transforms: Transform[],
@@ -9516,12 +9521,7 @@ async function runSurfaceTransportAgreementLegs(
       );
     }
     const construction = analysis.construction;
-    const wire: FiniteSolidGeneralWire = {
-      mapScale: construction.mapScale,
-      mapOffset: construction.mapOffset,
-      rootMin: construction.rootMin,
-      rootMax: construction.rootMax,
-    };
+    const wire = construction;
     const pose = FINITE_SOLID_IDENTITY_POSE;
     const boundingRadius = finiteSolidGeneralBoundingRadius(construction);
     legs.push({
@@ -9597,12 +9597,29 @@ async function runSurfaceTransportAgreementLegs(
     2,
     "finiteGeneralSierpinski3",
   );
-  pushFiniteGeneralLeg(false, mengerSponge(), 1, "finiteGeneralMenger3");
+  pushFiniteGeneralLeg(false, defaultTransforms(), 3, "finiteGeneralDefault3");
   pushFiniteGeneralLeg(
     true,
     hyperMengerSpongeTransforms(),
     1,
     "finiteGeneralHyperMenger4",
+  );
+  pushFiniteGeneralLeg(true, pentatope(), 2, "finiteGeneralPentatope4");
+  // The rotated pentatope: three of five maps turn (one of them out of 3D
+  // through xw), so no invariant simplex exists and the derived root rides
+  // the level boxes — the 4D half of the default system's witness.
+  const rotatedPentatope = pentatope();
+  rotatedPentatope[1].rotation = [0, Math.PI / 4, 0];
+  rotatedPentatope[2].w = {
+    ...rotatedPentatope[2].w,
+    rotation: { xw: Math.PI / 5 },
+  };
+  rotatedPentatope[3].rotation = [Math.PI / 4, 0, 0];
+  pushFiniteGeneralLeg(
+    true,
+    rotatedPentatope,
+    2,
+    "finiteGeneralRotatedPentatope4",
   );
 
   const escapeSys = systems.escape[0];

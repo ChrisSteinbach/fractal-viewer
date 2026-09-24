@@ -8,9 +8,10 @@ import {
   FINITE_SOLID_HALF_EXTENT,
   analyzeFiniteSolidGeneral,
   finiteSolidBoundingRadius,
+  finiteSolidGeneralBoundingRadius,
+  finiteSolidGeneralOpticsRadius,
   resolveFiniteSolid,
 } from "../fractal/finite-solid";
-import { finiteSolidGeneralBoundingRadius } from "../fractal/surface-finite-solid-gpu";
 import type { FiniteSolidGeneralWire } from "../fractal/surface-finite-solid-gpu";
 import { BALLOON_CENTRE_REFUSAL_REASON } from "./panel-applicability";
 import {
@@ -6247,8 +6248,9 @@ async function main(): Promise<void> {
           }
           // A GENERAL block re-runs the admission at the door (pure and
           // cheap — the gate passed this same analysis) and the target
-          // carries its construction: the maps and root box bake into the
-          // kernel source, so the wire IS the session's construction.
+          // carries its construction: the maps, the root simplex and the
+          // level boxes bake into the kernel source, so the wire IS the
+          // session's construction.
           let general: FiniteSolidGeneralWire | null = null;
           let boundingRadius: number;
           let opticsRadius: number;
@@ -6267,25 +6269,15 @@ async function main(): Promise<void> {
               );
             }
             const construction = analysis.construction;
-            general = {
-              mapScale: construction.mapScale,
-              mapOffset: construction.mapOffset,
-              rootMin: construction.rootMin,
-              rootMax: construction.rootMax,
-            };
-            boundingRadius = finiteSolidGeneralBoundingRadius(general);
-            // The material's H: the root box's largest per-axis half extent
-            // — the same "the solid's own scale" role the shipped
-            // construction's 0.75 plays (Beer distance and slab lengths).
-            opticsRadius = Math.max(
-              ...[0, 1, 2, 3]
-                .slice(0, fourD ? 4 : 3)
-                .map(
-                  (axis) =>
-                    (construction.rootMax[axis] - construction.rootMin[axis]) /
-                    2,
-                ),
-            );
+            general = construction;
+            // The marching ball bounds the LEVEL union's box, not the root
+            // simplex: a derived root is not invariant, so a level-N cell
+            // can reach outside it (finiteSolidGeneralBoundingRadius).
+            boundingRadius = finiteSolidGeneralBoundingRadius(construction);
+            // The material's H: the level box's largest half extent — the
+            // same "the solid's own scale" role the shipped construction's
+            // 0.75 plays (Beer distance and slab lengths).
+            opticsRadius = finiteSolidGeneralOpticsRadius(construction);
           } else {
             boundingRadius = finiteSolidBoundingRadius(fourD ? 4 : 3);
             opticsRadius = FINITE_SOLID_HALF_EXTENT;
