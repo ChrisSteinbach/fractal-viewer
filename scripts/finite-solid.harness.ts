@@ -1173,6 +1173,9 @@ function referenceMediumEvents(
   media: readonly number[],
   q: Vec4,
   qd: Vec4,
+  /** The composite's glass-only walk: an opaque branch's leaves are not
+   * cells at all (its content is the attractor, marched elsewhere). */
+  glassOnly = false,
 ): Array<{ t: number; from: number; to: number }> {
   const endpoints: Array<{ t: number; delta: number; branch: number }> = [];
   const counter = new Array<number>(c.level).fill(0);
@@ -1183,7 +1186,7 @@ function referenceMediumEvents(
         ? referenceBoxClip(vertices, c.dimension, q, qd)
         : referenceSimplexClip(vertices, c.dimension, q, qd);
     const branch = c.level === 0 ? 0 : counter[0];
-    if (clip) {
+    if (clip && !(glassOnly && media[branch] === 0)) {
       endpoints.push({ t: clip.enter, delta: 1, branch });
       endpoints.push({ t: clip.exit, delta: -1, branch });
     }
@@ -1310,6 +1313,103 @@ describe("the general word tree's per-map media chain reconstructs the reference
         });
       }
       expect(opaque).toBeGreaterThan(0);
+    });
+  }
+});
+
+describe("the composite's glass-only walk reconstructs the reference", () => {
+  // The same chained sweep with the opaque branches' leaves dropped from
+  // BOTH sides: the reference skips them by its own word counter, the
+  // production walk at its tree's first level.
+  for (const { name, maps, level, dimension, media, radius } of [
+    {
+      name: "default system, glass/opaque",
+      maps: defaultTransforms,
+      level: 3,
+      dimension: 3 as const,
+      media: [1, 0, 2, 0],
+      radius: 6,
+    },
+    {
+      name: "Menger maps, glass on two opposite corners",
+      maps: mengerSponge,
+      level: 3,
+      dimension: 3 as const,
+      media: mengerSponge().map((_, i) => (i === 0 || i === 19 ? 1 : 0)),
+      radius: 3,
+    },
+    {
+      name: "rotated pentatope, two materials",
+      maps: rotatedPentatope,
+      level: 1,
+      dimension: 4 as const,
+      media: [1, 2, 0, 0, 1],
+      radius: 5,
+    },
+  ]) {
+    it(`sweeps 24 chained rays: ${name}, ${dimension}D`, () => {
+      const c = generalConstructionFor(maps(), level, dimension);
+      const pose = poseFor(dimension);
+      let glass = 0;
+      for (const { origin, dir } of probeRaysAround(
+        [0, 0, 0],
+        radius,
+        24,
+        17,
+      )) {
+        const expected = referenceMediumEvents(
+          c,
+          media,
+          finiteSolidIntrinsicPoint(pose, origin),
+          finiteSolidIntrinsicDirection(pose, dir),
+          true,
+        ).filter((event) => event.t > 0);
+        const got: Array<{ t: number; from: number; to: number }> = [];
+        let medium = 0;
+        let anchor: FiniteSolidAnchor | undefined;
+        let accumulated = 0;
+        for (let hop = 0; hop < 256; hop++) {
+          const result = anchor
+            ? finiteSolidGeneralNextBoundaryFromAnchor(c, pose, dir, {
+                inside: medium !== 0,
+                anchor,
+                media,
+                medium,
+                glassOnly: true,
+              })
+            : finiteSolidGeneralNextBoundary(c, pose, origin, dir, {
+                inside: false,
+                media,
+                medium: 0,
+                glassOnly: true,
+              });
+          if (result.kind === "refused") {
+            throw new Error(
+              `the glass-only chain refused at hop ${hop}: ${result.reason}`,
+            );
+          }
+          if (result.kind === "miss") break;
+          accumulated += result.t;
+          got.push({
+            t: accumulated,
+            from: result.fromMedium ?? -1,
+            to: result.toMedium ?? -1,
+          });
+          expect(result.toMedium).not.toBe(FINITE_SOLID_MEDIUM_OPAQUE);
+          glass++;
+          medium = result.toMedium ?? 0;
+          anchor = result.anchor;
+        }
+        expect(got).toHaveLength(expected.length);
+        got.forEach((event, k) => {
+          expect(event.from).toBe(expected[k].from);
+          expect(event.to).toBe(expected[k].to);
+          expect(Math.abs(event.t - expected[k].t)).toBeLessThan(
+            CHAIN_RECONSTRUCTION * Math.max(1, expected[k].t),
+          );
+        });
+      }
+      expect(glass).toBeGreaterThan(0);
     });
   }
 });
