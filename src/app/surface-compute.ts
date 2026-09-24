@@ -221,6 +221,11 @@ import {
   type SurfaceDE,
 } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
+import type { FiniteSolidOpaqueBranch } from "../fractal/finite-solid-composite";
+import {
+  SURFACE_GPU_PARAMS4_FINITE_COMPOSITE_BYTES,
+  SURFACE_GPU_PARAMS_FINITE_COMPOSITE_BYTES,
+} from "../fractal/surface-finite-composite-gpu";
 import type { SphereInversionDE } from "../fractal/sphere-inversion";
 import { packSphereInversionGpuTables } from "../fractal/surface-sphere-inversion-gpu";
 import type { SphereInversionGpuTables } from "../fractal/surface-sphere-inversion-gpu";
@@ -929,13 +934,18 @@ export type SphereInversionComputeTarget =
  * construction's do. `tiling` is declared absent (the mirrored copies are
  * not the construction, refused at the gate), the slab is refused at pack,
  * and the balloon is refused at the session door (a filled solid's echo
- * swallows the camera; the finite cores throw on it anyway).
+ * swallows the camera; the finite cores throw on it anyway). `composite`
+ * (requires a glass-only `general` wire) renders the opaque maps as the
+ * TRUE ATTRACTOR under the glass cells: the attractor's estimator packs
+ * into the kernel's baked maps and the params' opaque-descent block
+ * (`finite-composite-route.ts` decides it).
  */
 export type FiniteSolidComputeTarget =
   | {
       kind: "finite";
       level: number;
       general?: FiniteSolidGeneralWire;
+      composite?: { de: SurfaceDE; branches: FiniteSolidOpaqueBranch[] };
       groundPlane?: boolean;
       tiling?: undefined;
     }
@@ -943,6 +953,7 @@ export type FiniteSolidComputeTarget =
       kind: "finite4";
       level: number;
       general?: FiniteSolidGeneralWire;
+      composite?: { de: SurfaceDE4; branches: FiniteSolidOpaqueBranch[] };
       groundPlane?: boolean;
       tiling?: undefined;
     };
@@ -3609,6 +3620,17 @@ export class SurfaceComputeRenderer {
             ? {
                 level: target.level,
                 ...(target.general ? { general: target.general } : {}),
+                ...(target.composite
+                  ? {
+                      composite: {
+                        maps:
+                          target.kind === "finite4"
+                            ? packSurfaceGpuMaps4(target.composite.de)
+                            : packSurfaceGpuMaps(target.composite.de),
+                        branches: target.composite.branches,
+                      },
+                    }
+                  : {}),
               }
             : null,
           // THE GENERAL CURVED SOLID: a closed-solid glass session whose
@@ -3885,10 +3907,14 @@ export class SurfaceComputeRenderer {
                 SURFACE_GPU_PARAMS4_TRAP_BYTES
               : target.kind === "finite4"
                 ? // The finite block ends the plain struct at 480; a
-                  // floor bridges to the shared 4D plane region (576).
-                  target.groundPlane === true
-                  ? SURFACE_GPU_PARAMS4_PLANE_BYTES
-                  : SURFACE_GPU_PARAMS4_FINITE_BYTES
+                  // floor bridges to the shared 4D plane region (576);
+                  // a composite appends its opaque-descent block past
+                  // that region (624), floor or not.
+                  target.composite !== undefined
+                  ? SURFACE_GPU_PARAMS4_FINITE_COMPOSITE_BYTES
+                  : target.groundPlane === true
+                    ? SURFACE_GPU_PARAMS4_PLANE_BYTES
+                    : SURFACE_GPU_PARAMS4_FINITE_BYTES
                 : target.groundPlane === true
                   ? SURFACE_GPU_PARAMS4_PLANE_BYTES
                   : target.kind === "sphereInversion4"
@@ -3937,10 +3963,14 @@ export class SurfaceComputeRenderer {
                 SURFACE_GPU_PARAMS_TRAP_BYTES
               : target.kind === "finite"
                 ? // The finite block ends the plain struct at 224; a
-                  // floor bridges to the shared plane region (288).
-                  target.groundPlane === true
-                  ? SURFACE_GPU_PARAMS_PLANE_BYTES
-                  : SURFACE_GPU_PARAMS_FINITE_BYTES
+                  // floor bridges to the shared plane region (288); a
+                  // composite appends its opaque-descent block past that
+                  // region (336), floor or not.
+                  target.composite !== undefined
+                  ? SURFACE_GPU_PARAMS_FINITE_COMPOSITE_BYTES
+                  : target.groundPlane === true
+                    ? SURFACE_GPU_PARAMS_PLANE_BYTES
+                    : SURFACE_GPU_PARAMS_FINITE_BYTES
                 : target.groundPlane === true
                   ? // The plane kernel's struct appends the
                     // plane block at the same frozen offset (the two are
@@ -5885,6 +5915,7 @@ export class SurfaceComputeRenderer {
                   // A general session's per-map slots (the hit-info's
                   // owning branch); the shaped grid's one.
                   target.general?.mapMatrix.length ?? 1,
+                  target.composite?.de ?? null,
                 )
             : target.kind === "finite4"
               ? (run) =>
@@ -5895,6 +5926,7 @@ export class SurfaceComputeRenderer {
                     finiteTargetBoundingRadius(target, 4),
                     groundPlane,
                     target.general?.mapMatrix.length ?? 1,
+                    target.composite?.de ?? null,
                   )
               : target.kind === "escape"
                 ? (run) =>

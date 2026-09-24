@@ -5782,11 +5782,17 @@ export class FractalScene {
    * spec exactly as the other 4D kinds' do — the DDA lifts world→intrinsic
    * through the shared tail's rows, so ANY pose renders the posed slice
    * (no canonical-pose admission needed, unlike the closed-solid field).
+   * A COMPOSITE session (`attractor` present — the opaque maps render as
+   * the true attractor, finite-composite-route.ts) installs the
+   * attractor's own depth and certified contraction instead, exactly as
+   * the ordinary IFS entries do: the depth is the spliced descent's, and
+   * the finite core itself packs no depth (writeFiniteFrozen's 0).
    */
   enterSurfaceComputeFiniteSession(
     fourD: boolean,
     groundPlane: boolean,
     ballRadius: number,
+    attractor: { maxDepth: number; slowestSigma: number } | null = null,
   ): void {
     this.renderNeeded = true;
     this.surfaceComputeActive = true;
@@ -5801,7 +5807,11 @@ export class FractalScene {
       ? { center: [0, 0, 0], radius: ballRadius }
       : null;
     this.surfaceComputeGroundPlane = groundPlane;
-    this.installSurfaceDepth(FINITE_SOLID_MAX_LEVEL, null);
+    if (attractor) {
+      this.installSurfaceDepth(attractor.maxDepth, attractor.slowestSigma);
+    } else {
+      this.installSurfaceDepth(FINITE_SOLID_MAX_LEVEL, null);
+    }
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
     this.flushStripBacklog();
