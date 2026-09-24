@@ -1700,8 +1700,8 @@ The owner's direction after the box root: under a Glass solid, a
 NON-glass map should render with the attractor's FINE DETAIL — what the
 ordinary IFS Surface render draws — visible directly and through the glass,
 not as cells. Glass maps stay cells (glass needs a closed interior). This
-section is the f64 oracle and the trace fixture; the kernel, routing and
-panel are not built yet.
+section is the f64 oracle and the trace fixture; the kernel follows in the
+next section; the routing and panel are not built yet.
 
 - **The opaque content** is `O = ∪_{a opaque} M_a(A)`, bounded by WRAPPING
   the shipped IFS estimator (`finite-solid-composite.ts`):
@@ -1753,6 +1753,83 @@ panel are not built yet.
   degrees off the face (z 0.968 at the measured contact) — the same
   normal the ordinary Surface render's taps compute from the same
   estimator, disclosed rather than corrected.
+
+## The composite kernel (2026-09-24)
+
+The oracle above on the GPU: `finiteSolid.composite` on the finite general
+cores (`surface-finite-composite-gpu.ts`), in both dimensions. The app does
+not route to it yet.
+
+- **The descent is extracted, not restated.** The kernel generator builds
+  the plain affine / affine4 shade kernel (`slabExt: false` in 4D; the
+  finite cores take no slab), lifts out the declarations `surfaceDE` and
+  `surfaceDEHitInfo` reach, and renames them onto `finOp_`. Three foreign
+  references are renamed: `params.X` becomes `params.op_X`; `maps[j]`
+  becomes `FIN_OP_MAPS[j]`; and in 4D the view lift becomes the intrinsic
+  `vec4f` argument. A unit test undoes the renames and compares each
+  declaration with the shipped text, so the descent cannot drift from the
+  one the IFS Surface render runs.
+- **The params ride an appended block.** The affine struct's own fields,
+  renamed, sit at 336 (3D) / 624 (4D), past the frozen ground-plane block;
+  a plane-less composite pads up to them. The finite packers' `composite`
+  argument copies `packSurfaceGpuParams` / `packSurface4GpuParams`'s frozen
+  bytes (208 / 464) for the attractor under the same run params, so the
+  descent's live `maxDepth` is the preview tier's. The frozen base keeps
+  the CONSTRUCTION's ball: the glass cells need it, and the attractor's
+  probe-fit ball does not contain them.
+- **The maps bake.** The attractor's maps are a const array, as the word
+  tree's maps are, so the finite cores stay bindingless and binding 1 stays
+  the chunked transport's work buffer.
+- **The primary.** On the ray's first pass the glass-only walk runs once
+  and its boundary `t` rides the state's diagnostic lane (-1 on a miss).
+  The opaque term is then sphere-traced, bounded per pass like every
+  sphere-traced core, until it hits or reaches the glass. A surface behind
+  the glass is the transport's to reach, never the primary's.
+- **The transport.** Each segment runs the glass-only walk, then
+  `transportOpaqueMarch`, the estimator backend's unanchored query over the
+  opaque term, in the fixture's order (after the walk's refusal check). A
+  march hit strictly before the walk's boundary is an opaque terminal,
+  with Beer over the glass the segment crossed.
+- **Hit attribution.** A point in or on a glass leaf belongs to its glass
+  branch. Otherwise the nearer term owns it: the display argmin's glass
+  branch, or the opaque branch the wrapper's min names. That branch's own
+  descent supplies trap, rings and sheets.
+- **Scope.** The general admission's scope, plus the IFS descent's
+  24-map packing cap. The same cap the ordinary Surface render has; the
+  48-map hyper-Menger cannot carry a composite.
+- **Agreement.** Two bench legs, `finiteCompositeMenger3` (Menger L2,
+  glass on the extreme corners) and `finiteCompositeRotatedPentatope4`
+  (L1, glass on map 0), each add three probes aimed through the glass. The
+  canonical grid only sees opaque content directly. On the fixture the 3D
+  aimed probes cross 16-29 glass interfaces each and reach 3-10 opaque
+  terminals through the glass. The 4D ones cross 6-16 interfaces and reach
+  one through-glass opaque terminal, because the thin attractor's slice is
+  sparse. Every probe was ULP-stable and agreed on both engines:
+
+  | Leg               | Engine      | traces | max radiance delta |
+  | ----------------- | ----------- | ------ | ------------------ |
+  | Menger3           | SwiftShader | 7/7    | 3.5e-5             |
+  | Menger3           | RX 7900 XTX | 7/7    | 8.8e-5             |
+  | RotatedPentatope4 | SwiftShader | 4/4    | 1.4e-7             |
+  | RotatedPentatope4 | RX 7900 XTX | 4/4    | 6.1e-6             |
+
+- **Cost on the RX 7900 XTX** (control kernels, quiet-certified; the Mesa
+  shader cache disabled for compile times, `RADV_DEBUG=shaderstats` for the
+  rest). No composite kernel spills a register.
+
+  | Kernel                      | cold compile | VGPRs | waves/SIMD | scratch | code    |
+  | --------------------------- | ------------ | ----- | ---------- | ------- | ------- |
+  | general Menger3             | 0.91 s       | 144   | 10         | 290 KiB | 99.5 KB |
+  | composite Menger3           | 1.67 s       | 192   | 8          | 290 KiB | 143 KB  |
+  | general RotatedPentatope4   | 0.99 s       | 252   | 6          | 162 KiB | 118 KB  |
+  | composite RotatedPentatope4 | 1.73 s       | 252   | 6          | 162 KiB | 160 KB  |
+
+  On SwiftShader the composites compile in 12.7 s / 14.4 s, against
+  6.5-8.6 s for the general kernels.
+
+- **Not yet measured:** the settle envelope, and whether the 32-path
+  transport quantum stays inside the 500 ms submission ceiling once every
+  segment also marches the opaque term. Both need a routed session.
 
 ## The finite routing (landed, 2026-09-19)
 
