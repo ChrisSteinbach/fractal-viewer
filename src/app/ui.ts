@@ -8216,6 +8216,7 @@ export class Ui {
     kind: SurfaceRouteKind | null = null,
     recovery: SurfaceEligibilityRecovery | null = null,
     opticsOutlook?: SurfaceOpticsOutlook,
+    perMapMaterials = false,
   ): void {
     const button = this.modeButtons.surface;
     const blocked = status === "ineligible";
@@ -8244,6 +8245,7 @@ export class Ui {
     // editor rebuild cannot lose an ineligibility reason.
     this.surfaceEligibility = { status, note: detail, kind };
     if (recovery !== null) this.surfaceEligibility.recovery = recovery;
+    if (perMapMaterials) this.surfaceEligibility.perMapMaterials = true;
     // Absent means UNKNOWN, and unknown reads classic — never a stale
     // resolution claim from an earlier document.
     this.surfaceOpticsOutlook = opticsOutlook ?? { resolves: false };
@@ -10399,8 +10401,11 @@ export class Ui {
     if (!editor) return;
     const eligibility = this.surfaceEligibility;
     const fullyIneligible = eligibility.status === "ineligible";
+    // The general Glass solid reads EVERY map's material (per-map media);
+    // only a shaped preset grid shades the whole solid from the head map.
     const headOnly =
       routeShadesHeadOnly(eligibility.kind) &&
+      eligibility.perMapMaterials !== true &&
       editor.target !== this.forwardHead;
     const inactiveIfs =
       (eligibility.kind === "ifs" || eligibility.kind === "ifs4") &&
@@ -10424,7 +10429,10 @@ export class Ui {
         return `Surface render unavailable: ${sentence} This ${feature} stays authored for the next eligible Surface.`;
       }
       if (headOnly) {
-        return `Escape-time and Mandelbulb surfaces use the first active transform's ${feature}; this one needs an IFS surface.`;
+        return eligibility.kind === "finiteSolid" ||
+          eligibility.kind === "finiteSolid4"
+          ? `Glass presets shade every cell with the first transform's ${feature}; a Glass solid from your own maps reads each map's.`
+          : `Escape-time and Mandelbulb surfaces use the first active transform's ${feature}; this one needs an IFS surface.`;
       }
       if (inactiveIfs) {
         return `IFS surfaces do not read a transform while its Weight is 0. This ${feature} stays authored and applies when the map is active.`;

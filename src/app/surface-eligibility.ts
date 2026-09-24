@@ -102,6 +102,10 @@ export interface SurfaceEligibilityResult {
   note: string | null;
   kind: SurfaceRouteKind | null;
   recovery?: SurfaceEligibilityRecovery;
+  /** The route shades EVERY map with its own material — the general Glass
+   * solid's per-map media — where the other finite route (a shaped preset
+   * grid) reads the head map's alone. Absent = the route kind decides. */
+  perMapMaterials?: true;
 }
 
 /**
@@ -483,6 +487,7 @@ function deriveFiniteSolidEligibility(
     status: "degraded",
     note: `Word-tree render: Surface marches the level-${value.level} glass solid from the document's own maps — the transmission transport's object, not the IFS attractor.`,
     kind: fourD ? "finiteSolid4" : "finiteSolid",
+    perMapMaterials: true,
   };
 }
 

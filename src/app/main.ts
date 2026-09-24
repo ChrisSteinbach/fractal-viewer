@@ -7709,6 +7709,7 @@ async function main(): Promise<void> {
       eligibility.kind,
       eligibility.recovery ?? null,
       opticsOutlook,
+      eligibility.perMapMaterials === true,
     );
     refreshFinalSwirlRadius();
     return eligibility;
