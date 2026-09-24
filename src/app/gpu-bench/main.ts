@@ -9235,6 +9235,14 @@ async function runSurfaceTransportAgreementLegs(
             : condensationSolidSignedDistance3(solid3!, p),
         stepScale: de.stepScale,
         visibleRadius: de.visibleBoundingRadius,
+        // The kernel's curved-solid rules: membership is the field's sign
+        // (its transportSolidContains), and the query owns the primary
+        // interface.
+        contains: (p) =>
+          (solid4
+            ? condensationSolidSignedDistance4(solid4, [p[0], p[1], p[2], 0])
+            : condensationSolidSignedDistance3(solid3!, p)) <= 0,
+        ownsPrimary: true,
       },
     });
   };

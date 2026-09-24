@@ -9171,6 +9171,15 @@ ${surfacePatternShadeSourceWgsl()}`
   // closed-solid emission stays byte-identical.
   const siGlass = opticsBackend === "sphereInversion";
   const solidQuery = opticsBackend === "closedSolid" || siGlass;
+  // The membership gate's branches (the boundary query's phantom-landing
+  // gate and membership-crossed bisection, the shadow corridor's gated
+  // band): every backend with an exact membership predicate. The general
+  // curved solid's is its field's sign (condensation-solid-gpu.ts), so
+  // gating a band fire on a real sign flip removes the phantom crossings
+  // its union's sub-eps gaps fire — without it they flipped the medium
+  // and failed inside-miss or state-mismatch. The emitter-only
+  // closed-solid emission stays byte-identical.
+  const membershipGate = siGlass || condensationSolid !== null;
   // The finite-solid backend: the exact DDA over the construction. The
   // codegen gate above pinned it to the finite cores, so the display
   // source (and its finiteLift the DDA reads) is always in the same
@@ -9328,7 +9337,7 @@ fn transportSolidField(p: vec3f) -> f32 {
       break;
     }
     if (abs(f) < eps${
-      siGlass
+      membershipGate
         ? ` &&
         // The membership gate (the backend's option doc): a band fire is
         // an interface only where exact membership flips across it.
@@ -9384,7 +9393,7 @@ fn transportSolidField(p: vec3f) -> f32 {
         if (!(fq > -1.0e30) || abs(fq) >= eps) {
           break;
         }${
-          siGlass
+          membershipGate
             ? `
         // The exact predicate ends the advance once the sample agrees with
         // the medium the crossing established: a transported BOUND's band
@@ -9404,7 +9413,7 @@ fn transportSolidField(p: vec3f) -> f32 {
       continue;
     }
     if ((f < 0.0) != inside${
-      siGlass ? " && transportSolidContains(sp) != inside" : ""
+      membershipGate ? " && transportSolidContains(sp) != inside" : ""
     }) {
       // A stride jumped clean across the band: the crossing happened
       // between the samples; report it here (within one stride — the
@@ -9804,7 +9813,7 @@ fn transportNextBoundary(
   result.normal = vec3f(0.0);
   var p = origin;
   var t = 0.0;${
-    siGlass
+    membershipGate
       ? `
   // The membership gate re-anchors at a phantom landing, so the anchor is
   // the march's own state here rather than the caller's argument.
@@ -9825,7 +9834,7 @@ fn transportNextBoundary(
     if (f0 > -1.0e30 &&
         ((inside == 1u && f0 > TRANSPORT_ANCHOR_ENVELOPE_REL * eps) ||
          (inside == 0u && f0 < -TRANSPORT_ANCHOR_ENVELOPE_REL * eps))${
-           siGlass
+           membershipGate
              ? ` &&
         // With an exact predicate the cross-check asks IT rather than the
         // sign of a bound, which reads the wrong side often enough outside
@@ -9838,7 +9847,7 @@ fn transportNextBoundary(
     }
   }
   let tFar = transportDomainExit(origin, dir);${
-    siGlass
+    membershipGate
       ? `
   // The last sample's t, for the membership-crossed branch's bisection.
   var tPrev = t;`
@@ -9857,7 +9866,7 @@ fn transportNextBoundary(
       result.reason = TRANSPORT_REASON_INVALID_INPUT;
       return result;
     }${
-      siGlass
+      membershipGate
         ? `
     if (select((f < 0.0), (f > 0.0), inside == 1u) &&
         (anchorOn == 0u ||
@@ -9917,7 +9926,7 @@ fn transportNextBoundary(
         // child outside with a stale medium, and stranded it (the
         // multi-cell inside-miss mass).
         var suppress = false;${
-          siGlass
+          membershipGate
             ? `
         if (transportSolidContains(hitP + dir * (2.0 * eps)) == (inside == 1u)) {
           // THE MEMBERSHIP GATE (option doc): the band fired where the
@@ -9933,8 +9942,8 @@ fn transportNextBoundary(
         }`
             : ""
         }
-        if (${siGlass ? "anchorOn" : "anchorPresent"} == 1u &&
-            distance(hitP, ${siGlass ? "anchorAt" : "anchorPoint"}) <= TRANSPORT_ANCHOR_ENVELOPE_REL * eps) {
+        if (${membershipGate ? "anchorOn" : "anchorPresent"} == 1u &&
+            distance(hitP, ${membershipGate ? "anchorAt" : "anchorPoint"}) <= TRANSPORT_ANCHOR_ENVELOPE_REL * eps) {
           let fBeyond = transportSolidField(hitP + dir * (2.0 * eps));
           suppress = (inside == 1u && fBeyond < 0.0) ||
             (inside == 0u && fBeyond > 0.0);
@@ -10145,7 +10154,32 @@ ${
   stack[0] = primary;
   sp = 1u;
 `
-    : `  // --- the primary split (the march's own hit, entering from outside) ---
+    : condensationSolid
+      ? `  // THE QUERY OWNS THE PRIMARY INTERFACE (the general curved solid). The
+  // display march accepts a hit anywhere within its pixel cone, so a
+  // silhouette ray can be accepted beside a bead it never enters; a split
+  // forced there refracts a chord that starts outside the sphere, meets
+  // the wall past the critical angle and circles by total internal
+  // reflection until the path caps. This backend's field is SIGNED with
+  // an exact sign, so the query can say whether the ray really enters:
+  // one unanchored outside path from the march's hit, whose miss is the
+  // rear scene (the near-miss reads as background, as the oracle's trace
+  // reads it) and whose boundary is split by the loop like any other.
+  var primary: TransportPath;
+  primary.origin = origin;
+  primary.dir = dir;
+  primary.energy = vec3f(1.0);
+  primary.inside = 0u;
+  primary.interfaces = 0u;
+  primary.bound = transportChildBound(primary.energy);
+  primary.anchorPresent = 0u;
+  primary.anchorPoint = origin;
+  primary.anchorPad2 = 0u;
+  primary.exitPresent = 0u;
+  stack[0] = primary;
+  sp = 1u;
+`
+      : `  // --- the primary split (the march's own hit, entering from outside) ---
   // The accepted hit may sit up to one pixel footprint OUTSIDE the
   // surface; the child's anchored restart keeps the 2·eps baseline and
   // the query's own march reaches the surface — the anchor suppression
@@ -10157,16 +10191,14 @@ ${
   // origin (at an edge the smoothed normal faces away from the approach
   // and the landing cannot fire; re-sampling the split normal at the
   // landing re-drew the corner normals for a net loss).${
-    siGlass || condensationSolid
+    siGlass
       ? `
   // The sphere-inversion backend taps its SIGNED field here, as the twin
   // does: this core's surfaceDE is the unsigned estimator, whose interior
   // values are folded member signals at the wrong scale, so its taps across
   // the surface drew a garbage split normal (the orbit leg's near-cusp
-  // probe traced straight through as backdrop). The general curved solid
-  // (condensationSolid) taps its field for the same reason: this core's
-  // surfaceDE is the IFS descent, not the band solid, and in 4D it reads
-  // zero throughout the solid's interior.
+  // probe traced straight through as backdrop). (The general curved solid
+  // never reaches this split: its query owns the primary interface.)
   let n0 = transportSolidNormal(origin, dir, eps);`
       : `
   let n0 = transportOpticalNormal(origin, dir, eps, li);`
