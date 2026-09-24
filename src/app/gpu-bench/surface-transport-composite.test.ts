@@ -171,6 +171,7 @@ describe("the composite trace (opaque maps as the attractor, glass maps as cells
       origin,
       dir,
       DIELECTRIC_CROSSING_EPS_REL * finiteSolidGeneralBoundingRadius(c),
+      Infinity,
     );
     expect(march.kind).toBe("hit");
     if (march.kind !== "hit") return;
@@ -226,7 +227,12 @@ describe("the composite trace (opaque maps as the attractor, glass maps as cells
       content,
       FINITE_SOLID_IDENTITY_POSE,
       radius,
-    )([0.375, 0.375, 0.75], dir, DIELECTRIC_CROSSING_EPS_REL * radius);
+    )(
+      [0.375, 0.375, 0.75],
+      dir,
+      DIELECTRIC_CROSSING_EPS_REL * radius,
+      Infinity,
+    );
     expect(inside.kind).toBe("hit");
     if (inside.kind !== "hit") return;
     expect(inside.t).toBeCloseTo(0.5, 3);
@@ -272,7 +278,7 @@ describe("the composite trace (opaque maps as the attractor, glass maps as cells
       const d = target.map((x, a) => x - origin[a]);
       const len = Math.hypot(...d);
       const dir = d.map((x) => x / len) as Vec3;
-      const m = march(origin, dir, eps);
+      const m = march(origin, dir, eps, Infinity);
       expect(m.kind).not.toBe("refused");
       if (m.kind !== "hit") continue;
       hits++;

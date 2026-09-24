@@ -10557,8 +10557,8 @@ ${
     // through it), strictly before the glass walk's next boundary, is an
     // opaque terminal — shaded, with the Beer throughput of the glass the
     // segment crossed. Where glass abuts opaque content the opaque
-    // surface wins.
-    let opaque = transportOpaqueMarch(path.origin, path.dir, eps, li);
+    // surface wins. The march stops at that boundary.
+    let opaque = transportOpaqueMarch(path.origin, path.dir, eps, li, select(-1.0, hit.t, hit.kind == 1u));
     if (opaque.kind == 3u) {
       residual = residual + path.bound;
       out.status = TRANSPORT_STATUS_UNRESOLVED;

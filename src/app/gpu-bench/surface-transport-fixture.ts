@@ -175,6 +175,8 @@ export function transportBoundaryQueryCPU(
   anchorPresent: boolean,
   anchorPoint: Vec3,
   eps: number,
+  /** Stop marching here (a miss at or past it); the domain exit otherwise. */
+  tLimit = Infinity,
 ): TransportBoundaryResult {
   let px = origin[0];
   let py = origin[1];
@@ -187,7 +189,7 @@ export function transportBoundaryQueryCPU(
     pz += dir[2] * skip;
     t += skip;
   }
-  const tFar = domainExit(system, origin, dir);
+  const tFar = Math.min(domainExit(system, origin, dir), tLimit);
   for (let i = 0; i < TRANSPORT_QUERY_MAX_STEPS; i++) {
     if (tFar < 0 || t >= tFar) {
       return { kind: "miss", reason: 0, t, normal: [0, 0, 0] };
@@ -548,6 +550,9 @@ export interface TransportFixtureMedia {
     origin: Vec3,
     dir: Vec3,
     eps: number,
+    /** Where the march may stop: the walk's next boundary (Infinity on a
+     * walk miss) — a hit at or past it is never a terminal. */
+    tLimit: number,
   ) => TransportOpaqueMarchResult;
 }
 
@@ -570,7 +575,7 @@ export function transportCompositeOpaqueMarch(
     stepScale: 1,
     visibleRadius,
   };
-  return (origin, dir, eps) => {
+  return (origin, dir, eps, tLimit) => {
     if (content.branches.length === 0) return { kind: "miss" };
     const r = transportBoundaryQueryCPU(
       system,
@@ -579,6 +584,7 @@ export function transportCompositeOpaqueMarch(
       false,
       origin,
       eps,
+      tLimit,
     );
     if (r.kind === "refused") return { kind: "refused", reason: r.reason };
     if (r.kind === "miss") return { kind: "miss" };
@@ -982,7 +988,12 @@ export function transportTraceCPU(
       // The composite's opaque half: the attractor along this segment, in
       // air or inside glass (reached through it), strictly before the
       // glass walk's next boundary.
-      const march = media.opaqueMarch(path.origin, path.dir, eps);
+      const march = media.opaqueMarch(
+        path.origin,
+        path.dir,
+        eps,
+        hit.kind === "boundary" ? hit.t : Infinity,
+      );
       if (march.kind === "refused") {
         residual += path.bound;
         status = "unresolved";
