@@ -77,6 +77,19 @@ import {
   finiteSolidTransportSource,
 } from "./surface-finite-solid-gpu";
 import {
+  type FiniteCompositeDescent,
+  type FiniteSolidCompositeWire,
+  finiteCompositeDescentSource,
+  finiteCompositeHitInfoSource,
+  finiteCompositeStructFields,
+  finiteCompositeTransportSource,
+  finiteCompositeWrapperSource,
+  SURFACE_GPU_PARAMS4_FINITE_COMPOSITE_BYTES,
+  SURFACE_GPU_PARAMS_FINITE_COMPOSITE_BYTES,
+  validateFiniteCompositeWire,
+  writeFiniteCompositeBlock,
+} from "./surface-finite-composite-gpu";
+import {
   SPHERE_INVERSION_GPU_POLE_FLOOR,
   SPHERE_INVERSION_GPU_SLACK,
   sphereInversionWgslSource,
@@ -2109,10 +2122,17 @@ export interface SurfaceGpuKernelOptions {
    * maps, their inverses, the root simplex and the level boxes bake into
    * the source (the tiling clip's pattern), the params tail and packers
    * stay byte-identical, and the admission lives in the routing (the
-   * general analysis's verdict — codegen validates the shape). */
+   * general analysis's verdict — codegen validates the shape).
+   * `composite` (requires a glass-only `general` wire) renders the opaque
+   * maps as the TRUE ATTRACTOR under the glass cells
+   * (`surface-finite-composite-gpu.ts`): the shipped affine / affine4
+   * refined descent spliced in per opaque branch, its params in the
+   * appended opaque-descent block ({@link packSurfaceGpuParamsFinite}'s
+   * `composite` argument), its maps baked. Absent is byte-identical. */
   finiteSolid?: {
     level: number;
     general?: FiniteSolidGeneralWire;
+    composite?: FiniteSolidCompositeWire;
   } | null;
   /** The escape family's SHAPE-TRAP color channel (`types.ts`'s ShapeTrap;
    * the formula is `escape-de.ts`'s, defined once): bake this spec's SDF
@@ -3850,6 +3870,13 @@ function writeFiniteHeader(view: DataView, base: number, level: number): void {
  * the visible radius, since the whole construction is visible. The optional
  * ground plane packs at the frozen 288 (the buffer growing to the plane
  * size); absent keeps the 224-byte wire the bench legs pin.
+ *
+ * `composite` (the composite kernel's attractor — the `SurfaceDE` of the
+ * document whose maps the construction bakes) grows the buffer to
+ * {@link SURFACE_GPU_PARAMS_FINITE_COMPOSITE_BYTES} and copies
+ * {@link packSurfaceGpuParams}'s own frozen block for it, under the SAME
+ * run params (its live `maxDepth` is the descent's preview depth), into
+ * the opaque-descent block; the frozen base keeps the construction's ball.
  */
 export function packSurfaceGpuParamsFinite(
   run: SurfaceGpuRunParams,
@@ -3857,6 +3884,7 @@ export function packSurfaceGpuParamsFinite(
   boundingRadius: number,
   groundPlane: SurfaceGpuGroundPlane | null = null,
   slotCount = 1,
+  composite: SurfaceDE | null = null,
 ): ArrayBuffer {
   validateFiniteSolidLevel(level);
   if ((run.footprint ?? 0) > 0) {
@@ -3865,14 +3893,19 @@ export function packSurfaceGpuParamsFinite(
     );
   }
   const buf = new ArrayBuffer(
-    groundPlane
-      ? SURFACE_GPU_PARAMS_PLANE_BYTES
-      : SURFACE_GPU_PARAMS_FINITE_BYTES,
+    composite
+      ? SURFACE_GPU_PARAMS_FINITE_COMPOSITE_BYTES
+      : groundPlane
+        ? SURFACE_GPU_PARAMS_PLANE_BYTES
+        : SURFACE_GPU_PARAMS_FINITE_BYTES,
   );
   const view = new DataView(buf);
   writeFiniteFrozen(view, run, boundingRadius, slotCount);
   writeFiniteHeader(view, 208, level);
   if (groundPlane) writeGroundPlane(view, groundPlane);
+  if (composite) {
+    writeFiniteCompositeBlock(3, buf, packSurfaceGpuParams(composite, run));
+  }
   return buf;
 }
 
@@ -3885,6 +3918,9 @@ export function packSurfaceGpuParamsFinite(
  * ground plane packs at the frozen 576 (the buffer growing to the 4D
  * plane size); absent keeps the 480-byte wire the bench legs pin. THROWS
  * on a nonzero slab: the DDA has no segment form (the escape4 refusal).
+ * `composite` is the 3D packer's argument one dimension up (the
+ * attractor's `SurfaceDE4`, packed by {@link packSurface4GpuParams} under
+ * the same view and run into the 4D opaque-descent block).
  */
 export function packSurfaceGpuParamsFinite4(
   view4: SurfaceGpu4View,
@@ -3893,6 +3929,7 @@ export function packSurfaceGpuParamsFinite4(
   boundingRadius: number,
   groundPlane: SurfaceGpuGroundPlane | null = null,
   slotCount = 1,
+  composite: SurfaceDE4 | null = null,
 ): ArrayBuffer {
   validateFiniteSolidLevel(level);
   if ((run.footprint ?? 0) > 0) {
@@ -3906,9 +3943,11 @@ export function packSurfaceGpuParamsFinite4(
     );
   }
   const buf = new ArrayBuffer(
-    groundPlane
-      ? SURFACE_GPU_PARAMS4_PLANE_BYTES
-      : SURFACE_GPU_PARAMS4_FINITE_BYTES,
+    composite
+      ? SURFACE_GPU_PARAMS4_FINITE_COMPOSITE_BYTES
+      : groundPlane
+        ? SURFACE_GPU_PARAMS4_PLANE_BYTES
+        : SURFACE_GPU_PARAMS4_FINITE_BYTES,
   );
   const view = new DataView(buf);
   writeFiniteFrozen(view, run, boundingRadius, slotCount);
@@ -3930,6 +3969,13 @@ export function packSurfaceGpuParamsFinite4(
   view.setFloat32(452, 1 / boundingRadius, true);
   writeFiniteHeader(view, 464, level);
   if (groundPlane) writeGroundPlane4(view, groundPlane);
+  if (composite) {
+    writeFiniteCompositeBlock(
+      4,
+      buf,
+      packSurface4GpuParams(composite, view4, run),
+    );
+  }
   return buf;
 }
 
@@ -5080,6 +5126,44 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
         throw new Error(`surface-de-gpu: the ${core} core refuses ${what}`);
       }
     }
+  }
+  // THE COMPOSITE (option doc): the shipped affine/affine4 refined descent,
+  // extracted from its own generated kernel and renamed onto the finite
+  // struct's opaque-descent block, so no descent text is restated here.
+  const finiteCompositeWire = finiteCore
+    ? (opts.finiteSolid?.composite ?? null)
+    : null;
+  let finiteComposite: FiniteCompositeDescent | null = null;
+  if (finiteCompositeWire) {
+    if (
+      !finiteGeneral ||
+      finiteGeneral.glassOnly !== true ||
+      finiteGeneral.media === undefined
+    ) {
+      throw new Error(
+        "surface-de-gpu: the composite needs a glass-only general wire with media (its glass cells are the glass maps' subtrees alone)",
+      );
+    }
+    finiteComposite = finiteCompositeDescentSource(
+      core4 ? 4 : 3,
+      surfaceDeKernelWgsl({
+        mode: "shade",
+        core: core4 ? "affine4" : "affine",
+        width: 4,
+        workgroupSize,
+        sharedFrontier: false,
+        bnbStage2: false,
+        ...(core4 ? { slabExt: false } : {}),
+      }),
+      mode === "shade",
+    );
+    validateFiniteCompositeWire(
+      core4 ? 4 : 3,
+      finiteCompositeWire,
+      finiteGeneral.mapMatrix.length,
+      finiteGeneral.media,
+      finiteComposite.mapVec4s,
+    );
   }
   // Tiling is a compile gate: finite roots and either arm's analytic clip
   // bake into the source, while the params tail carries the construction code
@@ -8673,8 +8757,10 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   const rawCoreHitInfoText = siCore
     ? siHitInfoText
     : finiteCore
-      ? finiteGeneral
-        ? `// The GENERAL word tree's hit-info: the hit's slot is its OWNING
+      ? finiteComposite
+        ? finiteCompositeHitInfoSource(core4 ? 4 : 3)
+        : finiteGeneral
+          ? `// The GENERAL word tree's hit-info: the hit's slot is its OWNING
 // BRANCH — the top-level map whose subtree owns the point under the
 // per-map media's owner rule (finiteGeneralPointMedium), so a map's own
 // finish, color and optics shade its own subtree. A point the march
@@ -8690,7 +8776,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   info.firstChoice = branch;
   return info;
 }`
-        : `// The finite core's hit-info: one material slot (the session packs
+          : `// The finite core's hit-info: one material slot (the session packs
 // the Glass material there), neutral trap/rings/sheets — the cell
 // decomposition carries no forward orbit for the trap accumulator and
 // no fold for the ring/sheet sources.
@@ -9575,7 +9661,9 @@ ${
   finiteGeneral
     ? `// The GENERAL word tree walk: the reference's endpoint sweep over the
 // document's own maps, pruned, in f32.
-${finiteSolidGeneralTransportSource(core4 ? 4 : 3, finiteGeneral, finiteLevel ?? 0)}`
+${finiteSolidGeneralTransportSource(core4 ? 4 : 3, finiteGeneral, finiteLevel ?? 0)}${
+        finiteComposite ? finiteCompositeTransportSource() : ""
+      }`
     : finiteSolidTransportSource(core4 ? 4 : 3, opts.finiteCacheCrossings)
 }`
           : ""
@@ -10461,6 +10549,43 @@ ${
       out.failure = TRANSPORT_FAILURE_TRAVERSAL;
       out.reason = hit.reason;
       break;
+    }${
+      finiteComposite && finiteMedia
+        ? `
+    // THE COMPOSITE's opaque half (the fixture's media.opaqueMarch): the
+    // attractor along this segment, in air or inside glass (reached
+    // through it), strictly before the glass walk's next boundary, is an
+    // opaque terminal — shaded, with the Beer throughput of the glass the
+    // segment crossed. Where glass abuts opaque content the opaque
+    // surface wins.
+    let opaque = transportOpaqueMarch(path.origin, path.dir, eps, li);
+    if (opaque.kind == 3u) {
+      residual = residual + path.bound;
+      out.status = TRANSPORT_STATUS_UNRESOLVED;
+      out.failure = TRANSPORT_FAILURE_TRAVERSAL;
+      out.reason = opaque.reason;
+      break;
+    }
+    if (opaque.kind == 1u && (hit.kind == 2u || opaque.t < hit.t)) {
+      var opaqueEnergy = path.energy;
+      if (path.inside != 0u) {
+        let segAbsorb = transportMediumAbsorb(path.inside);
+        let segRadius = transportMediumRadius(path.inside);
+        opaqueEnergy = vec3f(
+          path.energy[0] * dielectricBeerThroughput(segAbsorb[0], opaque.t, segRadius),
+          path.energy[1] * dielectricBeerThroughput(segAbsorb[1], opaque.t, segRadius),
+          path.energy[2] * dielectricBeerThroughput(segAbsorb[2], opaque.t, segRadius),
+        );
+      }
+      radiance = radiance + opaqueEnergy * transportOpaqueRadiance(
+        path.origin + path.dir * opaque.t, path.dir, opaque.normal, opaque.branch, bg, li);
+      if (any(radiance != radiance) || any(abs(radiance) > vec3f(3.0e38))) {
+        out.status = TRANSPORT_STATUS_INVALID;
+        break;
+      }
+      continue;
+    }`
+        : ""
     }
     if (hit.kind == 2u) {
       if (${finiteMedia ? "path.inside != 0u" : "path.inside == 1u"}${finiteQuery ? "" : " && path.interfaces != 1u"}) {
@@ -11043,8 +11168,87 @@ fn transportRays(
   // Keep every non-finite march emission unchanged. The finite primary
   // shares the exact geometry queried by optical continuation; the hybrid
   // display DE remains available for normals, shadow and AO probes.
-  const marchBody = finiteCore
-    ? `  // The finite construction has exact analytic boundaries. One DDA query
+  const marchBody = finiteComposite
+    ? `  // THE COMPOSITE's primary: the glass cells keep their exact walk, the
+  // opaque attractor term is sphere-traced like the ordinary IFS Surface
+  // render, and the nearer wins. The walk runs ONCE, on the ray's first
+  // pass (the seed's negative t), and its boundary rides the state's
+  // diagnostic lane (-1 = the walk misses) so the march — bounded per
+  // pass like every sphere-traced core — stops at the glass: a surface
+  // behind it is the transport's to reach through the glass, never the
+  // primary's.
+  let firstPass = st.x < 0.0;
+  let radius = params.visibleRadius * 1.02;
+  let bq = dot(ro, rd);
+  let cq = dot(ro, ro) - radius * radius;
+  let disc = bq * bq - cq;
+  if (disc < 0.0) {
+    st.y = ${marchMissStatus};
+    states[ray] = st;${statusStore("    ")}
+    return;
+  }
+  let sq = sqrt(disc);
+  let tFar = -bq + sq;
+  if (tFar <= 0.0) {
+    st.y = ${marchMissStatus};
+    states[ray] = st;${statusStore("    ")}
+    return;
+  }
+  var t = st.x;
+  if (firstPass) {
+    t = max(-bq - sq, 0.0);${marchDither}
+    // The ray-side state is the camera's glass-only MEDIUM, the walk's
+    // medium-code claim (the finite primary's rule).
+    let primaryInside = u32(finiteGeneralPointMedium(finiteLift(ro)).x);
+    let glass = transportFiniteBoundary(
+      ro, rd, 0u, vec4f(0.0), 0u, vec4i(-1), vec4i(-1), primaryInside,
+    );
+    if (glass.kind == 3u) {
+      // A refused walk has no certified nearest glass boundary: exhausted
+      // work carrying its reason, the finite primary's rule.
+      st.x = t;
+      st.y = ${SURFACE_GPU_RAY_EXHAUSTED}.0;
+      st.z = 1.0;
+      st.w = f32(glass.reason);
+      states[ray] = st;${statusStore("      ")}
+      return;
+    }
+    st.w = select(-1.0, glass.t, glass.kind == 1u);
+  }
+  let tGlass = st.w;
+  let tStop = select(tFar, min(tFar, tGlass), tGlass >= 0.0);
+  var steps = u32(st.z);
+  for (var sIt = 0u; sIt < params.stepsThisPass; sIt++) {
+    if (t >= tStop) {
+      // The march certified [start, t] free of the opaque term, so a glass
+      // boundary inside it is the nearest surface.
+      if (tGlass >= 0.0 && tGlass <= tFar) {
+        t = tGlass;
+        st.y = ${SURFACE_GPU_RAY_HIT}.0;
+      } else {
+        st.y = ${marchMissStatus};
+      }
+      break;
+    }
+    if (steps >= params.marchSteps) {
+      st.y = ${SURFACE_GPU_RAY_EXHAUSTED}.0;
+      st.w = 0.0;
+      break;
+    }
+    let eps = max(params.pixelEps * t, params.hitFloorEps);
+    let d = finOpaqueAt(ro + rd * t, eps, li).d;
+    steps++;
+    if (d < eps) {
+      st.y = ${SURFACE_GPU_RAY_HIT}.0;
+      break;
+    }
+    t += d * params.op_stepScale;
+  }
+  st.x = t;
+  st.z = f32(steps);
+  states[ray] = st;${statusStore("  ")}`
+    : finiteCore
+      ? `  // The finite construction has exact analytic boundaries. One DDA query
   // classifies the primary ray without a distance tolerance or march dither.
   // Ray-side occupancy admits cameras inside an opaque cell as well as
   // outside cameras and cameras in the construction's empty tunnels.
@@ -11093,7 +11297,7 @@ fn transportRays(
       : ""
   }
   states[ray] = st;${statusStore("  ")}`
-    : `${marchGate}
+      : `${marchGate}
 ${
   lens
     ? `  // Cancel only the swirl certificate's extra hit tolerance. Physical
@@ -12288,7 +12492,11 @@ ${
   lensPostT2: f32,
 `
     : ""
-}
+}${
+    finiteComposite
+      ? finiteCompositeStructFields(core4 ? 4 : 3, finiteComposite, groundPlane)
+      : ""
+  }
 }${
     !mapsBinding || siCore
       ? ""
@@ -15299,7 +15507,17 @@ ${
     ? `// The GENERAL word tree: the document's own maps as the cell tree,
 // baked into the source (surface-finite-solid-gpu.ts's
 // finiteSolidGeneralDisplaySource).
-${finiteSolidGeneralDisplaySource(core4 ? 4 : 3, finiteGeneral, finiteLevel ?? 0)}`
+${finiteSolidGeneralDisplaySource(core4 ? 4 : 3, finiteGeneral, finiteLevel ?? 0, !finiteComposite)}${
+        finiteComposite && finiteCompositeWire
+          ? `
+// THE COMPOSITE's opaque attractor term (surface-finite-composite-gpu.ts):
+// the shipped affine${core4 ? "4" : ""} refined descent, renamed onto finOp_ and the
+// opaque-descent params block, wrapped per opaque branch.
+${finiteComposite.source}
+
+${finiteCompositeWrapperSource(core4 ? 4 : 3, finiteCompositeWire, finiteComposite)}`
+          : ""
+      }`
     : finiteSolidDisplaySource(core4 ? 4 : 3)
 }`
       : core === "affine"
