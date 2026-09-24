@@ -978,15 +978,15 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     unresolved rays dark;
     NO PARTICIPATING MEDIUM (measured cost; a look call). Record:
     `docs/cinematic-surface-lighting.md`.
-  - `finite-solid.ts` — the FRACTAL GLASS oracle: the level-N Menger and
-    posed hyper-Menger slice are co-extensive with the displayed optical
-    solid, admitted from the document's own maps. The optional `finiteSolid`
+  - `finite-solid.ts` — the FRACTAL GLASS oracle: the displayed optical
+    solid IS the level-N cell set. The optional `finiteSolid`
     block routes to compute-only cores; primary rays and transport share the
     exact walk — the grid's ternary DDA for `{shape, level}`, and `{level}`
     alone (0..4) as the document's OWN maps' SIMPLICIAL word tree (any
     contracting affine; a derived root where no hull is invariant; the
     prune rides level boxes; the 128-leaf cap refuses disclosed); the
-    hybrid DE shades.
+    hybrid DE shades. PER-MAP MEDIA: a Glass map's subtree is glass, the
+    rest opaque terminals; opaque owns overlaps.
     Anchors snap to the clip's own planes (general: facet mask, envelope
     scaled to the arithmetic, the anchor's own leaf exactly on-plane); a
     split child's stale medium re-anchors once. One-cell anchor
