@@ -6417,13 +6417,14 @@ ${chaos ? "  var v1State = CHAOS_WILDCARD;\n" : ""}
   var v2Scale = 1.0;
 ${chaos ? "  var v2State = CHAOS_WILDCARD;\n" : ""}
   var v2Live = false;
-  for (var depth = 0u; depth < params.maxDepth; depth++) {
+${condensationShapes ? "  var bandEnded = false;\n" : ""}  for (var depth = 0u; depth < params.maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) {
       break;
     }
 ${
   condensationShapes
     ? `${condensationLiveHitFold("aLive", "aQ", "aScale", "depth", "best", "aState")}${condensationLiveHitFold("bLive", "bQ", "bScale", "depth", "best", "bState")}${condensationLiveHitFold("v1Live", "v1Q", "v1Scale", "depth", "best", "v1State")}${condensationLiveHitFold("v2Live", "v2Q", "v2Scale", "depth", "best", "v2State")}    let futureCondensation = condensationHasFuture(depth + 1u);
+    let lastLevel = params.mapCount > 0u && !futureCondensation;
 `
     : ""
 }    var c1Key = 1e30;
@@ -6500,7 +6501,7 @@ ${
           let r = length(img - params.boundCenter);
           let key = pScale * (r - R);
           let childScale = pScale * m.p0.x;
-${chaos ? "          let childState = chaosChildState(depth, j);\n" : ""}${condensationHitFold("img", "childScale", "depth + 1u", "best", "childState")}${condensationShapes ? "          let cert = childScale * (r - R);\n" : ""}          // Top-2 insert-shift; the displaced tuple (or the candidate
+${chaos ? "          let childState = chaosChildState(depth, j);\n" : ""}${condensationHitFold("img", "childScale", "depth + 1u", "best", "childState")}${condensationShapes ? "          let cert = select(childScale * (r - R), 1e30, lastLevel);\n" : ""}          // Top-2 insert-shift; the displaced tuple (or the candidate
           // itself) spills into the rank-3/4 ladder. Certificates are
           // value-side and trimmed; radii flow through — the spill
           // ladder routes on them.
@@ -6686,13 +6687,13 @@ ${chaos ? "        v2State = c4State;\n" : ""}
         v2Live = true;
       }
     }
-  }
+${condensationShapes ? "    if (lastLevel) {\n      bandEnded = true;\n      break;\n    }\n" : ""}  }
 ${
   condensationShapes
-    ? `${condensationLiveHitFold("aLive", "aQ", "aScale", "params.maxDepth", "best", "aState")}${condensationLiveHitFold("bLive", "bQ", "bScale", "params.maxDepth", "best", "bState")}${condensationLiveHitFold("v1Live", "v1Q", "v1Scale", "params.maxDepth", "best", "v1State")}${condensationLiveHitFold("v2Live", "v2Q", "v2Scale", "params.maxDepth", "best", "v2State")}  if (aLive) {
+    ? `${condensationLiveHitFold("aLive", "aQ", "aScale", "params.maxDepth", "best", "aState")}${condensationLiveHitFold("bLive", "bQ", "bScale", "params.maxDepth", "best", "bState")}${condensationLiveHitFold("v1Live", "v1Q", "v1Scale", "params.maxDepth", "best", "v1State")}${condensationLiveHitFold("v2Live", "v2Q", "v2Scale", "params.maxDepth", "best", "v2State")}  if (aLive && !bandEnded) {
     best = min(best, aScale * (aR - R));
   }
-  if (bLive) {
+  if (bLive && !bandEnded) {
     best = min(best, bScale * (bR - R));
   }
 `
@@ -6857,13 +6858,14 @@ ${
 }  var v2Scale = 1.0;
 ${chaos ? "  var v2State = CHAOS_WILDCARD;\n" : ""}
   var v2Live = false;
-  for (var depth = 0u; depth < params.maxDepth; depth++) {
+${condensationShapes ? "  var bandEnded = false;\n" : ""}  for (var depth = 0u; depth < params.maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) {
       break;
     }
 ${
   condensationShapes
     ? `${condensationLiveHitFold("aLive", "aQ", "aScale", "depth", "best", "aState")}${condensationLiveHitFold("bLive", "bQ", "bScale", "depth", "best", "bState")}${condensationLiveHitFold("v1Live", "v1Q", "v1Scale", "depth", "best", "v1State")}${condensationLiveHitFold("v2Live", "v2Q", "v2Scale", "depth", "best", "v2State")}    let futureCondensation = condensationHasFuture(depth + 1u);
+    let lastLevel = params.mapCount > 0u && !futureCondensation;
 `
     : ""
 }    var c1Key = 1e30;
@@ -7017,7 +7019,7 @@ ${
 ${chaos ? "          let childState = chaosChildState(depth, j);\n" : ""}
 ${
   condensationShapes
-    ? `${condensationHitFold("img", "childScale", "depth + 1u", "best", "childState")}          let cert = childScale * (r - R);
+    ? `${condensationHitFold("img", "childScale", "depth + 1u", "best", "childState")}          let cert = select(childScale * (r - R), 1e30, lastLevel);
 `
     : ""
 }${
@@ -7294,13 +7296,13 @@ ${chaos ? "        v2State = c4State;\n" : ""}
         v2Live = true;
       }
     }
-  }
+${condensationShapes ? "    if (lastLevel) {\n      bandEnded = true;\n      break;\n    }\n" : ""}  }
 ${
   condensationShapes
-    ? `${condensationLiveHitFold("aLive", "aQ", "aScale", "params.maxDepth", "best", "aState")}${condensationLiveHitFold("bLive", "bQ", "bScale", "params.maxDepth", "best", "bState")}${condensationLiveHitFold("v1Live", "v1Q", "v1Scale", "params.maxDepth", "best", "v1State")}${condensationLiveHitFold("v2Live", "v2Q", "v2Scale", "params.maxDepth", "best", "v2State")}  if (aLive) {
+    ? `${condensationLiveHitFold("aLive", "aQ", "aScale", "params.maxDepth", "best", "aState")}${condensationLiveHitFold("bLive", "bQ", "bScale", "params.maxDepth", "best", "bState")}${condensationLiveHitFold("v1Live", "v1Q", "v1Scale", "params.maxDepth", "best", "v1State")}${condensationLiveHitFold("v2Live", "v2Q", "v2Scale", "params.maxDepth", "best", "v2State")}  if (aLive && !bandEnded) {
     best = min(best, aScale * (aR - R));
   }
-  if (bLive) {
+  if (bLive && !bandEnded) {
     best = min(best, bScale * (bR - R));
   }
 `
@@ -12948,7 +12950,7 @@ ${chaos ? "  var v1State = CHAOS_WILDCARD;\n" : ""}
   var v2Scale = 1.0;
 ${chaos ? "  var v2State = CHAOS_WILDCARD;\n" : ""}
   var v2Live = false;
-  for (var depth = 0u; depth < maxDepth; depth++) {
+${condensationShapes ? "  var bandEnded = false;\n" : ""}  for (var depth = 0u; depth < maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) {
       break;
     }${
@@ -12969,7 +12971,8 @@ ${chaos ? "  var v2State = CHAOS_WILDCARD;\n" : ""}
     if (best <= sphereBound || best * params.finalSigmaMin < bailBelow) {
       return max(best, sphereBound) * params.finalSigmaMin;
     }
-    let futureCondensation = condensationHasFuture(depth + 1u);`
+    let futureCondensation = condensationHasFuture(depth + 1u);
+    let lastLevel = params.mapCount > 0u && !futureCondensation;`
         : ""
     }
     // The four smallest-key candidates this level, key-ascending. The
@@ -13066,8 +13069,7 @@ ${
     ? `          best = min(best, condensationTerm(img, childScale, depth + 1u${chaos ? ", childState" : ""}));
 `
     : ""
-}          let cert = childScale * (r - R);
-          // Exactly one tuple leaves the top-2 ladder per candidate —
+}${condensationShapes ? "          let cert = select(childScale * (r - R), 1e30, lastLevel);\n" : "          let cert = childScale * (r - R);\n"}          // Exactly one tuple leaves the top-2 ladder per candidate —
           // the displaced runner-up, or the candidate itself. It spills
           // into the rank-3/4 ladder or folds below; empty-slot
           // sentinels flow through both harmlessly (key 1e30 never
@@ -13261,7 +13263,7 @@ ${chaos ? "        v2State = c4State;\n" : ""}
     if (best <= sphereBound || best * params.finalSigmaMin < bailBelow) {
       return max(best, sphereBound) * params.finalSigmaMin;
     }
-  }
+${condensationShapes ? "    if (lastLevel) {\n      bandEnded = true;\n      break;\n    }\n" : ""}  }
   // Terminal bound of the chains alive at the depth cap (the KIFS
   // last-value formula): non-positive when the chain tracked the
   // attractor all the way down. Validity chains fold NO cap terminal —
@@ -13285,10 +13287,10 @@ ${
   }
 `
     : ""
-}  if (aLive) {
+}  if (${condensationShapes ? "aLive && !bandEnded" : "aLive"}) {
     best = min(best, aScale * (aR - R));
   }
-  if (bLive) {
+  if (${condensationShapes ? "bLive && !bandEnded" : "bLive"}) {
     best = min(best, bScale * (bR - R));
   }
   return max(best, sphereBound) * params.finalSigmaMin;
@@ -13497,7 +13499,7 @@ ${chaos ? "  var v2State = CHAOS_WILDCARD;\n" : ""}
   // NO cone-footprint depth cap in this core — the 4D oracle takes
   // none (packSurface4GpuParams throws on a nonzero footprint), so the
   // loop runs plain params.maxDepth.
-  for (var depth = 0u; depth < params.maxDepth; depth++) {
+${condensationShapes ? "  var bandEnded = false;\n" : ""}  for (var depth = 0u; depth < params.maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) {
       break;
     }${
@@ -13518,7 +13520,8 @@ ${chaos ? "  var v2State = CHAOS_WILDCARD;\n" : ""}
     if (best <= sphereBound || best * params.final4SigmaMin < bailBelow) {
       return max(best, sphereBound) * params.final4SigmaMin;
     }
-    let futureCondensation = condensationHasFuture(depth + 1u);`
+    let futureCondensation = condensationHasFuture(depth + 1u);
+    let lastLevel = params.mapCount > 0u && !futureCondensation;`
         : ""
     }
     // The four smallest-key candidates this level, key-ascending. The
@@ -13694,8 +13697,7 @@ ${
     ? `          best = min(best, condensationTerm(img, childScale, depth + 1u${chaos ? ", childState" : ""}));
 `
     : ""
-}          let cert = childScale * (r - R);
-          // Exactly one tuple leaves the top-2 ladder per candidate —
+}${condensationShapes ? "          let cert = select(childScale * (r - R), 1e30, lastLevel);\n" : "          let cert = childScale * (r - R);\n"}          // Exactly one tuple leaves the top-2 ladder per candidate —
           // the displaced runner-up, or the candidate itself. It spills
           // into the rank-3/4 ladder or folds below; empty-slot
           // sentinels flow through both harmlessly (key 1e30 never
@@ -14006,7 +14008,7 @@ ${chaos ? "        v2State = c4State;\n" : ""}
     if (best <= sphereBound || best * params.final4SigmaMin < bailBelow) {
       return max(best, sphereBound) * params.final4SigmaMin;
     }
-  }
+${condensationShapes ? "    if (lastLevel) {\n      bandEnded = true;\n      break;\n    }\n" : ""}  }
   // Terminal bound of the chains alive at the depth cap (the KIFS
   // last-value formula): non-positive when the chain tracked the
   // attractor all the way down. Validity chains fold NO cap terminal —
@@ -14030,10 +14032,10 @@ ${
   }
 `
     : ""
-}  if (aLive) {
+}  if (${condensationShapes ? "aLive && !bandEnded" : "aLive"}) {
     best = min(best, aScale * (aR - R));
   }
-  if (bLive) {
+  if (${condensationShapes ? "bLive && !bandEnded" : "bLive"}) {
     best = min(best, bScale * (bR - R));
   }
   return max(best, sphereBound) * params.final4SigmaMin;

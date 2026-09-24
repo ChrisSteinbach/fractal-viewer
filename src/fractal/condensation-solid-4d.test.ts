@@ -22,7 +22,12 @@ import {
   type ShapeSpec,
 } from "./shapes";
 import { buildSurfaceDE } from "./surface-de";
-import { buildSurfaceDE4, inverse4, singularValues4 } from "./surface-de-4d";
+import {
+  buildSurfaceDE4,
+  estimateDistance4Refined,
+  inverse4,
+  singularValues4,
+} from "./surface-de-4d";
 import type { Transform, Vec4 } from "./types";
 
 const SPHERE: ShapeSpec = {
@@ -236,6 +241,25 @@ describe("condensation solid (4D)", () => {
     expect(
       condensationSolidPoseAdmission4(solid, { ...CANONICAL, w0: 0.2 }).ok,
     ).toBe(false);
+  });
+
+  it("pins the 4D Surface descent of a finite band to the solid on the slice", () => {
+    const transforms = [...sierpinskiTetrahedron(), emitter(SPHERE)];
+    const de = buildSurfaceDE4(transforms, null, undefined, {
+      condensationDepthBand: { maxDepth: 2 },
+    });
+    const solid = buildCondensationSolid4(de);
+    for (const p of slicePoints(400, 23, 1.5)) {
+      const s = condensationSolidSignedDistance4(solid, p);
+      const d = estimateDistance4Refined(de, p);
+      // The 4D display estimator is unsigned inside (the hypot form), so
+      // the pins are the exterior bound and the membership sign.
+      expect(d <= 0).toBe(s <= 0);
+      if (s > 0) {
+        expect(d).toBeLessThanOrEqual(s + 1e-12);
+        expect(d).toBeGreaterThanOrEqual(0.5 * s);
+      }
+    }
   });
 
   it("refuses the pose for a map that turns into w", () => {

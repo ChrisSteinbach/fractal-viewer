@@ -43,6 +43,7 @@ import type { SurfaceNativeCalibration } from "./surface-pattern";
 import type { SurfaceDistanceSample } from "./surface-de";
 import {
   CONFORMAL_RATIO,
+  condensationLastLevel,
   CONTRACTION_LIMIT,
   DEPTH_RESOLUTION,
   ESCAPE_FACTOR,
@@ -3077,6 +3078,8 @@ function descend4(
   // hands the fold site a radius and a certificate only — never a point, and
   // so never an extent — so the displaced tuple's extent dies with it.
 
+  // Set when the finite band's last level ends the loop.
+  let bandEnded = false;
   for (let depth = 0; depth < maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) break;
     const inB = de.schedule !== undefined && depth < de.schedule.depth;
@@ -3135,6 +3138,9 @@ function descend4(
       de,
       depth + 1,
     );
+    // The finite band's last level (surface-de.ts's condensationLastLevel,
+    // the one rule): no certificate folds, and the descent ends here.
+    const lastLevel = condensationLastLevel(de, futureCondensation);
     // The two smallest-key candidates this level, key-ascending. The
     // sentinel r = 0 keeps empty slots out of every escaped-candidate fold
     // below (their certificates are meaningless until occupied).
@@ -3288,7 +3294,7 @@ function descend4(
           const r = segmentRadius(ix, iy, iz, iw, imgExt);
           const key = pScale * (r - R);
           const childScale = pScale * map.sigmaMin;
-          const cert = childScale * (r - R);
+          const cert = lastLevel ? Infinity : childScale * (r - R);
           if (condensation) {
             const shapeTerm = scheduledCondensationTerm4(
               de,
@@ -3511,6 +3517,10 @@ function descend4(
         v2Live = true;
       }
     }
+    if (lastLevel) {
+      bandEnded = true;
+      break;
+    }
   }
 
   // Terminal bound of chains alive at the depth cap (the KIFS last-value
@@ -3581,11 +3591,11 @@ function descend4(
   const terminalR = de.schedule
     ? de.schedule.bounds[Math.min(maxDepth, de.schedule.depth)].radius
     : R;
-  if (aLive) {
+  if (aLive && !bandEnded) {
     const terminal = aScale * (aR - terminalR);
     if (terminal < best) best = terminal;
   }
-  if (bLive) {
+  if (bLive && !bandEnded) {
     const terminal = bScale * (bR - terminalR);
     if (terminal < best) best = terminal;
   }
@@ -4006,6 +4016,8 @@ function descend4Refined(
   const imgExt = new Float64Array(4);
   const tExt = new Float64Array(4);
 
+  // Set when the finite band's last level ends the loop.
+  let bandEnded = false;
   for (let depth = 0; depth < maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) break;
     const inB = de.schedule !== undefined && depth < de.schedule.depth;
@@ -4067,6 +4079,9 @@ function descend4Refined(
       de,
       depth + 1,
     );
+    // The finite band's last level (surface-de.ts's condensationLastLevel,
+    // the one rule): no certificate folds, and the descent ends here.
+    const lastLevel = condensationLastLevel(de, futureCondensation);
     // The two smallest-key candidates this level, key-ascending. The
     // sentinel r = 0 keeps empty slots out of every escaped-candidate fold
     // below (their certificates are meaningless until occupied).
@@ -4220,7 +4235,7 @@ function descend4Refined(
           const r = segmentRadius(ix, iy, iz, iw, imgExt);
           const key = pScale * (r - R);
           const childScale = pScale * map.sigmaMin;
-          const cert = childScale * (r - R);
+          const cert = lastLevel ? Infinity : childScale * (r - R);
           if (condensation) {
             const shapeTerm = scheduledCondensationTerm4(
               de,
@@ -4552,6 +4567,10 @@ function descend4Refined(
     if (best <= sphereBound || best * finalScale < bailBelow) {
       return descentValue(best, sphereBound, finalScale);
     }
+    if (lastLevel) {
+      bandEnded = true;
+      break;
+    }
   }
 
   if (condensation) {
@@ -4619,11 +4638,11 @@ function descend4Refined(
   const terminalR = de.schedule
     ? de.schedule.bounds[Math.min(maxDepth, de.schedule.depth)].radius
     : R;
-  if (aLive) {
+  if (aLive && !bandEnded) {
     const terminal = aScale * (aR - terminalR);
     if (terminal < best) best = terminal;
   }
-  if (bLive) {
+  if (bLive && !bandEnded) {
     const terminal = bScale * (bR - terminalR);
     if (terminal < best) best = terminal;
   }

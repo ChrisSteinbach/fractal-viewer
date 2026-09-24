@@ -3325,6 +3325,30 @@ function scheduledCondensationHasFutureDepth(
 }
 
 /**
+ * Is this the finite band's LAST level: recursive maps present and no
+ * descendant of the level's children can hold an enabled C0? Every child's
+ * own C0 term is folded as it is generated, so the subtree below holds
+ * nothing, and a child's ball certificate would bound the plain attractor
+ * instead of the band's union: marched, those certificates drew a finite
+ * band's phantom attractor surfaces, content past the levels the band
+ * names (the unbounded default keeps the limit set, rightly). So at the
+ * last level the affine descent family folds no certificate, stops after
+ * the level and skips the chains' ball terminals, in both dimensions and
+ * every mirror (CPU, GLSL value and hit-info, WGSL affine/affine4). The
+ * fold frontier's port is still owed (fr-kg89). Emitter-only systems (no
+ * recursive maps) and unbounded bands never reach this state, which keeps
+ * them value-identical.
+ */
+export function condensationLastLevel(
+  de: { maps: readonly unknown[]; condensation?: unknown },
+  futureCondensation: boolean,
+): boolean {
+  return (
+    de.condensation !== undefined && de.maps.length > 0 && !futureCondensation
+  );
+}
+
+/**
  * One extra Hutchinson level on a frozen escaped candidate's own inverse
  * image, over every (sector, base map, fold branch) triple (see
  * {@link estimateDistanceRefined}'s doc): the certificate becomes
@@ -3719,6 +3743,8 @@ function descend(
   let v2Scale = 1;
   let v2State = SURFACE_CHAOS_WILDCARD;
   let v2Live = false;
+  // Set when the finite band's last level ends the loop (see lastLevel).
+  let bandEnded = false;
 
   for (let depth = 0; depth < maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) break;
@@ -3782,6 +3808,12 @@ function descend(
       de,
       depth + 1,
     );
+    // THE BAND'S LAST LEVEL: no descendant of this level's children can hold
+    // an enabled C0, and each child's own C0 is folded as it is generated.
+    // Its ball certificate would bound the plain attractor instead, which
+    // drew a finite band's phantom attractor surfaces, so it is +Infinity
+    // and the descent ends with this level ({@link condensationLastLevel}).
+    const lastLevel = condensationLastLevel(de, futureCondensation);
     // The two smallest-key candidates this level, key-ascending. The
     // sentinel r = 0 keeps empty slots out of every escaped-candidate fold
     // below (their certificates are meaningless until occupied).
@@ -3906,7 +3938,7 @@ function descend(
           const r = Math.sqrt(icx * icx + icy * icy + icz * icz);
           const key = pScale * (r - R);
           const childScale = pScale * map.sigmaMin;
-          const cert = childScale * (r - R);
+          const cert = lastLevel ? Infinity : childScale * (r - R);
           if (condensation) {
             const shapeTerm = scheduledCondensationTerm3(
               de,
@@ -4213,6 +4245,10 @@ function descend(
     if (best <= sphereBound || best * finalScale < bailBelow) {
       return descentValue(best, sphereBound, finalScale);
     }
+    if (lastLevel) {
+      bandEnded = true;
+      break;
+    }
   }
 
   // Terminal bound of chains alive at the depth cap (the KIFS last-value
@@ -4263,11 +4299,14 @@ function descend(
   const terminalR = de.schedule
     ? de.schedule.bounds[Math.min(maxDepth, de.schedule.depth)].radius
     : R;
-  if (aLive) {
+  // A band that ENDED the descent leaves nothing below its chains: their
+  // ball terminal would be the plain attractor's hit signal (the phantom
+  // the last-level rule removes), so it folds only at a real depth cap.
+  if (aLive && !bandEnded) {
     const terminal = aScale * (aR - terminalR);
     if (terminal < best) best = terminal;
   }
-  if (bLive) {
+  if (bLive && !bandEnded) {
     const terminal = bScale * (bR - terminalR);
     if (terminal < best) best = terminal;
   }

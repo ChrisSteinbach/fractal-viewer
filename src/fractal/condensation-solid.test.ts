@@ -10,7 +10,12 @@ import type { CondensationDepthBand } from "./condensation-de";
 import { sierpinskiTetrahedron } from "./presets";
 import { mulberry32 } from "./rng";
 import { SHAPE_MARCH_SAFETY, shapeSdf, type ShapeSpec } from "./shapes";
-import { buildSurfaceDE, singularValues3 } from "./surface-de";
+import {
+  buildSurfaceDE,
+  estimateDistance,
+  estimateDistanceRefined,
+  singularValues3,
+} from "./surface-de";
 import type { Transform, Vec3 } from "./types";
 
 const SPHERE: ShapeSpec = {
@@ -290,5 +295,37 @@ describe("condensation solid (3D)", () => {
       ok: false,
       reason: "a fold map",
     });
+  });
+
+  it("pins the Surface descent of a finite band to the solid: no phantom attractor", () => {
+    // A finite band's descent used to fold ball certificates past the band's
+    // last level, which bound the PLAIN attractor: at a depth-3 cell centre
+    // (no bead there) the refined estimate read 0.047 against the band
+    // union's 0.117, and a marched ray drew the whole gasket. The last-level
+    // rule ends it. The refined estimator (the one production and every GPU
+    // mirror march) stays within a small factor of the union's distance;
+    // the plain one is pinned sound only, being the unrefined estimator
+    // whose ghosts the refined certificates exist to remove.
+    for (const band of [
+      { maxDepth: 0 },
+      { maxDepth: 2 },
+      { minDepth: 1, maxDepth: 3 },
+    ]) {
+      const transforms = [...sierpinskiTetrahedron(), emitter(SPHERE)];
+      const de = buildSurfaceDE(transforms, null, undefined, {
+        condensationDepthBand: band,
+      });
+      const solid = buildCondensationSolid3(de);
+      for (const p of samples(400, 21, 1.5)) {
+        const s = condensationSolidSignedDistance3(solid, p);
+        const refined = estimateDistanceRefined(de, p);
+        const plain = estimateDistance(de, p);
+        for (const d of [refined, plain]) {
+          expect(d).toBeLessThanOrEqual(s + 1e-12);
+          expect(d <= 0).toBe(s <= 0);
+        }
+        if (s > 0) expect(refined).toBeGreaterThanOrEqual(0.3 * s);
+      }
+    }
   });
 });

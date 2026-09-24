@@ -3888,6 +3888,9 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
     int v1State = -1;
     int v2State = -1;
 #endif
+#if SURFACE_CONDENSATION
+    bool bandEnded = false;
+#endif
     for (int depth = 0; depth < uMaxDepth; depth++) {
       if (!aLive && !bLive && !v1Live && !v2Live) {
         break;
@@ -3924,6 +3927,7 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
         return max(best, sphereBound) * uFinalSigmaMin;
       }
       bool futureCondensation = condensationFutureAfterChild(depth, uMapCount);
+      bool lastLevel = uMapCount > 0 && !futureCondensation;
 #endif
       // The four smallest-key candidates this level, key-ascending. The
       // sentinel r = 0 keeps empty slots out of every escaped-candidate
@@ -4057,6 +4061,9 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
             float cert = childScale * (r - childBound.w);
 #else
             float cert = childScale * (r - uBoundingRadius);
+#endif
+#if SURFACE_CONDENSATION
+            if (lastLevel) cert = 1e30;
 #endif
             // Exactly one tuple leaves the top-2 ladder per candidate — the
             // displaced runner-up, or the candidate itself. It spills into
@@ -4359,6 +4366,12 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
       if (best <= sphereBound || best * uFinalSigmaMin < bailBelow) {
         return max(best, sphereBound) * uFinalSigmaMin;
       }
+#if SURFACE_CONDENSATION
+      if (lastLevel) {
+        bandEnded = true;
+        break;
+      }
+#endif
     }
     // Terminal bound of chains alive at the depth cap (the KIFS last-value
     // formula): non-positive when the chain tracked the attractor all the
@@ -4385,7 +4398,11 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
 #endif
       , best);
 #endif
+#if SURFACE_CONDENSATION
+    if (aLive && !bandEnded) {
+#else
     if (aLive) {
+#endif
 #if SURFACE_SCHEDULE
       vec4 terminalBound = surfaceLevelBound(uMaxDepth);
       best = min(best, aScale * (aR - terminalBound.w));
@@ -4393,7 +4410,11 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
       best = min(best, aScale * (aR - uBoundingRadius));
 #endif
     }
+#if SURFACE_CONDENSATION
+    if (bLive && !bandEnded) {
+#else
     if (bLive) {
+#endif
 #if SURFACE_SCHEDULE
       vec4 terminalBound = surfaceLevelBound(uMaxDepth);
       best = min(best, bScale * (bR - terminalBound.w));
@@ -4836,6 +4857,9 @@ ${foldValueFormGlsl(shadeDeWidth)}
     float trapAcc = 0.0;
     float trapNorm = 0.0;
     float trapW = 1.0;
+#if SURFACE_CONDENSATION
+    bool bandEnded = false;
+#endif
     for (int depth = 0; depth < uMaxDepth; depth++) {
       if (!aLive && !bLive && !v1Live && !v2Live) {
         break;
@@ -4869,6 +4893,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
 #endif
         best, firstChoice);
       bool futureCondensation = condensationFutureAfterChild(depth, uMapCount);
+      bool lastLevel = uMapCount > 0 && !futureCondensation;
 #endif
       float c1Key = 1e30;
       vec3 c1Q = vec3(0.0);
@@ -5005,6 +5030,9 @@ ${foldValueFormGlsl(shadeDeWidth)}
             float cert = childScale * (r - childBound.w);
 #else
             float cert = childScale * (r - uBoundingRadius);
+#endif
+#if SURFACE_CONDENSATION
+            if (lastLevel) cert = 1e30;
 #endif
             // Exactly one tuple leaves the top-2 ladder per candidate — the
             // displaced runner-up, or the candidate itself. It spills into
@@ -5306,6 +5334,12 @@ ${foldValueFormGlsl(shadeDeWidth)}
           v2Live = true;
         }
       }
+#if SURFACE_CONDENSATION
+      if (lastLevel) {
+        bandEnded = true;
+        break;
+      }
+#endif
     }
 #if SURFACE_CONDENSATION
     if (aLive) condensationFoldHit(aQ, aScale, uMaxDepth,
@@ -5329,7 +5363,11 @@ ${foldValueFormGlsl(shadeDeWidth)}
 #endif
       best, firstChoice);
 #endif
+#if SURFACE_CONDENSATION
+    if (aLive && !bandEnded) {
+#else
     if (aLive) {
+#endif
 #if SURFACE_SCHEDULE
       vec4 terminalBound = surfaceLevelBound(uMaxDepth);
       best = min(best, aScale * (aR - terminalBound.w));
@@ -5337,7 +5375,11 @@ ${foldValueFormGlsl(shadeDeWidth)}
       best = min(best, aScale * (aR - uBoundingRadius));
 #endif
     }
+#if SURFACE_CONDENSATION
+    if (bLive && !bandEnded) {
+#else
     if (bLive) {
+#endif
 #if SURFACE_SCHEDULE
       vec4 terminalBound = surfaceLevelBound(uMaxDepth);
       best = min(best, bScale * (bR - terminalBound.w));

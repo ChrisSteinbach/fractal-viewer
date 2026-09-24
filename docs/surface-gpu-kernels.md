@@ -212,6 +212,18 @@ Eligibility refuses nearly-flat poses and final-transform emitters before packin
 A maps and an active root band, including qualified finite B prefixes. Their minimum
 traversal budget completes the prefix and zero-child exit; future-subtree
 certificates require real A children once B ends. No wire offsets change.
+A FINITE band's affine descents stop at the band's last level
+(`surface-de.ts`'s `condensationLastLevel`): there each child's own C0 term is
+already folded and nothing below it is enabled, so its ball certificate is
++Infinity, the loop breaks after the level, and the A/B chains' ball
+terminals are skipped. Before, those certificates bounded the plain
+attractor and drew it as phantom surfaces past the levels the band names
+(on the Glass beads starter the refined estimate read 0.0117 against the
+band union's 0.252 at a Sierpinski corner vertex). The rule is mirrored in
+the CPU descents, both GLSL arms (value and hit-info) and the WGSL
+affine/affine4 value and hit-info bodies, gated on the emitted condensation
+text. Unbounded bands and emitter-only systems never reach it. The fold
+frontier's port is owed (fr-kg89).
 Balloon needs no kernel fork: it
 wraps the same public estimator, and the existing balloon/plane mutual
 exclusion still applies. The separate 3D fragment-side grid also samples that
