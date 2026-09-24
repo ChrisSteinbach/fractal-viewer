@@ -120,6 +120,8 @@ import {
   surfaceLightingRuntime,
 } from "../fractal/surface-lighting";
 import {
+  FINITE_GENERAL_TRANSPORT_CHUNK_PATHS,
+  FINITE_TRANSPORT_CHUNK_PATHS,
   FINITE_TRANSPORT_RUNNING,
   SPHERE_INVERSION_POOL_FRESH_BIT,
   SPHERE_INVERSION_POOL_PASS_MASK,
@@ -2013,6 +2015,35 @@ describe("SurfaceComputeRenderer general finite target", () => {
     throw new Error("the default-system fixture must admit");
   }
   const wire: FiniteSolidGeneralWire = construction.construction;
+
+  it("schedules a glass word tree per submission at the small quantum, the shaped grid at its whole-trace one", async () => {
+    // A general path is a pruned tree walk: the Menger maps at depth 4 lost
+    // the device on the shaped grid's whole-trace submission.
+    const general = await createPaletteResourceHarness(
+      false,
+      { kind: "finite", level: 1, general: wire },
+      false,
+      [],
+      {},
+    );
+    expect(Reflect.get(general.renderer, "transportChunkPaths")).toBe(
+      FINITE_GENERAL_TRANSPORT_CHUNK_PATHS,
+    );
+    expect(Reflect.get(general.renderer, "transportPerSubmission")).toBe(true);
+    general.renderer.destroy();
+    const shaped = await createPaletteResourceHarness(
+      false,
+      { kind: "finite", level: 2 },
+      false,
+      [],
+      {},
+    );
+    expect(Reflect.get(shaped.renderer, "transportChunkPaths")).toBe(
+      FINITE_TRANSPORT_CHUNK_PATHS,
+    );
+    expect(Reflect.get(shaped.renderer, "transportPerSubmission")).toBe(false);
+    shaped.renderer.destroy();
+  });
 
   it("bakes the document's own maps into the emitted kernels and leaves the shipped construction alone", async () => {
     const general = await createPaletteResourceHarness(false, {

@@ -121,6 +121,7 @@ import {
   FINITE_TRANSPORT_PATH_BYTES,
   TRANSPORT_PATH_BYTES,
   resolveFiniteTransportChunkPaths,
+  FINITE_GENERAL_TRANSPORT_CHUNK_PATHS,
   resolveSphereInversionTransportChunkPaths,
   transportWorkBytes,
 } from "../fractal/finite-transport-work";
@@ -3375,11 +3376,19 @@ export class SurfaceComputeRenderer {
     // mid-render with a message naming the wrong thing.
     device.pushErrorScope("out-of-memory");
     device.pushErrorScope("validation");
+    // A general word tree's processed path is a pruned tree walk, not a
+    // grid step: its production quantum is the small per-submission base
+    // (FINITE_GENERAL_TRANSPORT_CHUNK_PATHS's doc).
     const finiteChunkPaths =
       isFiniteSolidTarget(target) &&
       materials?.optics &&
       opticsBackend === "finiteSolid"
-        ? resolveFiniteTransportChunkPaths(finiteTransportChunkPaths)
+        ? resolveFiniteTransportChunkPaths(
+            finiteTransportChunkPaths ??
+              (target.general !== undefined
+                ? FINITE_GENERAL_TRANSPORT_CHUNK_PATHS
+                : undefined),
+          )
         : 0;
     // The sphere-inversion glass continuation: an optics session on these
     // cores IS this backend (the codegen refuses any other).
@@ -4375,6 +4384,12 @@ export class SurfaceComputeRenderer {
   /** Processed paths per continuation submission (0: uninterrupted), the
    * backend whose continuation it is, and that backend's stack stride. */
   private readonly transportChunkPaths: number;
+  /** Whether the transport lane is judged PER SUBMISSION (its worst chunk
+   * against the transport ceiling, capacity climbing from one workgroup):
+   * every lane but the shaped finite grid's, whose cheap DDA paths let it
+   * price the whole multi-submission batch. A general word tree's paths
+   * are tree walks, so it takes the per-submission shape. */
+  private readonly transportPerSubmission: boolean;
   /** The adaptive transport schedule is live (the init field's doc). */
   private readonly transportAdaptiveSchedule: boolean;
   private readonly transportChunkBackend:
@@ -4444,6 +4459,9 @@ export class SurfaceComputeRenderer {
         : finiteChunk
           ? "finiteSolid"
           : "sphereInversion";
+    this.transportPerSubmission =
+      !finiteChunk ||
+      (init.target as FiniteSolidComputeTarget).general !== undefined;
     this.transportWorkPathBytes = finiteChunk
       ? FINITE_TRANSPORT_PATH_BYTES
       : TRANSPORT_PATH_BYTES;
@@ -7056,7 +7074,10 @@ export class SurfaceComputeRenderer {
       // the transport ceiling, which for a chunked lane is its worst CHUNK
       // (the unit the watchdog sees). An unchunked lane has one chunk, so
       // its worst chunk IS its batch and nothing about it moves.
-      const chunkedTransport = this.transportChunkBackend === "finiteSolid";
+      // The general word tree's continuation is judged per submission
+      // like the sphere-inversion lane (FINITE_GENERAL_TRANSPORT_CHUNK_PATHS's
+      // doc: its whole-trace batches outran the watchdog).
+      const chunkedTransport = !this.transportPerSubmission;
       const transportSizer: ShadeSizerState = {
         cost: initialShadeHitCost(),
         cap: chunkedTransport

@@ -4,6 +4,17 @@ import { DIELECTRIC_MAX_STACK } from "./surface-dielectric";
  * the same LIFO work list at the same replay threshold. No scene field. */
 export const FINITE_TRANSPORT_CHUNK_PATHS = 2048;
 
+/** The GENERAL word tree's scheduling quantum (a `{level}` document's own
+ * maps). One processed path there is not a grid DDA step but a pruned tree
+ * walk per boundary query — up to thousands of box clips at depth 3–4 —
+ * so the shaped grid's whole-trace quantum above made one submission
+ * outrun the RX 7900 XTX's ~2 s job cut (the Menger maps at depth 4 lost
+ * the device on their first transport submission; depth 3's full-trace
+ * batches ran ~1.1 s each). It takes the sphere-inversion lane's shape
+ * instead: a small base that bounds ONE WORKGROUP's submission, every
+ * chunk judged per submission against the transport ceiling. */
+export const FINITE_GENERAL_TRANSPORT_CHUNK_PATHS = 32;
+
 /** Internal status only: it must never reach a completed frame's census or
  * advance the outer refinement pass. Existing transport statuses stay frozen. */
 export const FINITE_TRANSPORT_RUNNING = 6;
