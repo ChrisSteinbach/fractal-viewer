@@ -11,13 +11,16 @@ import {
   FINITE_SOLID_HALF_EXTENT,
   FINITE_SOLID_IDENTITY_POSE,
   FINITE_SOLID_MAX_LEVEL,
+  FINITE_SOLID_MEDIUM_OPAQUE,
   analyzeFiniteSolidGeneral,
   buildFiniteSolidConstruction,
   finiteSolidCellOccupiedByRule,
   finiteSolidGeneralBoundingRadius,
   finiteSolidGeneralContains,
   finiteSolidGeneralIntervals,
+  finiteSolidGeneralMediumAt,
   finiteSolidGeneralNextBoundary,
+  finiteSolidGeneralNextBoundaryFromAnchor,
   finiteSolidNextBoundary,
   finiteSolidNextBoundaryFromAnchor,
   type FiniteSolidAnchor,
@@ -1728,7 +1731,11 @@ describe("general finite-solid GPU sources", () => {
       const c = generalConstruction(maps, 2, dimension);
       const src = finiteSolidGeneralTransportSource(dimension, c, 2);
       expect(src).toContain("fn transportFiniteBoundary(");
-      expect(src).toContain("fn finiteGeneralPointInside(");
+      // Membership and the point medium live in the DISPLAY source, so the
+      // hit-info can attribute slots in kernels without the walk.
+      expect(finiteSolidGeneralDisplaySource(dimension, c, 2)).toContain(
+        "fn finiteGeneralPointMedium(",
+      );
       expect(src).toContain("anchorIntrinsic: vec4f");
       expect(src).toContain("anchorCells: vec4i");
       // The mask ranges over the cell's dimension + 1 facets; the plane
@@ -2005,5 +2012,110 @@ describe("general walk f32 twin against the f64 oracle", () => {
     );
     expect(malformed.kind).toBe(3);
     expect(malformed.reason).toBe(2);
+  });
+});
+
+describe("general walk f32 twin with per-map media", () => {
+  it("reproduces the oracle's media transitions and owning branches, both dimensions", () => {
+    for (const [maps, level, dimension, media] of [
+      [defaultTransforms(), 3, 3, [1, 0, 1, 0]],
+      [defaultTransforms(), 2, 3, [1, 2, 0, 2]],
+      [rotatedPentatope(), 2, 4, [0, 1, 1, 2, 0]],
+    ] as const) {
+      const c = generalConstruction(maps, level, dimension);
+      const wire = { ...c, media: [...media] };
+      const radius = finiteSolidGeneralBoundingRadius(c);
+      const rng = mulberry32(41);
+      let opaqueEvents = 0;
+      for (let i = 0; i < 24; i++) {
+        const u = (): number => rng() * 2 - 1;
+        const origin = [
+          u() * 3 * radius,
+          u() * 3 * radius,
+          u() * 3 * radius,
+        ].map(Math.fround) as Vec3;
+        const target: Vec3 = [
+          u() * 0.4 * radius,
+          u() * 0.4 * radius,
+          u() * 0.4 * radius,
+        ];
+        const d: Vec3 = [
+          target[0] - origin[0],
+          target[1] - origin[1],
+          target[2] - origin[2],
+        ];
+        const length = Math.hypot(d[0], d[1], d[2]);
+        const dir = d.map((x) => Math.fround(x / length)) as Vec3;
+        // Both chains continue THROUGH opaque (a geometry walk; the
+        // transport terminates there).
+        let claim = finiteSolidGeneralMediumAt(
+          c,
+          FINITE_SOLID_IDENTITY_POSE,
+          origin,
+          [...media],
+        ).medium;
+        let oracle = finiteSolidGeneralNextBoundary(
+          c,
+          FINITE_SOLID_IDENTITY_POSE,
+          origin,
+          dir,
+          { inside: claim !== 0, media: [...media], medium: claim },
+        );
+        let twin = finiteSolidGeneralDdaF32(
+          dimension,
+          level,
+          wire,
+          IDENTITY_ROWS,
+          0,
+          origin,
+          dir,
+          null,
+          claim,
+        );
+        for (let hop = 0; hop < 64; hop++) {
+          if (oracle.kind !== "boundary") {
+            expect(twin.kind).toBe(oracle.kind === "miss" ? 2 : 3);
+            break;
+          }
+          expect(twin.kind).toBe(1);
+          expect(twin.fromMedium).toBe(oracle.fromMedium);
+          expect(twin.toMedium).toBe(oracle.toMedium);
+          expect(twin.toBranch).toBe(oracle.toBranch);
+          // f32 rounds at the magnitude of the arithmetic (the camera a few
+          // radii out), not at t's: the snap envelope's scale rule.
+          expect(Math.abs(twin.t - oracle.t)).toBeLessThan(
+            4e-6 * Math.max(1, oracle.t, ...origin.map(Math.abs)),
+          );
+          if (oracle.toMedium === FINITE_SOLID_MEDIUM_OPAQUE) opaqueEvents++;
+          claim = oracle.toMedium ?? 0;
+          const oracleAnchor = oracle.anchor;
+          const twinAnchor = twin.anchor;
+          if (!twinAnchor) throw new Error("twin anchor missing");
+          oracle = finiteSolidGeneralNextBoundaryFromAnchor(
+            c,
+            FINITE_SOLID_IDENTITY_POSE,
+            dir,
+            {
+              inside: claim !== 0,
+              anchor: oracleAnchor,
+              media: [...media],
+              medium: claim,
+            },
+          );
+          twin = finiteSolidGeneralDdaF32(
+            dimension,
+            level,
+            wire,
+            IDENTITY_ROWS,
+            0,
+            [0, 0, 0],
+            dir,
+            twinAnchor,
+            claim,
+          );
+        }
+      }
+      expect(opaqueEvents).toBeGreaterThan(0);
+    }
   });
 });
