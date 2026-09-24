@@ -936,6 +936,13 @@ export type FiniteSolidGeneralWire = Pick<
    * editor hides for a Surface session's whole lifetime). Absent = every
    * map glass code 1, the single-material solid. */
   media?: readonly number[];
+  /** THE COMPOSITE'S WALK (requires `media`): opaque maps drop out at the
+   * tree's first level — `finite-solid.ts`'s `glassOnly` walk option — so
+   * the display DE, the point medium and the boundary walk see the glass
+   * subtrees alone, and an opaque map's subtree is left to the composite's
+   * attractor term (`finite-solid-composite.ts`). Absent/false is
+   * byte-identical source. */
+  glassOnly?: boolean;
 };
 
 /** The root cell's vertex count: the hull simplex's `dim + 1`, or the
@@ -982,10 +989,11 @@ function validateGeneralWire(
             Number.isInteger(code) &&
             code >= 0 &&
             code <= FINITE_SOLID_GENERAL_MAX_MAPS,
-        )))
+        ))) ||
+    (g.glassOnly === true && (g.media === undefined || level < 1))
   ) {
     throw new RangeError(
-      `surface-finite-solid-gpu: a general wire needs 1..${FINITE_SOLID_GENERAL_MAX_MAPS} maps, a hull (${dim + 1} vertices) or box (${2 ** dim} corners) root, ${level + 1} level boxes at level ${level} (0..${FINITE_SOLID_GENERAL_MAX_LEVEL}) and, when present, one media code per map`,
+      `surface-finite-solid-gpu: a general wire needs 1..${FINITE_SOLID_GENERAL_MAX_MAPS} maps, a hull (${dim + 1} vertices) or box (${2 ** dim} corners) root, ${level + 1} level boxes at level ${level} (0..${FINITE_SOLID_GENERAL_MAX_LEVEL}) and, when present, one media code per map (the glass-only walk requires the media and a level of at least 1)`,
     );
   }
 }
@@ -1317,8 +1325,19 @@ export function finiteSolidGeneralDisplaySource(
   dim: 3 | 4,
   g: FiniteSolidGeneralWire,
   level: number,
+  /** The composite owns the public `surfaceDE` (the min of this display DE
+   * and the attractor term), so it asks for the source without one. */
+  publicSurfaceDE = true,
 ): string {
   const lift = generalLiftSource(dim);
+  const glassOnly = g.glassOnly === true;
+  // The glass-only walk's branch filter: an opaque branch is no cell.
+  const skipOpaque = glassOnly
+    ? `
+    if (FIN_MEDIA[a] == 0u) {
+      continue;
+    }`
+    : "";
   const body =
     level === 0
       ? `  let facets = finCellFacets(finIdentity(), finIdentity());
@@ -1331,7 +1350,7 @@ export function finiteSolidGeneralDisplaySource(
   }
   return select(d, d * FIN_SAFETY, d > 0.0);`
       : `  var result = 1.0e30;
-  for (var a = 0u; a < FIN_MAP_COUNT; a++) {
+  for (var a = 0u; a < FIN_MAP_COUNT; a++) {${skipOpaque}
     let inv = finInverseMap(a);
     let d = finOrientedBoxSdf(inv, FIN_BOX_MIN[${level - 1}], FIN_BOX_MAX[${level - 1}], q);
     var term = d;${
@@ -1386,7 +1405,7 @@ ${
     : `  let q = vec4f(qa[0], qa[1], qa[2], qa[3]);
   var best = 1.0e30;
   var branch = 0;
-  for (var a = 0u; a < FIN_MAP_COUNT; a++) {
+  for (var a = 0u; a < FIN_MAP_COUNT; a++) {${skipOpaque}
     let d = finOrientedBoxSdf(finInverseMap(a), FIN_BOX_MIN[${level - 1}], FIN_BOX_MAX[${level - 1}], q);
     if (d < best) {
       best = d;
@@ -1469,6 +1488,7 @@ ${generalNestSource(
   finBranchCov[a0] = 1;
 }
 `,
+  glassOnly,
 )}  }`
 }
   return finMediumOfCoverage();
@@ -1478,11 +1498,15 @@ ${generalNestSource(
 fn finiteGeneralPointInside(qa: array<f32, 4>) -> bool {
   return finiteGeneralPointMedium(qa).x != 0;
 }
-
+${
+  publicSurfaceDE
+    ? `
 fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   return finiteDisplayDE(finiteLift(pIn));
 }
-`;
+`
+    : ""
+}`;
 }
 
 /** The view lift both general sources share: the 4D pose IS the shared 4D
@@ -1555,6 +1579,7 @@ function generalNestSource(
   level: number,
   nodeTest: (inverseVar: string, remaining: number) => string,
   leaf: (forwardVar: string, inverseVar: string, word: string) => string,
+  glassOnly = false,
 ): string {
   const indent = (depth: number): string => "  ".repeat(depth + 1);
   const wordOf = (depth: number): string => {
@@ -1571,7 +1596,16 @@ function generalNestSource(
     const parentI = depth === 0 ? "finIdentity()" : `i${depth - 1}`;
     const childDepth = depth + 1;
     open += `${pad}for (var a${depth} = 0u; a${depth} < FIN_MAP_COUNT; a${depth}++) {
-${pad}  let f${depth} = finCompose(${parentF}, a${depth});
+${
+  glassOnly && depth === 0
+    ? `${pad}  // The glass-only walk: an opaque map's subtree is the composite's
+${pad}  // attractor term, never a cell.
+${pad}  if (FIN_MEDIA[a0] == 0u) {
+${pad}    continue;
+${pad}  }
+`
+    : ""
+}${pad}  let f${depth} = finCompose(${parentF}, a${depth});
 `;
     if (childDepth < level) {
       open += `${pad}  let i${depth} = finChildInverse(${parentI}, a${depth});
@@ -1662,6 +1696,7 @@ ${generalNestSource(
   (inv, remaining) =>
     `finClipAxisBox(FIN_BOX_MIN[${remaining}], FIN_BOX_MAX[${remaining}], finApply(${inv}, q) + ${inv}.t, finApply(${inv}, qd))`,
   pushLeaf,
+  g.glassOnly === true,
 )}  return true;`;
   return `struct FiniteBoundary {
   // 1 boundary, 2 miss, 3 refused — TransportBoundary's vocabulary.
@@ -3205,6 +3240,8 @@ export function finiteSolidGeneralDdaF32(
     const word: number[] = [];
     const walk = (forward: F32Aff, inverse: F32Aff, depth: number): boolean => {
       for (let a = 0; a < mapCount; a++) {
+        // The glass-only walk (generalNestSource's depth-0 filter).
+        if (g.glassOnly === true && depth === 0 && media[a] === 0) continue;
         const childForward = compose(forward, a);
         const childInverse_ = childInverse(inverse, a);
         word.push(a);
