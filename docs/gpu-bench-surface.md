@@ -650,9 +650,12 @@ at scale 0.28) or ring (the orbit torus at 0.36).
   edges with the sector un-rotation folded into each.
 
 The fixture's `estimate` is the f64 oracle's signed field
-(`condensationSolidSignedDistance3`/`-4`); the twin carries no membership
-gate, because the kernel carries none. Beyond the closed-solid arms, each
-leg runs:
+(`condensationSolidSignedDistance3`/`-4`). The fixture also carries the
+kernel's two curved-solid rules: `contains` is the field's sign (the
+membership gate), and `ownsPrimary` starts the trace with an outside query
+at the march's hit instead of the split
+(`docs/surface-dielectric-transport.md`, "The resolved-share gap").
+Beyond the closed-solid arms, each leg runs:
 
 - **Named member probes.** The canonical grid hits 2 of 8 rays on this small
   lattice, so rays from the grid's eye aim at a surface point of each
@@ -690,6 +693,21 @@ own field near the surface. For the band solid it is the IFS descent, and in
 primary child straight through to the backdrop while every replayed query
 agreed. The split now taps the solid's field under `condensationSolid`, as
 the sphere-inversion backend's already did; C0 emission is unchanged.
+
+RE-MEASURED on 2026-09-24 after the owned primary and the membership gate
+(same box, `:0`, quiet=YES). All nine closed-solid legs agree, and the
+emitter-only rows are unchanged. The curved-solid trace rows:
+
+| Leg                         | Queries | Max radiance Δ | Max residual Δ | Max normal Δ | Field: worst relative Δ (interior samples) |
+| --------------------------- | ------: | -------------- | -------------- | ------------ | ------------------------------------------ |
+| `condensationSolidBeads3`   |     112 | 2.8e-8         | 1.3e-10        | 6.2e-6       | 2.00e-5 (1181)                             |
+| `condensationSolidBeads4`   |     112 | 2.8e-8         | 1.3e-10        | 6.2e-6       | 2.00e-5 (1181)                             |
+| `condensationSolidRings3`   |     195 | 9.4e-7         | 1.9e-4         | 1.9e-5       | 2.05e-5 (623)                              |
+| `condensationSolidRings4`   |     195 | 9.4e-7         | 1.9e-4         | 1.9e-5       | 2.05e-5 (623)                              |
+| `condensationSolidKaleido3` |     109 | 2.4e-8         | 3.8e-9         | 8.4e-6       | 2.64e-5 (1210)                             |
+
+The query counts moved because a trace now opens with the owned primary
+query rather than a split.
 
 ### The glass continuation leg (the resumable trace)
 

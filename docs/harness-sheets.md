@@ -1227,6 +1227,19 @@ conservative SDF leaves 47.7% unresolved. Record:
 `docs/surface-dielectric-transport.md`, "The general curved solid". Writes
 `scripts/out/condensation-glass*.png`.
 
+### condensation-glass-app-twin
+
+`scripts/condensation-glass-app-twin.harness.ts` — the curved-solid glass
+starters at the app's own camera and 960x540 raster, run through the kernel's
+f64 transport twin with the kernel's replay schedule. Verdict: the twin
+reproduced the app's pre-fix 90% and its failure mix, so the gap to the look
+sheet was not f32, raster, pose or the display estimator. It was two kernel
+rules: a forced primary split at silhouette near-misses (a whispering-gallery
+TIR orbit that caps) and band crossings taken without a membership flip.
+With both fixed the twin resolves 99.94% / 98.24%. `CGT_SPLIT=1` and
+`CGT_NOGATE=1` restore each pre-fix rule. Record:
+`docs/surface-dielectric-transport.md`, "The resolved-share gap". Prints only.
+
 ### sphere-inversion-glass-cost
 
 `scripts/sphere-inversion-glass-cost.harness.ts` — where the curved-glass
