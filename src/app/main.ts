@@ -113,6 +113,8 @@ import {
   surfaceSlotColors,
   surfaceForwardSlot,
   surfaceSlotMaterials,
+  finiteSolidGeneralMediaCodes,
+  finiteSolidGeneralSlots,
   surfaceTrapIndices,
 } from "./surface-slots";
 import {
@@ -4907,8 +4909,14 @@ async function main(): Promise<void> {
       );
       slotColors = slots.colors;
       slotTraps = slots.trapIndices;
+    } else if (isFiniteSolidTarget(target) && target.general) {
+      // The general word tree: one slot per active map (the per-map
+      // media) — the hit-info's owning branch indexes them directly.
+      const slots = finiteSolidGeneralSlots(state.transforms);
+      slotColors = surfaceSlotColors(state.transforms, slots);
+      slotTraps = surfaceTrapIndices(state.transforms, slots);
     } else if (isFiniteSolidTarget(target)) {
-      // The finite cores' ONE slot: the hit-info pins firstChoice 0, so
+      // The shaped grid's ONE slot: the hit-info pins firstChoice 0, so
       // the head map's color lane is the whole wire — the forward
       // families' exact shape, one route kind over.
       slotColors = [escapeSlotColor()];
@@ -6282,21 +6290,37 @@ async function main(): Promise<void> {
             boundingRadius = finiteSolidBoundingRadius(fourD ? 4 : 3);
             opticsRadius = FINITE_SOLID_HALF_EXTENT;
           }
-          // ONE material slot: the finite cores' hit-info pins firstChoice
-          // 0, so the head map's authored finish/optics is the whole
-          // material wire — the forward families' exact shape. The optical
-          // lane is ALWAYS admitted here (the DDA backend is this
-          // family's resolver), so the wire is derived with the gate on.
-          // The selected finite material measures Beer distance and slab
-          // lengths against H, not its H*sqrt(dim) enclosing sphere. Keep
-          // that geometry bound for framing, floor and fog independently.
+          // The material wire. A SHAPED block keeps ONE slot: the grid
+          // core's hit-info pins firstChoice 0, so the head map's authored
+          // finish/optics is the whole wire — the forward families' exact
+          // shape. A GENERAL block takes one slot PER ACTIVE MAP (the
+          // per-map media): its hit-info attributes a hit to the owning
+          // branch, a map's Glass finish makes its own subtree glass and
+          // every other subtree shades opaque with its own finish, and the
+          // media codes bake into the wire beside the maps. The optical
+          // lane is ALWAYS admitted here (the DDA backend is this family's
+          // resolver). The selected finite material measures Beer distance
+          // and slab lengths against H, not its H*sqrt(dim) enclosing
+          // sphere; the geometry bound keeps framing, floor and fog.
+          const materialSlots = general
+            ? finiteSolidGeneralSlots(state.transforms)
+            : [surfaceForwardSlot(state.transforms)];
           sessionMaterials = surfaceSlotMaterials(
             state.transforms,
-            [surfaceForwardSlot(state.transforms)],
+            materialSlots,
             undefined,
             opticsRadius,
             true,
           );
+          if (general) {
+            general = {
+              ...general,
+              media: finiteSolidGeneralMediaCodes(
+                sessionMaterials,
+                materialSlots.length,
+              ),
+            };
+          }
           sessionOpticsBackend =
             sessionMaterials?.optics === true ? "finiteSolid" : "estimator";
           ui.setSurfaceSessionKind("finiteSolid");
@@ -7854,6 +7878,10 @@ async function main(): Promise<void> {
     if (!previous) return;
     // Delete before enter(): session activation refreshes the UI reentrantly.
     pendingTransformEdits.delete(target);
+    // The Glass solid section counts the glass maps (the per-map media): a
+    // committed Finish/weight edit is the one path that changes that count
+    // without the full label pass.
+    ui.refreshGlassSolidSection(state);
     const document = transformEditSnapshot();
     applyActiveTransformEffect(
       transformEditPlan(previous, document),

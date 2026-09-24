@@ -651,8 +651,17 @@ const FOG_FOUR_D_BALLOON_REASON =
  * note names the admission's structural limits (the per-document refusals
  * flow through the Surface eligibility note); a shaped block is the glass
  * presets' authored construction and stays read-only here. */
-const GLASS_SOLID_GENERAL_NOTE =
-  "Every map must be a plain contracting affine: rotations, shears and posts build; variations and non-contracting maps refuse.";
+/** The general block's note: which maps are glass (the per-map media — a
+ * map's Glass finish makes its own subtree glass, every other subtree
+ * renders opaque), then the admission's standing limit. */
+function glassSolidGeneralNote(transforms: readonly Transform[]): string {
+  const active = transforms.filter((t) => (t.weight ?? 1) > 0);
+  const glass = active.filter((t) => t.optics?.model === "dielectric").length;
+  const limit = "Maps must be plain contracting affines.";
+  return glass === 0
+    ? `No map is Glass, so the solid renders opaque; set a map's Finish to Glass. ${limit}`
+    : `${String(glass)} of ${String(active.length)} maps are Glass; the rest render opaque behind them. ${limit}`;
+}
 const GLASS_SOLID_SHAPED_NOTE =
   "The glass preset authors this exact construction; the depth control stays read-only.";
 
@@ -5247,6 +5256,13 @@ export class Ui {
    * section in, and the two disclosures — the section's admission limits
    * and the depth row's enumeration-cap warning.
    */
+  /** Repaint the Glass solid section alone — its glass-map count reads the
+   * transforms' optics and weights, which a transform-editor commit
+   * changes without the full label pass. */
+  refreshGlassSolidSection(state: AppState): void {
+    this.syncGlassSolidSection(state);
+  }
+
   private syncGlassSolidSection(state: AppState): void {
     const block = state.finiteSolid;
     const shaped =
@@ -5277,7 +5293,7 @@ export class Ui {
       shaped
         ? GLASS_SOLID_SHAPED_NOTE
         : block !== undefined
-          ? GLASS_SOLID_GENERAL_NOTE
+          ? glassSolidGeneralNote(state.transforms)
           : "",
     );
   }

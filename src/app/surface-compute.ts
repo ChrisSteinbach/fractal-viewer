@@ -102,7 +102,10 @@ import {
   resolveTiling,
   type ResolvedTiling,
 } from "../fractal/tiling";
-import { finiteSolidBoundingRadius } from "../fractal/finite-solid";
+import {
+  finiteSolidBoundingRadius,
+  finiteSolidGeneralBoundingRadius,
+} from "../fractal/finite-solid";
 import {
   FINITE_TRANSPORT_RUNNING,
   FINITE_TRANSPORT_RUNNING_OFFSET,
@@ -804,6 +807,24 @@ function condensationSolidWireFor(
   );
 }
 
+/** A finite target's marching/visible ball: the general word tree's own
+ * level-box bound (a derived root's solid reaches far past the shaped
+ * grid's circumscribed ball), else the shaped construction's. The shade
+ * entry's AO/shadow scales and the shadow march's exit read this radius,
+ * so packing the grid's for a general session cut its shadows short. */
+function finiteTargetBoundingRadius(
+  target: { level: number; general?: FiniteSolidGeneralWire },
+  dimension: 3 | 4,
+): number {
+  return target.general
+    ? finiteSolidGeneralBoundingRadius({
+        dimension,
+        level: target.level,
+        levelBoxes: target.general.levelBoxes,
+      })
+    : finiteSolidBoundingRadius(dimension);
+}
+
 export type SurfaceComputeTarget =
   | {
       kind: "ifs";
@@ -1368,6 +1389,9 @@ export interface SurfaceComputeFrame {
     resolved: number;
     unresolved: number;
     invalid: number;
+    /** Hits whose slot resolves no optics — shadeRays owns them (the glass
+     * solid's opaque-first pixels under per-map media). */
+    skipped?: number;
     passes: number;
     batchMs: number[];
     /** Number of finite chunks that paused live work at the same theta. */
@@ -5451,7 +5475,8 @@ export class SurfaceComputeRenderer {
               boundingRadius: isFiniteSolidTarget(this.target)
                 ? // No DE — the construction's own origin-centred bound
                   // (the same ball the packers carry).
-                  finiteSolidBoundingRadius(
+                  finiteTargetBoundingRadius(
+                    this.target,
                     this.target.kind === "finite4" ? 4 : 3,
                   )
                 : this.target.de.boundingRadius,
@@ -5837,8 +5862,11 @@ export class SurfaceComputeRenderer {
                 packSurfaceGpuParamsFinite(
                   run,
                   target.level,
-                  finiteSolidBoundingRadius(3),
+                  finiteTargetBoundingRadius(target, 3),
                   groundPlane,
+                  // A general session's per-map slots (the hit-info's
+                  // owning branch); the shaped grid's one.
+                  target.general?.mapMatrix.length ?? 1,
                 )
             : target.kind === "finite4"
               ? (run) =>
@@ -5846,8 +5874,9 @@ export class SurfaceComputeRenderer {
                     view4!,
                     run,
                     target.level,
-                    finiteSolidBoundingRadius(4),
+                    finiteTargetBoundingRadius(target, 4),
                     groundPlane,
+                    target.general?.mapMatrix.length ?? 1,
                   )
               : target.kind === "escape"
                 ? (run) =>
@@ -6981,6 +7010,10 @@ export class SurfaceComputeRenderer {
     let transportLastUnresolved = 0;
     let transportUnresolved = 0;
     let transportInvalid = 0;
+    // Hits whose slot resolves no optics (SKIPPED: shadeRays owns them) —
+    // under the glass solid's per-map media, the pixels whose first surface
+    // is an opaque subtree. Counted so the frame's hits partition exactly.
+    let transportSkipped = 0;
     const transportFailures = new Map<string, number>();
     const transportBatchMs: number[] = [];
     let transportPassesStarted = 0;
@@ -7417,7 +7450,9 @@ export class SurfaceComputeRenderer {
             } else if (st === SURFACE_GPU_TRANSPORT_INVALID) {
               if (other) other.invalid++;
               else transportInvalid++;
-            } else if (st !== SURFACE_GPU_TRANSPORT_SKIPPED) {
+            } else if (st === SURFACE_GPU_TRANSPORT_SKIPPED) {
+              if (!other) transportSkipped++;
+            } else {
               throw new Error(
                 "Surface compute: unknown chunked transport status",
               );
@@ -7744,10 +7779,9 @@ export class SurfaceComputeRenderer {
             transportFailures.set(key, (transportFailures.get(key) ?? 0) + 1);
           } else if (s === SURFACE_GPU_TRANSPORT_INVALID) {
             transportInvalid++;
-          } else if (
-            this.transportChunkPaths > 0 &&
-            s !== SURFACE_GPU_TRANSPORT_SKIPPED
-          ) {
+          } else if (s === SURFACE_GPU_TRANSPORT_SKIPPED) {
+            transportSkipped++;
+          } else if (this.transportChunkPaths > 0) {
             throw new Error(
               "Surface compute: unknown chunked transport status",
             );
@@ -7776,7 +7810,7 @@ export class SurfaceComputeRenderer {
       // unresolved / invalid split the black-pixel question three ways:
       // budget exhaustion, refused queries, and NaN paths respectively).
       tr(
-        `transport done final resolved=${transportLastResolved} unresolved=${transportLastUnresolved} (cumulative resolved=${transportResolved} unresolved=${transportUnresolved} invalid=${transportInvalid}) passes=${transportPassesStarted}`,
+        `transport done final resolved=${transportLastResolved} unresolved=${transportLastUnresolved} (cumulative resolved=${transportResolved} unresolved=${transportUnresolved} invalid=${transportInvalid}) passes=${transportPassesStarted} skipped=${transportSkipped}`,
       );
     }
 
@@ -7922,6 +7956,7 @@ export class SurfaceComputeRenderer {
               resolved: transportResolved,
               unresolved: transportUnresolved,
               invalid: transportInvalid,
+              skipped: transportSkipped,
               passes: transportPassesStarted,
               batchMs: transportBatchMs,
               ...(this.transportChunkPaths > 0
