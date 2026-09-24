@@ -601,7 +601,11 @@ fn transportOpaqueNormal(p: vec3f, dir: vec3f, eps: f32, li: u32) -> vec3f {
   return select(-dir, normalize(grad), dot(grad, grad) > 1.0e-12);
 }
 
-fn transportOpaqueMarch(origin: vec3f, dir: vec3f, eps: f32, li: u32) -> FinOpaqueHit {
+// The march ends at \`tLimit\` (the glass walk's next boundary; negative on
+// a walk miss, which leaves the domain exit): only a hit strictly before
+// that boundary is a terminal, so marching past it bought nothing — and
+// could spend the step budget into a refusal the path never needed.
+fn transportOpaqueMarch(origin: vec3f, dir: vec3f, eps: f32, li: u32, tLimit: f32) -> FinOpaqueHit {
   var result: FinOpaqueHit;
   result.kind = 3u;
   result.reason = TRANSPORT_REASON_VISIT_CAP;
@@ -610,7 +614,8 @@ fn transportOpaqueMarch(origin: vec3f, dir: vec3f, eps: f32, li: u32) -> FinOpaq
   result.branch = -1;
   var p = origin;
   var t = 0.0;
-  let tFar = transportDomainExit(origin, dir);
+  let tExit = transportDomainExit(origin, dir);
+  let tFar = select(tExit, min(tExit, tLimit), tLimit >= 0.0);
   for (var i = 0u; i < TRANSPORT_QUERY_MAX_STEPS; i++) {
     if (tFar < 0.0 || t >= tFar) {
       result.kind = 2u;
