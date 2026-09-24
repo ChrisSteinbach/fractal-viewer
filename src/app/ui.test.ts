@@ -5852,7 +5852,7 @@ describe("Ui finish editor", () => {
       ui.bind(noopHandlers());
       ui.renderTransformEditor(plain, 0, 1);
       expect(opticsNote().textContent).toBe(
-        "This scene keeps the classic finish: transmission resolves on emitter-only scenes and finite-cell Menger constructions.",
+        "This scene keeps the classic finish: glass resolves inside a Glass solid (Scene / Look) and on emitter-only scenes.",
       );
     });
 
@@ -5886,7 +5886,7 @@ describe("Ui finish editor", () => {
 
       ui.setSurfaceEligibility("eligible", null, "escape");
       expect(opticsNote().textContent).toBe(
-        "This scene keeps the classic finish: transmission resolves on emitter-only scenes and finite-cell Menger constructions.",
+        "This scene keeps the classic finish: glass resolves inside a Glass solid (Scene / Look) and on emitter-only scenes.",
       );
     });
   });
