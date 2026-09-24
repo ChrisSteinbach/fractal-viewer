@@ -218,6 +218,24 @@ exclusion still applies. The separate 3D fragment-side grid also samples that
 public estimator; it is not a WGSL compute path. Absent condensation emits the
 pre-feature WGSL source byte for byte.
 
+### The general curved solid's field (`condensationSolid`)
+
+With `opticsBackend: "closedSolid"` on the plain affine cores, the
+`condensationSolid` option replaces the closed-solid field's root term with
+the depth band's word-tree search (`condensation-solid-gpu.ts`, the CPU
+oracles `condensation-solid.ts`/`-4d.ts`). The composed (base map, sector)
+edges, the invariant ball and the two prune ratios BAKE into the source (a
+`switch` per edge, at most 64), so no params or maps byte moves; the band
+stays the live `condDepthMin`/`condDepthMax`, and the emitter terms are the
+kernel's own `condensationShapeSdf` over the emitters the maps binding
+already carries. The search is the oracle's pre-order walk on an explicit
+stack of `CONDENSATION_SOLID_MAX_DEPTH + 1`. The f32 argument (relative
+rounding inside the 0.9 safety factor, a `1e-4` relative ball pad, a `1e-5`
+prune slack) is the module doc's. The option also moves the primary split
+onto the solid's own normal (`docs/gpu-bench-surface.md`'s curved-solid
+rows). Codegen refuses it off `closedSolid`, off the affine cores, and with
+a dimension mismatch. Absent or null is byte-identical.
+
 ## The fold's authored lengths
 
 The fold's authored lengths ride a dedicated `fold` lane in both map

@@ -10,6 +10,11 @@ import {
 } from "./bulb-de";
 import { condensationTraversalDepth } from "./condensation-de";
 import {
+  condensationSolidWgslSource,
+  validateCondensationSolidWire,
+  type CondensationSolidWire,
+} from "./condensation-solid-gpu";
+import {
   ESCAPE_STEP_SCALE,
   ESCAPE_TIME_ITERATIONS,
   type EscapeDE,
@@ -2052,6 +2057,15 @@ export interface SurfaceGpuKernelOptions {
    * byte-identical. */
   opticsBackend?:
     "estimator" | "closedSolid" | "finiteSolid" | "sphereInversion";
+  /** The GENERAL CURVED SOLID (`condensation-solid-gpu.ts`): with
+   * `opticsBackend: "closedSolid"` on the plain affine cores, the closed-
+   * solid field becomes the depth band's word-tree search over the
+   * session's baked edges instead of the root term. Everything above the
+   * field — the query, the medium cross-check, the shadow march — is the
+   * closed-solid backend's, unchanged. Requires condensation emitters and
+   * recursive maps (emitter-only C0 keeps the root field), and the wire's
+   * dimension must match the core's. Absent/null is byte-identical. */
+  condensationSolid?: CondensationSolidWire | null;
   /** The sphere-inversion glass backend's EXACT MÖBIUS NORMAL, OPT-IN and
    * not the shipped default: every transport normal (the boundary query's
    * landing and reported normals, the primary split, the floor shadow's
@@ -5407,6 +5421,25 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
         "surface-de-gpu: the closed-solid transport backend refuses mesh-bearing emitter shapes — the mesh lattice's interior band is not a certified stepping bound",
       );
     }
+  }
+  const condensationSolid = opts.condensationSolid ?? null;
+  if (condensationSolid) {
+    if (opticsBackend !== "closedSolid") {
+      throw new Error(
+        'surface-de-gpu: condensationSolid rides opticsBackend "closedSolid"',
+      );
+    }
+    if (core !== "affine" && core !== "affine4") {
+      throw new Error(
+        "surface-de-gpu: condensationSolid needs the plain affine cores — the solid admits no fold map",
+      );
+    }
+    if ((core === "affine4") !== (condensationSolid.dim === 4)) {
+      throw new Error(
+        "surface-de-gpu: condensationSolid's dimension must match the core's",
+      );
+    }
+    validateCondensationSolidWire(condensationSolid);
   }
   // The exact finite DDA uses its qualified oracle allowance. The lower
   // estimator guard prices an expensive distance-march boundary query;
@@ -9183,8 +9216,10 @@ fn transportSolidField(p: vec3f) -> f32 {
 fn transportSolidContains(p: vec3f) -> bool {
   return siEstimate(${siLift}).clear >= 0.0;
 }${siExactNormal ? siExactNormalWgsl(core4) : ""}`
-      : core4
-        ? `// The closed-solid field (opticsBackend "closedSolid"), 4D form —
+      : core4 && condensationSolid
+        ? condensationSolidWgslSource(condensationSolid)
+        : core4
+          ? `// The closed-solid field (opticsBackend "closedSolid"), 4D form —
 // condensation-de.ts's condensationSignedDistance4 mirrored. The hypot
 // estimator's interior reads ZERO on the shape flat (hypot(max(sd,0), w)
 // = 0 whenever sd < 0 and w = 0), so it has no negative region for a
@@ -9214,7 +9249,9 @@ fn transportSolidField(p: vec3f) -> f32 {
   }
   return best * ${wgslFloatLit(SHAPE_MARCH_SAFETY)};
 }`
-        : `// The closed-solid field (opticsBackend "closedSolid"): the session's
+          : condensationSolid
+            ? condensationSolidWgslSource(condensationSolid)
+            : `// The closed-solid field (opticsBackend "closedSolid"): the session's
 // SIGNED closed-solid union — the condensation term at the root, the
 // same SAFETY-scaled certified bound the primary march reads, so the
 // query's crossing scale applies to the field the primary hit was
@@ -10118,13 +10155,16 @@ ${
   // origin (at an edge the smoothed normal faces away from the approach
   // and the landing cannot fire; re-sampling the split normal at the
   // landing re-drew the corner normals for a net loss).${
-    siGlass
+    siGlass || condensationSolid
       ? `
   // The sphere-inversion backend taps its SIGNED field here, as the twin
   // does: this core's surfaceDE is the unsigned estimator, whose interior
   // values are folded member signals at the wrong scale, so its taps across
   // the surface drew a garbage split normal (the orbit leg's near-cusp
-  // probe traced straight through as backdrop).
+  // probe traced straight through as backdrop). The general curved solid
+  // (condensationSolid) taps its field for the same reason: this core's
+  // surfaceDE is the IFS descent, not the band solid, and in 4D it reads
+  // zero throughout the solid's interior.
   let n0 = transportSolidNormal(origin, dir, eps);`
       : `
   let n0 = transportOpticalNormal(origin, dir, eps, li);`

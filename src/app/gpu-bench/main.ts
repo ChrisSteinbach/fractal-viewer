@@ -123,7 +123,12 @@ import {
 } from "../../fractal/escape-de";
 import { resolveShapeTrap, shapeTrapLocalSdf } from "../../fractal/shape-trap";
 import type { ResolvedShapeTrap } from "../../fractal/shape-trap";
-import { PEACE_SIGN_SHAPE, SHAPE_MARCH_SAFETY } from "../../fractal/shapes";
+import {
+  ORBIT_RING_SHAPE,
+  PEACE_SIGN_SHAPE,
+  SHAPE_MARCH_SAFETY,
+  type ShapeSpec,
+} from "../../fractal/shapes";
 import type { EscapeDE } from "../../fractal/escape-de";
 import {
   analyzeEscapeSystem4,
@@ -353,6 +358,18 @@ import {
 } from "../flame-gpu-backend";
 import { FLAME_FILTER_RADIUS } from "../flame-worker-core";
 import { surfaceCondensationKernelSpec } from "./condensation";
+import { composeAffine } from "../../fractal/affine";
+import {
+  buildCondensationSolid3,
+  condensationSolidContains3,
+  condensationSolidSignedDistance3,
+} from "../../fractal/condensation-solid";
+import {
+  buildCondensationSolid4,
+  condensationSolidContains4,
+  condensationSolidSignedDistance4,
+} from "../../fractal/condensation-solid-4d";
+import { condensationSolidWire } from "../../fractal/condensation-solid-gpu";
 import { runSurfaceEmitterOnlyAgreement } from "./condensation-emitter-only";
 import { runSphereInversionBench } from "./sphere-inversion-legs";
 import {
@@ -3762,6 +3779,13 @@ interface SurfaceSectionConfig {
    * cost-sweep path. Its verdict is "fail" or "skipped", never "pass": a run
    * that skipped every other leg certifies nothing about the section. */
   sphereInversionOnly: boolean;
+  /** Opt-in (`--surface-transport-only=<backend>`,
+   * `surfaceTransportOnly=<backend>`): run ONLY that backend's transport
+   * agreement legs after the canary arms — the iteration path for a
+   * transport backend (the general curved solid rides `closedSolid`). Its
+   * verdict is "fail" or "skipped", never "pass", like the
+   * sphere-inversion-only path. Absent runs the whole section. */
+  transportOnly: SurfaceTransportLegBackend | undefined;
   /** With {@link sphereInversionOnly} (`--surface-si-glass-envelope=1`,
    * `surfaceSiGlassEnvelope=1`): the curved-glass starters' renderer
    * envelope and depth curve, real adapters only. MEASURED, NOT GATED — a
@@ -5661,6 +5685,9 @@ function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
     aff4Sweep: params.get("surfaceAff4Sweep") === "1",
     planeFrame: params.get("surfacePlaneFrame") === "1",
     sphereInversionOnly: params.get("surfaceSphereInversionOnly") === "1",
+    transportOnly: (["estimator", "closedSolid", "finiteSolid"] as const).find(
+      (b) => b === params.get("surfaceTransportOnly"),
+    ),
     siGlassEnvelope: params.get("surfaceSiGlassEnvelope") === "1",
     siExactNormal: params.get("surfaceSiExactNormal") === "1",
     siJointOff: params.get("surfaceSiJointOff") === "1",
@@ -7667,6 +7694,7 @@ async function acquireSurfaceDevice(
  * offset. */
 function surfaceTransportControlWgsl(
   backend: SurfaceTransportLegBackend,
+  fieldProbe = backend === "sphereInversion",
 ): string {
   // The sphere-inversion glass backend rides the closed-solid query's
   // signature (the caller-carried medium) and its shadow/terminal helpers,
@@ -7796,12 +7824,12 @@ ${
 }
     r.c = vec4f(0.0);
     r.d = vec4f(0.0);${
-      backend === "sphereInversion"
+      fieldProbe
         ? `
   } else if (q.mode == 4u) {
-    // The sphere-inversion field probe: the SIGNED field the query marches
-    // and the exact membership bit, at q.origin — the real-driver half of
-    // the interior f32 argument (the twin is sphereInversionSignedF32).
+    // The field probe (the sphere-inversion and condensation-solid legs):
+    // the SIGNED field the query marches and the membership bit, at
+    // q.origin — the real-driver half of each field's f32 argument.
     r.a = vec4f(transportSolidField(q.origin), select(0.0, 1.0, transportSolidContains(q.origin)), 0.0, 0.0);
     r.b = vec4f(0.0);
     r.c = vec4f(0.0);
@@ -8351,6 +8379,11 @@ const SURFACE_TRANSPORT_CHAIN_REPLAY_CAP = SURFACE_TRANSPORT_LEG_MAX_PATHS;
 /** The sphere-inversion legs' field arm: member points sampled per leg (each
  * also seeds a bisected pair toward the boundary). */
 const SURFACE_TRANSPORT_FIELD_PROBES = 600;
+/** The condensation-solid field probes' value gate: f32 rounding of the
+ * same terms (condensation-solid-gpu.ts's f32 argument), relative to the
+ * value plus an absolute floor at the boundary scale. */
+const CONDENSATION_SOLID_FIELD_REL_TOL = 1e-4;
+const CONDENSATION_SOLID_FIELD_ABS_TOL = 1e-5;
 /** Max excluded (chaos-flip) probes per forward leg before the leg fails:
  * the escape eval legs' own absolution-cap discipline — a fixture whose
  * every probe flips certifies nothing. */
@@ -8478,6 +8511,19 @@ interface SurfaceTransportLegSpec {
    * grid cannot aim at. A ray that finds no primary hit THROWS: an extra
    * probe exists to exercise one named case, never to vanish. */
   extraProbes?: readonly { label: string; ro: Vec3; dir: Vec3 }[];
+  /** The general curved solid's legs: exact membership in the f64 solid
+   * for the FIELD probes (mode 4) only. It is not the fixture's
+   * `contains`, which would put the sphere-inversion membership gate into
+   * the twin's query while the closed-solid kernel carries none. */
+  fieldContains?: (p: Vec3) => boolean;
+  /** Put the leg's probes through the ULP ensemble (the forward and finite
+   * legs' pre-hoc classifier): a probe whose own twin disagrees with its
+   * f32 neighbours is excluded and counted, capped. The general curved
+   * solid's field is continuous, but its traces refract through the seams
+   * where beads meet, and a trace there can flip between resolving and a
+   * medium-state refusal across one ulp of the origin (measured on the
+   * beads fixture: three outcomes among seven neighbours). */
+  ulpEnsemble?: boolean;
   fixture: TransportFixtureSystem;
 }
 
@@ -8580,6 +8626,10 @@ function surfaceTransportTraceProbeStable(
   dir: Vec3,
   caps: { maxProcessedPaths: number; maxInterfaces: number },
   finiteQuery?: TransportFiniteQueryFn,
+  /** The signed backends' boundary query (the trace's 8th argument), so
+   * the ensemble re-traces with the query the leg compares; absent, the
+   * estimator query as before. */
+  query?: TransportQueryFn,
 ): boolean {
   const material = {
     ior: DIELECTRIC_IOR,
@@ -8594,7 +8644,7 @@ function surfaceTransportTraceProbeStable(
     material,
     SURFACE_TRANSPORT_CONTROL_BG_LINEAR,
     caps,
-    undefined,
+    query,
     finiteQuery,
   );
   const agrees = (r: ReturnType<typeof transportTraceCPU>): boolean =>
@@ -8612,7 +8662,7 @@ function surfaceTransportTraceProbeStable(
           material,
           SURFACE_TRANSPORT_CONTROL_BG_LINEAR,
           caps,
-          undefined,
+          query,
           finiteQuery,
         ),
       )
@@ -8641,18 +8691,23 @@ function surfaceTransportBoundaryProbeStable(
   anchorPoint: Vec3,
   eps: number,
   finiteQuery?: (origin: Vec3, dir: Vec3) => TransportFiniteBoundaryResult,
+  /** The signed backends' query, wrapped to the ensemble's (origin) shape
+   * over the record's anchor and medium claim; absent, the estimator. */
+  signedQuery?: (origin: Vec3) => TransportBoundaryResult,
 ): boolean {
   const twin = (o: Vec3): TransportBoundaryResult =>
     finiteQuery
       ? finiteQuery(o, dir)
-      : transportBoundaryQueryCPU(
-          fixture,
-          o,
-          dir,
-          anchorPresent,
-          anchorPoint,
-          eps,
-        );
+      : signedQuery
+        ? signedQuery(o)
+        : transportBoundaryQueryCPU(
+            fixture,
+            o,
+            dir,
+            anchorPresent,
+            anchorPoint,
+            eps,
+          );
   const base = twin(origin);
   const agrees = (r: TransportBoundaryResult): boolean =>
     r.kind === base.kind &&
@@ -8771,6 +8826,48 @@ function surfaceTransportProbeOnSurface(
  * convention), and a probe camera that finds no primary hit throws —
  * an agreement leg never certifies vacuously.
  */
+/** The general curved solid's named probes: from the canonical grid's eye,
+ * one ray at a point of the emitter's surface (`local`, in the emitter's
+ * own frame) in each depth-1 member and, for a band reaching depth 2, in
+ * two depth-2 members.
+ * The canonical grid mostly misses a small bead lattice (2 of 8 hits on
+ * the beads fixture); these rays land on named members instead. */
+function condensationSolidBeadProbes(
+  transforms: readonly Transform[],
+  local: Vec3,
+  visR: number,
+  maxDepth: number,
+): { label: string; ro: Vec3; dir: Vec3 }[] {
+  const apply = (t: Transform, p: Vec3): Vec3 => {
+    const a = composeAffine(t);
+    return [0, 1, 2].map(
+      (r) =>
+        a.m[r * 3] * p[0] +
+        a.m[r * 3 + 1] * p[1] +
+        a.m[r * 3 + 2] * p[2] +
+        a.t[r],
+    ) as Vec3;
+  };
+  const emitter = transforms.find((t) => t.emitter)!;
+  const maps = transforms.filter((t) => !t.emitter);
+  const seed = apply(emitter, local);
+  const targets: { label: string; p: Vec3 }[] = maps.map((m, i) => ({
+    label: `member f${String(i)}`,
+    p: apply(m, seed),
+  }));
+  if (maxDepth >= 2)
+    targets.push(
+      { label: "member f0 f1", p: apply(maps[0], apply(maps[1], seed)) },
+      { label: "member f2 f3", p: apply(maps[2], apply(maps[3], seed)) },
+    );
+  const ro: Vec3 = [0.9 * visR, 0.55 * visR, 1.7 * visR];
+  return targets.map(({ label, p }) => ({
+    label,
+    ro,
+    dir: [p[0] - ro[0], p[1] - ro[1], p[2] - ro[2]],
+  }));
+}
+
 async function runSurfaceTransportAgreementLegs(
   device: GPUDevice,
   systems: {
@@ -9035,6 +9132,117 @@ async function runSurfaceTransportAgreementLegs(
   pushClosedSolidLeg(true);
   pushClosedSolidLeg(false, "abutting");
   pushClosedSolidLeg(true, "abutting");
+
+  // The GENERAL CURVED SOLID's legs (condensation-solid-gpu.ts): the
+  // closed-solid query over the depth band's word tree, on the look gate's
+  // own subject — the Sierpinski corners stamping a centred bead (a sphere)
+  // or ring (the orbit torus). Four fixtures cover what the search can get
+  // wrong: beads over [0, 2] (the root plus two levels), rings over the
+  // band [1, 2] that SKIPS the root, an order-3 kaleidoscope (twelve edges,
+  // the sector un-rotation baked into each), and each dimension — 4D at
+  // the canonical identity pose, where the oracle's slice IS the 3D solid.
+  // The fixture's `estimate` is the f64 oracle's signed field; the field
+  // probes read the kernel's `transportSolidField` against it directly.
+  const pushCondensationSolidLeg = (
+    fourD: boolean,
+    variant: "beads" | "rings" | "kaleido",
+  ): void => {
+    const shape: ShapeSpec =
+      variant === "rings"
+        ? ORBIT_RING_SHAPE
+        : {
+            parts: [
+              {
+                primitive: { kind: "sphere", radius: 1 },
+                combine: "union",
+              },
+            ],
+          };
+    const transforms: Transform[] = [
+      ...sierpinskiTetrahedron(),
+      {
+        id: 4,
+        position: [0, 0, 0],
+        rotation: [0.5, 0.3, 0.2],
+        scale: variant === "rings" ? [0.36, 0.36, 0.36] : [0.28, 0.28, 0.28],
+        weight: 1.4,
+        emitter: shape,
+      },
+    ];
+    const symmetry =
+      variant === "kaleido"
+        ? { order: 3, plane: "xy" as const }
+        : { order: 1, plane: "xy" as const };
+    const options = {
+      condensationDepthBand:
+        variant === "rings"
+          ? { minDepth: 1, maxDepth: 2 }
+          : { maxDepth: variant === "kaleido" ? 1 : 2 },
+    };
+    const de3 = fourD
+      ? null
+      : buildSurfaceDE(transforms, null, symmetry, options);
+    const de4 = fourD
+      ? buildSurfaceDE4(transforms, null, symmetry, options)
+      : null;
+    const de = (de4 ?? de3)!;
+    const solid3 = de3 ? buildCondensationSolid3(de3) : null;
+    const solid4 = de4 ? buildCondensationSolid4(de4) : null;
+    const wire = condensationSolidWire((solid4 ?? solid3)!);
+    legs.push({
+      core: fourD ? "affine4" : "affine",
+      systemName: `condensationSolid${variant[0].toUpperCase()}${variant.slice(1)}${fourD ? "4" : "3"}`,
+      backend: "closedSolid",
+      options: {
+        mode: "shade",
+        core: fourD ? "affine4" : "affine",
+        width: SURFACE_AFFINE_LADDER_WIDTH,
+        workgroupSize: SURFACE_TRANSPORT_WG,
+        sharedFrontier: false,
+        bnbStage2: false,
+        optics: true,
+        opticsBackend: "closedSolid",
+        transportMaxPaths: SURFACE_TRANSPORT_LEG_MAX_PATHS,
+        condensation: surfaceCondensationKernelSpec(de),
+        condensationSolid: wire,
+      },
+      packParams: (n) =>
+        de4
+          ? packSurface4GpuParams(de4, canonicalView4, {
+              itemCount: n,
+              cutoff: 0,
+            })
+          : packSurfaceGpuParams(de3!, { itemCount: n, cutoff: 0 }),
+      packMaps: () =>
+        new Float32Array(
+          de4 ? packSurfaceGpuMaps4(de4) : packSurfaceGpuMaps(de3!),
+        ),
+      ulpEnsemble: true,
+      extraProbes: condensationSolidBeadProbes(
+        transforms,
+        variant === "rings" ? [0.78, 0, 0] : [0, 0, 0],
+        de.visibleBoundingRadius,
+        variant === "kaleido" ? 1 : 2,
+      ),
+      fieldContains: (p) =>
+        solid4
+          ? condensationSolidContains4(solid4, [p[0], p[1], p[2], 0])
+          : condensationSolidContains3(solid3!, p),
+      fixture: {
+        estimate: (p) =>
+          solid4
+            ? condensationSolidSignedDistance4(solid4, [p[0], p[1], p[2], 0])
+            : condensationSolidSignedDistance3(solid3!, p),
+        stepScale: de.stepScale,
+        visibleRadius: de.visibleBoundingRadius,
+      },
+    });
+  };
+  pushCondensationSolidLeg(false, "beads");
+  pushCondensationSolidLeg(true, "beads");
+  pushCondensationSolidLeg(false, "rings");
+  pushCondensationSolidLeg(true, "rings");
+  pushCondensationSolidLeg(false, "kaleido");
 
   // The sphere-inversion GLASS backend's legs (both dimensions): the
   // family's signed field under the closed-solid query, with the exact
@@ -9522,7 +9730,7 @@ async function runSurfaceTransportAgreementLegs(
     const { pipeline, compileMs } = await buildSurfacePipeline(
       device,
       "auto",
-      `${surfaceDeKernelWgsl(leg.options)}\n${surfaceTransportControlWgsl(leg.backend)}`,
+      `${surfaceDeKernelWgsl(leg.options)}\n${surfaceTransportControlWgsl(leg.backend, leg.backend === "sphereInversion" || !!leg.fieldContains)}`,
       "controlTransport",
       `surface-de transport ${leg.core}`,
     );
@@ -9833,7 +10041,11 @@ async function runSurfaceTransportAgreementLegs(
           visR,
           distortion: 0,
         });
-        if (leg.backend === "sphereInversion") {
+        // The chain-replay arm runs for the sphere-inversion legs and the
+        // general curved solid's legs (the ones carrying fieldContains): both
+        // trace long refracting chains where a trace-level mismatch names
+        // nothing.
+        if (leg.backend === "sphereInversion" || leg.fieldContains) {
           // THE CHAIN-REPLAY ARM: the twin's OWN boundary-query chain while
           // it traces this probe, replayed on the GPU query by query. A
           // trace chains dozens of queries, so a trace-level disagreement
@@ -10371,8 +10583,12 @@ async function runSurfaceTransportAgreementLegs(
     // field is read against the f64 authority. The deterministic RNG keeps
     // the set identical run to run.
     const fieldQueries: ControlQueryRec[] = [];
-    if (leg.backend === "sphereInversion" && leg.fixture.contains) {
-      const contains = leg.fixture.contains;
+    const fieldContains =
+      leg.backend === "sphereInversion"
+        ? leg.fixture.contains
+        : leg.fieldContains;
+    if (fieldContains) {
+      const contains = fieldContains;
       const rng = mulberry32(0x9ea55);
       const members: Vec3[] = [];
       const others: Vec3[] = [];
@@ -10471,7 +10687,8 @@ async function runSurfaceTransportAgreementLegs(
     // origin, so a probe whose twin disagrees with its own ULP neighbors
     // is excluded and counted (the escape legs' pre-hoc shape), never
     // compared against a differently-realized GPU chain.
-    const discreteQuery = forward || leg.backend === "finiteSolid";
+    const discreteQuery =
+      forward || leg.backend === "finiteSolid" || leg.ulpEnsemble === true;
     let flipped = 0;
     // A finite leg must compare real traces and resolve at least one of
     // them; excluding every probe cannot certify optical agreement.
@@ -10571,6 +10788,18 @@ async function runSurfaceTransportAgreementLegs(
               ? (o: Vec3, d: Vec3) =>
                   finiteQuery!(o, d, finiteAnchorOf(query), query.inside === 1)
               : undefined,
+            surfaceTransportSignedBackend(leg.backend)
+              ? (o: Vec3) =>
+                  transportSolidBoundaryQueryCPU(
+                    leg.fixture,
+                    o,
+                    query.dir,
+                    query.anchorPresent === 1,
+                    query.anchorPoint,
+                    query.inside === 1,
+                    query.eps,
+                  )
+              : undefined,
           );
         if (!boundaryStable) flipped++;
         if (!boundaryStable) continue;
@@ -10644,7 +10873,18 @@ async function runSurfaceTransportAgreementLegs(
         // honestly reports t 0 — so its anchored arms pin the
         // kind/reason/t/normal agreement and the anchor out below
         // instead.
-        if (leg.backend !== "finiteSolid" && anchoredArm && !(gpuT > 0)) {
+        // A chain-replay query (past the signed backends' two canonical
+        // arms) is the twin's own mid-trace query, whose honest answer can
+        // be an anchored miss at t 0 on both engines; the pin is the
+        // canonical arm's, or a chain query the twin says is a boundary.
+        const chainReplay =
+          surfaceTransportSignedBackend(leg.backend) && b >= 2;
+        if (
+          leg.backend !== "finiteSolid" &&
+          anchoredArm &&
+          !(gpuT > 0) &&
+          (!chainReplay || cpuHit.kind === "boundary")
+        ) {
           fail(
             pi,
             armName,
@@ -10881,6 +11121,7 @@ async function runSurfaceTransportAgreementLegs(
           probe.dir,
           legCaps,
           finiteQuery,
+          solidQuery,
         );
       if (!traceStable) flipped++;
       const traceBase = pi * resultFloats;
@@ -11075,7 +11316,58 @@ async function runSurfaceTransportAgreementLegs(
     // claims more interior clearance than f64. Disclosed: the worst
     // PRE-SLACK interior excess, `gpu clearance + slack − f64 clearance`,
     // the number the slack exists to cover (CPU emulation: <= 1.39e-7).
-    if (fieldOut) {
+    // The condensation-solid legs' field probes gate the kernel's word
+    // search against the f64 oracle's value: membership outside the
+    // crossing band (the field's sign is EXACT on the CPU, so a flip is
+    // allowed only where rounding can land it), and the value within f32
+    // rounding of the same terms (condensation-solid-gpu.ts's f32
+    // argument). Disclosed: the worst relative value delta.
+    if (fieldOut && leg.fieldContains) {
+      const contains = leg.fieldContains;
+      const bandEps = DIELECTRIC_CROSSING_EPS_REL * visR;
+      let interior = 0;
+      let worstRel = 0;
+      fieldQueries.forEach((q, fi) => {
+        const base = fi * resultFloats;
+        const gpuField = fieldOut[base];
+        const gpuMember = fieldOut[base + 1] > 0.5;
+        const f64 = leg.fixture.estimate(q.origin);
+        const member = contains(q.origin);
+        if (!Number.isFinite(gpuField)) {
+          fail(fi, "field", `non-finite GPU field ${String(gpuField)}`);
+        }
+        if (Math.abs(f64) > bandEps && gpuMember !== member) {
+          fail(
+            fi,
+            "field",
+            `membership — gpu ${String(gpuMember)} vs cpu ${String(member)} (f64 field ${String(f64)})`,
+          );
+        }
+        const tol =
+          CONDENSATION_SOLID_FIELD_REL_TOL * Math.abs(f64) +
+          CONDENSATION_SOLID_FIELD_ABS_TOL * visR;
+        const delta = Math.abs(gpuField - f64);
+        if (!(delta <= tol)) {
+          fail(
+            fi,
+            "field",
+            `value — gpu ${String(gpuField)} vs f64 ${String(f64)} (tol ${tol.toExponential(2)})`,
+          );
+        }
+        if (f64 < 0 && member) interior++;
+        worstRel = Math.max(
+          worstRel,
+          delta / Math.max(Math.abs(f64), 1e-3 * visR),
+        );
+      });
+      if (interior < 50) {
+        fail(0, "field", `only ${String(interior)} interior samples read`);
+      }
+      note(
+        `transport ${leg.core} (${leg.systemName}) field: ${String(fieldQueries.length)} ` +
+          `probes, ${String(interior)} interior, worst relative delta ${worstRel.toExponential(2)}`,
+      );
+    } else if (fieldOut) {
       const band = 4 * SPHERE_INVERSION_GPU_SLACK;
       let interior = 0;
       let worstExcess = -Infinity;
@@ -20048,6 +20340,45 @@ async function runSurfaceDeSection(
       }
       render();
     };
+
+    if (config.transportOnly) {
+      const only = config.transportOnly;
+      let transportFailed = false;
+      try {
+        const { rows, notes: transportNotes } =
+          await runSurfaceTransportAgreementLegs(
+            device,
+            {
+              descent: systems,
+              escape: escapeSystems,
+              bulb: bulbSystems,
+              affine4: affine4Systems,
+              fold4: fold4Systems,
+              escape4: escape4Systems,
+            },
+            status,
+            activity,
+            (text) => results.notes.push(text),
+            only,
+          );
+        results.transportAgreement = rows;
+        for (const n of transportNotes) results.notes.push(n);
+        for (const row of rows)
+          results.notes.push(surfaceTransportAgreementNote(row));
+        if (rows.length === 0) transportFailed = true;
+      } catch (e) {
+        transportFailed = true;
+        results.notes.push(`transport agreement: ${describeError(e)}`);
+      }
+      await canaryCheck(`the ${only} transport legs`);
+      results.verdict = transportFailed ? "fail" : "skipped";
+      results.reason = transportFailed
+        ? `${only} transport agreement failure — see transportAgreement and notes`
+        : `surfaceTransportOnly=${only}: only that backend's transport legs ran (and passed); every other leg was skipped, so this certifies nothing about the section`;
+      render();
+      status(results.verdict + ` — ${results.reason}`);
+      return results;
+    }
 
     if (config.sphereInversionOnly) {
       await runSphereInversionLegs();

@@ -2165,8 +2165,24 @@ THE ROUTING PREDICATE (`surface-optics-backend.ts`'s
 `surfaceCondensationSolidAdmitted`) reads both admissions and, in 4D, the
 pose at entry, plus the router's own tiling and balloon refusals. It is
 DISJOINT from `surfaceClosedSolidAdmitted` by the map count: emitter-only
-C0 stays the closed-solid backend's. Nothing selects it yet. It waits on
-the kernel mirror.
+C0 stays the closed-solid backend's.
+
+THE KERNEL HALF (`src/fractal/condensation-solid-gpu.ts`, the closed-solid
+backend's `condensationSolid` kernel option). The word-tree search runs as
+`transportSolidField` in WGSL, with everything above the field unchanged.
+The session's edges and invariant ball bake into the source, so the frozen
+params wire does not move, and the module doc carries the f32 argument the
+epic owed: relative rounding sits inside the 0.9 safety factor, a relative
+ball pad keeps the prune certificate sound under the f32 child point, and
+the f32 prune slack only prunes less. Five transport legs pin it on the RX
+7900 XTX against the f64 oracle in both dimensions: beads, rings over a band
+skipping the root, and an order-3 kaleidoscope, field values within
+2.64e-5 relative (`docs/gpu-bench-surface.md`, the curved-solid rows). The
+legs found one bug. The primary split's normal came from the display
+estimator, which for a band solid is the IFS descent. The split now taps the
+solid's field, as the sphere-inversion backend's does. Routing does not yet
+select the option: the panel material, starters and app gate are the next
+step.
 
 ## What is not yet qualified
 

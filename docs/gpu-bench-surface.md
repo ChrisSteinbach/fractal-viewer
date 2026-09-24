@@ -137,6 +137,11 @@ software device corrupts mid-run readbacks, which the contended-device
 canary reports as `verdict=device-unreliable` (exit 2, rerun) instead of
 plausible numeric fails.
 
+`--surface-transport-only=<backend>` (`estimator`, `closedSolid` or
+`finiteSolid`) runs only that backend's transport agreement legs, the
+iteration path for a transport backend. Like the sphere-inversion-only path,
+its verdict is `fail` or `skipped`, never `pass`.
+
 Judge the escape rows on `--display=:0` — this is already this file's
 standing advice, and the reason is the known SwiftShader false failure
 documented below. Do not raise the escape agreement cap to make a
@@ -630,6 +635,61 @@ WHAT THE LEGS FOUND, both fixed in the kernel AND the twin before these rows
 1. The kernel's primary split tapped the UNSIGNED estimator for its normal.
 2. The query could step past a real exit near a cusp, which is what the look
    gate's inside-miss mass was.
+
+## The general curved solid's transport rows (`closedSolid` + `condensationSolid`)
+
+The closed-solid backend's word-tree field (`condensation-solid-gpu.ts`) is
+pinned by five transport legs beside the emitter-only ones, on the look
+gate's own subject: the Sierpinski corners stamping a centred bead (a sphere
+at scale 0.28) or ring (the orbit torus at 0.36).
+
+- **Beads, band [0, 2], 3D and 4D.** 4D at the canonical identity pose,
+  where the oracle's slice is the 3D solid.
+- **Rings, band [1, 2], 3D and 4D.** A band that skips the root.
+- **Kaleido, band [0, 1], 3D.** An order-3 `xy` kaleidoscope, twelve baked
+  edges with the sector un-rotation folded into each.
+
+The fixture's `estimate` is the f64 oracle's signed field
+(`condensationSolidSignedDistance3`/`-4`); the twin carries no membership
+gate, because the kernel carries none. Beyond the closed-solid arms, each
+leg runs:
+
+- **Named member probes.** The canonical grid hits 2 of 8 rays on this small
+  lattice, so rays from the grid's eye aim at a surface point of each
+  depth-1 member and two depth-2 members.
+- **The chain-replay arm**, as the sphere-inversion legs run it. An anchored
+  replay query whose honest answer is a miss reports t 0 on both engines, so
+  the anchored-arm `t > 0` pin applies to the canonical arm and to replayed
+  queries the twin calls a boundary.
+- **The ULP ensemble** (the forward and finite legs' pre-hoc classifier), now
+  re-tracing with the leg's own signed query. The field is continuous, but a
+  trace refracting through the seam where beads meet can flip between
+  resolving and a medium-state refusal across one ulp of its origin: the
+  beads fixture's second grid probe gives three outcomes among its seven
+  neighbours. Excluded probes are counted and capped.
+- **The field arm (mode 4)** against the f64 value: membership outside the
+  crossing band, and the value within `1e-4·|f64| + 1e-5·visR`.
+
+MEASURED on 2026-09-24 on the RX 7900 XTX (`:0`, radeonsi navi31),
+`--surface-transport-only=closedSolid`, UNCERTIFIED (the owner's Firefox at
+68 ms/s; agreement rows, not timing). All nine closed-solid legs agree, one
+chaos-flip probe excluded in each beads leg:
+
+| Leg                         | Queries | Max radiance Δ | Max residual Δ | Max normal Δ | Field: worst relative Δ (interior samples) |
+| --------------------------- | ------: | -------------- | -------------- | ------------ | ------------------------------------------ |
+| `condensationSolidBeads3`   |     236 | 3.5e-6         | 6.4e-5         | 8.2e-5       | 2.00e-5 (1181)                             |
+| `condensationSolidBeads4`   |     236 | 3.5e-6         | 6.4e-5         | 8.2e-5       | 2.00e-5 (1181)                             |
+| `condensationSolidRings3`   |     200 | 9.4e-7         | 1.9e-4         | 9.0e-6       | 2.05e-5 (623)                              |
+| `condensationSolidRings4`   |     200 | 9.4e-7         | 1.9e-4         | 9.0e-6       | 2.05e-5 (623)                              |
+| `condensationSolidKaleido3` |     102 | 2.2e-8         | 1.9e-9         | 8.4e-6       | 2.64e-5 (1210)                             |
+
+WHAT THE LEGS FOUND: the kernel's primary split tapped `surfaceDE`, the
+display estimator, for its normal. For emitter-only C0 that is the solid's
+own field near the surface. For the band solid it is the IFS descent, and in
+4D it reads zero throughout the solid's interior, so the 4D traces bent the
+primary child straight through to the backdrop while every replayed query
+agreed. The split now taps the solid's field under `condensationSolid`, as
+the sphere-inversion backend's already did; C0 emission is unchanged.
 
 ### The glass continuation leg (the resumable trace)
 
