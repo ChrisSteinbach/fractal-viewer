@@ -1195,7 +1195,7 @@ grid, pad}`. The grid needs NO bitmap in-shader — the ternary rule is
   can exclude an unstable probe, within its existing cap. Independent f64
   continuation regressions additionally check the f32 query's mathematics.
 
-## The general word tree's GPU half (landed, 2026-09-21)
+## The general word tree's GPU half (landed 2026-09-21; the box tree, superseded — see the simplicial replacement below)
 
 The general construction's Phase 2 (the document's OWN maps as the cell
 tree, the owner scope correction's deliverable) LANDED as
@@ -1259,7 +1259,7 @@ same `core: "finite"` / `"finite4"` pair under
   ray, its anchored continuation, honest exits, the contradicting-claim
   refusal, and the twin-vs-grid-twin cross-construction check).
 
-## The general word tree's routing and panel (landed, 2026-09-21)
+## The general word tree's routing and panel (landed 2026-09-21; the box tree, superseded)
 
 The general construction's Phase 3 (the shape-less block routed and
 authored in the app, both dimensions) LANDED:
@@ -1318,7 +1318,7 @@ authored in the app, both dimensions) LANDED:
   needs the document's own diagonal contractions, and the Surface button
   disables beside the reason until the block is cleared.
 
-## The general word tree's Phase 4 record (landed, 2026-09-21)
+## The general word tree's Phase 4 record (landed 2026-09-21; the box tree, superseded)
 
 The harness legs and the owner-authored app gate that close the general
 word tree's qualification, plus the one defect they caught:
@@ -1412,6 +1412,119 @@ word tree's qualification, plus the one defect they caught:
   2.48e-8 — and the grid finite legs, envelopes and chunk controls all
   green, so the snap fix and the retry are pinned by the same device
   agreement the GPU half shipped with.
+
+## The simplicial word tree: the box tree replaced (2026-09-24)
+
+The owner's decision of 2026-09-21 replaced the general construction's box
+cells by SIMPLEX cells, retiring the box word tree (the three sections above
+are its record). The document wire (`{level}` alone) and the Glass solid
+panel survive; the admission widens from diagonal contractions to EVERY
+contracting affine the UI authors — rotations, shears, per-axis scale and
+post-affines — because an affine maps a simplex to a simplex exactly. The
+shaped grid path (`{shape, level}`) is untouched and byte-identical.
+
+- **The root, and why invariance is not required.** The planned admission
+  filter was ROOT INVARIANCE; it was measured and refuted before any code
+  shipped: the viewer's own default system (three of four maps rotate)
+  sends a vertex image 0.50 outside its fixed points' hull, a 4000-restart
+  search across scales 1..20.5 found NO invariant tetrahedron for it (best
+  violation +0.664, scale-free), and its attractor's hull has 100+ extreme
+  points — the filter would refuse the very documents the replacement is
+  for. The shipped rule: the fixed points' hull when it is one simplex AND
+  invariant (`rootKind: "hull"` — the gasket, the pentatope), else the
+  canonical DERIVED simplex (`"derived"`): a regular simplex (a fixed
+  Householder frame, no basis choice) whose inscribed ball contains the
+  invariant axis box (the bbox fixed point of the Hutchinson iteration —
+  round 76 for the default system). Soundness rides the LEVEL BOXES
+  instead: `levelBoxes[k] ⊇ U_k` by one Hutchinson bbox step per level, so
+  the pruned DFS (the ray against each child's word-image of its level
+  box, by the composed inverse and an axis clip) equals the unpruned
+  enumeration endpoint for endpoint for every contracting family, and the
+  marching ball bounds `levelBoxes[level]` — NOT the root, which a
+  non-invariant family's cells reach outside.
+- **The anchor's face vocabulary is facets.** The mask names the incident
+  leaf's crossed facets (5 bits in 4D, so the 4-slot plane question the
+  replacement raised dissolves: `planeIndices` stays all −1), the word
+  rides `cellIndices` (4 slots = the band 0..4), and the snap targets the
+  leaf's composed facet planes, recomputed from the word in the walk's own
+  op sequence (the corner-class discipline, one tree up).
+- **Four oracle corrections, each measured.** (1) The display hybrid
+  REPLACES a near branch box by its children's boxes and refines every
+  branch within its own world-frame margin; the checkpoint's
+  `min(best, refined)` never refined (a child box nests in its parent) and
+  kept the seal hazard. (2) The exact-corner normal's basis takes a
+  declared rank test (`FINITE_SOLID_GENERAL_NORMAL_DEPENDENT_REL`, 1e-3)
+  and stops at rank 3 — a general shared face's two normals agree only to
+  ulps, and an exact test promoted the residue to a random basis vector.
+  (3) The snap envelope scales with the ARITHMETIC that made the point
+  (`FINITE_SOLID_GENERAL_SNAP_REL`, 32 ulp, × max(1, cell radius,
+  max(|q|, |t|)) for an event, |anchor| for a restart): the box tree's
+  cell-relative envelope refused the first hit of 5–50% of sampled f32
+  rays from a camera a few radii out, each a masked-facet correction
+  1.6–15× past it. (4) The anchor's OWN leaf reads its masked facet
+  residuals as exact zeros: at a grazing angle `−s/denom` amplified the
+  snap's rounding past the tie and the restart misread its starting side
+  (3 of 420 sampled f32 chains refused state-mismatch mid-walk; 0 after).
+- **The GPU half.** The level is baked into the code SHAPE — `level`
+  explicit nests, every const-array index in range (WGSL refuses a constant
+  out-of-range index at creation) — with the oracle's term order
+  (`finDot`/`finRowTimes`/`finCompose`/`finChildInverse`) so the f32 twin
+  mirrors it op for op, the per-map f64 inverses baked rather than
+  inverted in f32, and endpoints on `vec2u` (the 30-bit word+facet pack
+  never rides an f32 bit pattern). Bench legs (`--surface-transport-only=
+finiteSolid`), real driver RX 7900 XTX certified quiet AND SwiftShader,
+  every finite leg green: general Sierpinski L2 (hull), the default system
+  L3 (derived, rotating), the hyper-Menger's 48 maps L1, the pentatope L2
+  and a rotated pentatope L2 (xw) — maxRadianceDelta 7.5e-9..2.6e-8,
+  maxNormalDelta 0. The general-Menger leg is retired: the box tree's
+  cross-construction witness does not survive simplicial cells, and the
+  maps' derived-root lump runs probe traces into the path cap, where
+  SwiftShader moved which paths fit (agreement 7e-7 on the real driver, a
+  false failure on CI's device).
+- **The harness** (`scripts/finite-solid.harness.ts`, 48 tests): an
+  independent simplex union sharing neither association nor clip (leaf
+  vertices by the outer-inward POINT fold, leaves clipped by BARYCENTRIC
+  coordinates) at 1e-12 across Sierpinski 0..4, the default system 1..4,
+  the pentatope L3, the rotated pentatope L2 and the hyper-Menger L1; event
+  chains reconstructing the union at 1e-9. The leaf cap MEASURED (the
+  reference's clipped count is the pruned walk's; 48 rays per document):
+  worst 4 of 256 (gasket L4), 38 of 256 (default L4), 23 of 25 (rotated
+  pentatope L2), 42 of 48 (hyper-Menger L1) — all under 128; a 12-map
+  overlapping document's centre ray exceeds it and refuses visit-cap on
+  the device, uncapped in the reference. The box tree's shared-face and
+  four-leaf-corner controls have NO simplicial analog on the gasket: its
+  level-1 cells meet only at vertices whose tangent cones intersect along
+  the root's own edge, so no transversal ray threads two of them. The
+  silent-crossing control is now OVERLAP (derived-root cells, coverage
+  1 → 2 → 1 is one interval).
+- **The app gate** (`scripts/glass-solid-panel.verify.mjs`, real driver,
+  certified quiet): verdict pass, seven
+  legs. The five box-era legs carry over (the owner-authored Sierpinski
+  Glass: 8 samples, 49,546 paths resolved, 0 unresolved, two Save-PNGs
+  byte for byte at 24,097 bytes 960×640), with ONE recalibration: that
+  leg's drew-something coverage bar drops from 20% to 5%, because the
+  depth-1 gasket is now four corner TETRAHEDRA (about a sixth of their
+  boxes) — measured 8.1% of the auto-fit frame. Two new legs author Glass
+  from the panel on documents the box tree refused or never reached: the
+  viewer's ROTATING boot system at depth 3 (64 cells; covered 73.9%,
+  182,693 paths resolved, 0 unresolved, every antialias sample complete)
+  and the pentatope in native 4D at depth 2 (25 cells; covered 66.8%,
+  12,165 resolved, 0 unresolved). Within-run export identity is the
+  asserted property; a second run's export differed in bytes from the
+  first's, which the gate does not assert and this record does not
+  claim.
+- **Dimensional parity.** Every piece above is one dimension-parameterized
+  body — the oracle, the WGSL, the twin, the gate legs — and each carries
+  a 4D leg (the pentatope and the rotated pentatope, the hyper-Menger's 48
+  maps, the harness's posed rows). No 3D-only gap.
+- **What remains.** The derived root is a regular simplex around the
+  invariant box, three times the box's half-diagonal out, so at low depth
+  a rotating document's glass is a LUMP of heavily overlapping simplices
+  that sharpens toward the attractor only with depth (the default
+  system's L4 cells are ~1/16 of that simplex). Whether that reads as the
+  owner's glass fractal is the owner's look question, not settled here.
+  The per-map media (Glass on a subtree, opaque elsewhere) lands on this
+  construction next.
 
 ## The finite routing (landed, 2026-09-19)
 

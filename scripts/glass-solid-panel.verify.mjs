@@ -27,12 +27,20 @@
  *      Surface with the word tree's own optical backend LIVE
  *      (`opticsBackend: "finiteSolid"`), complete transport in every
  *      antialias sample (the finite-glass gate's strict completion
- *      helpers), and two Save-PNG exports byte for byte.
+ *      helpers), the drew-something coverage bar, and two Save-PNG
+ *      exports byte for byte.
  *   5. The shaped read-only state: load the glassMenger preset, assert the
  *      checkbox reads checked+disabled beside its reason, the depth select
  *      reads 2, the eligibility note names the Menger route — and Surface
  *      enters on compute with the finiteSolid optics backend LIVE (the
  *      shipped byte-identical path serving the preset's own construction).
+ *   6. Glass on the viewer's own ROTATING boot document (the box tree
+ *      refused it; the simplicial tree's derived root admits it) at depth
+ *      3, authored from the panel: routed, the 64-cell depth note, the
+ *      finiteSolid optics backend LIVE, complete transport in every
+ *      antialias sample.
+ *   7. The same flow one dimension up on the pentatope preset at depth 2
+ *      (25 cells): the 4D half, native posed slice.
  *
  * A behavior gate: no timing rows, no screenshots, no appearance claims.
  * Exit 1 is a verdict failure; a browser/display failure says so (exit 2).
@@ -224,11 +232,9 @@ try {
   };
 
   // ——— Leg 1: the general flow, authored FROM THE PANEL ———
-  // The route needs the document's OWN diagonal contractions: load the
-  // Sierpinski tetrahedron preset first (the owner's example document),
-  // wait out the replace-load morph, then check the box. The default
-  // system's maps rotate and the analyzer refuses them — which is the
-  // refusal disclosure working, not a defect.
+  // Load the Sierpinski tetrahedron preset first (the owner's example
+  // document, the hull root), wait out the replace-load morph, then check
+  // the box. (The rotating boot document routes too — legs 6 and 7.)
   const generalLeg = leg("general-block-authored-from-panel");
   await boot();
   await page.evaluate(() => {
@@ -433,10 +439,14 @@ try {
   if (!census || census.rays === 0) {
     fail(`no settled ray census: ${JSON.stringify(glassState.census)}`);
   } else {
+    // A drew-nothing bar, not a quality line: the simplicial depth-1
+    // gasket is four corner TETRAHEDRA (a tetrahedron fills about a sixth
+    // of its box), measured 8.1% of the auto-fit frame where the retired
+    // box tree's four corner boxes cleared 20%.
     const covered = census.covered / census.rays;
-    if (covered < 0.2) {
+    if (covered < 0.05) {
       fail(
-        `covered fraction ${(covered * 100).toFixed(1)}% below the 20% bar — the session routed but did not draw the solid`,
+        `covered fraction ${(covered * 100).toFixed(1)}% below the 5% bar — the session routed but did not draw the solid`,
       );
     }
   }
@@ -550,6 +560,144 @@ try {
       `optics backend read ${shapedState.opticsBackend}, expected finiteSolid (the preset's Glass)`,
     );
   }
+
+  // ——— Legs 6 and 7: Glass on documents the box tree refused ———
+  // The simplicial construction's reason to exist, end to end in the app:
+  // the viewer's own BOOT document (three of four maps rotate — the box
+  // tree refused it, the derived root admits it) at depth 3, and the 4D
+  // half on the pentatope preset at depth 2. Both authored FROM THE PANEL
+  // (the block, then Glass on the head map through the Finish bundle),
+  // rebooted on the authored hash, and gated on the word tree's own optics
+  // backend LIVE with complete transport in every antialias sample.
+  const simplicialGlassLeg = async (name, preset, depth, cells) => {
+    const record = leg(name);
+    record.trace = [];
+    await boot();
+    if (preset) {
+      await page.evaluate((value) => {
+        const sel = document.getElementById("presetSelect");
+        sel.value = value;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      }, preset);
+      await page.waitForTimeout(8000);
+    }
+    await page.click("#glassSolidSection > summary");
+    await page.click("#glassSolidEnabledCheckbox");
+    await page.waitForTimeout(300);
+    await page.selectOption("#glassSolidDepthSelect", String(depth));
+    await page.waitForTimeout(300);
+    const routed = await page.evaluate(() => ({
+      note: document.getElementById("surfaceNote").textContent,
+      depthNote: document.getElementById("glassSolidDepthNote").textContent,
+    }));
+    if (!routed.note.includes("Word-tree render")) {
+      fail(`${name}: the eligibility note did not route: "${routed.note}"`);
+    }
+    if (!routed.depthNote.includes(String(cells))) {
+      fail(
+        `${name}: the depth note did not name the ${cells}-cell construction: "${routed.depthNote}"`,
+      );
+    }
+    await page.click("#transformsSection > summary");
+    await page.waitForTimeout(300);
+    await page.evaluate(() => {
+      document.getElementById("transformList").children[1].click();
+    });
+    await page.waitForTimeout(300);
+    await page.evaluate(() => {
+      const details = [
+        ...document.querySelectorAll("#transformEditor > details"),
+      ].find(
+        (d) => d.querySelector("summary")?.textContent?.trim() === "Finish",
+      );
+      if (details && !details.open) details.querySelector("summary")?.click();
+    });
+    await page.waitForTimeout(200);
+    await page.evaluate(() => {
+      const bundle = document.querySelector("#transformEditor .finish-bundle");
+      bundle.value = "glass";
+      bundle.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await page.waitForTimeout(500);
+    const authoredDoc = await decodeHash();
+    if (JSON.stringify(authoredDoc?.finiteSolid) !== `{"level":${depth}}`) {
+      fail(
+        `${name}: the document carries ${JSON.stringify(authoredDoc?.finiteSolid)}, expected {level:${depth}}`,
+      );
+    }
+    if (authoredDoc?.transforms?.[0]?.optics?.model !== "dielectric") {
+      fail(`${name}: Glass did not land on the head map`);
+    }
+    const hash = await page.evaluate(() => location.hash);
+    activeLeg = record;
+    await page.goto(
+      `${args.url.replace(/\/+$/, "")}/?surfacestate&surfacetrace${hash}`,
+    );
+    await page.waitForFunction(
+      () => typeof window.__surfaceState === "function",
+      undefined,
+      { timeout: 60_000 },
+    );
+    await enterSurface(record);
+    const samples = await page.evaluate(() => {
+      const label = document.getElementById(
+        "surfaceAntialiasLabel",
+      )?.textContent;
+      return Number(/^(\d+) samples\/pixel$/.exec(label ?? "")?.[1]);
+    });
+    const deadline = Date.now() + 300_000;
+    for (;;) {
+      const frames = traceFrames(record.trace);
+      const last = frames.at(-1);
+      if (last && Number.isInteger(last.token)) {
+        const final = frames.filter((frame) => frame.token === last.token);
+        if (
+          final.length === samples &&
+          final.every((frame) => frame.completed)
+        ) {
+          break;
+        }
+      }
+      if (Date.now() > deadline) {
+        throw new Error(`timed out waiting for ${name}'s complete settle`);
+      }
+      await page.waitForTimeout(500);
+    }
+    activeLeg = null;
+    const state = await probe();
+    if (state.opticsBackend !== "finiteSolid") {
+      fail(
+        `${name}: optics backend read ${state.opticsBackend}, expected finiteSolid`,
+      );
+    }
+    const legCensus = state.census;
+    const covered = legCensus?.rays ? legCensus.covered / legCensus.rays : 0;
+    if (covered < 0.05) {
+      fail(
+        `${name}: covered fraction ${(covered * 100).toFixed(1)}% — the session routed but did not draw the solid`,
+      );
+    }
+    record.frames = traceFrames(record.trace);
+    for (const message of completionFailures(
+      record.frames,
+      samples,
+      legCensus?.rays,
+    )) {
+      fail(`${name}: ${message}`);
+    }
+    const lastToken = record.frames.at(-1)?.token;
+    const legTallies = record.frames
+      .filter((frame) => frame.token === lastToken)
+      .map((frame) => frame.tallies[0]);
+    log(
+      `[${name}] samples=${samples} rays=${legCensus?.rays} covered=${(covered * 100).toFixed(1)}% transport=` +
+        JSON.stringify(legTallies.at(-1) ?? null),
+    );
+  };
+  // The boot system is the "default" preset ("Twisted Tetrahedron"); load
+  // it explicitly — a boot restores the previous leg's saved scene.
+  await simplicialGlassLeg("rotating-boot-document-glass", "default", 3, 64);
+  await simplicialGlassLeg("pentatope-4d-glass", "pentatope", 2, 25);
 } catch (err) {
   checkingFailed = true;
   report.checkingFailure = err instanceof Error ? err.message : String(err);
