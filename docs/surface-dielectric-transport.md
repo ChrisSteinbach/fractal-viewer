@@ -2180,9 +2180,61 @@ skipping the root, and an order-3 kaleidoscope, field values within
 2.64e-5 relative (`docs/gpu-bench-surface.md`, the curved-solid rows). The
 legs found one bug. The primary split's normal came from the display
 estimator, which for a band solid is the IFS descent. The split now taps the
-solid's field, as the sphere-inversion backend's does. Routing does not yet
-select the option: the panel material, starters and app gate are the next
-step.
+solid's field, as the sphere-inversion backend's does.
+
+ROUTING, STARTERS AND THE APP GATE. A Surface session whose document is
+admitted by `surfaceCondensationSolidAdmitted` (and whose optics authors
+glass) rides the closed-solid backend, and `surface-compute.ts` derives the
+word-tree wire from the session's frozen DE. It is COMPUTE-ONLY: the GLSL
+closed-solid twin traces the root term alone, so `?surfacegl`, a missing
+adapter or a lost device strip the glass to classic, disclosed like any
+other refused glass. The 64-edge kernel ceiling is a routing term, and the
+panel's document outlook mirrors the admission conservatively (a map with
+any variation or a live post, or a 4D member with a w term other than a
+scale, keeps classic).
+
+Two findings shaped the starters, both measured in the built app:
+
+- THE DISPLAY DREW THE PLAIN ATTRACTOR. The Surface descent of a finite
+  band kept descending past the band's last level, and the ball
+  certificates it folded there bounded the plain attractor, so a glass
+  fractal rendered the whole Sierpinski gasket as phantom (black,
+  unresolved) surfaces. The affine descent family now stops at the band's
+  last level in every mirror (`docs/surface-gpu-kernels.md`'s condensation
+  section); the display estimator is then never above the solid field,
+  agrees with its sign everywhere, and sits within 0.3x of it on the
+  refined estimator (`condensation-solid.test.ts`, both dimensions). The
+  fold frontier's port is owed (fr-kg89).
+- MATERIAL FOLLOWS ATTRIBUTION. A hit's optical material is read from the
+  descent's attribution, which names the first map wherever that map's ball
+  certificate beats the emitter's own term. With glass on the emitter
+  alone, the root and depth-1 beads rendered opaque in the maps' colours.
+  The starters author glass on every transform, and `docs/controls.md` says
+  to.
+
+The starters are **Glass beads fractal (3D)**, **Glass rings fractal (3D)**
+and **Glass beads fractal (4D)**: the Sierpinski corners stamping one bead
+(scale 0.28) or orbit ring (0.36) over the band [0, 2], the 4D twin with
+every transform's w scale at 0.5 and the slice on w = 0.
+
+`scripts/curved-solid-glass.verify.mjs`, MEASURED 2026-09-24 on the RX 7900
+XTX (`x11::0`, `amd rdna-3`, software=false), 960x540, 1 spp, UNCERTIFIED
+(the owner's Firefox on the GPU, so the times are indicative):
+
+| Starter          | Settle | Covered | Resolved glass hits      | Export | Link reload | Bent vs Classic | Tiled export |
+| ---------------- | -----: | ------: | ------------------------ | -----: | ----------- | --------------: | ------------ |
+| `glass-beads`    | 10.4 s |   68.2% | 25,640 / 28,480 (90.03%) |  7.4 s | max diff 0  |           10.9% | 3 bands, 0   |
+| `glass-rings`    |  5.1 s |   68.5% | 29,407 / 32,703 (89.92%) |  2.3 s | max diff 0  |           11.6% | 3 bands, 0   |
+| `glass-beads-4d` | 43.1 s |   68.2% | 25,640 / 28,480 (90.03%) | 45.4 s | max diff 0  |           10.9% | 3 bands, 0   |
+
+Every leg passes: menu to settle, compute and closed-solid on a real
+adapter, no exhausted ray, the band and optics in the document, the 4D
+slab at zero on w = 0, a byte-identical link reload that copies the same
+link, and a byte-identical tiled export. Two gaps are recorded rather than
+absorbed. The resolved share is 90% where the CPU look sheet measured
+97.6–100%, so the gate's bar sits at 0.85 (fr-pd1p). The 4D twin traces
+the same object with the same tallies at about four times the cost
+(fr-7y60).
 
 ## What is not yet qualified
 

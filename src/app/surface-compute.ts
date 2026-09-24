@@ -79,6 +79,12 @@ import {
   type BackgroundShapeSpec,
 } from "../fractal/background-shape";
 import type { BulbDE } from "../fractal/bulb-de";
+import { buildCondensationSolid3 } from "../fractal/condensation-solid";
+import { buildCondensationSolid4 } from "../fractal/condensation-solid-4d";
+import {
+  condensationSolidWire,
+  type CondensationSolidWire,
+} from "../fractal/condensation-solid-gpu";
 import type { EscapeDE } from "../fractal/escape-de";
 import { resolveShapeTrap } from "../fractal/shape-trap";
 import type { ResolvedShapeTrap } from "../fractal/shape-trap";
@@ -782,6 +788,22 @@ export class SurfaceComputeFrameSizeError extends Error {}
  * camera — the balloon's measured verdict for the escape solid,
  * re-measured on the Mandelbulb).
  */
+/** The general curved solid's kernel wire for an IFS target with recursive
+ * maps beside its emitters, or null (emitter-only C0 keeps the root field;
+ * every other kind has no condensation solid). */
+function condensationSolidWireFor(
+  target: SurfaceComputeAnyTarget,
+): CondensationSolidWire | null {
+  if (target.kind !== "ifs" && target.kind !== "ifs4") return null;
+  const de = target.de;
+  if (de.maps.length === 0 || !de.condensation) return null;
+  return condensationSolidWire(
+    target.kind === "ifs4"
+      ? buildCondensationSolid4(de as SurfaceDE4)
+      : buildCondensationSolid3(de as SurfaceDE),
+  );
+}
+
 export type SurfaceComputeTarget =
   | {
       kind: "ifs";
@@ -3556,6 +3578,17 @@ export class SurfaceComputeRenderer {
                 ...(target.general ? { general: target.general } : {}),
               }
             : null,
+          // THE GENERAL CURVED SOLID: a closed-solid glass session whose
+          // document carries recursive maps (routing admitted it through
+          // surfaceCondensationSolidAdmitted) traces the depth band's word
+          // tree instead of the root term. The wire is derived here from
+          // the session's frozen DE, so the routing never carries it.
+          condensationSolid:
+            mode === "shade" &&
+            materials?.optics === true &&
+            opticsBackend === "closedSolid"
+              ? condensationSolidWireFor(target)
+              : null,
         }),
       });
       const info = await module.getCompilationInfo();

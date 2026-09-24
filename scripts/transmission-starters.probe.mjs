@@ -40,7 +40,15 @@ const STARTERS = [
   { id: "glass-garden", label: "Glass garden (3D)" },
   { id: "glass-corner-cells", label: "Glass corner cells (3D)" },
   { id: "glass-cells", label: "Glass cells (4D)" },
+  { id: "glass-beads", label: "Glass beads fractal (3D)" },
+  { id: "glass-rings", label: "Glass rings fractal (3D)" },
+  { id: "glass-beads-4d", label: "Glass beads fractal (4D)" },
 ];
+// `--only=a,b` narrows the run to those starter ids.
+const only = argOf("--only", "");
+const selected = only
+  ? STARTERS.filter((s) => only.split(",").includes(s.id))
+  : STARTERS;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -58,7 +66,7 @@ async function main() {
 
   const report = [];
   let failed = false;
-  for (const starter of STARTERS) {
+  for (const starter of selected) {
     const page = await browser.newPage({
       ignoreHTTPSErrors: true,
       viewport: { width: 1024, height: 640 },

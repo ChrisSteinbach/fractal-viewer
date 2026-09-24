@@ -7,6 +7,8 @@ import type { Transform, Vec3 } from "../fractal/types";
 import type { CameraPose } from "./orbit";
 import { sphericalFromCartesian } from "./orbit";
 import { createGlassStudioBackground } from "./preset-background";
+import { sierpinskiTetrahedron } from "../fractal/presets";
+import { ORBIT_RING_SHAPE } from "../fractal/shapes";
 
 /**
  * The transmission material's starter compositions — the glass bundle's
@@ -36,6 +38,19 @@ import { createGlassStudioBackground } from "./preset-background";
  * the members' plane is real 4D navigation — with the disclosed cost that
  * the transmission degrades to honest refusals off the carried flat.
  *
+ * THE FRACTAL STARTERS are the general curved solid's
+ * (`condensation-solid.ts`): the look sheet's own subject, the Sierpinski
+ * tetrahedron's four corner maps stamping one centred glass emitter (a bead
+ * or the orbit ring) over the depth band [0, 2]. EVERY transform authors
+ * glass, the maps included: the solid is the emitter's images, but a hit's
+ * material is read from the descent's attribution, which names the first
+ * map wherever that map's ball certificate beats the emitter's own term
+ * (the root and depth-1 beads rendered opaque in the maps' colours with
+ * glass on the emitter alone). Their 4D twin gives maps
+ * and emitter an explicit `w` scale, which makes the system native 4D and
+ * still fixes the w = 0 hyperplane every flat lies in, and saves the slice
+ * there: the canonical pose `condensationSolidPoseAdmission4` states.
+ *
  * A starter supports discovery; it cannot be the only scene on which the
  * material is correct. The capability matrix
  * (`docs/surface-dielectric-transport.md`) owns the broader envelope: the
@@ -47,6 +62,9 @@ export const SURFACE_TRANSMISSION_STARTERS = [
   { id: "glass-garden", label: "Glass garden (3D)" },
   { id: "glass-corner-cells", label: "Glass corner cells (3D)" },
   { id: "glass-cells", label: "Glass cells (4D)" },
+  { id: "glass-beads", label: "Glass beads fractal (3D)" },
+  { id: "glass-rings", label: "Glass rings fractal (3D)" },
+  { id: "glass-beads-4d", label: "Glass beads fractal (4D)" },
 ] as const;
 
 export type SurfaceTransmissionStarterId =
@@ -257,15 +275,78 @@ function glassCornerCells(): SceneSnapshot {
   };
 }
 
+/** The general curved solid's starter: the corners stamping one centred
+ * glass emitter over the band [0, 2] (the look sheet's subject). `fourD`
+ * gives every transform a `w` scale, the native-4D twin whose flats all lie
+ * in w = 0, and saves the slice there. */
+function glassFractal(
+  emitter: Transform["emitter"],
+  scale: number,
+  fourD: boolean,
+): SceneSnapshot {
+  const state = baseState();
+  const w = fourD ? { w: { scale: 0.5 } } : {};
+  state.transforms = [
+    ...sierpinskiTetrahedron().map((corner, id): Transform => ({
+      ...corner,
+      colorIndex: id / 4,
+      optics: { ...STARTER_OPTICS },
+      ...w,
+    })),
+    {
+      id: 4,
+      position: [0, 0, 0],
+      rotation: [0.5, 0.3, 0.2],
+      scale: [scale, scale, scale],
+      weight: 1.4,
+      colorIndex: 0.55,
+      optics: { ...STARTER_OPTICS },
+      emitter,
+      ...w,
+    },
+  ];
+  state.condensationDepthBand = { maxDepth: 2 };
+  return {
+    ...toSnapshot(state),
+    // Zoom 0.58 is a 60.2° field of view: at or above the 60° default, so
+    // the link decode leaves it a plain camera (narrower reads as deep zoom).
+    camera: camera([1.4, 0.8, 1.85], [0, -0.05, 0], 0.58),
+    ...(fourD ? { fourD: canonical4DPose() } : {}),
+  };
+}
+
+/** The canonical slice with an unturned rotor: w = 0, where the fractal
+ * twin's flats lie. */
+function canonical4DPose(): FourDPose {
+  const pair = identityRotorPair();
+  return {
+    pair: { p: [...pair.p], q: [...pair.q] },
+    sliceOn: true,
+    sliceCenter: 0,
+    sliceW: 0,
+    sliceThickness: 0,
+    sliceRelColor: false,
+  };
+}
+
 /** Every call owns its transforms, optics, camera, backdrop and floor.
  * Callers load the snapshot through the normal scene-replacement path; the
  * surface-mode entry is the caller's (the shared load-hint arm). */
 export function createSurfaceTransmissionStarter(
   id: SurfaceTransmissionStarterId,
 ): SceneSnapshot {
-  return id === "glass-garden"
-    ? glassGarden()
-    : id === "glass-corner-cells"
-      ? glassCornerCells()
-      : glassCells();
+  switch (id) {
+    case "glass-garden":
+      return glassGarden();
+    case "glass-corner-cells":
+      return glassCornerCells();
+    case "glass-cells":
+      return glassCells();
+    case "glass-beads":
+      return glassFractal(sphere(1), 0.28, false);
+    case "glass-rings":
+      return glassFractal(ORBIT_RING_SHAPE, 0.36, false);
+    case "glass-beads-4d":
+      return glassFractal(sphere(1), 0.28, true);
+  }
 }
