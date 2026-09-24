@@ -12,6 +12,7 @@ import {
   finiteSolidGeneralOpticsRadius,
   resolveFiniteSolid,
 } from "../fractal/finite-solid";
+import type { FiniteSolidGeneralConstruction } from "../fractal/finite-solid";
 import type { FiniteSolidGeneralWire } from "../fractal/surface-finite-solid-gpu";
 import { BALLOON_CENTRE_REFUSAL_REASON } from "./panel-applicability";
 import {
@@ -82,6 +83,10 @@ import {
   type SurfaceComputeAnyTarget,
   type SurfaceComputeTarget,
 } from "./surface-compute";
+import {
+  decideFiniteComposite,
+  type FiniteCompositeRoute,
+} from "./finite-composite-route";
 import { surfaceComputeForceFrameKey } from "./surface-force-frame-key";
 import { createSurfaceLightingStarter } from "./surface-lighting-starters";
 import { createSurfaceTransmissionStarter } from "./surface-transmission-starters";
@@ -653,6 +658,9 @@ interface SurfaceStateProbe {
    * surface mode. `"finiteSolid"` marks the finite cores' DDA backend,
    * compute-only. */
   opticsBackend: SurfaceOpticsBackend | null;
+  /** Whether a general Glass solid renders its opaque maps as the true
+   * attractor under the glass cells (the composite kernel). */
+  finiteComposite: boolean;
   /** The renderer actually executing this surface session. */
   backend: { label: string | null; software: boolean } | null;
   /** Exact terminal statuses for the current completed settle pass. */
@@ -4882,6 +4890,9 @@ async function main(): Promise<void> {
    * compute, and a glass block is a compute-only subject at the gate.
    */
   let sessionOpticsBackend: SurfaceOpticsBackend = "estimator";
+  // Whether this session's general Glass solid renders its opaque maps as
+  // the attractor (finite-composite-route.ts) — the probe's route signal.
+  let sessionFiniteComposite = false;
 
   // The compute path's first-frame gate — the compile gate's twin, one
   // async resource over: device + pipeline instead of a GLSL link. Same
@@ -5996,6 +6007,7 @@ async function main(): Promise<void> {
       // escape, ifs4 and bulb kinds alike — the gate below then awaits
       // device + pipeline instead of the GLSL link.
       let computeTarget: SurfaceComputeAnyTarget | null = null;
+      sessionFiniteComposite = false;
       // Resolve the authored tiling block against ONE arm's estimator
       // authority radius — the exact rule the shader wrappers and packers
       // enforce (a lattice block resolved against a different radius
@@ -6260,6 +6272,7 @@ async function main(): Promise<void> {
           // level boxes bake into the kernel source, so the wire IS the
           // session's construction.
           let general: FiniteSolidGeneralWire | null = null;
+          let generalConstruction: FiniteSolidGeneralConstruction | null = null;
           let boundingRadius: number;
           let opticsRadius: number;
           if (block.value.kind === "general") {
@@ -6278,6 +6291,7 @@ async function main(): Promise<void> {
             }
             const construction = analysis.construction;
             general = construction;
+            generalConstruction = construction;
             // The marching ball bounds the LEVEL union's box, not the root
             // simplex: a derived root is not invariant, so a level-N cell
             // can reach outside it (finiteSolidGeneralBoundingRadius).
@@ -6312,13 +6326,36 @@ async function main(): Promise<void> {
             opticsRadius,
             true,
           );
-          if (general) {
+          // THE COMPOSITE (finite-composite-route.ts): with both a glass map
+          // and an opaque one, the opaque maps render as the true attractor
+          // under the glass cells, and the walk enumerates the glass
+          // subtrees alone. A block the attractor's estimator refuses keeps
+          // its opaque maps as cells, disclosed by toast.
+          let composite: FiniteCompositeRoute | null = null;
+          if (general && generalConstruction) {
+            const media = finiteSolidGeneralMediaCodes(
+              sessionMaterials,
+              materialSlots.length,
+            );
+            const decision = decideFiniteComposite(
+              generalConstruction,
+              media,
+              state.transforms,
+              state.finalTransform ?? null,
+              state.symmetry,
+            );
+            if (decision.kind === "composite") {
+              composite = decision.route;
+              sessionFiniteComposite = true;
+            } else if (decision.kind === "refused") {
+              ui.flashToast(
+                `Glass solid: opaque maps render as cells — ${decision.reason}.`,
+              );
+            }
             general = {
               ...general,
-              media: finiteSolidGeneralMediaCodes(
-                sessionMaterials,
-                materialSlots.length,
-              ),
+              media,
+              ...(composite ? { glassOnly: true } : {}),
             };
           }
           sessionOpticsBackend =
@@ -6332,16 +6369,22 @@ async function main(): Promise<void> {
             ui.setFourDSlabAvailable(false, "finiteSolid");
           }
           if (surfaceComputeAvailable()) {
-            computeTarget = {
-              kind: fourD ? "finite4" : "finite",
+            const finiteShared = {
               level: block.value.level,
               ...(general ? { general } : {}),
               groundPlane: state.groundPlane,
             };
+            computeTarget =
+              composite?.dimension === 4
+                ? { kind: "finite4", ...finiteShared, composite }
+                : composite?.dimension === 3
+                  ? { kind: "finite", ...finiteShared, composite }
+                  : { kind: fourD ? "finite4" : "finite", ...finiteShared };
             scene.enterSurfaceComputeFiniteSession(
               fourD,
               state.groundPlane,
               boundingRadius,
+              composite?.de ?? null,
             );
             if (fourD) {
               scene.setSurface4View(fourDView.matrix(), liveSliceCenter(), 0);
@@ -13099,6 +13142,7 @@ async function main(): Promise<void> {
         // lane-live signal the transport gates read: a transmission
         // fixture is live only where the routing ADMITTED the session.
         opticsBackend: !inSurface ? null : sessionOpticsBackend,
+        finiteComposite: inSurface && sessionFiniteComposite,
         backend: !inSurface
           ? null
           : compute !== null
