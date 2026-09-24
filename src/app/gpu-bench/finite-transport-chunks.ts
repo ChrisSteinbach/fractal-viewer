@@ -186,9 +186,13 @@ export function finiteTransportChunkFailures(
         );
       } else if (status === 3) {
         unresolved++;
+        // A failed trace is final at the pass it fails (the transport no
+        // longer replays a trace that hit a guard), so the refusal's pass is
+        // wherever the processed-path limit bit; the malformed check above
+        // already bounds it by the frame's passes.
         fail(
           rayLabel,
-          refusal && failure === 1 && reason === 0 && pass === 5,
+          refusal && failure === 1 && reason === 0,
           "refusal is not the intentional processed-path limit",
         );
       }

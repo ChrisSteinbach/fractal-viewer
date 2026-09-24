@@ -73,7 +73,7 @@ function writeFloat(words: number[], index: number, value: number): void {
 
 describe("finite continuation evidence", () => {
   it.each(["finite", "finite4"] as const)(
-    "accepts complete wordwise controls and explicit final-pass refusals: %s",
+    "accepts complete wordwise controls and processed-limit refusals: %s",
     (core) => expect(finiteTransportChunkFailures(evidence(core))).toEqual([]),
   );
 
@@ -152,7 +152,7 @@ describe("finite continuation evidence", () => {
       ["controls", 3, 0.01],
       ["controls", 4, 0],
       ["processedLimitControls", 5, 2],
-      ["processedLimitControls", 7, 4],
+      ["processedLimitControls", 7, 6],
     ] as const) {
       const row = evidence();
       for (const arm of row[group])
