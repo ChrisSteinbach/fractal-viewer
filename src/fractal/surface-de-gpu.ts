@@ -49,6 +49,7 @@ import {
 import { swirlLensShaderSource } from "./swirl-lens-shader";
 import { inversionDistanceShaderSource } from "./inversion";
 import {
+  FINITE_SOLID_GENERAL_MAX_LEVEL,
   FINITE_SOLID_GENERAL_MAX_MAPS,
   FINITE_SOLID_HALF_EXTENT,
   FINITE_SOLID_MAX_LEVEL,
@@ -2098,10 +2099,11 @@ export interface SurfaceGpuKernelOptions {
    * extent is the module's constant and the grid size derives from the
    * level; both ride the params tail so the kernel reads one wire.
    * `general` present swaps the construction for the document's OWN maps
-   * (`analyzeFiniteSolidGeneral`'s word tree): the maps and root box bake
-   * into the source (the tiling clip's pattern), the params tail and
-   * packers stay byte-identical, and the admission lives in the routing
-   * (the general analysis's verdict — codegen validates the shape). */
+   * (`analyzeFiniteSolidGeneral`'s simplicial word tree, level 0..4): the
+   * maps, their inverses, the root simplex and the level boxes bake into
+   * the source (the tiling clip's pattern), the params tail and packers
+   * stay byte-identical, and the admission lives in the routing (the
+   * general analysis's verdict — codegen validates the shape). */
   finiteSolid?: {
     level: number;
     general?: FiniteSolidGeneralWire;
@@ -3734,10 +3736,26 @@ export function packSphereInversion4GpuParams(
   return buf;
 }
 
+/** The packers' band is the UNION of the two constructions' bands (shaped
+ * 0..FINITE_SOLID_MAX_LEVEL, general 0..FINITE_SOLID_GENERAL_MAX_LEVEL): a
+ * packer cannot see which construction its kernel bakes, and the codegen
+ * gates each band per construction — a shaped kernel refuses a level past
+ * its own band at creation, so a deeper packed level only ever meets a
+ * general kernel (which reads the level lane alone; the grid lane is
+ * unread there). */
+const FINITE_SOLID_PACKED_MAX_LEVEL = Math.max(
+  FINITE_SOLID_MAX_LEVEL,
+  FINITE_SOLID_GENERAL_MAX_LEVEL,
+);
+
 function validateFiniteSolidLevel(level: number): void {
-  if (!Number.isInteger(level) || level < 0 || level > FINITE_SOLID_MAX_LEVEL) {
+  if (
+    !Number.isInteger(level) ||
+    level < 0 ||
+    level > FINITE_SOLID_PACKED_MAX_LEVEL
+  ) {
     throw new RangeError(
-      `surface-de-gpu: finite-solid level ${level} is outside the certified band 0..${FINITE_SOLID_MAX_LEVEL}`,
+      `surface-de-gpu: finite-solid level ${level} is outside the certified bands 0..${FINITE_SOLID_PACKED_MAX_LEVEL}`,
     );
   }
 }
@@ -4961,19 +4979,24 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   const finiteLevel = finiteCore ? opts.finiteSolid?.level : undefined;
   if (finiteCore) {
     const level = finiteLevel;
+    // The band is the construction's own: the shaped grid's 0..2, the
+    // general word tree's 0..4 (the four-slot anchor word).
+    const maxLevel = finiteGeneral
+      ? FINITE_SOLID_GENERAL_MAX_LEVEL
+      : FINITE_SOLID_MAX_LEVEL;
     if (
       level === undefined ||
       !Number.isInteger(level) ||
       level < 0 ||
-      level > FINITE_SOLID_MAX_LEVEL
+      level > maxLevel
     ) {
       throw new RangeError(
-        `surface-de-gpu: the ${core} core needs an authored level 0..${FINITE_SOLID_MAX_LEVEL}`,
+        `surface-de-gpu: the ${core} core needs an authored level 0..${maxLevel}`,
       );
     }
     if (finiteGeneral) {
       const g = finiteGeneral;
-      const mapCount = g.mapScale.length;
+      const mapCount = g.mapMatrix.length;
       if (
         !Number.isInteger(mapCount) ||
         mapCount < 1 ||
@@ -4984,16 +5007,20 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
           `surface-de-gpu: the ${core} core's general construction carries 1..${FINITE_SOLID_GENERAL_MAX_MAPS} maps; this wire has ${String(mapCount)}`,
         );
       }
-      const finiteVec4 = (v: readonly number[]): boolean =>
-        v.length === 4 && v.every(Number.isFinite);
+      const finiteVec = (v: readonly number[], length: number): boolean =>
+        v.length === length && v.every(Number.isFinite);
       if (
-        !g.mapScale.every(finiteVec4) ||
-        !g.mapOffset.every(finiteVec4) ||
-        !finiteVec4(g.rootMin) ||
-        !finiteVec4(g.rootMax)
+        !g.mapMatrix.every((m) => finiteVec(m, 16)) ||
+        !g.mapOffset.every((t) => finiteVec(t, 4)) ||
+        g.rootVertices.length !== (core4 ? 5 : 4) ||
+        !g.rootVertices.every((v) => finiteVec(v, 4)) ||
+        g.levelBoxes.length !== level + 1 ||
+        !g.levelBoxes.every(
+          (box) => finiteVec(box.min, 4) && finiteVec(box.max, 4),
+        )
       ) {
         throw new RangeError(
-          `surface-de-gpu: the ${core} core's general construction carries a non-finite map or root bound`,
+          `surface-de-gpu: the ${core} core's general construction carries a non-finite map, root vertex or level box, or a root/level-box count that does not match the dimension and level`,
         );
       }
     }
@@ -5374,14 +5401,17 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
       );
     }
     const level = opts.finiteSolid?.level;
+    const maxLevel = opts.finiteSolid?.general
+      ? FINITE_SOLID_GENERAL_MAX_LEVEL
+      : FINITE_SOLID_MAX_LEVEL;
     if (
       level === undefined ||
       !Number.isInteger(level) ||
       level < 0 ||
-      level > FINITE_SOLID_MAX_LEVEL
+      level > maxLevel
     ) {
       throw new RangeError(
-        `surface-de-gpu: the finite-solid backend needs an authored level 0..${FINITE_SOLID_MAX_LEVEL}`,
+        `surface-de-gpu: the finite-solid backend needs an authored level 0..${maxLevel}`,
       );
     }
   }

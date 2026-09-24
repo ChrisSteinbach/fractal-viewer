@@ -6,15 +6,18 @@
  */
 import { createHash } from "node:crypto";
 import {
-  FINITE_SOLID_GENERAL_TIE_REL,
+  FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES,
+  FINITE_SOLID_GENERAL_MAX_LEVEL,
   FINITE_SOLID_HALF_EXTENT,
   FINITE_SOLID_IDENTITY_POSE,
   FINITE_SOLID_MAX_LEVEL,
   analyzeFiniteSolidGeneral,
   buildFiniteSolidConstruction,
   finiteSolidCellOccupiedByRule,
+  finiteSolidGeneralBoundingRadius,
+  finiteSolidGeneralContains,
+  finiteSolidGeneralIntervals,
   finiteSolidGeneralNextBoundary,
-  finiteSolidGeneralNextBoundaryFromAnchor,
   finiteSolidNextBoundary,
   finiteSolidNextBoundaryFromAnchor,
   type FiniteSolidAnchor,
@@ -24,7 +27,6 @@ import type { FiniteSolidGeneralConstruction } from "./finite-solid";
 import {
   SURFACE_GPU_PARAMS4_FINITE_BYTES,
   SURFACE_GPU_PARAMS_FINITE_BYTES,
-  type FiniteSolidGeneralWire,
   finiteSolidCellOccupiedF32,
   finiteSolidDdaF32,
   finiteSolidDisplaySource,
@@ -54,7 +56,9 @@ import {
 } from "./finite-transport-work";
 import type { Vec3, Vec4 } from "./types";
 import type { Transform } from "./types";
-import { mengerSponge, sierpinskiTetrahedron } from "./presets";
+import { defaultTransforms, pentatope, sierpinskiTetrahedron } from "./presets";
+import { hyperMengerSpongeTransforms } from "./finite-solid";
+import { mulberry32 } from "./rng";
 import {
   packSurfaceGpuParamsFinite,
   packSurfaceGpuParamsFinite4,
@@ -1542,13 +1546,15 @@ describe("the finite packers", () => {
         1.5,
       ),
     ).toThrow(/no slab/);
+    // The packers' band is the union of both constructions' bands (the
+    // codegen gates each construction's own).
     expect(() =>
       packSurfaceGpuParamsFinite(
         { itemCount: 1 },
-        FINITE_SOLID_MAX_LEVEL + 1,
+        Math.max(FINITE_SOLID_MAX_LEVEL, FINITE_SOLID_GENERAL_MAX_LEVEL) + 1,
         1,
       ),
-    ).toThrow(/certified band/);
+    ).toThrow(/certified bands/);
     expect(() =>
       packSurfaceGpuParamsFinite({ itemCount: 1, footprint: 0.1 }, 1, 1),
     ).toThrow(/footprint/);
@@ -1616,459 +1622,388 @@ describe("the finite packers", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The general word tree's GPU half: the baked-construction emission and the
-// f32 twin, pinned against the f64 oracle (`finite-solid.ts`'s general
-// section) and — one cross-construction check — against the shipped grid
-// twin on the grid's own maps. The WGSL-vs-twin agreement itself is the
-// bench's transport legs (a device question, not a vitest one).
+// The general word tree's GPU half: the baked simplicial construction's
+// emission and the f32 twin, pinned against the f64 oracle
+// (`finite-solid.ts`'s general section). The WGSL-vs-twin agreement itself
+// is the bench's transport legs (a device question, not a vitest one).
 // ---------------------------------------------------------------------------
 
 const noSymmetry = { order: 1, plane: "xz" as const };
+const IDENTITY_ROWS: Vec4[] = [
+  [1, 0, 0, 0],
+  [0, 1, 0, 0],
+  [0, 0, 1, 0],
+  [0, 0, 0, 1],
+];
 
-const generalSierpinskiWire = (
+const generalConstruction = (
+  maps: Transform[],
   level: number,
+  dimension: 3 | 4,
 ): FiniteSolidGeneralConstruction => {
-  const maps = sierpinskiTetrahedron();
-  const analysis = analyzeFiniteSolidGeneral(maps, null, noSymmetry, level, 3);
+  const analysis = analyzeFiniteSolidGeneral(
+    maps,
+    null,
+    noSymmetry,
+    level,
+    dimension,
+  );
   if (analysis.status !== "eligible" || !analysis.construction) {
-    throw new Error("the Sierpinski fixture must admit");
+    throw new Error(`the fixture must admit: ${analysis.reasons.join("; ")}`);
   }
   return analysis.construction;
 };
 
-describe("general finite-solid GPU sources", () => {
-  const construction1 = analyzeFiniteSolidGeneral(
-    sierpinskiTetrahedron(),
-    null,
-    noSymmetry,
-    1,
-    3,
-  );
-  if (construction1.status !== "eligible" || !construction1.construction) {
-    throw new Error("fixture admission failed");
-  }
-  const wire1 = construction1.construction;
-  const wireOf = (
-    c: FiniteSolidGeneralConstruction,
-  ): FiniteSolidGeneralWire => ({
-    mapScale: c.mapScale,
-    mapOffset: c.mapOffset,
-    rootMin: c.rootMin,
-    rootMax: c.rootMax,
-  });
+/** Three of five pentatope maps turned, one through xw: the derived root. */
+const rotatedPentatope = (): Transform[] => {
+  const maps = pentatope();
+  maps[1].rotation = [0, Math.PI / 4, 0];
+  maps[2].w = { ...maps[2].w, rotation: { xw: Math.PI / 5 } };
+  maps[3].rotation = [Math.PI / 4, 0, 0];
+  return maps;
+};
 
-  it("bakes the construction into the display source and keeps the shipped entry names", () => {
-    for (const dim of [3, 4] as const) {
-      const src = finiteSolidGeneralDisplaySource(dim, wireOf(wire1), 1);
+describe("general finite-solid GPU sources", () => {
+  it("bakes the simplicial construction into the display source under the shipped entry names", () => {
+    for (const [maps, dimension] of [
+      [defaultTransforms(), 3],
+      [rotatedPentatope(), 4],
+    ] as const) {
+      const c = generalConstruction(maps, 2, dimension);
+      const src = finiteSolidGeneralDisplaySource(dimension, c, 2);
       expect(src).toContain("fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32)");
-      expect(src).toContain("fn finiteDisplayDE(q: array<f32, 4>)");
-      // The construction is baked, not parameterized: the maps and root box
-      // ride the source, level and map count are consts.
-      expect(src).toContain("const FIN_LEVEL = 1u;");
+      expect(src).toContain("fn finiteDisplayDE(qa: array<f32, 4>)");
+      expect(src).toContain("const FIN_LEVEL = 2u;");
+      expect(src).toContain(`const FIN_MAP_COUNT = ${String(c.mapCount)}u;`);
       expect(src).toContain(
-        `const FIN_MAP_COUNT = ${String(wire1.mapCount)}u;`,
+        `const FIN_M = array<vec4f, ${String(4 * c.mapCount)}>(`,
       );
-      expect(src).toContain("const FIN_SCALE = array<vec4f, 4>(");
-      // The certified hybrid's own constants, emitted as literals.
-      expect(src).toContain("FIN_REFINE_REL = 0.16666666666666666");
-      expect(src).toContain("result * FIN_SAFETY");
-      expect(src).toContain("const FIN_TIE_REL = 2.384185791015625e-7");
-      expect(src).toMatch(/select\(best, best \* FIN_SAFETY, best > 0\.0\)/);
-      // The K-loops over the packed maps, not the ternary grid nests.
-      expect(src).toContain("for (var a = 0u; a < FIN_MAP_COUNT; a++)");
+      expect(src).toContain(
+        `const FIN_IM = array<vec4f, ${String(4 * c.mapCount)}>(`,
+      );
+      expect(src).toContain(
+        `const FIN_ROOT = array<vec4f, ${String(dimension + 1)}>(`,
+      );
+      expect(src).toContain("const FIN_BOX_MIN = array<vec4f, 3>(");
+      expect(src).toContain(
+        `const FIN_TAU = array<f32, ${String(c.mapCount)}>(`,
+      );
+      // The display reads no params lane of its own in 3D.
       expect(src).not.toContain("params.finiteLevel");
     }
-    const src4 = finiteSolidGeneralDisplaySource(4, wireOf(wire1), 1);
-    expect(src4).toContain("params.rotorInvR0");
-    expect(src4).toContain("params.w0");
-    const src3 = finiteSolidGeneralDisplaySource(3, wireOf(wire1), 1);
-    expect(src3).toContain("array<f32, 4>(p.x, p.y, p.z, 0.0)");
   });
 
-  it("emits the word-tree walk under the shipped query's name, with the anchor contract and the enumeration cap", () => {
-    for (const dim of [3, 4] as const) {
-      const src = finiteSolidGeneralTransportSource(dim, wireOf(wire1), 1);
-      // The SAME function name the mode-1 record body and march primary
-      // call — the emission is either the grid DDA or this walk, never both.
+  it("lifts 4D through the tail's pose rows and 3D through the identity", () => {
+    const c3 = generalConstruction(defaultTransforms(), 1, 3);
+    const c4 = generalConstruction(rotatedPentatope(), 1, 4);
+    const src3 = finiteSolidGeneralDisplaySource(3, c3, 1);
+    const src4 = finiteSolidGeneralDisplaySource(4, c4, 1);
+    expect(src3).toContain("array<f32, 4>(p.x, p.y, p.z, 0.0)");
+    expect(src4).toContain("params.rotorInvR0");
+    expect(src4).toContain("params.w0");
+  });
+
+  it("emits only in-range level-box indices at every level of the band", () => {
+    // WGSL refuses a constant out-of-range index at shader creation, so the
+    // level is baked into the code SHAPE: every emitted index must fit.
+    const maps = sierpinskiTetrahedron();
+    for (let level = 0; level <= 4; level++) {
+      const c = generalConstruction(maps, level, 3);
+      const src = `${finiteSolidGeneralDisplaySource(3, c, level)}${finiteSolidGeneralTransportSource(3, c, level)}`;
+      const indices = [...src.matchAll(/FIN_BOX_(?:MIN|MAX)\[(\d+)\]/g)].map(
+        (m) => Number(m[1]),
+      );
+      for (const index of indices) {
+        expect(index).toBeLessThanOrEqual(level);
+      }
+      if (level === 0) expect(indices).toHaveLength(0);
+    }
+  });
+
+  it("emits the simplicial walk under the shipped query's name with the facet-mask anchor contract", () => {
+    for (const [maps, dimension] of [
+      [defaultTransforms(), 3],
+      [rotatedPentatope(), 4],
+    ] as const) {
+      const c = generalConstruction(maps, 2, dimension);
+      const src = finiteSolidGeneralTransportSource(dimension, c, 2);
       expect(src).toContain("fn transportFiniteBoundary(");
-      expect(src).toContain("fn finEnumerate(");
-      expect(src).toContain("fn finSweep(");
-      expect(src).toContain("fn finEvent(");
       expect(src).toContain("fn finiteGeneralPointInside(");
-      expect(src).toContain("fn finiteBoundaryNormal(");
-      // The anchor contract: mask, planes, cells, intrinsic point.
       expect(src).toContain("anchorIntrinsic: vec4f");
-      expect(src).toContain("anchorMask: u32");
-      expect(src).toContain("anchorPlanes: vec4i");
       expect(src).toContain("anchorCells: vec4i");
-      // The walk's declared resolution reads the display source's baked
-      // const (the transport consumes it alongside the lift helpers).
-      expect(src).toContain("FIN_TIE_REL");
+      // The mask ranges over the cell's dimension + 1 facets; the plane
+      // slots stay unused.
+      expect(src).toContain(
+        `(anchorMask & ~${String((1 << (dimension + 1)) - 1)}u) != 0u`,
+      );
+      expect(src).toContain("any(anchorPlanesIn != vec4i(-1))");
+      // The anchor's depth reads the params tail's live level lane.
+      expect(src).toContain("params.finiteLevel");
+      // Endpoints ride integer storage, never an f32 bit pattern.
+      expect(src).toContain("var<private> finE: array<vec2u,");
       expect(src).toContain("FIN_TIE_REL * max(1.0, abs(groupT))");
-      // The grid arithmetic is absent: no canonical plane formula, no
-      // bitmap rule.
+      // The grid arithmetic is absent.
       expect(src).not.toContain("finiteGridPlane");
       expect(src).not.toContain("fn finiteOccupied(");
     }
-    // The codegen bakes the SMALLER of the construction's own worst case
-    // (K^level) and the walk's cap, so small constructions allocate exactly
-    // their own bound.
-    expect(finiteSolidGeneralTransportSource(3, wireOf(wire1), 1)).toContain(
-      `array<vec2f, ${String(wire1.mapCount * 2)}>`,
-    );
-    expect(finiteSolidGeneralTransportSource(3, wireOf(wire1), 2)).toContain(
-      `array<vec2f, ${String(wire1.mapCount ** 2 * 2)}>`,
-    );
   });
 
-  it("caps the enumeration at the walk's declared leaf cap", () => {
-    const manyMaps: Transform[] = Array.from(
-      { length: 40 },
-      (_, i): Transform => ({
-        id: i,
-        position: [i * 0.01, 0, 0],
-        rotation: [0, 0, 0],
-        scale: [0.5, 0.5, 0.5],
-      }),
-    );
-    const analysis = analyzeFiniteSolidGeneral(
-      manyMaps,
-      null,
-      noSymmetry,
-      1,
-      3,
-    );
-    if (analysis.status !== "eligible" || !analysis.construction) {
-      throw new Error("the 40-map fixture must admit");
+  it("nests one DFS loop per level, each non-leaf nest pruned by its level box", () => {
+    const maps = defaultTransforms();
+    for (let level = 1; level <= 4; level++) {
+      const c = generalConstruction(maps, level, 3);
+      const src = finiteSolidGeneralTransportSource(3, c, level);
+      const enumerate = src.slice(
+        src.indexOf("fn finEnumerate("),
+        src.indexOf("fn finSortEndpoints("),
+      );
+      expect(enumerate.match(/for \(var a\d = 0u;/g)).toHaveLength(level);
+      expect(enumerate.match(/finChildInverse\(/g) ?? []).toHaveLength(
+        level - 1,
+      );
     }
-    const src = finiteSolidGeneralTransportSource(
-      3,
-      wireOf(analysis.construction),
-      1,
+  });
+
+  it("bakes the smaller of the construction's own worst case and the leaf cap", () => {
+    const maps = sierpinskiTetrahedron();
+    const endpoints = (level: number): number => {
+      const src = finiteSolidGeneralTransportSource(
+        3,
+        generalConstruction(maps, level, 3),
+        level,
+      );
+      const match = /var<private> finE: array<vec2u, (\d+)>/.exec(src);
+      return Number(match?.[1]);
+    };
+    expect(endpoints(1)).toBe(8);
+    expect(endpoints(2)).toBe(32);
+    expect(endpoints(3)).toBe(128);
+    // 4^4 = 256 leaves exceed the cap: the cap's own 128 leaves bake.
+    expect(endpoints(4)).toBe(2 * FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES);
+  });
+
+  it("refuses a wire whose level boxes do not match its level", () => {
+    const c = generalConstruction(sierpinskiTetrahedron(), 2, 3);
+    expect(() => finiteSolidGeneralTransportSource(3, c, 3)).toThrow(
+      /level boxes/,
     );
-    // 40 leaves at level 1 — under the walk cap: the construction's own
-    // worst case IS the baked cap.
-    expect(src).toContain("const FIN_LEAF_CAP = 40u;");
+    expect(() => finiteSolidGeneralDisplaySource(4, c, 2)).toThrow(
+      /root vertices/,
+    );
   });
 });
 
 describe("general walk f32 twin against the f64 oracle", () => {
-  const wire = (level: number): FiniteSolidGeneralWire => {
-    const c = generalSierpinskiWire(level);
-    return {
-      mapScale: c.mapScale,
-      mapOffset: c.mapOffset,
-      rootMin: c.rootMin,
-      rootMax: c.rootMax,
-    };
+  /** A chain of queries: fresh from the origin, then the twin's own
+   * anchors, accumulating each hop's t. */
+  const twinChain = (
+    c: FiniteSolidGeneralConstruction,
+    origin: Vec3,
+    dir: Vec3,
+  ): { events: Array<{ t: number; entering: boolean }>; end: string } => {
+    const events: Array<{ t: number; entering: boolean }> = [];
+    let inside = finiteSolidGeneralContains(
+      c,
+      FINITE_SOLID_IDENTITY_POSE,
+      origin,
+    );
+    let result = finiteSolidGeneralDdaF32(
+      c.dimension,
+      c.level,
+      c,
+      IDENTITY_ROWS,
+      0,
+      origin,
+      dir,
+      null,
+      inside,
+    );
+    let t = 0;
+    for (let hop = 0; hop < 256; hop++) {
+      if (result.kind !== 1) {
+        return {
+          events,
+          end: result.kind === 3 ? `refused ${String(result.reason)}` : "miss",
+        };
+      }
+      t += result.t;
+      inside = !inside;
+      events.push({ t, entering: inside });
+      result = finiteSolidGeneralDdaF32(
+        c.dimension,
+        c.level,
+        c,
+        IDENTITY_ROWS,
+        0,
+        [0, 0, 0],
+        dir,
+        result.anchor,
+        inside,
+      );
+    }
+    return { events, end: "runaway" };
   };
-  const tie = (t: number): number =>
-    FINITE_SOLID_GENERAL_TIE_REL * Math.max(1, Math.abs(t));
 
-  it("agrees with the oracle on the hand-exact spine ray and its anchored continuation", () => {
-    const wire2 = wire(2);
-    const origin: Vec3 = [0.5, -2, 0];
-    const dir: Vec3 = [0, 1, 0];
-    const entry = finiteSolidGeneralDdaF32(
-      3,
-      2,
-      wire2,
-      null,
-      0,
-      origin,
-      dir,
-      null,
-      false,
-    );
-    expect(entry.kind).toBe(1);
-    if (entry.kind !== 1) return;
-    const oracleEntry = finiteSolidGeneralNextBoundary(
-      generalSierpinskiWire(2),
-      FINITE_SOLID_IDENTITY_POSE,
-      origin,
-      dir,
-      { inside: false },
-    );
-    expect(oracleEntry.kind).toBe("boundary");
-    if (oracleEntry.kind !== "boundary") return;
-    expect(Math.abs(entry.t - oracleEntry.t)).toBeLessThanOrEqual(1e-6);
-    for (let c = 0; c < 3; c++) {
-      expect(
-        Math.abs(entry.normal[c] - oracleEntry.outwardNormal[c]),
-      ).toBeLessThan(1e-6);
-    }
-    expect(entry.anchor?.planeMask).toBe(oracleEntry.anchor.planeMask);
-    for (let a = 0; a < 4; a++) {
-      expect(entry.anchor?.planeIndices[a]).toBe(
-        oracleEntry.anchor.planeIndices[a],
-      );
-      expect(entry.anchor?.cellIndices[a]).toBe(
-        oracleEntry.anchor.cellIndices[a],
-      );
-      expect(
-        Math.abs(
-          entry.anchor!.intrinsicPoint[a] -
-            oracleEntry.anchor.intrinsicPoint[a],
-        ),
-      ).toBeLessThanOrEqual(tie(1));
-    }
-    // The anchored continuation crosses the interior shared faces SILENTLY
-    // (level 2: the self-similar corner repeats twice more) to the true
-    // exit — compared against the oracle's own chain, whose continuation
-    // from the same anchor is the soundness record.
-    const through = finiteSolidGeneralDdaF32(
-      3,
-      2,
-      wire2,
-      null,
-      0,
-      [0, 0, 0],
-      dir,
-      entry.anchor,
-      true,
-    );
-    expect(through.kind).toBe(1);
-    if (through.kind !== 1) return;
-    const oracleThrough = finiteSolidGeneralNextBoundaryFromAnchor(
-      generalSierpinskiWire(2),
-      FINITE_SOLID_IDENTITY_POSE,
-      dir,
-      { inside: true, anchor: oracleEntry.anchor },
-    );
-    expect(oracleThrough.kind).toBe("boundary");
-    if (oracleThrough.kind !== "boundary") return;
-    expect(Math.abs(through.t - oracleThrough.t)).toBeLessThanOrEqual(1e-6);
-    for (let c = 0; c < 3; c++) {
-      expect(
-        Math.abs(through.normal[c] - oracleThrough.outwardNormal[c]),
-      ).toBeLessThan(1e-6);
-    }
-  });
-
-  it("fires honest exits, misses past the solid, and refuses a contradicting claim", () => {
-    const wire2 = wire(2);
-    // The off-apex ray exits into air at y = 0.4 and never re-enters.
-    const exit = finiteSolidGeneralDdaF32(
-      3,
-      2,
-      wire2,
-      null,
-      0,
-      [0.9, -2, 0],
-      [0, 1, 0],
-      null,
-      false,
-    );
-    expect(exit.kind).toBe(1);
-    if (exit.kind !== 1) return;
-    expect(exit.t).toBeCloseTo(1.2, 5);
-    // The fresh query from the exit point: the open side ahead, a miss —
-    // and the claim must match (a fresh inside=true refuses).
-    const fresh = finiteSolidGeneralDdaF32(
-      3,
-      2,
-      wire2,
-      null,
-      0,
-      [0.9, 2.4, 0],
-      [0, 1, 0],
-      null,
-      false,
-    );
-    expect(fresh.kind).toBe(2);
-    const wrongClaim = finiteSolidGeneralDdaF32(
-      3,
-      2,
-      wire2,
-      null,
-      0,
-      [0.9, -2, 0],
-      [0, 1, 0],
-      null,
-      true,
-    );
-    expect(wrongClaim.kind).toBe(3);
-    expect(wrongClaim.reason).toBe(3);
-  });
-
-  it("round-trips the twin's own anchor out through the anchored continuation, matching the oracle's chain", () => {
-    const wire2 = wire(2);
-    const dir: Vec3 = [0, 1, 0];
-    const entry = finiteSolidGeneralDdaF32(
-      3,
-      2,
-      wire2,
-      null,
-      0,
-      [0.5, -2, 0],
-      dir,
-      null,
-      false,
-    );
-    if (entry.kind !== 1 || !entry.anchor) throw new Error("entry expected");
-    const after = finiteSolidGeneralDdaF32(
-      3,
-      2,
-      wire2,
-      null,
-      0,
-      [0, 0, 0],
-      dir,
-      entry.anchor,
-      true,
-    );
-    expect(after.kind).toBe(1);
-    // The oracle's own chain agrees.
-    const oracleEntry = finiteSolidGeneralNextBoundary(
-      generalSierpinskiWire(2),
-      FINITE_SOLID_IDENTITY_POSE,
-      [0.5, -2, 0],
-      dir,
-      { inside: false },
-    );
-    if (oracleEntry.kind !== "boundary")
-      throw new Error("oracle entry expected");
-    const oracleAfter = finiteSolidGeneralNextBoundaryFromAnchor(
-      generalSierpinskiWire(2),
-      FINITE_SOLID_IDENTITY_POSE,
-      dir,
-      { inside: true, anchor: oracleEntry.anchor },
-    );
-    expect(oracleAfter.kind).toBe("boundary");
-    if (after.kind !== 1 || oracleAfter.kind !== "boundary") return;
-    expect(Math.abs(after.t - oracleAfter.t)).toBeLessThanOrEqual(1e-6);
-  });
-
-  it("agrees with the shipped grid twin on the grid's own maps (the cross-construction witness)", () => {
-    // The word tree with the shipped Menger maps reproduces the grid's
-    // cells (the CPU tests pin the unions); here the two f32 twins agree
-    // on sampled rays at level 1 — the same object through two
-    // constructions.
-    const maps = mengerSponge();
-    const general = analyzeFiniteSolidGeneral(maps, null, noSymmetry, 1, 3);
-    if (general.status !== "eligible" || !general.construction) {
-      throw new Error("the Menger fixture must admit");
-    }
-    const wire1 = {
-      mapScale: general.construction.mapScale,
-      mapOffset: general.construction.mapOffset,
-      rootMin: general.construction.rootMin,
-      rootMax: general.construction.rootMax,
-    };
-    const rays: Array<[Vec3, Vec3]> = [
-      [
-        [0.1, -2, 0.05],
-        [0, 1, 0],
-      ],
-      [
-        [-0.6, 0.2, -0.3],
-        [1, 0.1, 0.05],
-      ],
-      [
-        [0.4, 0.4, -2],
-        [0, 0, 1],
-      ],
-      [
-        [-2, -0.75, -0.75],
-        [1, 0, 0],
-      ],
-    ];
-    for (const [origin, dir] of rays) {
-      const grid = finiteSolidDdaF32(
-        3,
-        1,
-        0.75,
-        null,
-        0,
-        origin,
-        dir,
-        null,
-        false,
-      );
-      const tree = finiteSolidGeneralDdaF32(
-        3,
-        1,
-        wire1,
-        null,
-        0,
-        origin,
-        dir,
-        null,
-        false,
-      );
-      expect(tree.kind).toBe(grid.kind);
-      expect(tree.reason).toBe(grid.reason);
-      if (tree.kind === 1 && grid.kind === 1) {
-        expect(Math.abs(tree.t - grid.t)).toBeLessThan(1e-6);
-        for (let c = 0; c < 3; c++) {
-          expect(Math.abs(tree.normal[c] - grid.normal[c])).toBeLessThan(1e-5);
-        }
+  it("chains the oracle's union endpoints on sampled rays, both dimensions", () => {
+    // Seed 5's 60 rays on the default system at depth 2 include two grazing
+    // re-entries that refused state-mismatch before the anchor's own leaf
+    // read its masked residuals as exact zeros.
+    for (const [maps, level, dimension] of [
+      [defaultTransforms(), 2, 3],
+      [defaultTransforms(), 4, 3],
+      [sierpinskiTetrahedron(), 3, 3],
+      [rotatedPentatope(), 2, 4],
+      [hyperMengerSpongeTransforms(), 1, 4],
+    ] as const) {
+      const c = generalConstruction(maps, level, dimension);
+      const radius = finiteSolidGeneralBoundingRadius(c);
+      const rng = mulberry32(5);
+      for (let i = 0; i < 60; i++) {
+        const u = (): number => rng() * 2 - 1;
+        const rawOrigin: Vec3 = [
+          u() * 3 * radius,
+          u() * 3 * radius,
+          u() * 3 * radius,
+        ];
+        const target: Vec3 = [
+          u() * 0.4 * radius,
+          u() * 0.4 * radius,
+          u() * 0.4 * radius,
+        ];
+        const d: Vec3 = [
+          target[0] - rawOrigin[0],
+          target[1] - rawOrigin[1],
+          target[2] - rawOrigin[2],
+        ];
+        const length = Math.hypot(d[0], d[1], d[2]);
+        // The twin's inputs are f32; the oracle reads the same quantized ray.
+        const origin = rawOrigin.map(Math.fround) as Vec3;
+        const dir = d.map((x) => Math.fround(x / length)) as Vec3;
+        const expected = finiteSolidGeneralIntervals(
+          c,
+          FINITE_SOLID_IDENTITY_POSE,
+          origin,
+          dir,
+        )
+          .flatMap((interval) => [
+            { t: interval.enter, entering: true },
+            { t: interval.exit, entering: false },
+          ])
+          .filter((event) => event.t > 0);
+        const chain = twinChain(c, origin, dir);
+        expect(chain.end).toBe("miss");
+        expect(chain.events).toHaveLength(expected.length);
+        chain.events.forEach((event, k) => {
+          expect(event.entering).toBe(expected[k].entering);
+          expect(
+            Math.abs(event.t - expected[k].t) / Math.max(1, expected[k].t),
+          ).toBeLessThan(2e-6);
+        });
       }
     }
   });
 
-  it("resolves the TIR child's re-entering continuation at a shared face", () => {
-    // The corner class the owner-glass app gate caught (one unresolved
-    // path in ~127k glass hits): a chain whose second hop exits through a
-    // face whose SNAPPED anchor sat an ulp off the clip's own bound —
-    // the center/half reconstruction's f32 round-trip — so the TIR child
-    // re-entering through that same face read its own leaf 1 ulp
-    // outside, the tied start failed to merge, and the query refused
-    // state-mismatch. The snap now targets the composed bounds, so the
-    // chain resolves. The chain replays the transport's own discipline:
-    // the primary, then the Snell-bent refracted child (air→glass),
-    // then the TIR child (the exact mirror, staying inside).
-    const wire2 = wire(1);
-    const origin: Vec3 = [-2.58806502, -0.15623059, 0.375442716];
-    const primaryDir: Vec3 = [0.983974153, 0.1783109, 0.000299680885];
-    const primary = finiteSolidGeneralDdaF32(
+  it("enters the gasket's axis cell at the oracle's hand-exact crossing", () => {
+    const c = generalConstruction(sierpinskiTetrahedron(), 2, 3);
+    const entry = finiteSolidGeneralDdaF32(
       3,
-      1,
-      wire2,
-      null,
+      2,
+      c,
+      IDENTITY_ROWS,
       0,
-      origin,
-      primaryDir,
+      [0, -2, 0],
+      [0, 1, 0],
       null,
       false,
     );
-    expect(primary.kind).toBe(1);
-    if (primary.kind !== 1 || !primary.anchor) return;
-    // The refracted child: Snell air→glass at the entry's outward normal.
-    const entryNormal: Vec3 = [-1, 0, 0];
-    const refracted = dielectricRefract(primaryDir, entryNormal, 1, 1.45);
-    expect(refracted.tir).toBe(false);
-    const interior = finiteSolidGeneralDdaF32(
+    expect(entry.kind).toBe(1);
+    expect(entry.t).toBeCloseTo(3, 6);
+    expect(entry.normal[1]).toBeCloseTo(-1, 6);
+    expect(entry.anchor?.cellIndices).toEqual([0, 0, -1, -1]);
+    expect(entry.anchor?.planeIndices).toEqual([-1, -1, -1, -1]);
+    const oracle = finiteSolidGeneralNextBoundary(
+      c,
+      FINITE_SOLID_IDENTITY_POSE,
+      [0, -2, 0],
+      [0, 1, 0],
+      { inside: false },
+    );
+    if (oracle.kind !== "boundary") throw new Error("oracle entry missing");
+    expect(entry.anchor?.planeMask).toBe(oracle.anchor.planeMask);
+    expect(entry.anchor?.cellIndices).toEqual(oracle.anchor.cellIndices);
+  });
+
+  it("continues from its own anchor to the axis cell's apex exit", () => {
+    const c = generalConstruction(sierpinskiTetrahedron(), 2, 3);
+    const entry = finiteSolidGeneralDdaF32(
       3,
-      1,
-      wire2,
-      null,
+      2,
+      c,
+      IDENTITY_ROWS,
       0,
-      origin,
-      refracted.direction,
-      primary.anchor,
+      [0, -2, 0],
+      [0, 1, 0],
+      null,
+      false,
+    );
+    const exit = finiteSolidGeneralDdaF32(
+      3,
+      2,
+      c,
+      IDENTITY_ROWS,
+      0,
+      [0, 0, 0],
+      [0, 1, 0],
+      entry.anchor,
       true,
     );
-    expect(interior.kind).toBe(1);
-    if (interior.kind !== 1 || !interior.anchor) return;
-    // The interior hop's exit TIRs: the child stays inside, mirrored
-    // about the exit's outward normal, restarting from the exit's anchor.
-    const exitNormal: Vec3 = [0, 1, 0];
-    const tir = dielectricRefract(refracted.direction, exitNormal, 1.45, 1);
-    expect(tir.tir).toBe(true);
-    const childDir: Vec3 = [...tir.direction] as Vec3;
-    const restart = finiteSolidGeneralDdaF32(
+    expect(exit.kind).toBe(1);
+    expect(exit.t).toBeCloseTo(0.6, 6);
+  });
+
+  it("refuses a contradicting claim and a malformed anchor", () => {
+    const c = generalConstruction(sierpinskiTetrahedron(), 2, 3);
+    const entry = finiteSolidGeneralDdaF32(
       3,
-      1,
-      wire2,
-      null,
+      2,
+      c,
+      IDENTITY_ROWS,
       0,
-      origin,
-      childDir,
-      interior.anchor,
+      [0, -2, 0],
+      [0, 1, 0],
+      null,
+      false,
+    );
+    if (!entry.anchor) throw new Error("entry anchor missing");
+    const contradicting = finiteSolidGeneralDdaF32(
+      3,
+      2,
+      c,
+      IDENTITY_ROWS,
+      0,
+      [0, 0, 0],
+      [0, 1, 0],
+      entry.anchor,
+      false,
+    );
+    expect(contradicting.kind).toBe(3);
+    expect(contradicting.reason).toBe(3);
+    const planeSlot: FiniteSolidAnchor = {
+      ...entry.anchor,
+      planeIndices: [0, -1, -1, -1],
+    };
+    const malformed = finiteSolidGeneralDdaF32(
+      3,
+      2,
+      c,
+      IDENTITY_ROWS,
+      0,
+      [0, 0, 0],
+      [0, 1, 0],
+      planeSlot,
       true,
     );
-    expect(restart.kind).not.toBe(3);
-    expect(restart.reason).not.toBe(3);
+    expect(malformed.kind).toBe(3);
+    expect(malformed.reason).toBe(2);
   });
 });
