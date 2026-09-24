@@ -2127,3 +2127,126 @@ describe("general walk f32 twin with per-map media", () => {
     }
   });
 });
+
+describe("general walk f32 twin, glass-only (the composite's walk)", () => {
+  it("reproduces the oracle's glass-only transitions: opaque maps are no cells, both dimensions", () => {
+    for (const [maps, level, dimension, media] of [
+      [defaultTransforms(), 3, 3, [1, 0, 1, 0]],
+      [defaultTransforms(), 2, 3, [1, 2, 0, 2]],
+      [rotatedPentatope(), 2, 4, [0, 1, 1, 2, 0]],
+    ] as const) {
+      const c = generalConstruction(maps, level, dimension);
+      const wire = { ...c, media: [...media], glassOnly: true };
+      const radius = finiteSolidGeneralBoundingRadius(c);
+      const rng = mulberry32(43);
+      let glassEvents = 0;
+      for (let i = 0; i < 24; i++) {
+        const u = (): number => rng() * 2 - 1;
+        const origin = [
+          u() * 3 * radius,
+          u() * 3 * radius,
+          u() * 3 * radius,
+        ].map(Math.fround) as Vec3;
+        const target: Vec3 = [
+          u() * 0.4 * radius,
+          u() * 0.4 * radius,
+          u() * 0.4 * radius,
+        ];
+        const d: Vec3 = [
+          target[0] - origin[0],
+          target[1] - origin[1],
+          target[2] - origin[2],
+        ];
+        const length = Math.hypot(d[0], d[1], d[2]);
+        const dir = d.map((x) => Math.fround(x / length)) as Vec3;
+        let claim = finiteSolidGeneralMediumAt(
+          c,
+          FINITE_SOLID_IDENTITY_POSE,
+          origin,
+          [...media],
+          true,
+        ).medium;
+        let oracle = finiteSolidGeneralNextBoundary(
+          c,
+          FINITE_SOLID_IDENTITY_POSE,
+          origin,
+          dir,
+          {
+            inside: claim !== 0,
+            media: [...media],
+            medium: claim,
+            glassOnly: true,
+          },
+        );
+        let twin = finiteSolidGeneralDdaF32(
+          dimension,
+          level,
+          wire,
+          IDENTITY_ROWS,
+          0,
+          origin,
+          dir,
+          null,
+          claim,
+        );
+        for (let hop = 0; hop < 64; hop++) {
+          if (oracle.kind !== "boundary") {
+            expect(twin.kind).toBe(oracle.kind === "miss" ? 2 : 3);
+            break;
+          }
+          expect(twin.kind).toBe(1);
+          expect(twin.fromMedium).toBe(oracle.fromMedium);
+          expect(twin.toMedium).toBe(oracle.toMedium);
+          expect(twin.toBranch).toBe(oracle.toBranch);
+          expect(twin.toMedium).not.toBe(FINITE_SOLID_MEDIUM_OPAQUE);
+          expect(Math.abs(twin.t - oracle.t)).toBeLessThan(
+            4e-6 * Math.max(1, oracle.t, ...origin.map(Math.abs)),
+          );
+          glassEvents++;
+          claim = oracle.toMedium ?? 0;
+          const twinAnchor = twin.anchor;
+          if (!twinAnchor) throw new Error("twin anchor missing");
+          oracle = finiteSolidGeneralNextBoundaryFromAnchor(
+            c,
+            FINITE_SOLID_IDENTITY_POSE,
+            dir,
+            {
+              inside: claim !== 0,
+              anchor: oracle.anchor,
+              media: [...media],
+              medium: claim,
+              glassOnly: true,
+            },
+          );
+          twin = finiteSolidGeneralDdaF32(
+            dimension,
+            level,
+            wire,
+            IDENTITY_ROWS,
+            0,
+            [0, 0, 0],
+            dir,
+            twinAnchor,
+            claim,
+          );
+        }
+      }
+      expect(glassEvents).toBeGreaterThan(0);
+    }
+  });
+
+  it("refuses a glass-only wire without media or at level 0", () => {
+    const c = generalConstruction(defaultTransforms(), 1, 3);
+    expect(() =>
+      finiteSolidGeneralDisplaySource(3, { ...c, glassOnly: true }, 1),
+    ).toThrow(RangeError);
+    const c0 = generalConstruction(defaultTransforms(), 0, 3);
+    expect(() =>
+      finiteSolidGeneralDisplaySource(
+        3,
+        { ...c0, media: [1, 0, 1, 0], glassOnly: true },
+        0,
+      ),
+    ).toThrow(RangeError);
+  });
+});
