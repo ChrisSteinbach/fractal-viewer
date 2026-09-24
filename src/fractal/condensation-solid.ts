@@ -54,19 +54,29 @@
  * WHAT IT REFUSES ({@link condensationSolidAdmission3}): no emitters; a
  * band without a finite `maxDepth` at most
  * {@link CONDENSATION_SOLID_MAX_DEPTH}; a fold, graph-directed selection,
- * a hybrid schedule, any final transform but the value-exact identity, or
- * a mesh-bearing emitter shape; and a map that does not contract in
- * operator norm (`σ_max >= 1`, no invariant ball). Composition refusals
+ * a hybrid schedule, any final transform but the value-exact identity; an
+ * emitter shape outside the EXACT-SDF vocabulary
+ * ({@link condensationSolidShapeRefusal}); and a map that does not contract
+ * in operator norm (`σ_max >= 1`, no invariant ball). Composition refusals
  * (tiling, balloon) are the router's.
  *
- * THE 4D HALF. A 4D condensation emitter is a 3D solid embedded at local
- * `w = 0`, a flat piece of 4D. A 3D slice meets a flat piece in a set of
- * zero volume unless the flat lies IN the slice, so the only 4D slices that
- * hold a solid for glass are the canonical pose the closed-solid backend
- * already admits: w-untouched maps whose flats all lie in the displayed
- * hyperplane. There, the slice is exactly this module's 3D solid of the
- * document's 3D restriction. The 4D form, and the admission that states
- * the pose, belong to the production child that wires the backend.
+ * THE EMITTER RULE IS A LOOK DECISION as well as a soundness one. The field
+ * is sound over any shape SDF, but only an exact one makes the pruned
+ * field the brute-force union and keeps the transport's interior steps
+ * long: the look sheets (`scripts/condensation-glass.harness.ts`) resolved
+ * 97.6-100% of glass hits on sphere and torus emitters at every depth and
+ * 52.3% on the conservative gear, whose unresolved pixels read as black
+ * speckle. So the admitted shapes are the analytic primitives with exact
+ * SDFs — sphere, box, torus with `minor <= major`, capsule — combined by
+ * UNION only (a union of exact fields is exact outside and conservative
+ * inside, and its sign is exact). An intersect part keeps the sign and
+ * loses the distance; the gear and the baked mesh are conservative by
+ * construction. They refuse, and no gear remedy is scheduled.
+ *
+ * THE 4D HALF is `condensation-solid-4d.ts`: the same search one dimension
+ * up over the transport's penalty term, admitted only in the canonical
+ * pose, where its slice is exactly this module's solid of the document's
+ * 3D restriction.
  */
 import { inverse3x3, multiply3x3 } from "./affine";
 import { symmetryRotation } from "./chaos-game";
@@ -75,7 +85,7 @@ import {
   type CondensationDE3,
   type ResolvedCondensationDepthBand,
 } from "./condensation-de";
-import { SHAPE_MARCH_SAFETY, shapeMeshIds } from "./shapes";
+import { SHAPE_MARCH_SAFETY, type ShapeSpec } from "./shapes";
 import {
   singularValues3,
   SURFACE_FOLD_NONE,
@@ -126,10 +136,22 @@ export interface CondensationSolid3 {
 export type CondensationSolidAdmission =
   { ok: true } | { ok: false; reason: string };
 
+export interface CondensationSolidOptions {
+  /** Admit conservative emitter shapes (intersect parts, the gear, a spindle
+   * torus) that the emitter rule refuses. The field stays sound over them —
+   * only the pruned-equals-brute-force exactness and the look are lost —
+   * so the look sheet's gear panel and the soundness tests build them as an
+   * INSTRUMENT. Routing never passes it. A mesh stays refused either way
+   * (its baked lattice is not a CPU-side shape SDF this module evaluates
+   * against a kernel). */
+  admitConservativeShapes?: boolean;
+}
+
 /** Whether the surface DE's displayed object is a finite condensation
  * solid this module describes (the module doc's refusal list). */
 export function condensationSolidAdmission3(
   de: SurfaceDE,
+  options: CondensationSolidOptions = {},
 ): CondensationSolidAdmission {
   const emitters = de.condensation?.emitters ?? [];
   if (emitters.length === 0)
@@ -145,9 +167,10 @@ export function condensationSolidAdmission3(
   if (de.foldFinal) return { ok: false, reason: "a fold final lens" };
   if (de.final && !isIdentityFinal(de.final))
     return { ok: false, reason: "a final transform" };
-  for (const emitter of emitters)
-    if (shapeMeshIds(emitter.shape).length > 0)
-      return { ok: false, reason: "a mesh emitter shape" };
+  for (const emitter of emitters) {
+    const refusal = condensationSolidShapeRefusal(emitter.shape, options);
+    if (refusal) return { ok: false, reason: refusal };
+  }
   for (const map of de.maps)
     if (map.foldKind !== SURFACE_FOLD_NONE)
       return { ok: false, reason: "a fold map" };
@@ -155,6 +178,34 @@ export function condensationSolidAdmission3(
     if (!(map.sigmaMax < 1))
       return { ok: false, reason: "a map that does not contract" };
   return { ok: true };
+}
+
+/** Why an emitter shape falls outside the exact-SDF vocabulary (module
+ * doc's emitter rule), or `null` when it is admitted. Shared by both
+ * dimensions: the 4D emitter is the same 3D shape on its flat. */
+export function condensationSolidShapeRefusal(
+  shape: ShapeSpec,
+  options: CondensationSolidOptions = {},
+): string | null {
+  const exact = !options.admitConservativeShapes;
+  for (const part of shape.parts) {
+    const prim = part.primitive;
+    if (prim.kind === "mesh") return "a mesh emitter shape";
+    if (!exact) continue;
+    if (part.combine !== "union") return "an intersect emitter part";
+    switch (prim.kind) {
+      case "sphere":
+      case "box":
+      case "capsule":
+        break;
+      case "torus":
+        if (!(prim.minor <= prim.major)) return "a spindle torus emitter shape";
+        break;
+      case "gear":
+        return "a gear emitter shape";
+    }
+  }
+  return null;
 }
 
 function isIdentityFinal(final: {
@@ -222,8 +273,11 @@ function transpose3(m: readonly number[]): number[] {
 }
 
 /** The solid for an admitted surface DE; throws on a refused one. */
-export function buildCondensationSolid3(de: SurfaceDE): CondensationSolid3 {
-  const admission = condensationSolidAdmission3(de);
+export function buildCondensationSolid3(
+  de: SurfaceDE,
+  options: CondensationSolidOptions = {},
+): CondensationSolid3 {
+  const admission = condensationSolidAdmission3(de, options);
   if (!admission.ok)
     throw new Error(`condensation solid refused: ${admission.reason}`);
   const condensation = de.condensation!;

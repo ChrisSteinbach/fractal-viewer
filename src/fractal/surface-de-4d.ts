@@ -1116,7 +1116,7 @@ export function analyzeSurfaceSystem4(
  * NEAR_SINGULAR_SIGMA`, so the pivots this function selects are always well
  * clear of 0.
  */
-function inverse4(m: number[]): number[] {
+export function inverse4(m: number[]): number[] {
   // Augmented rows [M | I], mutated in place by the elimination below.
   const rows: number[][] = [];
   for (let r = 0; r < 4; r++) {
