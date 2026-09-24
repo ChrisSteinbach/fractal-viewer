@@ -10,6 +10,8 @@ import { FINITE_SOLID_HALF_EXTENT } from "../fractal/finite-solid";
 import { presetTransforms } from "../fractal/presets";
 import { dielectricBeerThroughput } from "../fractal/surface-dielectric";
 import {
+  finiteSolidGeneralMediaCodes,
+  finiteSolidGeneralSlots,
   sphereInversionShadeSlots,
   surfaceSlotColors,
   surfaceForwardSlot,
@@ -488,5 +490,56 @@ describe("sphereInversionShadeSlots", () => {
     for (const slot of admitted.materials!.slots) {
       expect(slot.optics?.radius).toBeCloseTo(1.7);
     }
+  });
+});
+
+describe("finiteSolidGeneralSlots", () => {
+  it("takes one slot per active map in document order, skipping weight-0 maps", () => {
+    const transforms = [
+      transform({ id: 0 }),
+      transform({ id: 1, weight: 0 }),
+      transform({ id: 2 }),
+    ];
+    expect(finiteSolidGeneralSlots(transforms)).toEqual([
+      { baseIndex: 0 },
+      { baseIndex: 2 },
+    ]);
+  });
+});
+
+describe("finiteSolidGeneralMediaCodes", () => {
+  const radius = 2;
+  const codesFor = (transforms: Transform[]): number[] => {
+    const slots = finiteSolidGeneralSlots(transforms);
+    return finiteSolidGeneralMediaCodes(
+      surfaceSlotMaterials(transforms, slots, undefined, radius, true),
+      slots.length,
+    );
+  };
+
+  it("codes every map opaque when no map carries Glass", () => {
+    expect(codesFor([transform({ id: 0 }), transform({ id: 1 })])).toEqual([
+      0, 0,
+    ]);
+  });
+
+  it("names each glass map by the first slot of its material, opaque maps 0", () => {
+    expect(
+      codesFor([
+        transform({ id: 0 }),
+        transform({ id: 1, optics: { model: "dielectric" } }),
+        transform({ id: 2, optics: { model: "dielectric" } }),
+        transform({ id: 3, optics: { model: "dielectric", scale: 2 } }),
+      ]),
+    ).toEqual([0, 2, 2, 4]);
+  });
+
+  it("keeps maps that differ only in distortion one medium", () => {
+    expect(
+      codesFor([
+        transform({ id: 0, optics: { model: "dielectric" } }),
+        transform({ id: 1, optics: { model: "dielectric", distortion: 0.2 } }),
+      ]),
+    ).toEqual([1, 1]);
   });
 });

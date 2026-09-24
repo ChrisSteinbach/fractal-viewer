@@ -40,7 +40,7 @@ export function traceFrames(lines) {
       }
     }
     const tally =
-      /transport done final (?:sample=\d+ )?resolved=(\d+) unresolved=(\d+) \(cumulative resolved=(\d+) unresolved=(\d+) invalid=(\d+)\) passes=(\d+)/.exec(
+      /transport done final (?:sample=\d+ )?resolved=(\d+) unresolved=(\d+) \(cumulative resolved=(\d+) unresolved=(\d+) invalid=(\d+)\) passes=(\d+)(?: skipped=(\d+))?/.exec(
         line,
       );
     if (tally)
@@ -51,6 +51,9 @@ export function traceFrames(lines) {
         cumulativeUnresolved: Number(tally[4]),
         invalid: Number(tally[5]),
         passes: Number(tally[6]),
+        // Classic-slot hits (shadeRays owns them): the glass solid's
+        // opaque-first pixels under per-map media. Absent on older feeds.
+        skipped: Number(tally[7] ?? 0),
       });
     const done =
       /frame done .*truncated=(true|false) hit=(\d+) miss=(\d+) exhausted=(\d+) active=(\d+) plane=(\d+)/.exec(
@@ -106,7 +109,10 @@ export function completionFailures(frames, samples, rays) {
       errors.push(
         `${label}: unresolved=${tally.unresolved} invalid=${tally.invalid}`,
       );
-    if (tally.resolved + tally.unresolved + tally.invalid !== frame.hit)
+    if (
+      tally.resolved + tally.unresolved + tally.invalid + tally.skipped !==
+      frame.hit
+    )
       errors.push(
         `${label}: optical tally does not account for every glass hit`,
       );

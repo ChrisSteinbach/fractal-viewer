@@ -3,6 +3,7 @@ import {
   resolveSurfaceMaterial,
   surfaceMaterialUsesFinish,
   surfaceMaterialUsesOptics,
+  surfaceMaterialOpticsLanes,
   surfaceMaterialUsesPattern,
   type SurfaceMaterialSlots,
 } from "../fractal/surface-material-wire";
@@ -40,6 +41,43 @@ import type { Transform, Vec3 } from "../fractal/types";
  */
 export interface SurfaceSlot {
   readonly baseIndex: number;
+}
+
+/** The general glass solid's slots: one per ACTIVE map, in the document's
+ * order — exactly the maps `analyzeFiniteSolidGeneral` builds its word tree
+ * from (weight-0 subtrees do not exist), so slot `j` is branch `j` and the
+ * word-tree hit-info's owning branch indexes it directly. */
+export function finiteSolidGeneralSlots(
+  transforms: readonly Transform[],
+): SurfaceSlot[] {
+  const slots: SurfaceSlot[] = [];
+  transforms.forEach((transform, baseIndex) => {
+    if ((transform.weight ?? 1) > 0) slots.push({ baseIndex });
+  });
+  return slots;
+}
+
+/** The general glass solid's per-map MEDIA codes (`FiniteSolidGeneralMedia`)
+ * from the session's slot materials: an opaque slot (no optics lanes) is 0,
+ * a glass slot is 1 + the FIRST slot carrying an identical medium (index,
+ * Beer radius and absorption — distortion does not split a medium) — so
+ * equal materials share one code (a crossing between them is silent) and
+ * every code names a glass slot of its own material, which is where the
+ * kernel reads it (code k at slot k - 1). No optics anywhere: every map
+ * opaque, the classic solid with per-branch finishes. */
+export function finiteSolidGeneralMediaCodes(
+  materials: SurfaceMaterialSlots | null,
+  slotCount: number,
+): number[] {
+  if (!materials?.optics) return new Array<number>(slotCount).fill(0);
+  // The key is what the walk and the trace read of a medium — index, Beer
+  // radius and absorption; distortion only displaces the rear seam, so two
+  // maps differing in it alone stay ONE medium (no phantom interface).
+  const keys = materials.slots.map((material) => {
+    const lanes = surfaceMaterialOpticsLanes(material);
+    return lanes ? JSON.stringify([...lanes[0], lanes[1][0]]) : null;
+  });
+  return keys.map((key) => (key === null ? 0 : 1 + keys.indexOf(key)));
 }
 
 /** The synthetic one-slot wire used by every forward-orbit surface core

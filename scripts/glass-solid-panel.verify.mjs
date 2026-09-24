@@ -36,11 +36,14 @@
  *      shipped byte-identical path serving the preset's own construction).
  *   6. Glass on the viewer's own ROTATING boot document (the box tree
  *      refused it; the simplicial tree's derived root admits it) at depth
- *      3, authored from the panel: routed, the 64-cell depth note, the
- *      finiteSolid optics backend LIVE, complete transport in every
- *      antialias sample.
+ *      3, authored from the panel on the HEAD map alone — under the per-map
+ *      media a MIXED session, one glass subtree in front of three opaque
+ *      ones: routed, the 64-cell depth note, the section note's "1 of 4
+ *      maps are Glass", the finiteSolid optics backend LIVE, complete
+ *      transport in every antialias sample, two Save-PNGs byte for byte
+ *      (the first kept under scripts/out/ for the owner's look review).
  *   7. The same flow one dimension up on the pentatope preset at depth 2
- *      (25 cells): the 4D half, native posed slice.
+ *      (25 cells; "1 of 5"): the 4D half, native posed slice.
  *
  * A behavior gate: no timing rows, no screenshots, no appearance claims.
  * Exit 1 is a verdict failure; a browser/display failure says so (exit 2).
@@ -48,7 +51,7 @@
 import { chromium } from "playwright-core";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
 import { completionFailures, traceFrames } from "./lib/finite-glass-trace.mjs";
 import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
@@ -628,6 +631,17 @@ try {
     if (authoredDoc?.transforms?.[0]?.optics?.model !== "dielectric") {
       fail(`${name}: Glass did not land on the head map`);
     }
+    // The per-map media: Glass on the head map ALONE makes its own subtree
+    // glass and every other subtree opaque — the section note counts it.
+    const mapCount = (authoredDoc?.transforms ?? []).length;
+    const mediaNote = await page.evaluate(
+      () => document.getElementById("glassSolidNote").textContent,
+    );
+    if (!mediaNote.includes(`1 of ${mapCount} maps are Glass`)) {
+      fail(
+        `${name}: the section note did not count the glass maps: "${mediaNote}"`,
+      );
+    }
     const hash = await page.evaluate(() => location.hash);
     activeLeg = record;
     await page.goto(
@@ -692,6 +706,28 @@ try {
     log(
       `[${name}] samples=${samples} rays=${legCensus?.rays} covered=${(covered * 100).toFixed(1)}% transport=` +
         JSON.stringify(legTallies.at(-1) ?? null),
+    );
+    // Export identity for the MIXED-MEDIA session (a glass subtree in front
+    // of opaque ones), and the export kept for the owner's look review.
+    await page.click("#captureSection > summary");
+    await page.selectOption("#exportScale", "1");
+    const shots = [];
+    for (const run of [1, 2]) {
+      const promise = page.waitForEvent("download", { timeout: 180_000 });
+      await page.click("#savePngBtn");
+      const download = await promise;
+      const bytes = readFileSync(await download.path());
+      shots.push({ run, bytes, sha256: sha256(bytes) });
+    }
+    if (shots[0].sha256 !== shots[1].sha256) {
+      fail(
+        `${name}: the two exports differ — the mixed-media export is not reproducible`,
+      );
+    }
+    mkdirSync("scripts/out", { recursive: true });
+    writeFileSync(`scripts/out/glass-media-${name}.png`, shots[0].bytes);
+    log(
+      `[${name}] export identity: ${shots[0].bytes.length} bytes sha ${shots[0].sha256.slice(0, 12)}… -> scripts/out/glass-media-${name}.png`,
     );
   };
   // The boot system is the "default" preset ("Twisted Tetrahedron"); load
