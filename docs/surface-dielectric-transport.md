@@ -1864,10 +1864,12 @@ reports the route.
   segment marched the attractor across the whole solid, although only a
   hit strictly before the walk's next boundary is a terminal. It now
   stops there (the domain exit only on a walk miss), in the kernel and the
-  fixture alike. Every outcome the old march resolved is unchanged —
-  resolved counts were identical before and after on all three documents
-  — and a step-budget refusal past the boundary can no longer make a
-  path unresolved.
+  fixture alike. Every outcome the old march resolved is unchanged (a hit
+  at or past the boundary was already discarded; both composite bench legs
+  agree with their deltas unmoved), and a step-budget refusal past the
+  boundary can no longer make a path unresolved. (The settle's resolved
+  tally is not an identity instrument: it drifts by about 1,000 paths
+  between runs and tools of one document.)
 
 THE COST (RX 7900 XTX, the Glass solid panel gate's 960x640 pane, eight
 antialias samples, summed sample walls; the cells column is the same
@@ -1893,6 +1895,34 @@ Scaled by pixel-samples to the envelope's 512x288 four-sample settle
 the 10 s line, which the cells route (near 7 s) met. The settle stays
 progressive and interruptible, so nothing is refused; the preview tier is
 unmeasured.
+
+WHERE THE TIME GOES. A scratch build whose transport never marches the
+opaque term (the kernel text otherwise unchanged) settles Menger in 18.7 s
+and the boot document in 55.1 s. So the transport's opaque march is
+~18 s of Menger's 37 s and ~65 s of the boot document's 120 s; the rest
+of Menger's gap over the cells is the primary march and shading of the
+attractor itself. For scale, the ordinary Surface render of the same maps
+(block and Glass removed, compute engine forced) settles Menger in 10.6 s,
+the boot document in 5.1 s and the pentatope in 4.9 s: on the boot
+document almost all of the cost is the level-3 glass itself, whose path
+trees are large (the cells route already took 61 s). The CPU fixture's
+counts over 60 through-glass traces
+per document: Menger 11 marches per trace at 7.7 steps each; the boot
+document 159 marches per trace at 2.4 steps, 69% of them a one-step miss.
+
+REFUTED: capping the descent at the march's remaining segment. A step only
+needs to know whether the distance is below `max(tFar - t, eps)`, and the
+refined descent can certify that early — the running min and the live A/B
+chains' ball floors lower-bound everything it has yet to certify — so a
+prototype capped the wrapper's branch walk and each descent there (CPU and
+WGSL, 3D and 4D). It was exact where it mattered: across both documents'
+10,214 marches every hit/miss and every hit `t` matched the uncapped march,
+and both composite bench legs agreed with unchanged deltas. It cut CPU
+evaluation time 2.4x (Menger) and 1.7x (boot document), and moved the GPU
+settle from 37.2 to 37.1 s and from 120.4 to 117.2 s. The misses it
+accelerates are cheap lanes that already wait on their wave's slowest
+lane — a 17-64-step march near an opaque surface — so it was reverted
+rather than shipped. A GPU lever has to shorten those long marches.
 
 GATE: `scripts/glass-solid-panel.verify.mjs` legs 6-8 are mixed blocks
 (the boot document, the pentatope, and the owner's Menger document with
