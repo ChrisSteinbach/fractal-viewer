@@ -854,7 +854,7 @@ function opticsOutlookNoteText(outlook: SurfaceOpticsOutlook): string {
       ? "This emitter scene's glass resolves at the saved slice pose; scrubbing the slice away leaves it unresolved."
       : "This emitter scene's glass resolves on the closed-solid transport at the next Surface entry.";
   }
-  return "This scene keeps the classic finish: transmission resolves on emitter-only scenes and finite-cell Menger constructions.";
+  return "This scene keeps the classic finish: glass resolves inside a Glass solid (Scene / Look) and on emitter-only scenes.";
 }
 
 /** The three w-mixing planes shared by `WExtension.rotation`/`.shear` (see
