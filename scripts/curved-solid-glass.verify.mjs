@@ -90,11 +90,12 @@ function parseArgs(argv) {
     exportTimeout: 1_800_000,
     scale: "1",
     maxrays: 200_000,
-    // The measured floor at 1 spp on the RX 7900 XTX: 90.0% (beads, both
-    // dimensions) and 89.9% (rings), against the CPU look sheet's
-    // 97.6-100% at 160 px. The gap is open work (fr-pd1p), so the bar sits
-    // below the measured floor rather than at the look sheet's figure.
-    "min-resolved": 0.85,
+    // The measured floor at 1 spp on the RX 7900 XTX: 99.9% (beads, both
+    // dimensions) and 98.4% (rings, whose rims keep a few state-mismatch
+    // refusals), matching the kernel twin at the app's own camera
+    // (`scripts/condensation-glass-app-twin.harness.ts`). The bar sits
+    // below the rings' floor with a margin, not at it.
+    "min-resolved": 0.97,
     "min-bent": 0.05,
     outdir: path.join(HERE, "out"),
   };

@@ -2230,11 +2230,92 @@ XTX (`x11::0`, `amd rdna-3`, software=false), 960x540, 1 spp, UNCERTIFIED
 Every leg passes: menu to settle, compute and closed-solid on a real
 adapter, no exhausted ray, the band and optics in the document, the 4D
 slab at zero on w = 0, a byte-identical link reload that copies the same
-link, and a byte-identical tiled export. Two gaps are recorded rather than
-absorbed. The resolved share is 90% where the CPU look sheet measured
-97.6–100%, so the gate's bar sits at 0.85 (fr-pd1p). The 4D twin traces
-the same object with the same tallies at about four times the cost
-(fr-7y60).
+link, and a byte-identical tiled export. The 90% resolved share was a gap
+against the look sheet's 97.6–100%, closed in the next section; the rows
+above are the pre-fix record.
+
+### The resolved-share gap: two kernel rules, not f32 (2026-09-24)
+
+THE CENSUS. The unresolved status word now carries the failure kind and
+reason on every backend (it did only for the finite DDA). The pre-fix
+settle's residue: glass-beads processed-cap 1,792, interface-cap 443,
+inside-miss 365 and traversal state-mismatch 240 (the 4D twin identical),
+and glass-rings state-mismatch 1,641 and inside-miss 1,655. None was
+replay exhaustion.
+
+THE TWIN AT THE APP'S OWN CAMERA AND RASTER
+(`scripts/condensation-glass-app-twin.harness.ts`). This is the kernel's
+f64 transport twin (`transportTraceCPU` over the closed-solid query on the
+f64 field), run on the starter's own document and saved camera. It uses a
+960x540 pane's per-pixel cone, the refined descent as the primary
+estimator and the kernel's replay schedule, tracing every fourth pixel. It
+reproduced the app: beads 90.2%, rings 91.3%, with the same failure mix.
+So the f32 kernel was NOT the gap. Nor were the display-estimator hand-off
+(a primary march on the solid field gave 90.3% / 89.9%), the pose (the
+look sheet's pose at 960x540: 89.6% / 91.3%) or the raster (the sheet's
+pose at 160 px: 95.9% / 88.3%). The look sheet's figure was its TRACER's.
+`glass-preview.ts` runs the oracle's `dielectricTrace`, which starts with
+an outside boundary query from the march's hit, and its scene gates every
+crossing on exact membership. The kernel did neither:
+
+- THE FORCED PRIMARY SPLIT. The display march accepts a hit anywhere in
+  its pixel cone. Every primary hit sat OUTSIDE the solid, by up to 1.9
+  crossing eps. For a grazing silhouette ray the bead is not entered at
+  all. A split forced there refracts a chord that starts a distance `δ`
+  outside a sphere of radius `r`, and that chord meets the wall with
+  `sin θ` enlarged by `(1 + δ/r)`. At a grazing entry that is past the
+  critical angle (43.6° at IOR 1.45). The dumped processed-cap trace
+  circles a depth-1 bead at 44.4° incidence, a whispering-gallery orbit of
+  total internal reflection that only absorption can end. That takes more
+  than 2,048 interfaces. Landing the hit on the surface first does not help
+  (90.7% / 90.3%), because a near-miss has no surface to land on.
+- UNGATED BAND CROSSINGS. The union's gaps narrower than the crossing band
+  fire `|f| < eps` with no surface there. Taken as crossings, they flip the
+  medium, and the trace then fails inside-miss or state-mismatch.
+
+THE FIX (the curved solid's `condensationSolid` emission only; the
+emitter-only closed-solid kernel and every shipped digest are unmoved).
+The query OWNS THE PRIMARY INTERFACE: the trace starts with one unanchored
+outside path at the march's hit, as the finite DDA's does. A near-miss
+then misses (background, as the oracle reads it), and a real entry splits
+in the loop like any other boundary. The sphere-inversion backend's
+MEMBERSHIP GATE now also covers this backend, with membership as the
+field's own sign (exact: `transportSolidContains` is
+`transportSolidField(p) <= 0`). A band fire is a crossing only where the
+sign flips across it. The twin carries both rules (the fixture's
+`ownsPrimary` and `contains`). The field-sign gate and the module's
+`condensationSolidContains3` give identical tallies.
+
+| Twin rule (every 4th pixel of 960x540) |  Beads |  Rings |
+| -------------------------------------- | -----: | -----: |
+| Pre-fix: forced split, no gate         | 90.18% | 91.28% |
+| Owned primary, no gate                 | 93.79% | 90.49% |
+| Forced split, membership gate          | 93.51% | 96.13% |
+| Both (the shipped rule)                | 99.94% | 98.24% |
+
+Neither rule alone closes the gap. The beads' caps need the owned primary,
+and the rings' phantoms need the gate. The fixed twin also runs the beads
+about 8x faster, since the capped orbits were most of its work. What
+remains: one bead trace capped, and rings state-mismatch refusals on the
+rims (a few dark specks, the look sheet's own "a few unresolved rims").
+
+MEASURED after the fix, 2026-09-24, RX 7900 XTX (`x11::0`), 960x540,
+1 spp, quiet=YES, uncertified timings. Every leg still passes: link reload
+byte-identical, tiled exports byte-identical in 3 bands, and glass differs
+from Classic over 11.0% / 11.9% of the pane.
+
+| Starter          | Settle | Resolved glass hits      | Remaining failures | Export |
+| ---------------- | -----: | ------------------------ | ------------------ | -----: |
+| `glass-beads`    |  6.3 s | 28,448 / 28,480 (99.89%) | processed-cap 32   |  2.8 s |
+| `glass-rings`    |  5.9 s | 32,179 / 32,703 (98.40%) | state-mismatch 524 |  1.9 s |
+| `glass-beads-4d` |  7.9 s | 28,448 / 28,480 (99.89%) | processed-cap 32   |  4.0 s |
+
+The gate's `--min-resolved` is now 0.97, below the rings' floor with a
+margin. The closed-solid bench legs agree after the change
+(`docs/gpu-bench-surface.md`). The 4D beads' cost was mostly those capped
+orbits: they now settle in 7.9 s against 6.3 s for 3D, where the pre-fix
+record was 43.1 s against 10.4 s. What remains of the 4D cost question is
+open work (fr-7y60).
 
 ## What is not yet qualified
 
