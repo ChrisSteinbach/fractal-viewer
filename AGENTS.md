@@ -982,8 +982,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     solid IS the level-N cell set. The optional `finiteSolid`
     block routes to compute-only cores; primary rays and transport share the
     exact walk — the grid's ternary DDA for `{shape, level}`, and `{level}`
-    alone (0..4) as the document's OWN maps' SIMPLICIAL word tree (any
-    contracting affine; a derived root where no hull is invariant; the
+    alone (0..4) as the document's OWN maps' word tree (any contracting
+    affine; root: an invariant hull simplex, else the invariant box; the
     prune rides level boxes; the 128-leaf cap refuses disclosed); the
     hybrid DE shades. PER-MAP MEDIA: a Glass map's subtree is glass, the
     rest opaque terminals; opaque owns overlaps.
@@ -992,7 +992,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     split child's stale medium re-anchors once. One-cell anchor
     differences fail agreement. Gates pin every AA sample, the copied
     pose and export identity; the word tree's harness reference is an
-    independent barycentric simplex union, its Glass app gate seven legs.
+    independent simplex/box union, its Glass app gate seven legs.
     Evidence: `docs/surface-dielectric-transport.md`.
   - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its

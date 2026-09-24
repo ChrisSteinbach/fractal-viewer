@@ -1542,7 +1542,7 @@ untouched, byte for byte.
   first map (level 0's lone root cell is branch 0) — carried as a per-map
   code table (`FiniteSolidGeneralMedia`): 0 opaque, a glass code >= 1,
   equal codes one material. THE OWNER RULE partitions overlapping cells
-  (derived roots overlap heavily): any covering opaque branch owns the
+  (a rotating family's cells overlap): any covering opaque branch owns the
   point, else the LOWEST-INDEX covering glass branch, else air. The walk
   counts coverage per branch and an event is a MEDIUM CHANGE, reporting
   the from/to medium and the owning branch; a shared face, an overlap's
@@ -1620,6 +1620,79 @@ untouched, byte for byte.
   The gate also caught a stale panel note (a committed Finish edit
   repainted the transform list, not the section) — the commit now
   repaints the Glass solid section.
+
+## Box-root cells: the derived simplex retired (2026-09-24)
+
+The owner rendered the Menger maps under a general Glass solid at depth 4
+(Glass on two corner maps) and reported sawtooth faces and black blobs.
+Measured: 104,966 of 960,000 primary rays (~11%) refused at the 128-leaf
+cap. The cause was the DERIVED root — a regular simplex 3x the invariant
+box's half-diagonal out — so the depth-4 cells were tetrahedra ~5x the
+cubes they stood for, overlapping into spiky silhouettes and a per-ray
+cell count far past the cap. The Menger maps have no invariant
+tetrahedron, so they always took that root.
+
+- **The root.** Where the fixed points' hull is not one invariant simplex,
+  the root is now the INVARIANT AXIS BOX itself (`rootKind: "box"`, the
+  bbox fixed point the derived simplex was built around, `M_i(B) ⊆ B`),
+  whose word images are PARALLELEPIPEDS — exact cubes for axis-aligned
+  families, so the Menger maps' general cells ARE the sponge's cubes (unit
+  test: the general walk's intervals equal the shaped grid's, depth 2).
+  The hull simplex stays where it admits (gasket, pentatope); the box is
+  strictly tighter than any simplex around it.
+- **The facets.** A box cell's `2·dim` facets are read off the ROWS of the
+  word's composed inverse (facet `2i` axis `i`'s min side, `2i+1` its max,
+  normals `∓row/|row|`) — the same inverse the pruned DFS already composes
+  for its node clip, so a leaf costs one more clip, not a new algebra. The
+  anchor mask widens to 8 bits (4D), the endpoint pack becomes a
+  mixed-radix word index (23 bits) beside the facets (8 bits) and the
+  delta bit, and every other discipline carries verbatim: the facet snap,
+  the scale-relative envelope, the anchor's own leaf exactly on-plane.
+- **Leaf counts, measured** (the harness's uncapped reference, worst ray):
+  the default system L4 12 of 256, the Menger maps L3 23 of 8,000, the
+  hyper-Menger L1 4 of 48, the rotated pentatope 6 of 25 — the default
+  system's worst fell from 38 under the derived root. The independent
+  reference gains its own box clip (corners by the outer-inward point
+  fold, edges from the corner bit order); 55 harness tests.
+- **The bench.** A general-Menger leg is back (L2, box root: the cells'
+  own witness). The rotated pentatope's legs move to L1: at L2 its box
+  cells overlap densely enough that the probe trace exhausts the leg's
+  path cap on the ORACLE itself (unresolved, not a disagreement). The
+  media legs were re-measured on their own probes: glass/opaque 3D 20
+  entries and 5 opaque terminals; two glass materials (codes now
+  `[1, 2, 2, 0]`, the assignment whose probes cross the most glass-glass
+  interfaces) 4 glass-glass interfaces and 11 opaque terminals; the 4D
+  three-material leg 2 entries, 4 glass-glass interfaces, 6 opaque
+  terminals. Real driver RX 7900 XTX (quiet) and SwiftShader, all eleven
+  finite legs agree, maxRadianceDelta 1.6e-8..5.6e-8, maxNormalDelta 0.
+- **A watchdog defect the box root exposed.** The finite transport ran
+  each trace as ONE chunk (quantum 2048 processed paths) and priced the
+  whole batch, which is sound for the shaped grid's DDA steps but not for
+  a word tree, where one processed path is a pruned tree walk. With the
+  cells now resolving instead of refusing at the cap, the owner's
+  document at depth 3 ran ~1.1 s transport batches and at depth 4 lost
+  the device (`VK_ERROR_DEVICE_LOST`) on its first submission. A general
+  session now takes the sphere-inversion lane's shape
+  (`FINITE_GENERAL_TRANSPORT_CHUNK_PATHS`, 32): every chunk judged per
+  submission against the 500 ms transport ceiling, capacity climbing from
+  one workgroup; the shaped grid keeps its measured lane byte for byte.
+  A pause moves no pixel at any quantum. Depth 3 then settles all eight
+  antialias passes in 211 s with 0 unresolved; depth 4 no longer loses
+  the device, but it is NOT usable: its first completed frame (a small
+  preview raster, 148 glass rays) took 834 s, and 108 of those traces
+  came back UNRESOLVED at the trace caps — a depth-4 glass sponge splits
+  at every hole wall, far past the processed-path budget.
+- **The app gate** (`scripts/glass-solid-panel.verify.mjs`, real driver,
+  certified quiet): verdict pass, seven legs; the rotating boot document
+  (now box-rooted) covers 68.9% with 62,220 paths resolved and 0
+  unresolved, the owner-authored Sierpinski Glass and the 4D pentatope
+  (both hull roots) 0 unresolved.
+- **Disclosed cost.** A general transport query enumerates EVERY leaf the
+  ray clips before sweeping for the next event, so a trace through a
+  depth-4 sponge pays ~4 ms per processed path on the RX 7900 XTX. A
+  front-to-back walk that stops at the first medium change is the fix for
+  the per-path cost and is filed as open work, not part of this change;
+  it does not by itself resolve depth 4's cap-bound traces.
 
 ## The finite routing (landed, 2026-09-19)
 
