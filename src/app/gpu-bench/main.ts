@@ -311,11 +311,16 @@ import {
   finiteSolidGeneralDdaF32,
 } from "../../fractal/surface-finite-solid-gpu";
 import {
+  buildFiniteSolidOpaqueContent,
+  finiteSolidOpaqueDistance,
+} from "../../fractal/finite-solid-composite";
+import {
   transportBoundaryQueryCPU,
   transportShadowVisibilityCPU,
   transportSolidBoundaryQueryCPU,
   transportTerminalDisplacementCPU,
   transportOpticalNormal,
+  transportCompositeOpaqueMarch,
   transportOpaqueControlRadiance,
   transportTraceCPU,
   type TransportFixtureMedia,
@@ -9730,6 +9735,202 @@ async function runSurfaceTransportAgreementLegs(
     1,
     "finiteGeneralMediaRotatedPentatope4",
     { codes: [1, 2, 3, 0, 1], materials: { 1: glassA, 2: glassB, 3: glassC } },
+  );
+
+  // THE COMPOSITE legs: the opaque maps render as the TRUE ATTRACTOR under
+  // the glass cells (surface-finite-composite-gpu.ts) — the kernel's
+  // spliced affine/affine4 descent per opaque branch and its per-segment
+  // opaque march, against the fixture composite (media.opaqueMarch over
+  // finiteSolidOpaqueDistance, the glass-only walk as the finite query).
+  // Glass on the two extreme corners of the Menger sponge (the owner's
+  // Glass Menger shape) in 3D; glass on the rotated pentatope's map 0 in
+  // 4D (the composite's descent packs at most 24 maps, the ordinary
+  // Surface render's own cap, so the 48-map hyper-Menger cannot carry it;
+  // the plain pentatope's w = 0 slice is empty along every aimed ray).
+  // The canonical grid's probes land on opaque content seen DIRECTLY, so
+  // each leg adds three probes aimed from the canonical camera through its
+  // glass at the given world points. Measured on the fixture: the 3D trio
+  // crosses 16-29 glass interfaces each and reaches 3-10 opaque terminals
+  // THROUGH the glass; the 4D trio 6-16 interfaces, one through-glass
+  // opaque terminal (the slice of the thin attractor is sparse).
+  const pushFiniteCompositeLeg = (
+    fourD: boolean,
+    transforms: Transform[],
+    level: number,
+    systemName: string,
+    glassMaps: readonly number[],
+    aimAt: readonly Vec3[],
+  ): void => {
+    const analysis = analyzeFiniteSolidGeneral(
+      transforms,
+      null,
+      { order: 1, plane: "xz" },
+      level,
+      fourD ? 4 : 3,
+    );
+    if (analysis.status !== "eligible" || !analysis.construction) {
+      throw new Error(
+        `transport ${systemName}: the general admission refused its own fixture: ${analysis.reasons.join("; ")}`,
+      );
+    }
+    const construction = analysis.construction;
+    const codes = transforms.map((_, a) => (glassMaps.includes(a) ? 1 : 0));
+    const wire = { ...construction, media: codes, glassOnly: true };
+    const pose = FINITE_SOLID_IDENTITY_POSE;
+    const boundingRadius = finiteSolidGeneralBoundingRadius(construction);
+    const de3 = fourD ? null : buildSurfaceDE(transforms);
+    const de4 = fourD ? buildSurfaceDE4(transforms) : null;
+    const content = buildFiniteSolidOpaqueContent(
+      construction,
+      codes,
+      (de4 ?? de3)!,
+    );
+    const glassA = {
+      ior: DIELECTRIC_IOR,
+      absorption: [...DIELECTRIC_ABSORPTION] as Vec3,
+    };
+    const opticsSlots: ResolvedSurfaceMaterial[] = codes.map((code) => ({
+      finish: resolveSurfaceFinish(undefined),
+      pattern: resolveSurfacePattern(undefined),
+      ...(code === 0
+        ? {}
+        : {
+            optics: {
+              ior: glassA.ior,
+              absorption: [...glassA.absorption] as Vec3,
+              radius: boundingRadius,
+              distortion: 0,
+            },
+          }),
+    }));
+    const media: TransportFixtureMedia = {
+      material: () => ({ ...glassA, radius: boundingRadius }),
+      opaque: transportOpaqueControlRadiance,
+      opaqueMarch: transportCompositeOpaqueMarch(content, pose, boundingRadius),
+    };
+    legs.push({
+      core: fourD ? "finite4" : "finite",
+      systemName,
+      backend: "finiteSolid",
+      options: {
+        mode: "shade",
+        core: fourD ? "finite4" : "finite",
+        width: 4,
+        workgroupSize: SURFACE_TRANSPORT_WG,
+        sharedFrontier: false,
+        bnbStage2: false,
+        optics: true,
+        opticsBackend: "finiteSolid",
+        finiteSolid: {
+          level,
+          general: wire,
+          composite: {
+            maps: de4 ? packSurfaceGpuMaps4(de4) : packSurfaceGpuMaps(de3!),
+            branches: content.branches,
+          },
+        },
+        transportMaxPaths: SURFACE_TRANSPORT_LEG_MAX_PATHS,
+        finiteOpaqueControl: true,
+      },
+      media,
+      opticsSlots,
+      extraProbes: aimAt.map((target, i) => {
+        const ro: Vec3 = [
+          0.9 * boundingRadius,
+          0.55 * boundingRadius,
+          1.7 * boundingRadius,
+        ];
+        return {
+          label: `through-glass ${String(i)}`,
+          ro,
+          dir: [target[0] - ro[0], target[1] - ro[1], target[2] - ro[2]],
+        };
+      }),
+      packParams: (n) =>
+        de4
+          ? packSurfaceGpuParamsFinite4(
+              canonicalView4,
+              { itemCount: n, cutoff: 0 },
+              level,
+              boundingRadius,
+              null,
+              transforms.length,
+              de4,
+            )
+          : packSurfaceGpuParamsFinite(
+              { itemCount: n, cutoff: 0 },
+              level,
+              boundingRadius,
+              null,
+              transforms.length,
+              de3,
+            ),
+      packMaps: null,
+      finiteQuery: (origin, dir, anchor, inside) => {
+        const r = finiteSolidGeneralDdaF32(
+          fourD ? 4 : 3,
+          level,
+          wire,
+          [
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1],
+          ],
+          0,
+          origin,
+          dir,
+          anchor,
+          inside,
+        );
+        return {
+          kind: r.kind === 1 ? "boundary" : r.kind === 2 ? "miss" : "refused",
+          reason: r.reason,
+          t: r.t,
+          normal: r.normal,
+          anchor: r.anchor,
+          fromMedium: r.fromMedium,
+          toMedium: r.toMedium,
+          toBranch: r.toBranch,
+        };
+      },
+      // The displayed field: the glass-only cells and the opaque term.
+      fixture: {
+        estimate: (p) =>
+          Math.min(
+            finiteSolidGeneralDisplayDistance(construction, pose, p, {
+              media: codes,
+            }),
+            finiteSolidOpaqueDistance(content, [p[0], p[1], p[2], 0]).d,
+          ),
+        stepScale: 1,
+        visibleRadius: boundingRadius,
+      },
+    });
+  };
+  pushFiniteCompositeLeg(
+    false,
+    mengerSponge(),
+    2,
+    "finiteCompositeMenger3",
+    [0, 19],
+    [
+      [0.5, 0.5, 0.5],
+      [0.55, 0.35, 0.65],
+      [0.5, 0.725, 0.725],
+    ],
+  );
+  pushFiniteCompositeLeg(
+    true,
+    rotatedPentatope,
+    1,
+    "finiteCompositeRotatedPentatope4",
+    [0],
+    [
+      [0.248, 0.35, 0.404],
+      [0.518, 0.28, 0.079],
+      [-0.032, 0.07, 0.125],
+    ],
   );
 
   const escapeSys = systems.escape[0];
