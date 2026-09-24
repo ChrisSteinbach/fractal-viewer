@@ -1,4 +1,5 @@
 import {
+  defaultTransforms,
   PRESET_FINALS,
   PRESET_FINITE_SOLIDS,
   PRESET_NAMES,
@@ -2209,13 +2210,13 @@ describe("the finite-solid route", () => {
     expect(result.kind).toBe("finiteSolid");
   });
 
-  it("refuses the general block with the analyzer's reasons: variations, rotation, no compute", () => {
+  it("refuses a general block whose map carries variations, with the analyzer's reason", () => {
     const varied = sierpinskiTetrahedron().map((t, i) =>
       i === 0
         ? { ...t, variations: [{ type: "swirl" as const, weight: 0.5 }] }
         : t,
     );
-    const variedResult = deriveSurfaceEligibility(
+    const result = deriveSurfaceEligibility(
       varied,
       null,
       NO_SYMMETRY,
@@ -2227,17 +2228,13 @@ describe("the finite-solid route", () => {
       null,
       { level: 1 },
     );
-    expect(variedResult.status).toBe("ineligible");
-    expect(variedResult.note).toContain("carries variations");
-    // A rotated map: the axis-aligned cell frame refuses until the
-    // oriented-frame lift.
-    const rotated = sierpinskiTetrahedron().map((t, i) =>
-      i === 0
-        ? { ...t, rotation: [0, Math.PI / 4, 0] as [number, number, number] }
-        : t,
-    );
-    const rotatedResult = deriveSurfaceEligibility(
-      rotated,
+    expect(result.status).toBe("ineligible");
+    expect(result.note).toContain("carries variations");
+  });
+
+  it("admits the viewer's default system, whose rotated maps the simplicial tree builds", () => {
+    const result = deriveSurfaceEligibility(
+      defaultTransforms(),
       null,
       NO_SYMMETRY,
       { computeAvailable: true },
@@ -2246,11 +2243,14 @@ describe("the finite-solid route", () => {
       null,
       undefined,
       null,
-      { level: 1 },
+      { level: 2 },
     );
-    expect(rotatedResult.status).toBe("ineligible");
-    expect(rotatedResult.note).toContain("rotates or shears");
-    const noCompute = deriveSurfaceEligibility(
+    expect(result.status).toBe("degraded");
+    expect(result.kind).toBe("finiteSolid");
+  });
+
+  it("refuses a general block without WebGPU compute", () => {
+    const result = deriveSurfaceEligibility(
       sierpinskiTetrahedron(),
       null,
       NO_SYMMETRY,
@@ -2262,8 +2262,8 @@ describe("the finite-solid route", () => {
       null,
       { level: 1 },
     );
-    expect(noCompute.status).toBe("ineligible");
-    expect(noCompute.note).toContain("WebGPU compute");
+    expect(result.status).toBe("ineligible");
+    expect(result.note).toContain("WebGPU compute");
   });
 
   it("refuses the general block's combination policy like the shaped one", () => {

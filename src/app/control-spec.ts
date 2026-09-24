@@ -39,6 +39,7 @@ import {
   type BundledTrapKind,
 } from "./bundled-shapes";
 import { isLatticeTilingSpec, TILING_GROUPS } from "../fractal/tiling";
+import { FINITE_SOLID_GENERAL_MAX_LEVEL } from "../fractal/finite-solid";
 import { SPHERE_INVERSION_SEED_KINDS } from "../fractal/sphere-inversion";
 import {
   defaultSphereInversionBlock,
@@ -683,13 +684,21 @@ const glassSolidEffect: ControlEffect = (state, fx) => {
   if (state.renderMode === "surface") fx.restartSurfaceRender();
 };
 
-/** The certified level band (finite-solid.ts's `FINITE_SOLID_MAX_LEVEL`). */
+/** The depth a freshly enabled Glass solid block authors. */
 const GLASS_SOLID_DEFAULT_DEPTH = 1;
 
-/** The depth select's domain: the certified band, exported for the panel's
- * sync (a refused out-of-band level shows as no selection). */
-export function isGlassSolidDepth(level: unknown): level is 0 | 1 | 2 {
-  return level === 0 || level === 1 || level === 2;
+/** The depth select's domain: the general word tree's certified band
+ * (finite-solid.ts's `FINITE_SOLID_GENERAL_MAX_LEVEL`, the four-slot
+ * anchor word), exported for the panel's sync (a refused out-of-band level
+ * shows as no selection). A shaped block's own 0..2 band is the resolver's
+ * to refuse; its row is read-only. */
+export function isGlassSolidDepth(level: unknown): level is 0 | 1 | 2 | 3 | 4 {
+  return (
+    typeof level === "number" &&
+    Number.isInteger(level) &&
+    level >= 0 &&
+    level <= FINITE_SOLID_GENERAL_MAX_LEVEL
+  );
 }
 
 const sphereInversionCommit: ControlEffect = (_state, fx) => {
