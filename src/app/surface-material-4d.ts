@@ -963,6 +963,9 @@ uniform float uBalloonPaletteEnabled;
     int v1State = -1;
     int v2State = -1;
 #endif
+#if SURFACE_CONDENSATION
+    bool bandEnded = false;
+#endif
     for (int depth = 0; depth < uMaxDepth; depth++) {
       if (!aLive && !bLive && !v1Live && !v2Live) {
         break;
@@ -998,6 +1001,7 @@ uniform float uBalloonPaletteEnabled;
         return max(best, sphereBound) * uFinalSigmaMin;
       }
       bool futureCondensation = condensationFutureAfterChild4(depth, uMapCount);
+      bool lastLevel = uMapCount > 0 && !futureCondensation;
 #endif
       // The four smallest-key candidates this level, key-ascending. The
       // sentinel r = 0 keeps empty slots out of every escaped-candidate
@@ -1145,6 +1149,9 @@ uniform float uBalloonPaletteEnabled;
             float cert = childScale * (r - childBound.x);
 #else
             float cert = childScale * (r - uBoundingRadius);
+#endif
+#if SURFACE_CONDENSATION
+            if (lastLevel) cert = 1e30;
 #endif
             // Exactly one tuple leaves the top-2 ladder per candidate — the
             // displaced runner-up, or the candidate itself. It spills into
@@ -1463,6 +1470,12 @@ uniform float uBalloonPaletteEnabled;
       if (best <= sphereBound || best * uFinalSigmaMin < bailBelow) {
         return max(best, sphereBound) * uFinalSigmaMin;
       }
+#if SURFACE_CONDENSATION
+      if (lastLevel) {
+        bandEnded = true;
+        break;
+      }
+#endif
     }
     // Terminal bound of chains alive at the depth cap (the KIFS last-value
     // formula, PLAIN — not refined): non-positive when the chain tracked
@@ -1489,7 +1502,11 @@ uniform float uBalloonPaletteEnabled;
 #endif
       , best);
 #endif
+#if SURFACE_CONDENSATION
+    if (aLive && !bandEnded) {
+#else
     if (aLive) {
+#endif
 #if SURFACE_SCHEDULE
       vec2 terminalBound = surface4LevelBound(uMaxDepth);
       best = min(best, aScale * (aR - terminalBound.x));
@@ -1497,7 +1514,11 @@ uniform float uBalloonPaletteEnabled;
       best = min(best, aScale * (aR - uBoundingRadius));
 #endif
     }
+#if SURFACE_CONDENSATION
+    if (bLive && !bandEnded) {
+#else
     if (bLive) {
+#endif
 #if SURFACE_SCHEDULE
       vec2 terminalBound = surface4LevelBound(uMaxDepth);
       best = min(best, bScale * (bR - terminalBound.x));
@@ -1647,6 +1668,9 @@ uniform float uBalloonPaletteEnabled;
     float trapAcc = 0.0;
     float trapNorm = 0.0;
     float trapW = 1.0;
+#if SURFACE_CONDENSATION
+    bool bandEnded = false;
+#endif
     for (int depth = 0; depth < uMaxDepth; depth++) {
       if (!aLive && !bLive && !v1Live && !v2Live) {
         break;
@@ -1679,6 +1703,7 @@ uniform float uBalloonPaletteEnabled;
 #endif
         best, firstChoice);
       bool futureCondensation = condensationFutureAfterChild4(depth, uMapCount);
+      bool lastLevel = uMapCount > 0 && !futureCondensation;
 #endif
       float c1Key = 1e30;
       vec4 c1Q = vec4(0.0);
@@ -1829,6 +1854,9 @@ uniform float uBalloonPaletteEnabled;
             float cert = childScale * (r - childBound.x);
 #else
             float cert = childScale * (r - uBoundingRadius);
+#endif
+#if SURFACE_CONDENSATION
+            if (lastLevel) cert = 1e30;
 #endif
             // Exactly one tuple leaves the top-2 ladder per candidate — the
             // displaced runner-up, or the candidate itself. It spills into
@@ -2162,6 +2190,12 @@ uniform float uBalloonPaletteEnabled;
           v2Live = true;
         }
       }
+#if SURFACE_CONDENSATION
+      if (lastLevel) {
+        bandEnded = true;
+        break;
+      }
+#endif
     }
 #if SURFACE_CONDENSATION
     if (aLive) condensationFoldHit4(aQ, aScale, uMaxDepth,
@@ -2185,7 +2219,11 @@ uniform float uBalloonPaletteEnabled;
 #endif
       best, firstChoice);
 #endif
+#if SURFACE_CONDENSATION
+    if (aLive && !bandEnded) {
+#else
     if (aLive) {
+#endif
 #if SURFACE_SCHEDULE
       vec2 terminalBound = surface4LevelBound(uMaxDepth);
       best = min(best, aScale * (aR - terminalBound.x));
@@ -2193,7 +2231,11 @@ uniform float uBalloonPaletteEnabled;
       best = min(best, aScale * (aR - uBoundingRadius));
 #endif
     }
+#if SURFACE_CONDENSATION
+    if (bLive && !bandEnded) {
+#else
     if (bLive) {
+#endif
 #if SURFACE_SCHEDULE
       vec2 terminalBound = surface4LevelBound(uMaxDepth);
       best = min(best, bScale * (bR - terminalBound.x));

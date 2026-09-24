@@ -449,6 +449,9 @@ morphs into place instead of snapping (see **Presets** below).
   shipped **Gearworks** and **Star Foundry** presets render the master shape
   and every recursive copy instead of refusing the document. **Levels** chooses all depths,
   root only, or a custom inclusive min/max word-depth band (root is 0).
+  A finite band draws exactly its levels' shapes on the affine maps: the
+  limit attractor the unbounded default accumulates onto is not part of it
+  (fold maps still draw it; that port is owed).
   Emitters do not recurse and their variations are skipped; ordinary maps
   remain the recursive alphabet. In a schedule-free document the 24-slot
   gate therefore counts ordinary maps plus symmetry-expanded emitter
@@ -1028,7 +1031,13 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
     (which resolves) only where the composition is the closed-solid vocabulary
     — an emitter-only union in 3D, or the same in native 4D at the canonical
     pose (the members' plane carried by the slice, a w-preserving rotor) —
-    and keeps the classic fallback (estimator-backend sessions on ordinary
+    and, on WebGPU compute only, the GLASS FRACTAL: plain affine maps
+    stamping emitters that are unions of spheres, boxes, capsules or tori
+    (no intersect parts, gears or meshes) over a finite **Levels** band of
+    6 or fewer, in 4D at the same canonical pose. Author the glass on the
+    maps too: a hit's material follows the descent's attribution, which can
+    name a map on the emitter's own images. Everywhere else the session
+    keeps the classic fallback (estimator-backend sessions on ordinary
     IFS geometry render the disclosed vacuous state; escape-time, Mandelbulb,
     3D-fold and software-rendered sessions keep the classic finish entirely;
     cinematic lighting and optics never compile together). The panel's own
@@ -1138,7 +1147,11 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   Pearls** and **Glass Cross Pearls (4D)**: sphere-inversion scenes whose
   Material row is Glass, over the same checker floor. They render glass on
   WebGPU compute only, and a full-quality settle takes minutes rather than
-  seconds; Points draws them opaque.
+  seconds; Points draws them opaque. **Glass beads fractal (3D)**, **Glass
+  rings fractal (3D)** and **Glass beads fractal (4D)** are the glass
+  fractal: the Sierpinski tetrahedron's corners stamping one bead or ring
+  over the Levels band 0 to 2, every transform glass, the 4D twin at the
+  canonical slice. They also render glass on WebGPU compute only.
 - **Systems → + Add isolated block** — preserves the current system, copies a
   chosen preset, saved scene, or the current system, measures both x extents,
   seats the copy beyond the old with a gap, and writes block-diagonal Xaos rows
