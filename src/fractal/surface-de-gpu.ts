@@ -1999,6 +1999,12 @@ export interface SurfaceGpuKernelOptions {
    * changes, with the same division and tie order. Default true; false
    * preserves the original uncached query for diagnostic comparisons. */
   finiteCacheCrossings?: boolean;
+  /** General finite optics only: shade the transport's OPAQUE terminals
+   * (a per-map-media path meeting an opaque subtree) with a deterministic
+   * per-branch control color instead of the shade entry's own lighting —
+   * the bench legs' form, which the CPU fixture mirrors (the fixture has
+   * no shade entry to reproduce). Production leaves it absent. */
+  finiteOpaqueControl?: boolean;
   /** The optical transport's boundary backend. `"estimator"` — absent's
    * meaning, byte-identical — marches the composed PUBLIC estimator: the
    * query the renderer-envelope leg measured, sound from OUTSIDE only
@@ -3769,6 +3775,7 @@ function writeFiniteFrozen(
   view: DataView,
   run: SurfaceGpuRunParams,
   boundingRadius: number,
+  slotCount = 1,
 ): void {
   writeVec3(view, 0, [0, 0, 0]);
   view.setFloat32(12, boundingRadius, true);
@@ -3787,8 +3794,15 @@ function writeFiniteFrozen(
   // the clamp to [-1, 0], the opticsMaps lane read goes out of bounds,
   // reads zero, and every transport path skips as a "classic slot" (the
   // app-level dark-glass defect the bench's control entry cannot see: it
-  // passes ior as a probe parameter and never walks the shade entry).
-  view.setUint32(48, 1, true);
+  // passes ior as a probe parameter and never walks the shade entry). The
+  // GENERAL word tree's hit-info attributes a hit to its owning BRANCH, so
+  // a general session packs one slot per active map (the per-map media).
+  if (!Number.isInteger(slotCount) || slotCount < 1) {
+    throw new RangeError(
+      `surface-de-gpu: the finite cores need a slot count >= 1, got ${String(slotCount)}`,
+    );
+  }
+  view.setUint32(48, slotCount, true);
   view.setUint32(52, 0, true);
   view.setUint32(56, run.itemCount, true);
   view.setUint32(60, run.stepsThisPass ?? 0, true);
@@ -3842,6 +3856,7 @@ export function packSurfaceGpuParamsFinite(
   level: number,
   boundingRadius: number,
   groundPlane: SurfaceGpuGroundPlane | null = null,
+  slotCount = 1,
 ): ArrayBuffer {
   validateFiniteSolidLevel(level);
   if ((run.footprint ?? 0) > 0) {
@@ -3855,7 +3870,7 @@ export function packSurfaceGpuParamsFinite(
       : SURFACE_GPU_PARAMS_FINITE_BYTES,
   );
   const view = new DataView(buf);
-  writeFiniteFrozen(view, run, boundingRadius);
+  writeFiniteFrozen(view, run, boundingRadius, slotCount);
   writeFiniteHeader(view, 208, level);
   if (groundPlane) writeGroundPlane(view, groundPlane);
   return buf;
@@ -3877,6 +3892,7 @@ export function packSurfaceGpuParamsFinite4(
   level: number,
   boundingRadius: number,
   groundPlane: SurfaceGpuGroundPlane | null = null,
+  slotCount = 1,
 ): ArrayBuffer {
   validateFiniteSolidLevel(level);
   if ((run.footprint ?? 0) > 0) {
@@ -3895,7 +3911,7 @@ export function packSurfaceGpuParamsFinite4(
       : SURFACE_GPU_PARAMS4_FINITE_BYTES,
   );
   const view = new DataView(buf);
-  writeFiniteFrozen(view, run, boundingRadius);
+  writeFiniteFrozen(view, run, boundingRadius, slotCount);
   const rot = view4.rotor;
   for (let i = 0; i < 4; i++) {
     const at = 208 + i * 16;
@@ -8655,7 +8671,24 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   const rawCoreHitInfoText = siCore
     ? siHitInfoText
     : finiteCore
-      ? `// The finite core's hit-info: one material slot (the session packs
+      ? finiteGeneral
+        ? `// The GENERAL word tree's hit-info: the hit's slot is its OWNING
+// BRANCH — the top-level map whose subtree owns the point under the
+// per-map media's owner rule (finiteGeneralPointMedium), so a map's own
+// finish, color and optics shade its own subtree. A point the march
+// accepted just OUTSIDE every leaf falls back to the display DE's nearest
+// branch. Neutral trap/rings/sheets, as the grid core's.
+fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0);
+  let q = finiteLift(p);
+  var branch = finiteGeneralPointMedium(q).y;
+  if (branch < 0) {
+    branch = finiteDisplayBranch(q);
+  }
+  info.firstChoice = branch;
+  return info;
+}`
+        : `// The finite core's hit-info: one material slot (the session packs
 // the Glass material there), neutral trap/rings/sheets — the cell
 // decomposition carries no forward orbit for the trap accumulator and
 // no fold for the ring/sheet sources.
@@ -9215,6 +9248,14 @@ ${surfacePatternShadeSourceWgsl()}`
   // source (and its finiteLift the DDA reads) is always in the same
   // kernel.
   const finiteQuery = opticsBackend === "finiteSolid";
+  // The general word tree's per-map media ride the finite query when the
+  // wire carries a media table (every production session does): medium
+  // codes on every path, per-medium materials at binding 13, opaque
+  // terminals. A table-less general wire is the single-material solid and
+  // keeps the grid DDA's trace text (the walk's claim codes 0/1 ARE its
+  // glass-code-1 form).
+  const finiteMedia =
+    finiteQuery && finiteGeneral !== null && finiteGeneral.media !== undefined;
   // The closed-solid field's emission, per dimension. In 3D it is the
   // condensation term at the root (the signed certified bound the primary
   // march reads). In 4D the term's hypot form is a distance to the shape
@@ -10113,7 +10154,30 @@ fn transportChildBound(energy: vec3f) -> f32 {
   return dielectricBranchBound(energy[0], energy[1], energy[2], TRANSPORT_RADIANCE_BOUND);
 }
 
-// The replay-pass trace (the contract's GPU resumption shape): one
+${
+  finiteMedia
+    ? `// The per-map media's materials: a glass medium code k is slot k - 1's
+// optics lanes (the host codes each glass map by the FIRST slot carrying
+// identical lanes, so a code always names a glass slot); air is index 1.
+fn transportMediumIor(medium: u32) -> f32 {
+  if (medium == 0u) {
+    return 1.0;
+  }
+  return opticsMaps[(medium - 1u) * 2u][0];
+}
+
+fn transportMediumRadius(medium: u32) -> f32 {
+  return opticsMaps[(medium - 1u) * 2u][1];
+}
+
+fn transportMediumAbsorb(medium: u32) -> vec3f {
+  let base = (medium - 1u) * 2u;
+  return vec3f(opticsMaps[base][2], opticsMaps[base][3], opticsMaps[base + 1u][0]);
+}
+
+`
+    : ""
+}// The replay-pass trace (the contract's GPU resumption shape): one
 // sample, re-traced FROM SCRATCH each pass at the halved theta. The
 // primary boundary is the march's own hit — split exactly as the oracle
 // splits a boundary event (entering a denser medium cannot TIR) — then
@@ -10371,7 +10435,7 @@ ${
   // untouched — it still refused the stale flag, and a query that
   // refuses both ways stays the disclosed unresolved work.
   if (hit.kind == 3u && hit.reason == 3u && path.anchorPresent == 1u) {
-    let flipped = 1u - path.inside;
+    let flipped = ${finiteMedia ? "hit.toMedium" : "1u - path.inside"};
     let retry = transportFiniteBoundary(
       path.origin,
       path.dir,
@@ -10397,7 +10461,7 @@ ${
       break;
     }
     if (hit.kind == 2u) {
-      if (path.inside == 1u${finiteQuery ? "" : " && path.interfaces != 1u"}) {
+      if (${finiteMedia ? "path.inside != 0u" : "path.inside == 1u"}${finiteQuery ? "" : " && path.interfaces != 1u"}) {
         // An inside miss is unresolved, never a background hit — a path
         // that entered through a real crossing cannot miss a closed
         // solid, so this is an anomaly the frame discloses.
@@ -10476,17 +10540,45 @@ ${
     let n = hit.normal;
     let dotDN = dot(path.dir, n);
     let childOrigin = path.origin + path.dir * hit.t;
-    let incidentInGlass = ${finiteQuery ? "path.inside == 1u" : "dot(path.origin - childOrigin, n) < 0.0"};
+    let incidentInGlass = ${finiteQuery ? (finiteMedia ? "path.inside != 0u" : "path.inside == 1u") : "dot(path.origin - childOrigin, n) < 0.0"};
     var energy = path.energy;
-    if (incidentInGlass) {
-      energy = vec3f(
-        path.energy[0] * dielectricBeerThroughput(absorb[0], hit.t, radius),
-        path.energy[1] * dielectricBeerThroughput(absorb[1], hit.t, radius),
-        path.energy[2] * dielectricBeerThroughput(absorb[2], hit.t, radius),
-      );
+    if (incidentInGlass) {${
+      finiteMedia
+        ? `
+      // The incident medium's own absorption and Beer radius (the per-map
+      // media: a map's optical scale is its own).
+      let segAbsorb = transportMediumAbsorb(path.inside);
+      let segRadius = transportMediumRadius(path.inside);`
+        : ""
     }
+      energy = vec3f(
+        path.energy[0] * dielectricBeerThroughput(${finiteMedia ? "segAbsorb" : "absorb"}[0], hit.t, ${finiteMedia ? "segRadius" : "radius"}),
+        path.energy[1] * dielectricBeerThroughput(${finiteMedia ? "segAbsorb" : "absorb"}[1], hit.t, ${finiteMedia ? "segRadius" : "radius"}),
+        path.energy[2] * dielectricBeerThroughput(${finiteMedia ? "segAbsorb" : "absorb"}[2], hit.t, ${finiteMedia ? "segRadius" : "radius"}),
+      );
+    }${
+      finiteMedia
+        ? `
+    // An OPAQUE subtree ends the path (the per-map media): the face is a
+    // shaded terminal in physical ray order — seen through every glass
+    // interface the path already crossed, with the Beer throughput of the
+    // segment that reached it.
+    if (hit.toMedium == FIN_MEDIUM_OPAQUE) {
+      radiance = radiance + energy * transportOpaqueRadiance(childOrigin, path.dir, n, hit.toBranch, bg, li);
+      if (any(radiance != radiance) || any(abs(radiance) > vec3f(3.0e38))) {
+        out.status = TRANSPORT_STATUS_INVALID;
+        break;
+      }
+      continue;
+    }
+    // Each side's own index (air 1): a glass-glass interface between two
+    // materials bends; equal materials never meet (one medium code).
+    let fromIor = transportMediumIor(path.inside);
+    let toIor = transportMediumIor(hit.toMedium);`
+        : `
     let fromIor = select(1.0, ior, incidentInGlass);
-    let toIor = select(ior, 1.0, incidentInGlass);
+    let toIor = select(ior, 1.0, incidentInGlass);`
+    }
     let bend = dielectricRefract(path.dir[0], path.dir[1], path.dir[2], n[0], n[1], n[2], fromIor, toIor);
     var abort = false;
     if (bend[3] > 0.5) {
@@ -10496,7 +10588,7 @@ ${
       child.origin = childOrigin;
       child.dir = bend.xyz;
       child.energy = energy;
-      child.inside = select(0u, 1u, incidentInGlass);
+      child.inside = ${finiteMedia ? "path.inside" : "select(0u, 1u, incidentInGlass)"};
       child.interfaces = path.interfaces + 1u;
       child.anchorPresent = 1u;${
         finiteQuery
@@ -10532,7 +10624,7 @@ ${
       trans.origin = childOrigin;
       trans.dir = bend.xyz;
       trans.energy = energy * (1.0 - f);
-      trans.inside = select(1u, 0u, incidentInGlass);
+      trans.inside = ${finiteMedia ? "hit.toMedium" : "select(1u, 0u, incidentInGlass)"};
       trans.interfaces = path.interfaces + 1u;
       trans.anchorPresent = 1u;${
         finiteQuery
@@ -10544,7 +10636,7 @@ ${
       // Only the transmitted child of an EXIT crossing reads the rear
       // scene through the glass; every other child resets the flag, so a
       // mirror view at a later entry never displaces.
-      trans.exitPresent = select(0u, 1u, incidentInGlass);${
+      trans.exitPresent = select(0u, 1u, incidentInGlass${finiteMedia ? " && hit.toMedium == 0u" : ""});${
         finiteQuery
           ? `
       trans.finiteIntrinsic = hit.anchorIntrinsic;
@@ -10558,7 +10650,7 @@ ${
       refl.origin = childOrigin;
       refl.dir = path.dir - 2.0 * dotDN * n;
       refl.energy = energy * f;
-      refl.inside = select(0u, 1u, incidentInGlass);
+      refl.inside = ${finiteMedia ? "path.inside" : "select(0u, 1u, incidentInGlass)"};
       refl.interfaces = path.interfaces + 1u;
       refl.anchorPresent = 1u;${
         finiteQuery
@@ -10958,11 +11050,12 @@ fn transportRays(
   let primaryDir = finiteLiftDir(rd);
   ${
     finiteGeneral
-      ? `// The general word tree's ray-side state is point membership: the
-  // coverage at the origin is > 0 exactly when some leaf contains it
-  // (closed — a point on a shared face reads inside, and the boundary
-  // group's half-open sweep at that origin resolves the event either way).
-  let primaryInside = select(0u, 1u, finiteGeneralPointInside(primaryOrigin));`
+      ? `// The general word tree's ray-side state is the camera's MEDIUM
+  // (finiteGeneralPointMedium: closed membership under the per-map owner
+  // rule — a point on a shared face reads inside, and the boundary group's
+  // half-open sweep at that origin resolves the event either way); the
+  // walk takes it as its medium-code claim.
+  let primaryInside = u32(finiteGeneralPointMedium(primaryOrigin).x);`
       : `var primaryCells = array<i32, 4>(-1, -1, -1, -1);
   for (var axis = 0; axis < ${core4 ? 4 : 3}; axis++) {
     primaryCells[axis] = finiteRaySideIndex(primaryOrigin[axis], primaryDir[axis]);
@@ -11550,6 +11643,75 @@ ${shadeLighting}
   };
   layerOut[ray] = packSurfaceLayer(${latticeTiling ? "latticeVisibility" : "1.0"}, clamp(fog, 0.0, 1.0), coc);
 }`;
+
+  // THE OPAQUE TERMINAL (the per-map media): a transport path meeting an
+  // opaque subtree is shaded by THIS entry's own text — the material block
+  // with the slot forced to the owning branch and the optics hand-off
+  // removed, then the normal, shadow, AO and lighting lines verbatim — so an
+  // opaque surface seen through glass lights exactly like one seen
+  // directly (the fog lines are not applied: the terminal's radiance
+  // already rides the glass path's attenuation). Built from the CLASSIC
+  // entry before any cinematic rewrite, which a cinematic session's opaque
+  // terminals therefore keep (disclosed in the transport contract).
+  const opaqueTerminalText = (() => {
+    if (!(finiteMedia && mode === "shade" && optics)) return "";
+    if (opts.finiteOpaqueControl) {
+      return `
+// The bench's control opaque terminal (finiteOpaqueControl): a
+// deterministic per-branch color, Lambert on the event normal — the CPU
+// fixture's own formula, so a leg pins the walk and trace, not the shading.
+fn transportOpaqueRadiance(pos: vec3f, rd: vec3f, n: vec3f, branch: i32, bg: vec3f, li: u32) -> vec3f {
+  return vec3f(0.18, 0.24, 0.3) * (1.0 + 0.125 * f32(branch)) * abs(dot(rd, n));
+}
+`;
+    }
+    const materialStart = entry.indexOf(
+      "  let hi = surfaceDEHitInfo(pos, li);",
+    );
+    const normalStart = entry.indexOf(
+      "  // Normal from the DE gradient",
+      materialStart,
+    );
+    const fogStart = entry.indexOf(
+      "  // Depth fog toward the backdrop",
+      normalStart,
+    );
+    const handOff = entry.indexOf(
+      "  // The optical transport owns this pixel",
+      materialStart,
+    );
+    const handOffEnd =
+      entry.indexOf("return;\n  }\n", handOff) + "return;\n  }\n".length;
+    if (
+      materialStart < 0 ||
+      normalStart < 0 ||
+      fogStart < 0 ||
+      handOff < 0 ||
+      handOff > normalStart
+    ) {
+      throw new Error(
+        "surface-de-gpu: the opaque terminal lost the shade entry's material/lighting blocks",
+      );
+    }
+    const material = (
+      entry.slice(materialStart, handOff) + entry.slice(handOffEnd, normalStart)
+    ).replace(
+      "  let hi = surfaceDEHitInfo(pos, li);",
+      "  var hi = surfaceDEHitInfo(pos, li);\n  hi.firstChoice = branch;",
+    );
+    const lit = entry.slice(normalStart, fogStart);
+    return `
+// The transport's OPAQUE terminal (the per-map media): the shade entry's
+// own material and lighting text at the face, slot forced to the owning
+// branch, returned in LINEAR light (the file's 2.2 convention).
+fn transportOpaqueRadiance(pos: vec3f, rd: vec3f, nEvent: vec3f, branch: i32, bg: vec3f, li: u32) -> vec3f {
+  let t = distance(params.ro, pos);
+  let R = params.boundingRadius;
+  let visR = params.visibleRadius;
+${material}${lit}  return pow(max(col, vec3f(0.0)), vec3f(2.2));
+}
+`;
+  })();
 
   if (lighting) {
     // Reuse the existing material and normal blocks verbatim. The new
@@ -16032,7 +16194,7 @@ ${tilingProbeWrapText}`
 
 ${meshSdfHelperText}${trapGeometryHelperText}${condensationHelperText}${tiledBodyBlock}${marchSample ? `\n${balloon ? inversionDistanceShaderSource("wgsl") : ""}\n${sampleLensText}\n${sampleOuterText}` : ""}
 ${finiteCore && mode === "march" ? `${finiteGeneral ? finiteSolidGeneralTransportSource(core4 ? 4 : 3, finiteGeneral, finiteLevel ?? 0) : finiteSolidTransportSource(core4 ? 4 : 3, opts.finiteCacheCrossings)}\n` : ""}${entry}
-${siGlassChunk ? siTransportWorkNames(opticsBlock) : opticsBlock}`;
+${siGlassChunk ? siTransportWorkNames(opticsBlock) : opticsBlock}${opaqueTerminalText}`;
 }
 
 /** The continuation text is written once, in the finite backend's words;
