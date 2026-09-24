@@ -713,7 +713,7 @@ describe("finite-solid general admission", () => {
     });
   });
 
-  it("admits the viewer's rotating default system through the derived root", () => {
+  it("admits the viewer's rotating default system through the invariant box root", () => {
     const result = analyzeFiniteSolidGeneral(
       defaultTransforms(),
       null,
@@ -722,11 +722,11 @@ describe("finite-solid general admission", () => {
       3,
     );
     expect(result.status).toBe("eligible");
-    expect(result.construction?.rootKind).toBe("derived");
+    expect(result.construction?.rootKind).toBe("box");
     expect(result.construction?.mapCount).toBe(4);
   });
 
-  it("admits a rotated 4D document through the derived root", () => {
+  it("admits a rotated 4D document through the invariant box root", () => {
     const result = analyzeFiniteSolidGeneral(
       rotatedPentatope(),
       null,
@@ -735,8 +735,9 @@ describe("finite-solid general admission", () => {
       4,
     );
     expect(result.status).toBe("eligible");
-    expect(result.construction?.rootKind).toBe("derived");
-    expect(result.construction?.rootVertices).toHaveLength(5);
+    expect(result.construction?.rootKind).toBe("box");
+    // The box root's vertex set is its 2^4 corners.
+    expect(result.construction?.rootVertices).toHaveLength(16);
   });
 
   it("refuses a map carrying variations", () => {
@@ -1120,7 +1121,7 @@ describe("finite-solid general walk", () => {
   });
 
   it("refuses a ray that clips more pruned leaves than the cap, never truncating", () => {
-    // Twelve heavily overlapping half-scale maps whose fixed points sit on
+    // Twelve heavily overlapping 0.8-scale maps whose fixed points sit on
     // a small shell: a ray through the centre clips nearly every one of the
     // 144 level-2 cells, past the 128-leaf cap.
     const directions: Vec3[] = [
@@ -1141,7 +1142,7 @@ describe("finite-solid general walk", () => {
       id,
       position: [d[0] * 0.05, d[1] * 0.05, d[2] * 0.05],
       rotation: [0, 0, 0],
-      scale: [0.5, 0.5, 0.5],
+      scale: [0.8, 0.8, 0.8],
     }));
     const c = analyzeFiniteSolidGeneral(
       maps,
@@ -1360,5 +1361,79 @@ describe("finite-solid general media (per-map materials)", () => {
         { inside: false, media: [1, 0], medium: 0 },
       ),
     ).toMatchObject({ kind: "refused", reason: "invalid-input" });
+  });
+});
+
+describe("finite-solid general box cells", () => {
+  it("builds the Menger maps' cells as the sponge's own cubes", () => {
+    // Axis-aligned maps: the invariant box is the fixed points' cube and
+    // every cell its exact image — the general walk reproduces the SHAPED
+    // grid's union on the same rays.
+    const general = analyzeFiniteSolidGeneral(
+      mengerSponge(),
+      null,
+      noSymmetry,
+      2,
+      3,
+    ).construction;
+    const shaped = analyzeFiniteSolidSystem(
+      mengerSponge(),
+      null,
+      noSymmetry,
+      "menger",
+      2,
+    ).construction;
+    if (!general || !shaped) throw new Error("constructions missing");
+    expect(general.rootKind).toBe("box");
+    const rng = mulberry32(43);
+    const radius = finiteSolidGeneralBoundingRadius(general);
+    for (let i = 0; i < 24; i++) {
+      const [origin, dir] = sampledRay(rng, radius);
+      // The grid's intervals start at t = 0; the general reference reports
+      // the whole line — compare the forward parts.
+      const tree = finiteSolidGeneralIntervals(
+        general,
+        FINITE_SOLID_IDENTITY_POSE,
+        origin,
+        dir,
+      )
+        .filter((interval) => interval.exit > 0)
+        .map((interval) => ({
+          ...interval,
+          enter: Math.max(0, interval.enter),
+        }));
+      const grid = finiteSolidIntervals(
+        shaped,
+        FINITE_SOLID_IDENTITY_POSE,
+        origin,
+        dir,
+      );
+      expect(tree).toHaveLength(grid.length);
+      tree.forEach((interval, k) => {
+        expect(Math.abs(interval.enter - grid[k].enter)).toBeLessThan(1e-9);
+        expect(Math.abs(interval.exit - grid[k].exit)).toBeLessThan(1e-9);
+      });
+    }
+  });
+
+  it("keeps the Menger maps at depth 4 inside the leaf cap on a solid edge row", () => {
+    // 81 cubes end to end — the densest axis row the depth-4 sponge has.
+    const c = analyzeFiniteSolidGeneral(
+      mengerSponge(),
+      null,
+      noSymmetry,
+      4,
+      3,
+    ).construction;
+    if (!c) throw new Error("construction missing");
+    const result = finiteSolidGeneralNextBoundary(
+      c,
+      FINITE_SOLID_IDENTITY_POSE,
+      [-3, -0.74, -0.74],
+      [1, 0, 0],
+      { inside: false },
+    );
+    expect(result.kind).toBe("boundary");
+    if (result.kind === "boundary") expect(result.t).toBeCloseTo(2.25, 9);
   });
 });

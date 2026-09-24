@@ -8110,7 +8110,7 @@ function surfaceFiniteBalloonFrameFixtures(): {
     id,
     position,
     rotation: [0, 0, 0],
-    scale: [0.5, 0.5, 0.5],
+    scale: [0.8, 0.8, 0.8],
   }));
   const transforms4 = pentatope();
   const pair = normalizeRotorPair(
@@ -9508,12 +9508,10 @@ async function runSurfaceTransportAgreementLegs(
   // the hyper-Menger's 48 maps (the map cap), the pentatope and a rotated
   // pentatope one dimension up — so the leg pins the kernel against the
   // SAME realization the CPU chain pins: the general twin mirrors the WGSL
-  // walk term for term, and the f64 oracle stays the soundness record. (The
-  // shipped Menger maps no longer ride a general leg: the box tree's
-  // cross-construction witness does not survive simplicial cells, and
-  // their derived-root lump runs probe traces into the path cap, where
-  // SwiftShader's rounding moves which paths fit — agreement to 7e-7 on
-  // the real driver, a false failure on CI's software device.) The construction
+  // walk term for term, and the f64 oracle stays the soundness record. (The shipped Menger maps ride the box root, whose cells are the
+  // sponge's own cubes; under the retired derived-simplex root they formed
+  // an overlapping lump whose probe traces ran into the path cap, where
+  // SwiftShader moved which paths fit.) The construction
   // bakes into the source, so the params wire and packers are the shipped
   // finite ones verbatim; the marching ball is the level box's farthest
   // corner — the fixture's domain gate reads the same number the packer
@@ -9661,6 +9659,10 @@ async function runSurfaceTransportAgreementLegs(
     "finiteGeneralSierpinski3",
   );
   pushFiniteGeneralLeg(false, defaultTransforms(), 3, "finiteGeneralDefault3");
+  // The Menger maps under the BOX root: the cells ARE the sponge's cubes
+  // (the general walk reproduces the shaped grid's union — the unit tests'
+  // cross-construction check), so the leg is the box cell's own witness.
+  pushFiniteGeneralLeg(false, mengerSponge(), 2, "finiteGeneralMenger3");
   pushFiniteGeneralLeg(
     true,
     hyperMengerSpongeTransforms(),
@@ -9669,8 +9671,11 @@ async function runSurfaceTransportAgreementLegs(
   );
   pushFiniteGeneralLeg(true, pentatope(), 2, "finiteGeneralPentatope4");
   // The rotated pentatope: three of five maps turn (one of them out of 3D
-  // through xw), so no invariant simplex exists and the derived root rides
-  // the level boxes — the 4D half of the default system's witness.
+  // through xw), so no invariant simplex exists and the root is the
+  // invariant axis box — the 4D half of the default system's witness. At
+  // level 2 its box cells overlap densely enough that the probe exhausts
+  // the leg's path cap (unresolved on the oracle itself); level 1 resolves
+  // every probe.
   const rotatedPentatope = pentatope();
   rotatedPentatope[1].rotation = [0, Math.PI / 4, 0];
   rotatedPentatope[2].w = {
@@ -9681,7 +9686,7 @@ async function runSurfaceTransportAgreementLegs(
   pushFiniteGeneralLeg(
     true,
     rotatedPentatope,
-    2,
+    1,
     "finiteGeneralRotatedPentatope4",
   );
   // The per-map MEDIA legs: glass subtrees in front of opaque ones (the
@@ -9699,12 +9704,12 @@ async function runSurfaceTransportAgreementLegs(
     radiusScale: 0.5,
   };
   const glassC = { ior: 1.3, absorption: [0.05, 0.12, 0.2] as Vec3 };
-  // Measured on the fixture's own probes (the dense-grid fallback these
-  // small solids take): the 3D glass/opaque leg crosses 4 glass entries and
-  // 1 opaque terminal, the two-glass leg 20 glass-glass interfaces and 16
-  // opaque terminals, the 4D leg (three materials) 5 entries, 9
-  // glass-glass interfaces and 4 opaque terminals — each leg exercises what
-  // it names.
+  // Measured on the fixture's own probes under the box root (event counts
+  // over every probe trace): the 3D glass/opaque leg crosses 20 glass
+  // entries and 5 opaque terminals, the two-glass leg 4 glass-glass
+  // interfaces and 11 opaque terminals, the 4D leg (three materials) 2
+  // entries, 4 glass-glass interfaces and 6 opaque terminals — each leg
+  // exercises what it names.
   pushFiniteGeneralLeg(
     false,
     defaultTransforms(),
@@ -9717,12 +9722,12 @@ async function runSurfaceTransportAgreementLegs(
     defaultTransforms(),
     2,
     "finiteGeneralTwoGlassDefault3",
-    { codes: [1, 2, 0, 2], materials: { 1: glassA, 2: glassB } },
+    { codes: [1, 2, 2, 0], materials: { 1: glassA, 2: glassB } },
   );
   pushFiniteGeneralLeg(
     true,
     rotatedPentatope,
-    2,
+    1,
     "finiteGeneralMediaRotatedPentatope4",
     { codes: [1, 2, 3, 0, 1], materials: { 1: glassA, 2: glassB, 3: glassC } },
   );

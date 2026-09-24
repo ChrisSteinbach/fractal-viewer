@@ -5028,7 +5028,9 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
       if (
         !g.mapMatrix.every((m) => finiteVec(m, 16)) ||
         !g.mapOffset.every((t) => finiteVec(t, 4)) ||
-        g.rootVertices.length !== (core4 ? 5 : 4) ||
+        (g.rootKind !== "hull" && g.rootKind !== "box") ||
+        g.rootVertices.length !==
+          (g.rootKind === "box" ? (core4 ? 16 : 8) : core4 ? 5 : 4) ||
         !g.rootVertices.every((v) => finiteVec(v, 4)) ||
         g.levelBoxes.length !== level + 1 ||
         !g.levelBoxes.every(

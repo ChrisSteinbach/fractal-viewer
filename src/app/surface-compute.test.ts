@@ -2023,7 +2023,8 @@ describe("SurfaceComputeRenderer general finite target", () => {
     expect(general.shaderSources.length).toBeGreaterThan(0);
     for (const source of general.shaderSources) {
       expect(source).toContain("const FIN_M = array<vec4f, 16>(");
-      expect(source).toContain("const FIN_ROOT = array<vec4f, 4>(");
+      // The default system's invariant BOX root: eight corners.
+      expect(source).toContain("const FIN_ROOT = array<vec4f, 8>(");
       expect(source).toContain("fn finCompose(");
     }
     general.renderer.destroy();

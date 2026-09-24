@@ -628,6 +628,50 @@ function referenceSimplexClip(
   return exit > enter ? { enter, exit } : null;
 }
 
+/** The ray against one BOX cell (a parallelepiped), independently: its
+ * edge vectors from the folded corners (corner bit i = axis i's max side,
+ * the construction's corner order), the coordinates `E⁻¹(q − v0)` and
+ * `E⁻¹qd` affine in t, the interval where every coordinate lies in [0, 1]. */
+function referenceBoxClip(
+  corners: readonly Vec4[],
+  dimension: 3 | 4,
+  q: Vec4,
+  qd: Vec4,
+): { enter: number; exit: number } | null {
+  const edges: number[][] = [];
+  for (let r = 0; r < dimension; r++) {
+    edges.push(
+      Array.from(
+        { length: dimension },
+        (_, k) => corners[1 << k][r] - corners[0][r],
+      ),
+    );
+  }
+  const base = solveSquare(
+    edges,
+    Array.from({ length: dimension }, (_, r) => q[r] - corners[0][r]),
+  );
+  const slope = solveSquare(
+    edges,
+    Array.from({ length: dimension }, (_, r) => qd[r]),
+  );
+  if (!base || !slope) return null;
+  let enter = -Infinity;
+  let exit = Infinity;
+  for (let k = 0; k < dimension; k++) {
+    // 0 <= base + t·slope <= 1
+    if (slope[k] === 0) {
+      if (base[k] < 0 || base[k] > 1) return null;
+      continue;
+    }
+    const t0 = -base[k] / slope[k];
+    const t1 = (1 - base[k]) / slope[k];
+    enter = Math.max(enter, Math.min(t0, t1));
+    exit = Math.min(exit, Math.max(t0, t1));
+  }
+  return exit > enter ? { enter, exit } : null;
+}
+
 /** The independent interval union (and the clipped-leaf count): every
  * level-N word's leaf clipped and swept with the declared-resolution tie —
  * the grouping rule the contract states, restated here because it is
@@ -641,12 +685,11 @@ function referenceGeneralUnion(
   const counter = new Array<number>(c.level).fill(0);
   let clipped = 0;
   for (;;) {
-    const clip = referenceSimplexClip(
-      referenceLeafVertices(c, counter),
-      c.dimension,
-      q,
-      qd,
-    );
+    const vertices = referenceLeafVertices(c, counter);
+    const clip =
+      c.rootKind === "box"
+        ? referenceBoxClip(vertices, c.dimension, q, qd)
+        : referenceSimplexClip(vertices, c.dimension, q, qd);
     if (clip) {
       clipped++;
       endpoints.push({ t: clip.enter, delta: 1 });
@@ -804,7 +847,7 @@ function chainReconstructsUnion(
   }
 }
 
-/** Twelve heavily overlapping half-scale maps whose fixed points sit on a
+/** Twelve heavily overlapping 0.8-scale maps whose fixed points sit on a
  * small shell: a ray through the centre clips nearly every one of the 144
  * level-2 leaves, past the device's enumeration cap — the f64 reference is
  * uncapped by decision, and this document keeps that honest. */
@@ -827,7 +870,7 @@ function twelveOverlappingMaps(): Transform[] {
     id,
     position: [d[0] * 0.05, d[1] * 0.05, d[2] * 0.05],
     rotation: [0, 0, 0],
-    scale: [0.5, 0.5, 0.5],
+    scale: [0.8, 0.8, 0.8],
   }));
 }
 
@@ -849,12 +892,20 @@ const GENERAL_SWEEPS: ReadonlyArray<{
     radius: 3,
   })),
   ...[1, 2, 3, 4].map((level) => ({
-    name: "default system (derived root)",
+    name: "default system (box root)",
     maps: defaultTransforms,
     level,
     dimension: 3 as const,
     center: [0, 0, 0] as Vec3,
     radius: 6,
+  })),
+  ...[2, 3].map((level) => ({
+    name: "Menger maps (box root: the sponge's cubes)",
+    maps: mengerSponge,
+    level,
+    dimension: 3 as const,
+    center: [0, 0, 0] as Vec3,
+    radius: 2.6,
   })),
   {
     name: "pentatope (hull root)",
@@ -865,7 +916,7 @@ const GENERAL_SWEEPS: ReadonlyArray<{
     radius: 3,
   },
   {
-    name: "rotated pentatope (derived root)",
+    name: "rotated pentatope (box root)",
     maps: rotatedPentatope,
     level: 2,
     dimension: 4,
@@ -873,7 +924,7 @@ const GENERAL_SWEEPS: ReadonlyArray<{
     radius: 5,
   },
   {
-    name: "hyper-Menger maps (derived root, 48 maps)",
+    name: "hyper-Menger maps (box root, 48 maps)",
     maps: hyperMengerSpongeTransforms,
     level: 1,
     dimension: 4,
@@ -1065,7 +1116,7 @@ describe("the general word tree's hand-exact controls", () => {
 });
 
 describe("the general word tree's admission, CPU-side", () => {
-  it("admits the boot document's rotating maps through the derived root, 0..4", () => {
+  it("admits the boot document's rotating maps through the invariant box root, 0..4", () => {
     // The replacement's premise, pinned where it is decided: the viewer's
     // starting system rotates three of its four maps, which the box tree
     // refused; the simplicial tree admits it at every level of the band.
@@ -1078,7 +1129,7 @@ describe("the general word tree's admission, CPU-side", () => {
         3,
       );
       expect(boot.status).toBe("eligible");
-      expect(boot.construction?.rootKind).toBe("derived");
+      expect(boot.construction?.rootKind).toBe("box");
     }
   });
 
@@ -1126,12 +1177,11 @@ function referenceMediumEvents(
   const endpoints: Array<{ t: number; delta: number; branch: number }> = [];
   const counter = new Array<number>(c.level).fill(0);
   for (;;) {
-    const clip = referenceSimplexClip(
-      referenceLeafVertices(c, counter),
-      c.dimension,
-      q,
-      qd,
-    );
+    const vertices = referenceLeafVertices(c, counter);
+    const clip =
+      c.rootKind === "box"
+        ? referenceBoxClip(vertices, c.dimension, q, qd)
+        : referenceSimplexClip(vertices, c.dimension, q, qd);
     const branch = c.level === 0 ? 0 : counter[0];
     if (clip) {
       endpoints.push({ t: clip.enter, delta: 1, branch });

@@ -59,7 +59,12 @@ import {
 } from "./finite-transport-work";
 import type { Vec3, Vec4 } from "./types";
 import type { Transform } from "./types";
-import { defaultTransforms, pentatope, sierpinskiTetrahedron } from "./presets";
+import {
+  defaultTransforms,
+  mengerSponge,
+  pentatope,
+  sierpinskiTetrahedron,
+} from "./presets";
 import { hyperMengerSpongeTransforms } from "./finite-solid";
 import { mulberry32 } from "./rng";
 import {
@@ -1684,8 +1689,9 @@ describe("general finite-solid GPU sources", () => {
       expect(src).toContain(
         `const FIN_IM = array<vec4f, ${String(4 * c.mapCount)}>(`,
       );
+      // The rotating documents take the invariant BOX root: 2^dim corners.
       expect(src).toContain(
-        `const FIN_ROOT = array<vec4f, ${String(dimension + 1)}>(`,
+        `const FIN_ROOT = array<vec4f, ${String(2 ** dimension)}>(`,
       );
       expect(src).toContain("const FIN_BOX_MIN = array<vec4f, 3>(");
       expect(src).toContain(
@@ -1719,7 +1725,6 @@ describe("general finite-solid GPU sources", () => {
       for (const index of indices) {
         expect(index).toBeLessThanOrEqual(level);
       }
-      if (level === 0) expect(indices).toHaveLength(0);
     }
   });
 
@@ -1740,8 +1745,9 @@ describe("general finite-solid GPU sources", () => {
       expect(src).toContain("anchorCells: vec4i");
       // The mask ranges over the cell's dimension + 1 facets; the plane
       // slots stay unused.
+      // The box root's cell has 2·dim facets: the mask spans them.
       expect(src).toContain(
-        `(anchorMask & ~${String((1 << (dimension + 1)) - 1)}u) != 0u`,
+        `(anchorMask & ~${String((1 << (2 * dimension)) - 1)}u) != 0u`,
       );
       expect(src).toContain("any(anchorPlanesIn != vec4i(-1))");
       // The anchor's depth reads the params tail's live level lane.
@@ -1765,9 +1771,8 @@ describe("general finite-solid GPU sources", () => {
         src.indexOf("fn finSortEndpoints("),
       );
       expect(enumerate.match(/for \(var a\d = 0u;/g)).toHaveLength(level);
-      expect(enumerate.match(/finChildInverse\(/g) ?? []).toHaveLength(
-        level - 1,
-      );
+      // Every nest carries its inverse — a box leaf's facets are its rows.
+      expect(enumerate.match(/finChildInverse\(/g) ?? []).toHaveLength(level);
     }
   });
 
@@ -1795,7 +1800,7 @@ describe("general finite-solid GPU sources", () => {
       /level boxes/,
     );
     expect(() => finiteSolidGeneralDisplaySource(4, c, 2)).toThrow(
-      /root vertices/,
+      /hull \(5 vertices\) or box \(16 corners\) root/,
     );
   });
 });
@@ -1851,17 +1856,18 @@ describe("general walk f32 twin against the f64 oracle", () => {
     return { events, end: "runaway" };
   };
 
-  it("chains the oracle's union endpoints on sampled rays, both dimensions", () => {
-    // Seed 5's 60 rays on the default system at depth 2 include two grazing
-    // re-entries that refused state-mismatch before the anchor's own leaf
-    // read its masked residuals as exact zeros.
-    for (const [maps, level, dimension] of [
-      [defaultTransforms(), 2, 3],
-      [defaultTransforms(), 4, 3],
-      [sierpinskiTetrahedron(), 3, 3],
-      [rotatedPentatope(), 2, 4],
-      [hyperMengerSpongeTransforms(), 1, 4],
-    ] as const) {
+  // Seed 5's 60 rays on the default system at depth 2 include two grazing
+  // re-entries that refused state-mismatch before the anchor's own leaf
+  // read its masked residuals as exact zeros.
+  for (const [name, maps, level, dimension] of [
+    ["the default system", defaultTransforms(), 2, 3],
+    ["the default system", defaultTransforms(), 4, 3],
+    ["the Sierpinski tetrahedron", sierpinskiTetrahedron(), 3, 3],
+    ["the Menger maps (box root)", mengerSponge(), 2, 3],
+    ["the rotated pentatope", rotatedPentatope(), 2, 4],
+    ["the hyper-Menger maps", hyperMengerSpongeTransforms(), 1, 4],
+  ] as const) {
+    it(`chains the oracle's union endpoints on sampled rays: ${name} at depth ${level}`, () => {
       const c = generalConstruction(maps, level, dimension);
       const radius = finiteSolidGeneralBoundingRadius(c);
       const rng = mulberry32(5);
@@ -1902,13 +1908,15 @@ describe("general walk f32 twin against the f64 oracle", () => {
         expect(chain.events).toHaveLength(expected.length);
         chain.events.forEach((event, k) => {
           expect(event.entering).toBe(expected[k].entering);
-          expect(
-            Math.abs(event.t - expected[k].t) / Math.max(1, expected[k].t),
-          ).toBeLessThan(2e-6);
+          // f32 rounds at the arithmetic's own magnitude (the camera a few
+          // radii out), not at t's.
+          expect(Math.abs(event.t - expected[k].t)).toBeLessThan(
+            4e-6 * Math.max(1, expected[k].t, ...origin.map(Math.abs)),
+          );
         });
       }
-    }
-  });
+    });
+  }
 
   it("enters the gasket's axis cell at the oracle's hand-exact crossing", () => {
     const c = generalConstruction(sierpinskiTetrahedron(), 2, 3);

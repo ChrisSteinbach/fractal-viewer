@@ -892,9 +892,9 @@ ${crossingTime}    }`
 // (`analyzeFiniteSolidGeneral` through `finiteSolidGeneralDisplayDistance` /
 // `finiteSolidGeneralNextBoundary` / `finiteSolidGeneralContains`); its
 // module doc carries the construction and every soundness argument (the
-// root simplex, the level boxes the pruning rides, the branch-box display
+// root cell, the level boxes the pruning rides, the branch-box display
 // hybrid). The construction rides the SOURCE, not the wire: the maps, their
-// f64 inverses, the root simplex's vertices, the level boxes and the
+// f64 inverses, the root cell's vertices, the level boxes and the
 // display's per-branch refine margins bake as `const` WGSL (the tiling
 // clip's and `shapes.ts`'s baked-constant pattern), so the shipped params
 // tail and the bindingless design survive untouched — a general session
@@ -928,7 +928,7 @@ ${crossingTime}    }`
  * quantize to f32 at bake. */
 export type FiniteSolidGeneralWire = Pick<
   FiniteSolidGeneralConstruction,
-  "mapMatrix" | "mapOffset" | "rootVertices" | "levelBoxes"
+  "mapMatrix" | "mapOffset" | "rootVertices" | "levelBoxes" | "rootKind"
 > & {
   /** The per-map media codes (`FiniteSolidGeneralMedia`: 0 opaque, a glass
    * code >= 1, equal codes one material), baked beside the maps — the
@@ -937,6 +937,21 @@ export type FiniteSolidGeneralWire = Pick<
    * map glass code 1, the single-material solid. */
   media?: readonly number[];
 };
+
+/** The root cell's vertex count: the hull simplex's `dim + 1`, or the
+ * invariant box's `2^dim` corners. */
+function generalRootCount(dim: 3 | 4, g: { rootKind: "hull" | "box" }): number {
+  return g.rootKind === "box" ? 2 ** dim : dim + 1;
+}
+
+/** The cell's facet count: `dim + 1` for a simplex, `2·dim` for a box
+ * (facet `2i` the axis-i min side, `2i + 1` the max side). */
+function generalFacetCount(
+  dim: 3 | 4,
+  g: { rootKind: "hull" | "box" },
+): number {
+  return g.rootKind === "box" ? 2 * dim : dim + 1;
+}
 
 const generalVec4Lit = (v: readonly number[]): string =>
   `vec4f(${floatLit(v[0])}, ${floatLit(v[1])}, ${floatLit(v[2])}, ${floatLit(v[3])})`;
@@ -957,7 +972,8 @@ function validateGeneralWire(
     count < 1 ||
     count > FINITE_SOLID_GENERAL_MAX_MAPS ||
     g.mapOffset.length !== count ||
-    g.rootVertices.length !== dim + 1 ||
+    (g.rootKind !== "hull" && g.rootKind !== "box") ||
+    g.rootVertices.length !== generalRootCount(dim, g) ||
     g.levelBoxes.length !== level + 1 ||
     (g.media !== undefined &&
       (g.media.length !== count ||
@@ -969,7 +985,7 @@ function validateGeneralWire(
         )))
   ) {
     throw new RangeError(
-      `surface-finite-solid-gpu: a general wire needs 1..${FINITE_SOLID_GENERAL_MAX_MAPS} maps, ${dim + 1} root vertices, ${level + 1} level boxes at level ${level} (0..${FINITE_SOLID_GENERAL_MAX_LEVEL}) and, when present, one media code per map`,
+      `surface-finite-solid-gpu: a general wire needs 1..${FINITE_SOLID_GENERAL_MAX_MAPS} maps, a hull (${dim + 1} vertices) or box (${2 ** dim} corners) root, ${level + 1} level boxes at level ${level} (0..${FINITE_SOLID_GENERAL_MAX_LEVEL}) and, when present, one media code per map`,
     );
   }
 }
@@ -1001,7 +1017,7 @@ const generalConstBlock = (
   return `// The construction, baked (the general admission's own maps — the
 // session freezes its construction at enter, the shipped cores' discipline):
 // row-major forward maps and their f64 inverses (four rows per map), the
-// root simplex, the level boxes (k = remaining depth) and the display's
+// root cell, the level boxes (k = remaining depth) and the display's
 // per-branch refine margins.
 const FIN_LEVEL = ${level}u;
 const FIN_MAP_COUNT = ${count}u;
@@ -1017,7 +1033,7 @@ ${rows(inverses.map((inv) => inv.m))}
 const FIN_IT = array<vec4f, ${count}>(
 ${vecs(inverses.map((inv) => inv.t))}
 );
-const FIN_ROOT = array<vec4f, ${dim + 1}>(
+const FIN_ROOT = array<vec4f, ${g.rootVertices.length}>(
 ${vecs(g.rootVertices)}
 );
 const FIN_BOX_MIN = array<vec4f, ${level + 1}>(
@@ -1053,7 +1069,10 @@ const FIN_SAFETY = ${finiteSafetyLiteral};
  * `finChildInverse` the walk's `childInverse` (M_a⁻¹ ∘ parent⁻¹). The 3D
  * maps carry the w row/column identity, so the fourth terms add exact
  * zeros. */
-const generalAlgebraWgsl = (dim: 3 | 4): string => `
+const generalAlgebraWgsl = (
+  dim: 3 | 4,
+  g: { rootKind: "hull" | "box"; rootVertices: readonly unknown[] },
+): string => `
 struct FinAff {
   r0: vec4f,
   r1: vec4f,
@@ -1136,14 +1155,25 @@ fn finWordAff(word: vec4i, depth: i32) -> FinAff {
   return acc;
 }
 
-// The cell: the root simplex's vertices through the composed word.
+// The word's composed INVERSE, replayed the same way (generalLeafFrames):
+// a box cell's facet planes are read off its rows.
+fn finWordInverse(word: vec4i, depth: i32) -> FinAff {
+  var acc = finIdentity();
+  for (var slot = 0; slot < depth; slot++) {
+    acc = finChildInverse(acc, u32(word[slot]));
+  }
+  return acc;
+}
+
+// The cell: the root cell's vertex set (the hull simplex's vertices or the
+// invariant box's corners) through the composed word.
 struct FinCell {
-  v: array<vec4f, ${dim + 1}>,
+  v: array<vec4f, ${g.rootVertices.length}>,
 }
 
 fn finCell(m: FinAff) -> FinCell {
   var cell: FinCell;
-  for (var i = 0; i < ${dim + 1}; i++) {
+  for (var i = 0; i < ${g.rootVertices.length}; i++) {
     cell.v[i] = finApply(m, FIN_ROOT[i]) + m.t;
   }
   return cell;
@@ -1156,8 +1186,8 @@ fn finCell(m: FinAff) -> FinCell {
 // ON the facet plane).
 struct FinFacets {
   ok: bool,
-  n: array<vec4f, ${dim + 1}>,
-  c: array<f32, ${dim + 1}>,
+  n: array<vec4f, ${generalFacetCount(dim, g)}>,
+  c: array<f32, ${generalFacetCount(dim, g)}>,
 }
 
 ${
@@ -1224,16 +1254,53 @@ fn finFacets(cell: FinCell) -> FinFacets {
   return out;
 }
 
+// A BOX cell's facets from its composed inverse (boxFacets): pre-image
+// coordinate i is row_i·x + t_i, bounded by the root box FIN_BOX_*[0];
+// facet 2i the min side (outward −row/|row|), 2i + 1 the max side.
+fn finBoxFacets(inv: FinAff) -> FinFacets {
+  var out: FinFacets;
+  out.ok = false;
+  var rows = array<vec4f, 4>(inv.r0, inv.r1, inv.r2, inv.r3);
+  for (var axis = 0; axis < ${dim}; axis++) {
+    let row = rows[axis];
+    let len = sqrt(finDot(row, row));
+    if (!(len > 0.0) || !(len <= 3.402823466e38)) {
+      return out;
+    }
+    let unit = row / len;
+    out.n[2 * axis] = -unit;
+    out.c[2 * axis] = -(FIN_BOX_MIN[0][axis] - inv.t[axis]) / len;
+    out.n[2 * axis + 1] = unit;
+    out.c[2 * axis + 1] = (FIN_BOX_MAX[0][axis] - inv.t[axis]) / len;
+  }
+  out.ok = true;
+  return out;
+}
+
+// A leaf cell's facets by root kind (cellFacets): the ${
+  g.rootKind === "box"
+    ? "BOX — read off the composed inverse"
+    : "hull SIMPLEX — from its image vertices"
+}.
+fn finCellFacets(forward: FinAff, inverse: FinAff) -> FinFacets {
+  return ${g.rootKind === "box" ? "finBoxFacets(inverse)" : "finFacets(finCell(forward))"};
+}
+
+// A word's facets, both frames replayed (the event's and the restart's).
+fn finWordFacets(word: vec4i, depth: i32) -> FinFacets {
+  return finCellFacets(finWordAff(word, depth), finWordInverse(word, depth));
+}
+
 // The cell's radius (generalCellRadius): the farthest vertex from the
 // centroid — the anchor envelope's scale.
 fn finCellRadius(cell: FinCell) -> f32 {
   var centroid = vec4f(0.0);
-  for (var i = 0; i < ${dim + 1}; i++) {
+  for (var i = 0; i < ${g.rootVertices.length}; i++) {
     centroid = centroid + cell.v[i];
   }
-  centroid = centroid / ${floatLit(dim + 1)};
+  centroid = centroid / ${floatLit(g.rootVertices.length)};
   var radius = 0.0;
-  for (var i = 0; i < ${dim + 1}; i++) {
+  for (var i = 0; i < ${g.rootVertices.length}; i++) {
     let d = cell.v[i] - centroid;
     radius = max(radius, sqrt(finDot(d, d)));
   }
@@ -1245,7 +1312,7 @@ fn finCellRadius(cell: FinCell) -> f32 {
  * certified branch-box hybrid — each level-1 branch's oriented box
  * `M_a(levelBoxes[level − 1])`, REPLACED by its children's boxes within
  * that branch's own refine margin (the seal-hazard argument one box up).
- * Level 0 is the root simplex's own SDF; level 1 the plain branch min. */
+ * Level 0 is the root cell's own facet SDF; level 1 the plain branch min. */
 export function finiteSolidGeneralDisplaySource(
   dim: 3 | 4,
   g: FiniteSolidGeneralWire,
@@ -1254,12 +1321,12 @@ export function finiteSolidGeneralDisplaySource(
   const lift = generalLiftSource(dim);
   const body =
     level === 0
-      ? `  let facets = finFacets(finCell(finIdentity()));
+      ? `  let facets = finCellFacets(finIdentity(), finIdentity());
   if (!facets.ok) {
     return 1.0e30;
   }
   var d = -1.0e30;
-  for (var k = 0; k < ${dim + 1}; k++) {
+  for (var k = 0; k < ${generalFacetCount(dim, g)}; k++) {
     d = max(d, finDot(facets.n[k], q) - facets.c[k]);
   }
   return select(d, d * FIN_SAFETY, d > 0.0);`
@@ -1284,7 +1351,7 @@ export function finiteSolidGeneralDisplaySource(
   }
   return select(result, result * FIN_SAFETY, result > 0.0);`;
   return `${generalConstBlock(dim, g, level)}${lift}
-${generalAlgebraWgsl(dim)}
+${generalAlgebraWgsl(dim, g)}
 // The oriented box M(box) as the max of its facet half-space distances
 // (orientedBoxSdf): the i-th pre-image coordinate is row_i(invM)·q + invT_i,
 // so each axis's two planes have normal row i (length |row|). A certified
@@ -1367,7 +1434,7 @@ fn finFacetsContain(facets: FinFacets, q: vec4f) -> bool {
   if (!facets.ok) {
     return false;
   }
-  for (var k = 0; k < ${dim + 1}; k++) {
+  for (var k = 0; k < ${generalFacetCount(dim, g)}; k++) {
     if (finDot(facets.n[k], q) - facets.c[k] > 0.0) {
       return false;
     }
@@ -1387,7 +1454,7 @@ fn finiteGeneralPointMedium(qa: array<f32, 4>) -> vec2i {
   }
 ${
   level === 0
-    ? `  if (finFacetsContain(finFacets(finCell(finIdentity())), q)) {
+    ? `  if (finFacetsContain(finCellFacets(finIdentity(), finIdentity()), q)) {
     finBranchCov[0] = 1;
   }`
     : `  if (finBoxContains(FIN_BOX_MIN[${level}], FIN_BOX_MAX[${level}], q)) {
@@ -1397,7 +1464,8 @@ ${generalNestSource(
     `finBranchCov[a0] == 0 && finBoxContains(FIN_BOX_MIN[${remaining}], FIN_BOX_MAX[${remaining}], finApply(${inv}, q) + ${inv}.t)`,
   (
     forwardVar,
-  ) => `if (finBranchCov[a0] == 0 && finFacetsContain(finFacets(finCell(${forwardVar})), q)) {
+    inverseVar,
+  ) => `if (finBranchCov[a0] == 0 && finFacetsContain(finCellFacets(${forwardVar}, ${inverseVar}), q)) {
   finBranchCov[a0] = 1;
 }
 `,
@@ -1486,7 +1554,7 @@ fn finiteLiftDir(d: vec3f) -> array<f32, 4> {
 function generalNestSource(
   level: number,
   nodeTest: (inverseVar: string, remaining: number) => string,
-  leaf: (forwardVar: string, word: string) => string,
+  leaf: (forwardVar: string, inverseVar: string, word: string) => string,
 ): string {
   const indent = (depth: number): string => "  ".repeat(depth + 1);
   const wordOf = (depth: number): string => {
@@ -1512,7 +1580,9 @@ ${pad}    continue;
 ${pad}  }
 `;
     } else {
-      open += leaf(`f${depth}`, wordOf(level))
+      open += `${pad}  let i${depth} = finChildInverse(${parentI}, a${depth});
+`;
+      open += leaf(`f${depth}`, `i${depth}`, wordOf(level))
         .split("\n")
         .map((line) => (line.length > 0 ? `${pad}  ${line}` : line))
         .join("\n");
@@ -1560,9 +1630,14 @@ export function finiteSolidGeneralTransportSource(
     FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES,
   );
   const endpointCap = leafCap * 2;
-  const facetRange = (1 << (dim + 1)) - 1;
-  const pushLeaf = (forwardVar: string, word: string): string =>
-    `let facets = finFacets(finCell(${forwardVar}));
+  const facetCount = generalFacetCount(dim, g);
+  const facetRange = (1 << facetCount) - 1;
+  const pushLeaf = (
+    forwardVar: string,
+    inverseVar: string,
+    word: string,
+  ): string =>
+    `let facets = finCellFacets(${forwardVar}, ${inverseVar});
 if (facets.ok) {
   let clip = finClipSimplex(facets, q, qd, select(0u, finAnchorMask, all(${word} == finAnchorWord)));
   if (clip.ok) {
@@ -1576,7 +1651,7 @@ if (facets.ok) {
 `;
   const enumerate =
     level === 0
-      ? `  ${pushLeaf("finIdentity()", "vec4i(-1)").split("\n").join("\n  ")}
+      ? `  ${pushLeaf("finIdentity()", "finIdentity()", "vec4i(-1)").split("\n").join("\n  ")}
   return true;`
       : `  // The entry prune: the whole tree sits inside levelBoxes[level].
   if (!finClipAxisBox(FIN_BOX_MIN[${level}], FIN_BOX_MAX[${level}], q, qd)) {
@@ -1646,7 +1721,7 @@ struct FinClip {
   exitMask: u32,
 }
 
-// Ray ∩ simplex by its facet half-spaces (clipGeneralSimplex): a crossing
+// Ray ∩ cell by its facet half-spaces (clipGeneralCell): a crossing
 // is an entry when the ray moves inward, an exit when outward; a parallel
 // facet requires the ray inside its half-space. No epsilon — only equal
 // crossing times tie, and the binding facets ride the masks. onPlane
@@ -1655,6 +1730,7 @@ struct FinClip {
 // by a grazing denominator, would otherwise move the leaf's own crossing
 // off t = 0 and the restart would misread its starting side).
 fn finClipSimplex(f: FinFacets, q: vec4f, qd: vec4f, onPlane: u32) -> FinClip {
+  // (Facet-generic: a simplex's dim + 1 facets or a box's 2·dim.)
   var result: FinClip;
   result.ok = false;
   result.enter = -1.0e30;
@@ -1665,7 +1741,7 @@ fn finClipSimplex(f: FinFacets, q: vec4f, qd: vec4f, onPlane: u32) -> FinClip {
   var exit = 1.0e30;
   var enterMask = 0u;
   var exitMask = 0u;
-  for (var k = 0; k < ${dim + 1}; k++) {
+  for (var k = 0; k < ${facetCount}; k++) {
     let denom = finDot(f.n[k], qd);
     let s = select(finDot(f.n[k], q) - f.c[k], 0.0, (onPlane & (1u << u32(k))) != 0u);
     if (denom == 0.0) {
@@ -1705,8 +1781,8 @@ fn finClipSimplex(f: FinFacets, q: vec4f, qd: vec4f, onPlane: u32) -> FinClip {
 ${generalRowXyzSource(dim)}
 // The pruned enumeration's storage: one record per leaf ENDPOINT —
 // (bits(t), packed) with packed bit 0 the delta (1 enter / 0 exit), bits
-// 1..24 the word (six bits per level, four levels), bits 25..29 the
-// endpoint's binding facets. Integer storage: the packed word is never
+// 1..23 the word as a mixed-radix index, bits 24..31 the endpoint's
+// binding facets (a 4D box has eight). Integer storage: the packed word is never
 // routed through an f32 (a denormal or NaN pattern could be canonicalized).
 // Module-scope private: per-invocation state, written before read.
 var<private> finE: array<vec2u, ${endpointCap}>;
@@ -1717,12 +1793,14 @@ var<private> finAnchorWord = vec4i(-1);
 var<private> finAnchorMask = 0u;
 
 fn finPushEndpoint(t: f32, delta: u32, word: vec4i, facets: u32) {
-  var packed = (delta & 1u) | ((facets & 31u) << 25u);
-  for (var slot = 0; slot < 4; slot++) {
-    if (word[slot] >= 0) {
-      packed = packed | ((u32(word[slot]) & 63u) << (1u + 6u * u32(slot)));
-    }
+  // The word as ONE mixed-radix index (first map most significant): at
+  // most 48^4 - 1 < 2^23, so bit 0 the delta, bits 1..23 the word, bits
+  // 24..31 the facets (a 4D box's eight).
+  var index = 0u;
+  for (var slot = 0; slot < i32(FIN_LEVEL); slot++) {
+    index = index * FIN_MAP_COUNT + u32(max(word[slot], 0));
   }
+  let packed = (delta & 1u) | (index << 1u) | ((facets & 255u) << 24u);
   finE[finTotal] = vec2u(bitcast<u32>(t), packed);
   finTotal = finTotal + 1u;
 }
@@ -1732,16 +1810,17 @@ fn finEndpointT(i: u32) -> f32 {
 }
 
 fn finEndpointWord(i: u32) -> vec4i {
-  let packed = finE[i].y;
+  var index = (finE[i].y >> 1u) & 0x7fffffu;
   var word = vec4i(-1);
-  for (var slot = 0; slot < i32(FIN_LEVEL); slot++) {
-    word[slot] = i32((packed >> (1u + 6u * u32(slot))) & 63u);
+  for (var slot = i32(FIN_LEVEL) - 1; slot >= 0; slot--) {
+    word[slot] = i32(index % FIN_MAP_COUNT);
+    index = index / FIN_MAP_COUNT;
   }
   return word;
 }
 
 fn finEndpointFacets(i: u32) -> u32 {
-  return (finE[i].y >> 25u) & 31u;
+  return (finE[i].y >> 24u) & 255u;
 }
 
 // The anchor reconstruction (the event's snap and the anchored restart's):
@@ -1770,13 +1849,13 @@ fn finSnapToLeaf(word: vec4i, mask: u32, pIn: vec4f, scale: f32) -> FinSnap {
   out.ok = false;
   out.p = pIn;
   let cell = finCell(finWordAff(word, i32(params.finiteLevel)));
-  let facets = finFacets(cell);
+  let facets = finWordFacets(word, i32(params.finiteLevel));
   if (!facets.ok) {
     return out;
   }
   let envelope = FIN_SNAP_REL * max(max(1.0, finCellRadius(cell)), scale);
   var p = pIn;
-  for (var k = 0; k < ${dim + 1}; k++) {
+  for (var k = 0; k < ${facetCount}; k++) {
     if ((mask & (1u << u32(k))) == 0u) {
       continue;
     }
@@ -1786,10 +1865,10 @@ fn finSnapToLeaf(word: vec4i, mask: u32, pIn: vec4f, scale: f32) -> FinSnap {
     }
     p = p + correction * facets.n[k];
   }
-  for (var sweep = 0; sweep <= ${dim + 1}; sweep++) {
+  for (var sweep = 0; sweep <= ${facetCount}; sweep++) {
     var worst = -1;
     var worstS = 0.0;
-    for (var k = 0; k < ${dim + 1}; k++) {
+    for (var k = 0; k < ${facetCount}; k++) {
       if ((mask & (1u << u32(k))) != 0u) {
         continue;
       }
@@ -1822,11 +1901,11 @@ fn finGroupNormal(dir: vec3f, groupLo: u32, groupHi: u32, entering: bool) -> vec
   var basisCount = 0;
   for (var m = groupLo; m < groupHi && basisCount < 3; m++) {
     let mask = finEndpointFacets(m);
-    let facets = finFacets(finCell(finWordAff(finEndpointWord(m), i32(FIN_LEVEL))));
+    let facets = finWordFacets(finEndpointWord(m), i32(FIN_LEVEL));
     if (!facets.ok) {
       return vec3f(0.0);
     }
-    for (var k = 0; k < ${dim + 1} && basisCount < 3; k++) {
+    for (var k = 0; k < ${facetCount} && basisCount < 3; k++) {
       if ((mask & (1u << u32(k))) == 0u) {
         continue;
       }
@@ -2716,7 +2795,10 @@ export function finiteSolidGeneralDdaF32(
     FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES,
   );
   const endpointCap = leafCap * 2;
-  const facetCount = dim + 1;
+  // The cell's facet count by root kind (a simplex's dim + 1, a box's
+  // 2·dim); the simplex construction's own vertex count stays dim + 1.
+  const facetCount = generalFacetCount(dim, g);
+  const simplexCount = dim + 1;
   const miss = (): FiniteSolidDdaF32Result => ({
     kind: 2,
     reason: 0,
@@ -2832,8 +2914,15 @@ export function finiteSolidGeneralDdaF32(
     for (let slot = 0; slot < depth; slot++) acc = compose(acc, word[slot]);
     return acc;
   };
+  const wordInverse = (word: readonly number[], depth: number): F32Aff => {
+    let acc = identity();
+    for (let slot = 0; slot < depth; slot++) {
+      acc = childInverse(acc, word[slot]);
+    }
+    return acc;
+  };
   const cellOf = (m: F32Aff): F32Vec4[] =>
-    root.slice(0, facetCount).map((v) => add4(apply(m, v), m.t));
+    root.map((v) => add4(apply(m, v), m.t));
 
   // The facets (finFacets / finCross / finMinor).
   const cross = (e1: F32Vec4, e2: F32Vec4, e3: F32Vec4 | null): F32Vec4 => {
@@ -2859,9 +2948,9 @@ export function finiteSolidGeneralDdaF32(
   ): { n: F32Vec4[]; c: number[] } | null => {
     const n: F32Vec4[] = [];
     const c: number[] = [];
-    for (let k = 0; k < facetCount; k++) {
+    for (let k = 0; k < simplexCount; k++) {
       const idx: number[] = [];
-      for (let i = 0; i < facetCount; i++) if (i !== k) idx.push(i);
+      for (let i = 0; i < simplexCount; i++) if (i !== k) idx.push(i);
       const a = cell[idx[0]];
       const e1 = sub4(cell[idx[1]], a);
       const e2 = sub4(cell[idx[2]], a);
@@ -2887,14 +2976,41 @@ export function finiteSolidGeneralDdaF32(
     }
     return { n, c };
   };
+  // A box cell's facets from its composed inverse (finBoxFacets).
+  const boxFacetsOf = (inv: F32Aff): { n: F32Vec4[]; c: number[] } | null => {
+    const n: F32Vec4[] = [];
+    const c: number[] = [];
+    for (let axis = 0; axis < dim; axis++) {
+      const row = inv.r[axis];
+      const len = f(Math.sqrt(dot4(row, row)));
+      if (!(len > 0) || !(len <= 3.402823466e38)) return null;
+      const unit: F32Vec4 = [
+        f(row[0] / len),
+        f(row[1] / len),
+        f(row[2] / len),
+        f(row[3] / len),
+      ];
+      n.push([-unit[0], -unit[1], -unit[2], -unit[3]]);
+      c.push(f(-f(boxMin[0][axis] - inv.t[axis]) / len));
+      n.push(unit);
+      c.push(f(f(boxMax[0][axis] - inv.t[axis]) / len));
+    }
+    return { n, c };
+  };
+  // A leaf cell's facets by root kind (finCellFacets).
+  const facetsFor = (
+    forward: F32Aff,
+    inverse: F32Aff,
+  ): { n: F32Vec4[]; c: number[] } | null =>
+    g.rootKind === "box" ? boxFacetsOf(inverse) : facetsOf(cellOf(forward));
   const cellRadius = (cell: readonly F32Vec4[]): number => {
     let centroid: F32Vec4 = [0, 0, 0, 0];
     for (const v of cell) centroid = add4(centroid, v);
     centroid = [
-      f(centroid[0] / facetCount),
-      f(centroid[1] / facetCount),
-      f(centroid[2] / facetCount),
-      f(centroid[3] / facetCount),
+      f(centroid[0] / cell.length),
+      f(centroid[1] / cell.length),
+      f(centroid[2] / cell.length),
+      f(centroid[3] / cell.length),
     ];
     let radius = 0;
     for (const v of cell) {
@@ -2936,7 +3052,7 @@ export function finiteSolidGeneralDdaF32(
     scale: number,
   ): F32Vec4 | null => {
     const cell = cellOf(wordAff(word, level));
-    const facets = facetsOf(cell);
+    const facets = facetsFor(wordAff(word, level), wordInverse(word, level));
     if (!facets) return null;
     const envelope = f(snapRel * Math.max(1, cellRadius(cell), scale));
     let p = pIn;
@@ -3036,11 +3152,11 @@ export function finiteSolidGeneralDdaF32(
     return exit > enter;
   };
   const endpoints: GeneralEndpointF32[] = [];
-  const pushLeaf = (m: F32Aff, word: number[]): boolean => {
-    const facets = facetsOf(cellOf(m));
+  const pushLeaf = (m: F32Aff, inv: F32Aff, word: number[]): boolean => {
+    const facets = facetsFor(m, inv);
     if (!facets) return true;
     // The anchor's own leaf reads its masked residuals as exact zeros
-    // (enumerateSimplicialLeaves's rule, finClipSimplex's `onPlane`).
+    // (enumerateGeneralLeaves's rule, finClipSimplex's `onPlane`).
     const forced =
       anchor && word.every((w, slot) => w === anchor.cellIndices[slot])
         ? anchor.planeMask
@@ -3084,15 +3200,15 @@ export function finiteSolidGeneralDdaF32(
   // The pruned nests (finEnumerate): the leaves in lexicographic word
   // order, subtrees pruned when the ray misses their level box, capped.
   if (level === 0) {
-    if (!pushLeaf(identity(), [])) return refused(1);
+    if (!pushLeaf(identity(), identity(), [])) return refused(1);
   } else if (clipAxisBox(boxMin[level], boxMax[level], q, qd)) {
     const word: number[] = [];
     const walk = (forward: F32Aff, inverse: F32Aff, depth: number): boolean => {
       for (let a = 0; a < mapCount; a++) {
         const childForward = compose(forward, a);
+        const childInverse_ = childInverse(inverse, a);
         word.push(a);
         if (depth + 1 < level) {
-          const childInverse_ = childInverse(inverse, a);
           const remaining = level - (depth + 1);
           if (
             clipAxisBox(
@@ -3105,7 +3221,7 @@ export function finiteSolidGeneralDdaF32(
           ) {
             return false;
           }
-        } else if (!pushLeaf(childForward, word)) {
+        } else if (!pushLeaf(childForward, childInverse_, word)) {
           return false;
         }
         word.pop();
@@ -3156,7 +3272,10 @@ export function finiteSolidGeneralDdaF32(
   ): Vec3 | null => {
     const basis: Vec3[] = [];
     for (let m = groupLo; m < groupHi && basis.length < 3; m++) {
-      const facets = facetsOf(cellOf(wordAff(endpoints[m].word, level)));
+      const facets = facetsFor(
+        wordAff(endpoints[m].word, level),
+        wordInverse(endpoints[m].word, level),
+      );
       if (!facets) return null;
       for (let k = 0; k < facetCount && basis.length < 3; k++) {
         if ((endpoints[m].facets & (1 << k)) === 0) continue;
