@@ -1670,6 +1670,32 @@ export const FINITE_SOLID_GENERAL_TIE_REL = 2 * 2 ** -23;
  * worst case. */
 export const FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES = 128;
 
+/** The anchor snap's declared envelope, relative to the SCALE of the
+ * arithmetic that produced the point, not to the cell: a boundary point is
+ * `q + t·qd` and its facet residual `c − n·p` rounds at the magnitude of
+ * `q`, `t` and `p` — at f32 about 16 ulps of that magnitude (the dot
+ * products' accumulation, the division's error projected back onto the
+ * facet normal) — while a level-4 cell can be a hundredth of it. The box
+ * construction's cell-relative envelope refused the first hit of rays
+ * from a camera a few radii out (a measured 5-50% of sampled rays, every
+ * one a masked-facet correction 1.6-15x past it). The envelope is
+ * `FINITE_SOLID_GENERAL_SNAP_REL · max(1, cell radius, scale)` with scale
+ * `max(|q|∞, |t|)` for an event and `|anchor|∞` for an anchored restart —
+ * the same `max(1, ·)` floor the tie takes. It still refuses a claimed
+ * anchor that is not ON its word's leaf; it no longer refuses rounding. */
+export const FINITE_SOLID_GENERAL_SNAP_REL = 32 * 2 ** -23;
+
+/** The exact-corner normal's rank test: a tied facet's displayed normal is
+ * DEPENDENT on the basis already accepted when its Gram-Schmidt residual
+ * falls below this fraction of its own length. The box construction never
+ * needed one — its faces were the pose's exact rows, so a repeated axis
+ * projected to exactly zero — but a general shared face is ONE real plane
+ * computed through two word compositions, so its two sides' normals agree
+ * only to ulps and an exact `> 0` test would promote the rounding residue
+ * to a basis vector of arbitrary direction. Distinct facets of a real cell
+ * sit far above this; ulp-level twins (f64 ~1e-16, f32 ~1e-7) far below. */
+export const FINITE_SOLID_GENERAL_NORMAL_DEPENDENT_REL = 1e-3;
+
 /** The general construction: cells are the level-`level` images of the
  * root simplex under the document's own maps. Each map is a general
  * contracting affine baked row-major 4x4 (the 3D maps carry the w row and
@@ -2012,13 +2038,16 @@ function generalCellRadius(
   return radius;
 }
 
-/** The invariant axis-aligned box: the bbox fixed point of the Hutchinson
- * iteration `B ← bbox({fixed} ∪ {M_i(corner) ∀ i})`. The limit is the
- * attractor's own bounding box — the minimal axis-aligned box invariant
- * under every map, so it contains the attractor and every level union the
- * tree builds. Canonical (no basis choice), derivable, and cheap: the
- * measured default-system document stabilizes at round 76 of this
- * iteration (growth tolerance 1e-12, cap 256 rounds). */
+/** The ∞-norm of an intrinsic point over the construction's axes — the
+ * snap envelope's scale. */
+function intrinsicMagnitude(p: Vec4, dimension: 3 | 4): number {
+  let magnitude = 0;
+  for (let axis = 0; axis < dimension; axis++) {
+    magnitude = Math.max(magnitude, Math.abs(p[axis]));
+  }
+  return magnitude;
+}
+
 /** The invariant axis-aligned box: the bbox fixed point of the Hutchinson
  * iteration `B ← bbox({fixed} ∪ {M_i(corner) ∀ i})`. The limit is the
  * attractor's own bounding box — the minimal axis-aligned box invariant
@@ -2307,6 +2336,7 @@ function clipGeneralSimplex(
   dimension: 3 | 4,
   q: Vec4,
   qd: Vec4,
+  onPlaneMask = 0,
 ): GeneralClip | null {
   let enter = -Infinity;
   let exit = Infinity;
@@ -2315,7 +2345,13 @@ function clipGeneralSimplex(
   for (let k = 0; k < facets.length; k++) {
     const facet = facets[k];
     const denom = dotIntrinsic(facet.n, qd, dimension);
-    const s = dotIntrinsic(facet.n, q, dimension) - facet.c;
+    // A facet the anchor asserts the query point sits ON reads residual
+    // exactly zero — what the snap computed in exact arithmetic (see
+    // enumerateSimplicialLeaves).
+    const s =
+      (onPlaneMask & (1 << k)) !== 0
+        ? 0
+        : dotIntrinsic(facet.n, q, dimension) - facet.c;
     if (denom === 0) {
       if (s > 0) return null;
       continue;
@@ -2380,10 +2416,26 @@ function enumerateSimplicialLeaves(
   q: Vec4,
   qd: Vec4,
   cap: number,
+  anchor?: FiniteSolidAnchor,
 ): GeneralLeaf[] | null {
   const leaves: GeneralLeaf[] = [];
   const dimension = c.dimension;
   const word: number[] = [];
+  // THE ANCHOR'S OWN LEAF CROSSES ITS MASKED FACETS AT EXACTLY t = 0. The
+  // snap put the query point on those planes, but only to the precision it
+  // rounds at: at a grazing angle the recomputed crossing `−s/denom`
+  // amplifies that residual past the tie, and the restart then misreads
+  // its own starting side (measured on the f32 twin: 3 of 420 sampled
+  // chains refused state-mismatch mid-walk; 0 of 420 with this rule). The
+  // box construction had the property for free — an axis snap sets the
+  // coordinate EXACTLY to the face — and the anchor contract already
+  // declares the anchor authoritative, so its leaf's masked residuals are
+  // the zeros exact arithmetic would compute. Every other leaf, including
+  // a tied neighbour across the same face, clips from the point as-is.
+  const onPlaneMask = (leafWord: readonly number[]): number =>
+    anchor && leafWord.every((w, slot) => w === anchor.cellIndices[slot])
+      ? anchor.planeMask
+      : 0;
   const clipComposed = (
     matrix: readonly number[],
     offset: Vec4,
@@ -2399,7 +2451,7 @@ function enumerateSimplicialLeaves(
     });
     const facets = facetsFromVertices(vertices, dimension);
     if (!facets) return null;
-    return clipGeneralSimplex(facets, dimension, q, qd);
+    return clipGeneralSimplex(facets, dimension, q, qd, onPlaneMask(word));
   };
   const walk = (
     matrix: number[],
@@ -2413,28 +2465,13 @@ function enumerateSimplicialLeaves(
         matrix: c.mapMatrix[a],
         offset: c.mapOffset[a],
       });
-      const mapT = c.mapOffset[a];
-      // The child node's inverse: (parent ∘ M_a)⁻¹ = M_a⁻¹ ∘ parent⁻¹ —
-      // M_a⁻¹ applied first; the offset composition follows.
-      const childInvM = multiplyMatrix4(inverseMapMatrix[a], invM);
-      const childInvT: Vec4 = [
-        inverseMapMatrix[a][0] * (invT[0] - mapT[0]) +
-          inverseMapMatrix[a][1] * (invT[1] - mapT[1]) +
-          inverseMapMatrix[a][2] * (invT[2] - mapT[2]) +
-          inverseMapMatrix[a][3] * (invT[3] - mapT[3]),
-        inverseMapMatrix[a][4] * (invT[0] - mapT[0]) +
-          inverseMapMatrix[a][5] * (invT[1] - mapT[1]) +
-          inverseMapMatrix[a][6] * (invT[2] - mapT[2]) +
-          inverseMapMatrix[a][7] * (invT[3] - mapT[3]),
-        inverseMapMatrix[a][8] * (invT[0] - mapT[0]) +
-          inverseMapMatrix[a][9] * (invT[1] - mapT[1]) +
-          inverseMapMatrix[a][10] * (invT[2] - mapT[2]) +
-          inverseMapMatrix[a][11] * (invT[3] - mapT[3]),
-        inverseMapMatrix[a][12] * (invT[0] - mapT[0]) +
-          inverseMapMatrix[a][13] * (invT[1] - mapT[1]) +
-          inverseMapMatrix[a][14] * (invT[2] - mapT[2]) +
-          inverseMapMatrix[a][15] * (invT[3] - mapT[3]),
-      ];
+      // The child node's inverse: (parent ∘ M_a)⁻¹ = M_a⁻¹ ∘ parent⁻¹.
+      const child = childInverse(inverseMapMatrix[a], c.mapOffset[a], {
+        m: invM,
+        t: invT,
+      });
+      const childInvM = child.m;
+      const childInvT = child.t;
       const childDepth = depth + 1;
       if (childDepth < c.level) {
         // The node prune: the subtree nests inside the child's word-image
@@ -2519,7 +2556,7 @@ function enumerateSimplicialLeaves(
   if (c.level === 0) {
     const facets = facetsFromVertices(c.rootVertices, dimension);
     if (!facets) return leaves;
-    const clip = clipGeneralSimplex(facets, dimension, q, qd);
+    const clip = clipGeneralSimplex(facets, dimension, q, qd, onPlaneMask([]));
     if (clip) {
       leaves.push({
         word: [],
@@ -2535,10 +2572,7 @@ function enumerateSimplicialLeaves(
   // missing that axis-aligned box misses every leaf.
   const rootClip = clipAxisAlignedBox(c.levelBoxes[c.level], dimension, q, qd);
   if (!rootClip) return leaves;
-  const inverseMaps = c.mapMatrix.map((m, i) =>
-    inverseAffine(m, c.mapOffset[i]),
-  );
-  const inverseMapMatrix = inverseMaps.map((inv) => inv.m);
+  const inverseMapMatrix = finiteSolidGeneralInverseMaps(c).map((inv) => inv.m);
   return walk(
     identityMatrix4(),
     [0, 0, 0, 0],
@@ -2683,13 +2717,15 @@ function simplicialBoundaryNormal(
 ): Vec3 | null {
   const basis: Vec3[] = [];
   for (const face of faces) {
+    if (basis.length === 3) break;
     const vertices = generalLeafVertices(c, face.leaf.word);
     const facets = facetsFromVertices(vertices, c.dimension);
     if (!facets) return null;
-    for (let f = 0; f < facets.length; f++) {
+    for (let f = 0; f < facets.length && basis.length < 3; f++) {
       if ((face.mask & (1 << f)) === 0) continue;
       const displayed = displayedNormal(pose, facets[f].n);
       const vector: Vec3 = [displayed[0], displayed[1], displayed[2]];
+      const length = Math.hypot(vector[0], vector[1], vector[2]);
       for (const unit of basis) {
         const projection =
           vector[0] * unit[0] + vector[1] * unit[1] + vector[2] * unit[2];
@@ -2698,7 +2734,14 @@ function simplicialBoundaryNormal(
         }
       }
       const magnitude = Math.hypot(vector[0], vector[1], vector[2]);
-      if (!(magnitude > 0) || !Number.isFinite(magnitude)) continue;
+      // A 4D facet whose displayed normal vanishes (orthogonal to the
+      // slice) and a shared face's ulp twin are both dependent.
+      if (
+        !(magnitude > FINITE_SOLID_GENERAL_NORMAL_DEPENDENT_REL * length) ||
+        !Number.isFinite(magnitude)
+      ) {
+        continue;
+      }
       basis.push([
         vector[0] / magnitude,
         vector[1] / magnitude,
@@ -2846,7 +2889,9 @@ function simplicialBoundaryEvent(
   // clip's own values — and the rest clamp into the leaf under the
   // declared envelope.
   const radius = generalCellRadius(incidentVertices, c.dimension);
-  const envelope = FINITE_SOLID_GENERAL_TIE_REL * radius;
+  const envelope =
+    FINITE_SOLID_GENERAL_SNAP_REL *
+    Math.max(1, radius, intrinsicMagnitude(q, c.dimension), Math.abs(t));
   const intrinsicPoint = q.map(
     (value, intrinsicAxis) => value + t * qd[intrinsicAxis],
   ) as Vec4;
@@ -2996,8 +3041,10 @@ function finiteSolidGeneralNextBoundaryInternal(
       return { kind: "refused", reason: "invalid-input", visits: 0 };
     }
     const radius = generalCellRadius(vertices, dimension);
-    const envelope = FINITE_SOLID_GENERAL_TIE_REL * radius;
     const p = [...anchor.intrinsicPoint] as Vec4;
+    const envelope =
+      FINITE_SOLID_GENERAL_SNAP_REL *
+      Math.max(1, radius, intrinsicMagnitude(p, dimension));
     for (let f = 0; f < facets.length; f++) {
       if ((anchor.planeMask & (1 << f)) === 0) continue;
       const correction = facets[f].c - dotIntrinsic(facets[f].n, p, dimension);
@@ -3036,7 +3083,7 @@ function finiteSolidGeneralNextBoundaryInternal(
     c.mapCount ** c.level,
     FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES,
   );
-  const leaves = enumerateSimplicialLeaves(c, q, qd, leafCap);
+  const leaves = enumerateSimplicialLeaves(c, q, qd, leafCap, anchor);
   if (!leaves) {
     // The pruned enumeration overflowed its cap: a disclosed refusal —
     // never a truncation.
@@ -3154,8 +3201,8 @@ function finiteSolidGeneralNextBoundaryInternal(
 }
 
 /** The simplicial display marcher's bounded-work estimate: the certified
- * hybrid over the level-1 branch BOXES and — one level in — the nearest
- * branch's children. The bound rides the level boxes, NOT the cells:
+ * hybrid over the level-1 branch BOXES and — one level in, for every branch
+ * within its own refine margin — that branch's children. The bound rides the level boxes, NOT the cells:
  * rotating families admit no invariant simplex (measured), so a union
  * point can sit outside every level-1 cell and a cell-min would overstate
  * the distance. The containment argument is word-shaped instead: any
@@ -3168,19 +3215,22 @@ function finiteSolidGeneralNextBoundaryInternal(
  * box up: a branch box's own faces are its SDF's zero set, and the deeper
  * structure (nested strictly inside the box) opens its gaps at those
  * faces, so the plain min would seal every opening at the box face;
- * refining the near box into its children's boxes
- * (`M_{a·b}(levelBoxes[N−2])`) vanishes those zeros inward and keeps the
- * bound. The zeros still sit on box faces, not the union's surface — the
- * zero set is NOT only the union's boundary, this field is not a
+ * REPLACING a near box's term by its children's boxes
+ * (`M_{a·b}(levelBoxes[N−2])`, which cover `M_a(U_{N−1})` because
+ * `U_{N−1} ⊆ ∪_b M_b(levelBoxes[N−2])`) vanishes those zeros inward and
+ * keeps the bound. A min over the parent AND its children would not: the
+ * children nest inside the parent, so the parent's face zeros survive.
+ * The zeros still sit on box faces, not the union's surface — the zero
+ * set is NOT only the union's boundary, this field is not a
  * membership oracle, and the transport walks the boundary query above,
  * never this field. The primary rays resolve exact boundaries through the
  * transport, so the box-coarse zero set costs coarser AO/shadow taps and
  * wasted candidate marches, never wrong pixels.
  *
- * Level 1 returns the plain min (the branch boxes ARE the union's
- * hull); level 0 the root simplex's own SDF. The refine margin is relative
+ * Level 1 returns the plain min over the branch boxes (no children to
+ * refine into); level 0 the root simplex's own SDF. The refine margin is relative
  * to the branch box's largest half extent (the shipped constant's role,
- * per box). */
+ * per box, measured in the world frame — `finiteSolidGeneralRefineTau`). */
 export function finiteSolidGeneralDisplayDistance(
   c: FiniteSolidGeneralConstruction,
   pose: FiniteSolidPose,
@@ -3196,16 +3246,15 @@ export function finiteSolidGeneralDisplayDistance(
     return safety(simplexSdf(facets, dimension, q));
   }
   // The branch stage: the word-images of levelBoxes[level − 1] — every
-  // union point sits inside one of them.
-  const inverseMaps = c.mapMatrix.map((m, i) =>
-    inverseAffine(m, c.mapOffset[i]),
-  );
-  let best = Infinity;
-  let bestWord = -1;
-  const branchInverses: Array<{ m: number[]; t: Vec4 }> = [];
+  // union point sits inside one of them. Each branch box within its own tau
+  // is REPLACED by its children's boxes (the shipped hybrid's term rule): a
+  // child box nests inside its parent, so a min over parent AND children
+  // would keep the parent's face zeros and refine nothing.
+  const inverseMaps = finiteSolidGeneralInverseMaps(c);
+  const tau = finiteSolidGeneralRefineTau(c);
+  let result = Infinity;
   for (let a = 0; a < c.mapCount; a++) {
     const inv = inverseMaps[a];
-    branchInverses.push(inv);
     const d = orientedBoxSdf(
       inv.m,
       inv.t,
@@ -3213,69 +3262,186 @@ export function finiteSolidGeneralDisplayDistance(
       dimension,
       q,
     );
-    if (d < best) {
-      best = d;
-      bestWord = a;
+    let term = d;
+    if (c.level > 1 && d < tau[a]) {
+      let refined = Infinity;
+      for (let b = 0; b < c.mapCount; b++) {
+        // The grandchild's inverse: (M_a ∘ M_b)⁻¹ = M_b⁻¹ ∘ M_a⁻¹ — the
+        // walk's own child-inverse step, one level in.
+        const grand = childInverse(inverseMaps[b].m, c.mapOffset[b], inv);
+        const dChild = orientedBoxSdf(
+          grand.m,
+          grand.t,
+          c.levelBoxes[c.level - 2],
+          dimension,
+          q,
+        );
+        if (dChild < refined) refined = dChild;
+      }
+      term = refined;
     }
+    if (term < result) result = term;
   }
-  if (bestWord < 0 || c.level === 1) {
-    return best === Infinity ? 1e30 : safety(best);
-  }
-  // Refine the nearest branch box into its children's boxes when the
-  // estimate is within the margin of that box's own surface (tau relative
-  // to its largest half extent — the shipped constant's role, per box).
-  const branchBox = c.levelBoxes[c.level - 1];
-  let halfMax = 0;
-  for (let axis = 0; axis < dimension; axis++) {
-    halfMax = Math.max(
-      halfMax,
-      Math.abs(branchBox.max[axis] - branchBox.min[axis]) / 2,
-    );
-  }
-  if (!(best < FINITE_SOLID_DISPLAY_REFINE_REL * halfMax)) {
-    return safety(best);
-  }
-  let refined = Infinity;
-  for (let b = 0; b < c.mapCount; b++) {
-    // The grandchild's inverse: (M_{a·b})⁻¹ = M_b⁻¹ ∘ M_a⁻¹ — composed
-    // from the per-map inverses, one matrix compose per child.
-    const invB = inverseMaps[b].m;
-    const invBT = inverseMaps[b].t;
-    const parentInv = branchInverses[bestWord];
-    const grandM = multiplyMatrix4(invB, parentInv.m);
-    const grandT: Vec4 = [
-      invB[0] * parentInv.t[0] +
-        invB[1] * parentInv.t[1] +
-        invB[2] * parentInv.t[2] +
-        invB[3] * parentInv.t[3] +
-        invBT[0],
-      invB[4] * parentInv.t[0] +
-        invB[5] * parentInv.t[1] +
-        invB[6] * parentInv.t[2] +
-        invB[7] * parentInv.t[3] +
-        invBT[1],
-      invB[8] * parentInv.t[0] +
-        invB[9] * parentInv.t[1] +
-        invB[10] * parentInv.t[2] +
-        invB[11] * parentInv.t[3] +
-        invBT[2],
-      invB[12] * parentInv.t[0] +
-        invB[13] * parentInv.t[1] +
-        invB[14] * parentInv.t[2] +
-        invB[15] * parentInv.t[3] +
-        invBT[3],
-    ];
-    const d = orientedBoxSdf(
-      grandM,
-      grandT,
-      c.levelBoxes[c.level - 2],
-      dimension,
-      q,
-    );
-    if (d < refined) refined = d;
-  }
-  const result = Math.min(best, refined);
   return result === Infinity ? 1e30 : safety(result);
+}
+
+/** The per-map inverses `{m⁻¹, −m⁻¹t}` in f64 — the walk's node prune, the
+ * display's oriented-box facets and the GPU wire all read these ONE
+ * values (the kernel bakes them rather than inverting in f32). */
+export function finiteSolidGeneralInverseMaps(
+  c: Pick<FiniteSolidGeneralConstruction, "mapMatrix" | "mapOffset">,
+): Array<{ m: number[]; t: Vec4 }> {
+  return c.mapMatrix.map((m, i) => inverseAffine(m, c.mapOffset[i]));
+}
+
+/** The composed child inverse `(parent ∘ M_a)⁻¹ = M_a⁻¹ ∘ parent⁻¹`:
+ * `{invM_a·parentInvM, invM_a·(parentInvT − t_a)}` — the walk's node step,
+ * shared so the display's grandchild boxes and the DFS round alike. */
+function childInverse(
+  invMapM: readonly number[],
+  mapT: Vec4,
+  parent: { m: readonly number[]; t: Vec4 },
+): { m: number[]; t: Vec4 } {
+  const d: Vec4 = [
+    parent.t[0] - mapT[0],
+    parent.t[1] - mapT[1],
+    parent.t[2] - mapT[2],
+    parent.t[3] - mapT[3],
+  ];
+  return {
+    m: multiplyMatrix4(invMapM, parent.m),
+    t: applyMatrix4(invMapM, d),
+  };
+}
+
+/** The display hybrid's per-branch refine margin:
+ * FINITE_SOLID_DISPLAY_REFINE_REL of the branch box's largest WORLD half
+ * extent — the image parallelepiped's half-edge `half_i·|M_a e_i|` along
+ * each pre-image axis (the shipped constant's role, per box; the pre-image
+ * box's own extents would over-refine every contracting branch). */
+export function finiteSolidGeneralRefineTau(
+  c: Pick<
+    FiniteSolidGeneralConstruction,
+    "dimension" | "level" | "mapMatrix" | "levelBoxes"
+  >,
+): number[] {
+  if (c.level < 2) return c.mapMatrix.map(() => 0);
+  const box = c.levelBoxes[c.level - 1];
+  return c.mapMatrix.map((m) => {
+    let reach = 0;
+    for (let axis = 0; axis < c.dimension; axis++) {
+      const half = (box.max[axis] - box.min[axis]) / 2;
+      const column = Math.hypot(
+        m[axis],
+        m[4 + axis],
+        m[8 + axis],
+        c.dimension === 4 ? m[12 + axis] : 0,
+      );
+      reach = Math.max(reach, half * column);
+    }
+    return FINITE_SOLID_DISPLAY_REFINE_REL * reach;
+  });
+}
+
+/** The general construction's marching ball: the farthest corner of
+ * `levelBoxes[level]`, which contains the whole level union by
+ * construction. NOT the root simplex's vertices: a derived root is not
+ * invariant, so a level-N cell can reach outside it. The norm is monotone
+ * in each |coordinate|, so the maximizing corner takes each axis's larger
+ * magnitude — exact for the box. */
+export function finiteSolidGeneralBoundingRadius(
+  c: Pick<FiniteSolidGeneralConstruction, "dimension" | "level" | "levelBoxes">,
+): number {
+  const box = c.levelBoxes[c.level];
+  let sum = 0;
+  for (let axis = 0; axis < c.dimension; axis++) {
+    const reach = Math.max(Math.abs(box.min[axis]), Math.abs(box.max[axis]));
+    sum += reach * reach;
+  }
+  return Math.sqrt(sum);
+}
+
+/** The material's own scale H (Beer distance and slab lengths): the
+ * largest half extent of `levelBoxes[level]` — the box the whole union
+ * sits in, the role the shipped construction's 0.75 plays. */
+export function finiteSolidGeneralOpticsRadius(
+  c: Pick<FiniteSolidGeneralConstruction, "dimension" | "level" | "levelBoxes">,
+): number {
+  const box = c.levelBoxes[c.level];
+  let half = 0;
+  for (let axis = 0; axis < c.dimension; axis++) {
+    half = Math.max(half, (box.max[axis] - box.min[axis]) / 2);
+  }
+  return half;
+}
+
+/** Closed point membership in the level union — the primary ray's
+ * ray-side state (a point on a shared face reads inside; the boundary
+ * group's half-open sweep resolves the event either way). The same pruned
+ * DFS as the walk: a node is skipped when the point lies outside its
+ * word-image of the level box, a leaf tested against its own facets. */
+export function finiteSolidGeneralContains(
+  c: FiniteSolidGeneralConstruction,
+  pose: FiniteSolidPose,
+  p: Vec3,
+): boolean {
+  const q = finiteSolidIntrinsicPoint(pose, p);
+  const dimension = c.dimension;
+  const inside = (facets: readonly GeneralFacet[] | null): boolean =>
+    facets !== null &&
+    facets.every((facet) => dotIntrinsic(facet.n, q, dimension) - facet.c <= 0);
+  if (c.level === 0) {
+    return inside(facetsFromVertices(c.rootVertices, dimension));
+  }
+  const inBox = (box: { min: Vec4; max: Vec4 }, point: Vec4): boolean => {
+    for (let axis = 0; axis < dimension; axis++) {
+      if (point[axis] < box.min[axis] || point[axis] > box.max[axis]) {
+        return false;
+      }
+    }
+    return true;
+  };
+  if (!inBox(c.levelBoxes[c.level], q)) return false;
+  const inverseMaps = finiteSolidGeneralInverseMaps(c);
+  const walk = (
+    matrix: number[],
+    offset: Vec4,
+    inv: { m: number[]; t: Vec4 },
+    depth: number,
+  ): boolean => {
+    for (let a = 0; a < c.mapCount; a++) {
+      const step = composeWordStep(matrix, offset, {
+        matrix: c.mapMatrix[a],
+        offset: c.mapOffset[a],
+      });
+      const child = childInverse(inverseMaps[a].m, c.mapOffset[a], inv);
+      const childDepth = depth + 1;
+      if (childDepth < c.level) {
+        const local = applyMatrix4(child.m, q);
+        for (let axis = 0; axis < 4; axis++) local[axis] += child.t[axis];
+        if (!inBox(c.levelBoxes[c.level - childDepth], local)) continue;
+        if (walk(step.matrix, step.offset, child, childDepth)) return true;
+        continue;
+      }
+      const vertices = c.rootVertices.map((v) => {
+        const image = applyMatrix4(step.matrix, v);
+        return [
+          image[0] + step.offset[0],
+          image[1] + step.offset[1],
+          image[2] + step.offset[2],
+          image[3] + step.offset[3],
+        ] as Vec4;
+      });
+      if (inside(facetsFromVertices(vertices, dimension))) return true;
+    }
+    return false;
+  };
+  return walk(
+    identityMatrix4(),
+    [0, 0, 0, 0],
+    { m: identityMatrix4(), t: [0, 0, 0, 0] },
+    0,
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,5 @@
 import {
+  FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES,
   FINITE_SOLID_HALF_EXTENT,
   FINITE_SOLID_IDENTITY_POSE,
   analyzeFiniteSolidGeneral,
@@ -11,6 +12,8 @@ import {
   finiteSolidContains,
   finiteSolidDisplayDistance,
   finiteSolidDistance,
+  finiteSolidGeneralBoundingRadius,
+  finiteSolidGeneralContains,
   finiteSolidGeneralDisplayDistance,
   finiteSolidGeneralIntervals,
   finiteSolidGeneralNextBoundary,
@@ -22,8 +25,16 @@ import {
   finiteSolidRaySideOccupancy,
   hyperMengerSpongeTransforms,
   resolveFiniteSolid,
+  type FiniteSolidAnchor,
+  type FiniteSolidGeneralConstruction,
 } from "./finite-solid";
-import { mengerSponge, sierpinskiTetrahedron } from "./presets";
+import {
+  defaultTransforms,
+  mengerSponge,
+  pentatope,
+  sierpinskiTetrahedron,
+} from "./presets";
+import { mulberry32 } from "./rng";
 import type { Transform, Vec3, Vec4 } from "./types";
 
 const noSymmetry = { order: 1, plane: "xz" as const };
@@ -609,336 +620,553 @@ describe("finite-solid display distance (the certified hybrid)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The general construction: the document's OWN maps as the cell tree.
+// The general construction: the document's OWN maps as the SIMPLICIAL cell
+// tree.
 // ---------------------------------------------------------------------------
 
-describe("finite-solid general construction", () => {
-  // The owner's own witness: the shipped Sierpinski tetrahedron document.
-  // Four diagonal 1/2 contractions; every face position is dyadic, so the
-  // expected intervals and ties are hand-exact.
-  const maps = sierpinskiTetrahedron();
-  const analyze = (level: number, ms: Transform[] = maps) =>
-    analyzeFiniteSolidGeneral(ms, null, noSymmetry, level, 3);
+/** The rotated pentatope: three of five maps turn, one of them out of 3D
+ * through xw — no invariant simplex exists, so the derived root rides the
+ * level boxes. The 4D half of the default system's witness. */
+function rotatedPentatope(): Transform[] {
+  const maps = pentatope();
+  maps[1].rotation = [0, Math.PI / 4, 0];
+  maps[2].w = { ...maps[2].w, rotation: { xw: Math.PI / 5 } };
+  maps[3].rotation = [Math.PI / 4, 0, 0];
+  return maps;
+}
 
-  it("admits the Sierpinski document and derives its root from the maps' fixed points", () => {
-    const result = analyze(1);
+/** A seeded ray from a few bounding radii out, aimed near the centre. */
+function sampledRay(rng: () => number, radius: number): [Vec3, Vec3] {
+  const u = (): number => rng() * 2 - 1;
+  const origin: Vec3 = [u() * 3 * radius, u() * 3 * radius, u() * 3 * radius];
+  const target: Vec3 = [
+    u() * 0.4 * radius,
+    u() * 0.4 * radius,
+    u() * 0.4 * radius,
+  ];
+  const d: Vec3 = [
+    target[0] - origin[0],
+    target[1] - origin[1],
+    target[2] - origin[2],
+  ];
+  const length = Math.hypot(d[0], d[1], d[2]);
+  return [origin, [d[0] / length, d[1] / length, d[2] / length]];
+}
+
+/** The boundary query chained along one ray: a fresh query from the
+ * origin, then anchored continuations, accumulating each hop's t. */
+function chainGeneralEvents(
+  c: FiniteSolidGeneralConstruction,
+  origin: Vec3,
+  dir: Vec3,
+): { events: Array<{ t: number; entering: boolean }>; end: string } {
+  const pose = FINITE_SOLID_IDENTITY_POSE;
+  const events: Array<{ t: number; entering: boolean }> = [];
+  let result = finiteSolidGeneralNextBoundary(c, pose, origin, dir, {
+    inside: finiteSolidGeneralContains(c, pose, origin),
+  });
+  let t = 0;
+  for (let hop = 0; hop < 256; hop++) {
+    if (result.kind !== "boundary") {
+      return {
+        events,
+        end: result.kind === "refused" ? result.reason : "miss",
+      };
+    }
+    t += result.t;
+    events.push({ t, entering: result.entering });
+    result = finiteSolidGeneralNextBoundaryFromAnchor(c, pose, dir, {
+      inside: result.entering,
+      anchor: result.anchor,
+    });
+  }
+  return { events, end: "runaway" };
+}
+
+describe("finite-solid general admission", () => {
+  it("admits the Sierpinski document with its fixed points' own hull as the root", () => {
+    const result = analyzeFiniteSolidGeneral(
+      sierpinskiTetrahedron(),
+      null,
+      noSymmetry,
+      1,
+      3,
+    );
     expect(result.status).toBe("eligible");
-    expect(result.construction?.mapCount).toBe(4);
-    // The fixed points are 2·p: the root box spans them exactly.
     const c = result.construction;
-    expect(c?.rootMin[0]).toBeCloseTo(-0.75, 12);
-    expect(c?.rootMax[0]).toBeCloseTo(1.5, 12);
-    expect(c?.rootMin[1]).toBeCloseTo(-0.8, 12);
-    expect(c?.rootMax[1]).toBeCloseTo(1.6, 12);
-    expect(c?.rootMin[2]).toBeCloseTo(-1.3, 12);
-    expect(c?.rootMax[2]).toBeCloseTo(1.3, 12);
+    expect(c?.rootKind).toBe("hull");
+    // Each map is x/2 + p, so its fixed point is 2p.
+    const expected: Vec3[] = [
+      [0, 1.6, 0],
+      [1.5, -0.8, 0],
+      [-0.75, -0.8, 1.3],
+      [-0.75, -0.8, -1.3],
+    ];
+    expected.forEach((vertex, i) => {
+      for (let axis = 0; axis < 3; axis++) {
+        expect(c?.rootVertices[i][axis]).toBeCloseTo(vertex[axis], 12);
+      }
+      expect(c?.rootVertices[i][3]).toBe(0);
+    });
   });
 
-  it("refuses variations, rotations, non-contracting maps, and out-of-band levels with reasons", () => {
-    // The owner's mandelbox test: a non-linear variation refuses.
-    const withVariation = maps.map((t, i) =>
+  it("admits the viewer's rotating default system through the derived root", () => {
+    const result = analyzeFiniteSolidGeneral(
+      defaultTransforms(),
+      null,
+      noSymmetry,
+      2,
+      3,
+    );
+    expect(result.status).toBe("eligible");
+    expect(result.construction?.rootKind).toBe("derived");
+    expect(result.construction?.mapCount).toBe(4);
+  });
+
+  it("admits a rotated 4D document through the derived root", () => {
+    const result = analyzeFiniteSolidGeneral(
+      rotatedPentatope(),
+      null,
+      noSymmetry,
+      2,
+      4,
+    );
+    expect(result.status).toBe("eligible");
+    expect(result.construction?.rootKind).toBe("derived");
+    expect(result.construction?.rootVertices).toHaveLength(5);
+  });
+
+  it("refuses a map carrying variations", () => {
+    const maps = sierpinskiTetrahedron().map((t, i) =>
       i === 0
-        ? {
-            ...t,
-            variations: [{ type: "mandelbox" as const, weight: 0.2 }],
-          }
+        ? { ...t, variations: [{ type: "mandelbox" as const, weight: 0.2 }] }
         : t,
     );
-    const variationResult = analyze(1, withVariation);
-    expect(variationResult.status).toBe("ineligible");
-    expect(variationResult.reasons.join("; ")).toMatch(/variations/);
+    const result = analyzeFiniteSolidGeneral(maps, null, noSymmetry, 1, 3);
+    expect(result.status).toBe("ineligible");
+    expect(result.reasons.join("; ")).toMatch(/carries variations/);
+  });
 
-    // A rotated map composes an oriented cell frame — refused until the
-    // oriented-frame lift.
-    const withRotation = maps.map((t, i) =>
-      i === 0 ? { ...t, rotation: [0.1, 0, 0] as Vec3 } : t,
-    );
-    const rotationResult = analyze(1, withRotation);
-    expect(rotationResult.status).toBe("ineligible");
-    expect(rotationResult.reasons.join("; ")).toMatch(/rotates or shears/);
-
-    // A map that grows instead of shrinking has no glass solid.
-    const withGrowth = maps.map((t, i) =>
+  it("refuses a map that does not contract", () => {
+    const maps = sierpinskiTetrahedron().map((t, i) =>
       i === 0 ? { ...t, scale: [1.2, 0.5, 0.5] as Vec3 } : t,
     );
-    const growthResult = analyze(1, withGrowth);
-    expect(growthResult.status).toBe("ineligible");
-    expect(growthResult.reasons.join("; ")).toMatch(/does not contract/);
-
-    expect(analyze(3).status).toBe("ineligible");
-    expect(analyze(-1).status).toBe("ineligible");
+    const result = analyzeFiniteSolidGeneral(maps, null, noSymmetry, 1, 3);
+    expect(result.status).toBe("ineligible");
+    expect(result.reasons.join("; ")).toMatch(/does not contract/);
   });
 
-  it("unions the level-1 boxes with shared faces merged and genuine gaps kept", () => {
-    const c = analyze(1).construction;
-    if (!c) throw new Error("construction missing");
-    // Down the spine through the apex box and the +x base box: they touch
-    // at y = 0.4 (dyadic-exact through both words), so ONE interval.
-    const spine = finiteSolidGeneralIntervals(
-      c,
-      FINITE_SOLID_IDENTITY_POSE,
-      [0.5, -2, 0],
-      [0, 1, 0],
+  it("refuses a map that collapses a direction", () => {
+    const maps = sierpinskiTetrahedron().map((t, i) =>
+      i === 0 ? { ...t, scale: [0.5, 0.5, 0] as Vec3 } : t,
     );
-    expect(spine).toHaveLength(1);
-    expect(spine[0].enter).toBeCloseTo(1.2, 12);
-    expect(spine[0].exit).toBeCloseTo(3.6, 12);
-    // Off the apex box's x range only the +x base box is crossed; the ray
-    // exits into air at y = 0.4 and never re-enters.
-    const offApex = finiteSolidGeneralIntervals(
-      c,
-      FINITE_SOLID_IDENTITY_POSE,
-      [0.9, -2, 0],
-      [0, 1, 0],
+    const result = analyzeFiniteSolidGeneral(maps, null, noSymmetry, 1, 3);
+    expect(result.status).toBe("ineligible");
+    expect(result.reasons.join("; ")).toMatch(/collapses a direction/);
+  });
+
+  it("refuses maps whose fixed points span less than the dimension", () => {
+    const result = analyzeFiniteSolidGeneral(
+      sierpinskiTetrahedron().slice(0, 2),
+      null,
+      noSymmetry,
+      1,
+      3,
     );
-    expect(offApex).toHaveLength(1);
-    expect(offApex[0].enter).toBeCloseTo(1.2, 12);
-    expect(offApex[0].exit).toBeCloseTo(2.4, 12);
-    // A ray missing everything returns no intervals.
-    expect(
-      finiteSolidGeneralIntervals(
+    expect(result.status).toBe("ineligible");
+    expect(result.reasons.join("; ")).toMatch(/span only 1 of 3/);
+  });
+
+  it("refuses levels outside the certified band 0..4", () => {
+    for (const level of [-1, 1.5, 5]) {
+      const result = analyzeFiniteSolidGeneral(
+        sierpinskiTetrahedron(),
+        null,
+        noSymmetry,
+        level,
+        3,
+      );
+      expect(result.status).toBe("ineligible");
+      expect(result.reasons.join("; ")).toMatch(/certified band 0\.\.4/);
+    }
+  });
+
+  it("bounds every level-N cell by the level box and the marching ball", () => {
+    // A derived root is not invariant, so a level-N cell can reach outside
+    // it: the level box — one Hutchinson step per level — is the bound.
+    for (const [maps, level, dimension] of [
+      [defaultTransforms(), 3, 3],
+      [rotatedPentatope(), 2, 4],
+    ] as const) {
+      const c = analyzeFiniteSolidGeneral(
+        maps,
+        null,
+        noSymmetry,
+        level,
+        dimension,
+      ).construction;
+      if (!c) throw new Error("construction missing");
+      const box = c.levelBoxes[level];
+      const radius = finiteSolidGeneralBoundingRadius(c);
+      const rng = mulberry32(3);
+      for (let sample = 0; sample < 200; sample++) {
+        // A random point of a random level-N cell: a random root barycentric
+        // point pushed through a random word, innermost map first.
+        const weights = c.rootVertices.map(() => rng());
+        const total = weights.reduce((a, b) => a + b, 0);
+        let p: Vec4 = [0, 0, 0, 0];
+        c.rootVertices.forEach((v, i) => {
+          for (let axis = 0; axis < 4; axis++) {
+            p[axis] += (weights[i] / total) * v[axis];
+          }
+        });
+        for (let depth = 0; depth < level; depth++) {
+          const a = Math.floor(rng() * c.mapCount);
+          const m = c.mapMatrix[a];
+          const t = c.mapOffset[a];
+          p = [0, 1, 2, 3].map(
+            (r) =>
+              m[r * 4] * p[0] +
+              m[r * 4 + 1] * p[1] +
+              m[r * 4 + 2] * p[2] +
+              m[r * 4 + 3] * p[3] +
+              t[r],
+          ) as Vec4;
+        }
+        for (let axis = 0; axis < dimension; axis++) {
+          expect(p[axis]).toBeGreaterThanOrEqual(box.min[axis] - 1e-12);
+          expect(p[axis]).toBeLessThanOrEqual(box.max[axis] + 1e-12);
+        }
+        expect(Math.hypot(p[0], p[1], p[2], p[3])).toBeLessThanOrEqual(
+          radius + 1e-12,
+        );
+      }
+    }
+  });
+});
+
+describe("finite-solid general walk", () => {
+  it("crosses the gasket's axis in one hand-exact interval at every level", () => {
+    // The vertical axis through the base centroid (0, −0.8, 0) and the apex
+    // (0, 1.6, 0) threads the central holes and meets only the apex chain's
+    // cell: y from 1.6 − 2.4·2^−L to the apex, t = y + 2 from the origin.
+    for (let level = 0; level <= 4; level++) {
+      const c = analyzeFiniteSolidGeneral(
+        sierpinskiTetrahedron(),
+        null,
+        noSymmetry,
+        level,
+        3,
+      ).construction;
+      if (!c) throw new Error("construction missing");
+      const union = finiteSolidGeneralIntervals(
         c,
         FINITE_SOLID_IDENTITY_POSE,
-        [5, -2, 0],
+        [0, -2, 0],
         [0, 1, 0],
-      ),
-    ).toHaveLength(0);
+      );
+      expect(union).toHaveLength(1);
+      expect(union[0].enter).toBeCloseTo(3.6 - 2.4 / 2 ** level, 12);
+      expect(union[0].exit).toBeCloseTo(3.6, 12);
+    }
   });
 
-  it("walks the boundary query through a shared face silently and fires honest exits", () => {
-    const c = analyze(1).construction;
+  it("enters the gasket's axis cell through its horizontal base with the −y normal", () => {
+    const c = analyzeFiniteSolidGeneral(
+      sierpinskiTetrahedron(),
+      null,
+      noSymmetry,
+      2,
+      3,
+    ).construction;
     if (!c) throw new Error("construction missing");
-    const pose = FINITE_SOLID_IDENTITY_POSE;
-    // Primary entry into the +x base box.
     const entry = finiteSolidGeneralNextBoundary(
       c,
-      pose,
-      [0.5, -2, 0],
+      FINITE_SOLID_IDENTITY_POSE,
+      [0, -2, 0],
       [0, 1, 0],
       { inside: false },
     );
     expect(entry.kind).toBe("boundary");
     if (entry.kind !== "boundary") return;
     expect(entry.entering).toBe(true);
-    expect(entry.t).toBeCloseTo(1.2, 12);
+    expect(entry.t).toBeCloseTo(3, 12);
+    expect(entry.outwardNormal[0]).toBeCloseTo(0, 12);
     expect(entry.outwardNormal[1]).toBeCloseTo(-1, 12);
-    // The anchored continuation from the canonical entry: the shared face
-    // at y = 0.4 is INTERIOR — the next event is the exit at y = 1.6,
-    // t = 2.4 from the anchor, not the shared face.
-    const through = finiteSolidGeneralNextBoundaryFromAnchor(
-      c,
-      pose,
-      [0, 1, 0],
-      { inside: true, anchor: entry.anchor },
-    );
-    expect(through.kind).toBe("boundary");
-    if (through.kind !== "boundary") return;
-    expect(through.entering).toBe(false);
-    expect(through.t).toBeCloseTo(2.4, 12);
-    expect(through.outwardNormal[1]).toBeCloseTo(1, 12);
-    // The exit's anchor restarts from the canonical boundary in the open:
-    // the coverage sweep reads the open side ahead and finds no further
-    // boundary along this ray.
-    const after = finiteSolidGeneralNextBoundaryFromAnchor(c, pose, [0, 1, 0], {
-      inside: false,
-      anchor: through.anchor,
-    });
-    expect(after.kind).toBe("miss");
-    // A fresh unanchored query from the exit point finds no further
-    // boundary along the ray.
-    const fresh = finiteSolidGeneralNextBoundary(
-      c,
-      pose,
-      [0.5, 1.6, 0],
-      [0, 1, 0],
-      {
-        inside: false,
-      },
-    );
-    expect(fresh.kind).toBe("miss");
+    expect(entry.outwardNormal[2]).toBeCloseTo(0, 12);
+    // The anchor names the apex chain's cell by its word and one facet.
+    expect(entry.anchor.cellIndices).toEqual([0, 0, -1, -1]);
+    expect(entry.anchor.planeIndices).toEqual([-1, -1, -1, -1]);
+    expect(entry.anchor.intrinsicPoint[1]).toBeCloseTo(1, 12);
   });
 
-  it("keeps the display hybrid a certified bound against the exact interval union", () => {
-    const c = analyze(2).construction;
-    if (!c) throw new Error("construction missing");
-    const pose = FINITE_SOLID_IDENTITY_POSE;
-    const march = (origin: Vec3, rawDir: Vec3): number | null => {
-      // The shipped display march's discipline: step the hybrid estimate
-      // (already SAFETY-scaled) with a one-sided hit test.
-      const len = Math.hypot(rawDir[0], rawDir[1], rawDir[2]);
-      const dir: Vec3 = [rawDir[0] / len, rawDir[1] / len, rawDir[2] / len];
-      let t = 0;
-      for (let i = 0; i < 4096; i++) {
-        const d = finiteSolidGeneralDisplayDistance(c, pose, [
-          origin[0] + dir[0] * t,
-          origin[1] + dir[1] * t,
-          origin[2] + dir[2] * t,
+  it("chains its boundary events to exactly the uncapped interval union, both dimensions", () => {
+    // The pruned walk (level-box node prune, capped) against the reference
+    // enumeration of EVERY leaf: the level boxes make the prune exact for
+    // every contracting family, so the chained medium flips are the union's
+    // endpoints — overlapping cells' interior faces silent, genuine gaps
+    // honest exit/entry pairs.
+    for (const [maps, level, dimension] of [
+      [defaultTransforms(), 3, 3],
+      [sierpinskiTetrahedron(), 4, 3],
+      [rotatedPentatope(), 2, 4],
+      [hyperMengerSpongeTransforms(), 1, 4],
+    ] as const) {
+      const c = analyzeFiniteSolidGeneral(
+        maps,
+        null,
+        noSymmetry,
+        level,
+        dimension,
+      ).construction;
+      if (!c) throw new Error("construction missing");
+      const rng = mulberry32(11);
+      const radius = finiteSolidGeneralBoundingRadius(c);
+      for (let i = 0; i < 24; i++) {
+        const [origin, dir] = sampledRay(rng, radius);
+        const expected = finiteSolidGeneralIntervals(
+          c,
+          FINITE_SOLID_IDENTITY_POSE,
+          origin,
+          dir,
+        ).flatMap((interval) => [
+          { t: interval.enter, entering: true },
+          { t: interval.exit, entering: false },
         ]);
-        if (d < 1e-5) return t;
-        t += d * 0.9;
-        if (t > 12) return null;
+        const chain = chainGeneralEvents(c, origin, dir);
+        expect(chain.end).toBe("miss");
+        expect(chain.events).toHaveLength(expected.length);
+        chain.events.forEach((event, k) => {
+          expect(event.entering).toBe(expected[k].entering);
+          expect(Math.abs(event.t - expected[k].t)).toBeLessThan(
+            1e-9 * Math.max(1, expected[k].t),
+          );
+        });
       }
-      return null;
-    };
-    for (const [origin, dir] of [
-      [
-        [0.5, -2, 0],
-        [0, 1, 0],
-      ] as [Vec3, Vec3],
-      [
-        [-2, -0.5, 0],
-        [1, 0, 0],
-      ] as [Vec3, Vec3],
-      [
-        [0.3, -2, 0.4],
-        [0.05, 1, 0.1],
-      ] as [Vec3, Vec3],
-    ]) {
-      const hit = march(origin, dir);
-      const exact = finiteSolidGeneralIntervals(c, pose, origin, dir);
-      if (exact.length === 0) {
-        expect(hit).toBeNull();
-        continue;
-      }
-      expect(hit).not.toBeNull();
-      if (hit === null) continue;
-      // The marched hit must land within the union's first interval at
-      // the march's own acceptance scale (the estimate never overshoots
-      // the surface; it stops within its 1e-5 hit band).
-      expect(hit).toBeGreaterThanOrEqual(exact[0].enter - 2e-5);
-      expect(hit).toBeLessThanOrEqual(exact[0].exit + 2e-5);
     }
   });
 
-  it("agrees with the shipped grid construction on the shipped Menger maps", () => {
-    // The word tree with the grid's own maps must reproduce the grid's
-    // cell structure: the two constructions' unions agree on sampled rays
-    // (endpoint arithmetic differs only in the last ulp of the composed
-    // matrices against the canonical grid planes).
-    const shipped = analyzeFiniteSolidSystem(
-      mengerSponge(),
-      null,
-      noSymmetry,
-      "menger",
-      2,
-    );
-    const general = analyzeFiniteSolidGeneral(
-      mengerSponge(),
+  it("keeps point membership in agreement with the interval union", () => {
+    for (const [maps, level, dimension] of [
+      [defaultTransforms(), 3, 3],
+      [rotatedPentatope(), 2, 4],
+    ] as const) {
+      const c = analyzeFiniteSolidGeneral(
+        maps,
+        null,
+        noSymmetry,
+        level,
+        dimension,
+      ).construction;
+      if (!c) throw new Error("construction missing");
+      const rng = mulberry32(17);
+      const radius = finiteSolidGeneralBoundingRadius(c);
+      for (let i = 0; i < 24; i++) {
+        const [origin, dir] = sampledRay(rng, radius);
+        const union = finiteSolidGeneralIntervals(
+          c,
+          FINITE_SOLID_IDENTITY_POSE,
+          origin,
+          dir,
+        );
+        for (let s = 0; s < 32; s++) {
+          const t = (s / 32) * 6 * radius;
+          const onBoundary = union.some(
+            (x) => Math.abs(x.enter - t) < 1e-9 || Math.abs(x.exit - t) < 1e-9,
+          );
+          if (onBoundary) continue;
+          const inside = union.some((x) => x.enter < t && t < x.exit);
+          expect(
+            finiteSolidGeneralContains(c, FINITE_SOLID_IDENTITY_POSE, [
+              origin[0] + t * dir[0],
+              origin[1] + t * dir[1],
+              origin[2] + t * dir[2],
+            ]),
+          ).toBe(inside);
+        }
+      }
+    }
+  });
+
+  it("keeps the display hybrid a certified bound: no step reaches past the next union entry", () => {
+    for (const [maps, level, dimension] of [
+      [defaultTransforms(), 3, 3],
+      [sierpinskiTetrahedron(), 3, 3],
+      [rotatedPentatope(), 2, 4],
+    ] as const) {
+      const c = analyzeFiniteSolidGeneral(
+        maps,
+        null,
+        noSymmetry,
+        level,
+        dimension,
+      ).construction;
+      if (!c) throw new Error("construction missing");
+      const rng = mulberry32(23);
+      const radius = finiteSolidGeneralBoundingRadius(c);
+      for (let i = 0; i < 24; i++) {
+        const [origin, dir] = sampledRay(rng, radius);
+        const union = finiteSolidGeneralIntervals(
+          c,
+          FINITE_SOLID_IDENTITY_POSE,
+          origin,
+          dir,
+        );
+        for (let s = 0; s < 32; s++) {
+          const t = (s / 32) * 6 * radius;
+          if (union.some((x) => x.enter <= t && t <= x.exit)) continue;
+          const next = union.find((x) => x.enter > t);
+          if (!next) continue;
+          const estimate = finiteSolidGeneralDisplayDistance(
+            c,
+            FINITE_SOLID_IDENTITY_POSE,
+            [
+              origin[0] + t * dir[0],
+              origin[1] + t * dir[1],
+              origin[2] + t * dir[2],
+            ],
+          );
+          expect(estimate).toBeLessThanOrEqual(next.enter - t + 1e-12);
+        }
+      }
+    }
+  });
+
+  it("replaces a near branch box by its children, reading positive where the plain box min seals", () => {
+    // (0.6, 1.5, 0.5) sits inside the gasket's level-2 apex branch box
+    // M_0(levelBoxes[1]) — x ≤ 0.75, 0.4 ≤ y ≤ 1.6, |z| ≤ 0.65 — so the
+    // plain branch min reads it at or below zero, yet outside all four of
+    // that branch's children boxes (the apex child stops at x = 0.375, the
+    // base children at y = 1.0) and outside the solid. The REPLACED term
+    // is positive; a min over the parent and its children would not be.
+    const c = analyzeFiniteSolidGeneral(
+      sierpinskiTetrahedron(),
       null,
       noSymmetry,
       2,
       3,
+    ).construction;
+    if (!c) throw new Error("construction missing");
+    const p: Vec3 = [0.6, 1.5, 0.5];
+    expect(finiteSolidGeneralContains(c, FINITE_SOLID_IDENTITY_POSE, p)).toBe(
+      false,
     );
-    expect(shipped.status).toBe("eligible");
-    expect(general.status).toBe("eligible");
-    if (!shipped.construction || !general.construction) {
-      throw new Error("constructions missing");
-    }
-    const rays: Array<[Vec3, Vec3]> = [
-      [
-        [0.1, -2, 0.05],
-        [0, 1, 0],
-      ],
-      [
-        [-2, 0.2, -0.3],
-        [1, 0.1, 0.05],
-      ],
-      [
-        [0.4, 0.4, -2],
-        [0, 0, 1],
-      ],
-      [
-        [-2, -1, -1],
-        [1, 1, 1],
-      ],
-      [
-        [0.9, -2, 0.4],
-        [0.02, 1, 0.03],
-      ],
-    ];
-    for (const [origin, dir] of rays) {
-      const grid = finiteSolidIntervals(
-        shipped.construction,
-        FINITE_SOLID_IDENTITY_POSE,
-        origin,
-        dir,
-      );
-      const tree = finiteSolidGeneralIntervals(
-        general.construction,
-        FINITE_SOLID_IDENTITY_POSE,
-        origin,
-        dir,
-      );
-      expect(tree.length).toBe(grid.length);
-      for (let i = 0; i < Math.min(grid.length, tree.length); i++) {
-        expect(Math.abs(tree[i].enter - grid[i].enter)).toBeLessThan(1e-9);
-        expect(Math.abs(tree[i].exit - grid[i].exit)).toBeLessThan(1e-9);
-      }
+    expect(
+      finiteSolidGeneralDisplayDistance(c, FINITE_SOLID_IDENTITY_POSE, p),
+    ).toBeGreaterThan(0);
+  });
+
+  it("refuses an anchored continuation that claims the wrong medium", () => {
+    const c = analyzeFiniteSolidGeneral(
+      sierpinskiTetrahedron(),
+      null,
+      noSymmetry,
+      2,
+      3,
+    ).construction;
+    if (!c) throw new Error("construction missing");
+    const entry = finiteSolidGeneralNextBoundary(
+      c,
+      FINITE_SOLID_IDENTITY_POSE,
+      [0, -2, 0],
+      [0, 1, 0],
+      { inside: false },
+    );
+    if (entry.kind !== "boundary") throw new Error("entry missing");
+    const wrong = finiteSolidGeneralNextBoundaryFromAnchor(
+      c,
+      FINITE_SOLID_IDENTITY_POSE,
+      [0, 1, 0],
+      { inside: false, anchor: entry.anchor },
+    );
+    expect(wrong).toMatchObject({ kind: "refused", reason: "state-mismatch" });
+  });
+
+  it("refuses an anchor that fills a plane slot or names the wrong depth", () => {
+    const c = analyzeFiniteSolidGeneral(
+      sierpinskiTetrahedron(),
+      null,
+      noSymmetry,
+      2,
+      3,
+    ).construction;
+    if (!c) throw new Error("construction missing");
+    const entry = finiteSolidGeneralNextBoundary(
+      c,
+      FINITE_SOLID_IDENTITY_POSE,
+      [0, -2, 0],
+      [0, 1, 0],
+      { inside: false },
+    );
+    if (entry.kind !== "boundary") throw new Error("entry missing");
+    for (const anchor of [
+      { ...entry.anchor, planeIndices: [0, -1, -1, -1] },
+      { ...entry.anchor, cellIndices: [0, -1, -1, -1] },
+      { ...entry.anchor, cellIndices: [0, 0, 0, -1] },
+      { ...entry.anchor, planeMask: 1 << 4 },
+    ] as FiniteSolidAnchor[]) {
+      expect(
+        finiteSolidGeneralNextBoundaryFromAnchor(
+          c,
+          FINITE_SOLID_IDENTITY_POSE,
+          [0, 1, 0],
+          { inside: true, anchor },
+        ),
+      ).toMatchObject({ kind: "refused", reason: "invalid-input" });
     }
   });
-});
 
-describe("finite-solid general construction, 4D", () => {
-  it("agrees with the shipped grid construction on the hyper-Menger maps", () => {
-    // The word tree one dimension up: the shipped 48-map construction's
-    // maps through the general admission must reproduce the grid's union
-    // on the identity pose (the slice discipline is the pose's, verbatim).
-    const shipped = analyzeFiniteSolidSystem(
-      hyperMengerSpongeTransforms(),
-      null,
-      noSymmetry,
-      "hyperMenger",
-      1,
-    );
-    const general = analyzeFiniteSolidGeneral(
-      hyperMengerSpongeTransforms(),
-      null,
-      noSymmetry,
-      1,
-      4,
-    );
-    expect(shipped.status).toBe("eligible");
-    expect(general.status).toBe("eligible");
-    if (!shipped.construction || !general.construction) {
-      throw new Error("constructions missing");
-    }
-    expect(general.construction.mapCount).toBe(48);
-    const rays: Array<[Vec3, Vec3]> = [
-      [
-        [0.1, -2, 0.05],
-        [0, 1, 0],
-      ],
-      [
-        [-2, 0.2, -0.3],
-        [1, 0.1, 0.05],
-      ],
-      [
-        [0.4, 0.4, -2],
-        [0, 0, 1],
-      ],
-      [
-        [0.9, -2, 0.4],
-        [0.02, 1, 0.03],
-      ],
+  it("refuses a ray that clips more pruned leaves than the cap, never truncating", () => {
+    // Twelve heavily overlapping half-scale maps whose fixed points sit on
+    // a small shell: a ray through the centre clips nearly every one of the
+    // 144 level-2 cells, past the 128-leaf cap.
+    const directions: Vec3[] = [
+      [1, 0, 0],
+      [-1, 0, 0],
+      [0, 1, 0],
+      [0, -1, 0],
+      [0, 0, 1],
+      [0, 0, -1],
+      [0.6, 0.8, 0],
+      [-0.6, 0.8, 0],
+      [0, 0.6, 0.8],
+      [0, -0.6, 0.8],
+      [0.8, 0, 0.6],
+      [0.8, 0, -0.6],
     ];
-    for (const [origin, dir] of rays) {
-      const grid = finiteSolidIntervals(
-        shipped.construction,
+    const maps: Transform[] = directions.map((d, id) => ({
+      id,
+      position: [d[0] * 0.05, d[1] * 0.05, d[2] * 0.05],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+    }));
+    const c = analyzeFiniteSolidGeneral(
+      maps,
+      null,
+      noSymmetry,
+      2,
+      3,
+    ).construction;
+    if (!c) throw new Error("construction missing");
+    expect(c.mapCount ** 2).toBeGreaterThan(
+      FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES,
+    );
+    const result = finiteSolidGeneralNextBoundary(
+      c,
+      FINITE_SOLID_IDENTITY_POSE,
+      [0.01, -5, 0.02],
+      [0, 1, 0],
+      { inside: false },
+    );
+    expect(result).toMatchObject({ kind: "refused", reason: "visit-cap" });
+    // The uncapped reference still sees the solid on that ray.
+    expect(
+      finiteSolidGeneralIntervals(
+        c,
         FINITE_SOLID_IDENTITY_POSE,
-        origin,
-        dir,
-      );
-      const tree = finiteSolidGeneralIntervals(
-        general.construction,
-        FINITE_SOLID_IDENTITY_POSE,
-        origin,
-        dir,
-      );
-      expect(tree.length).toBe(grid.length);
-      for (let i = 0; i < Math.min(grid.length, tree.length); i++) {
-        expect(Math.abs(tree[i].enter - grid[i].enter)).toBeLessThan(1e-9);
-        expect(Math.abs(tree[i].exit - grid[i].exit)).toBeLessThan(1e-9);
-      }
-    }
+        [0.01, -5, 0.02],
+        [0, 1, 0],
+      ),
+    ).toHaveLength(1);
   });
 });
