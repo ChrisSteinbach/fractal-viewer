@@ -10870,7 +10870,9 @@ fn transportRays(
       f32(TRANSPORT_STATUS_UNRESOLVED), f32(traced.failure), f32(traced.reason), f32(replayPass));
     colorOut[ray] = pack4x8unorm(vec4f(0.0, 0.0, 0.0, 1.0));
     layerOut[ray] = packSurfaceLayer(1.0, 0.0, surfaceCoc(dot(pos - ro, params.fwd)));
-    transportStatusOut[slotI] = TRANSPORT_STATUS_UNRESOLVED${finiteQuery ? " | (traced.failure << 8u) | (traced.reason << 16u)" : ""};
+    // The failure kind and refusal reason ride the status word's upper
+    // bytes on EVERY backend, so the frame's census names what failed.
+    transportStatusOut[slotI] = TRANSPORT_STATUS_UNRESOLVED | (traced.failure << 8u) | (traced.reason << 16u);
     return;
   }
   // Still pending: keep the pending identity; the next pass re-traces

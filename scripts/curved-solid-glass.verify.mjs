@@ -162,7 +162,10 @@ function finalTransport(consoleLines, samples) {
   let resolved = 0;
   let unresolved = 0;
   let invalid = 0;
+  const failureClasses = {};
   for (const [i, frame] of final.entries()) {
+    for (const [key, n] of Object.entries(frame.failureClasses))
+      failureClasses[key] = (failureClasses[key] ?? 0) + n;
     if (!frame.completed || frame.truncated)
       errors.push(`sample ${i}: incomplete or truncated`);
     if (frame.tallies.length !== 1) {
@@ -183,6 +186,7 @@ function finalTransport(consoleLines, samples) {
     unresolved,
     invalid,
     resolvedShare: traced > 0 ? resolved / traced : 0,
+    failureClasses,
     errors,
   };
 }
@@ -303,7 +307,8 @@ async function main() {
               ` backend=${st.backend?.label} software=${st.backend?.software}` +
               ` covered=${(100 * covered).toFixed(1)}% resolved=${transport.resolved}` +
               ` unresolved=${transport.unresolved} invalid=${transport.invalid}` +
-              ` (${(100 * transport.resolvedShare).toFixed(2)}%)`,
+              ` (${(100 * transport.resolvedShare).toFixed(2)}%)` +
+              ` failures ${JSON.stringify(transport.failureClasses)}`,
           );
 
           // (4) the document.
