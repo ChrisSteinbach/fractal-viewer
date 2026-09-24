@@ -316,9 +316,12 @@ import {
   transportSolidBoundaryQueryCPU,
   transportTerminalDisplacementCPU,
   transportOpticalNormal,
+  transportOpaqueControlRadiance,
   transportTraceCPU,
+  type TransportFixtureMedia,
   type TransportQueryFn,
 } from "./surface-transport-fixture";
+import type { ResolvedSurfaceMaterial } from "../../fractal/surface-material-wire";
 import type {
   TransportBoundaryKind,
   TransportBoundaryResult,
@@ -8490,6 +8493,13 @@ interface SurfaceTransportLegSpec {
    * built where the construction and pose live (the leg's own push), so
    * the runner never needs either. Absent on every other backend. */
   finiteQuery?: TransportFiniteQueryFn;
+  /** The general finite legs' per-map MEDIA: the fixture's per-code
+   * materials and control opaque terminal (the trace twin's 10th
+   * argument), with `opticsSlots` the per-slot materials the kernel reads
+   * at binding 13 — one slot per map, an opaque slot's lanes zero. Absent
+   * on every single-material leg. */
+  media?: TransportFixtureMedia;
+  opticsSlots?: ResolvedSurfaceMaterial[];
   /** The closed-solid legs' analytic control's chord: the through-lobe
    * probe's geometric path length through the fixture's emitter at
    * normal incidence — 0.7 through the separated fixture's sphere
@@ -8630,6 +8640,9 @@ function surfaceTransportTraceProbeStable(
    * the ensemble re-traces with the query the leg compares; absent, the
    * estimator query as before. */
   query?: TransportQueryFn,
+  /** The per-map media (general finite legs), threaded into every trace
+   * of the ensemble. */
+  media?: TransportFixtureMedia,
 ): boolean {
   const material = {
     ior: DIELECTRIC_IOR,
@@ -8646,6 +8659,7 @@ function surfaceTransportTraceProbeStable(
     caps,
     query,
     finiteQuery,
+    media,
   );
   const agrees = (r: ReturnType<typeof transportTraceCPU>): boolean =>
     r.status === base.status &&
@@ -8664,6 +8678,7 @@ function surfaceTransportTraceProbeStable(
           caps,
           query,
           finiteQuery,
+          media,
         ),
       )
     ) {
@@ -9464,7 +9479,8 @@ async function runSurfaceTransportAgreementLegs(
           origin,
           dir,
           anchor,
-          inside,
+          // The grid DDA's flag (a single-material code 1 reads as inside).
+          inside === true || inside === 1,
         );
         return {
           kind: r.kind === 1 ? "boundary" : r.kind === 2 ? "miss" : "refused",
@@ -9507,6 +9523,15 @@ async function runSurfaceTransportAgreementLegs(
     transforms: Transform[],
     level: number,
     systemName: string,
+    /** Per-map MEDIA: the codes (0 opaque, glass code k naming slot k - 1)
+     * and each glass code's material. */
+    mediaSpec?: {
+      codes: number[];
+      materials: Record<
+        number,
+        { ior: number; absorption: Vec3; radiusScale?: number }
+      >;
+    },
   ): void => {
     const analysis = analyzeFiniteSolidGeneral(
       transforms,
@@ -9521,9 +9546,42 @@ async function runSurfaceTransportAgreementLegs(
       );
     }
     const construction = analysis.construction;
-    const wire = construction;
+    const wire = mediaSpec
+      ? { ...construction, media: mediaSpec.codes }
+      : construction;
     const pose = FINITE_SOLID_IDENTITY_POSE;
     const boundingRadius = finiteSolidGeneralBoundingRadius(construction);
+    // One optics slot per map: an opaque map's lanes stay zero, a glass
+    // map carries its code's material (the kernel reads code k at slot
+    // k - 1, so the codes name their own first slot).
+    const opticsSlots: ResolvedSurfaceMaterial[] | undefined = mediaSpec
+      ? mediaSpec.codes.map((code) => ({
+          finish: resolveSurfaceFinish(undefined),
+          pattern: resolveSurfacePattern(undefined),
+          ...(code === 0
+            ? {}
+            : {
+                optics: {
+                  ior: mediaSpec.materials[code].ior,
+                  absorption: [...mediaSpec.materials[code].absorption] as Vec3,
+                  radius:
+                    boundingRadius *
+                    (mediaSpec.materials[code].radiusScale ?? 1),
+                  distortion: 0,
+                },
+              }),
+        }))
+      : undefined;
+    const media: TransportFixtureMedia | undefined = mediaSpec
+      ? {
+          material: (code) => ({
+            ...mediaSpec.materials[code],
+            radius:
+              boundingRadius * (mediaSpec.materials[code].radiusScale ?? 1),
+          }),
+          opaque: transportOpaqueControlRadiance,
+        }
+      : undefined;
     legs.push({
       core: fourD ? "finite4" : "finite",
       systemName,
@@ -9539,7 +9597,9 @@ async function runSurfaceTransportAgreementLegs(
         opticsBackend: "finiteSolid",
         finiteSolid: { level, general: wire },
         transportMaxPaths: SURFACE_TRANSPORT_LEG_MAX_PATHS,
+        ...(mediaSpec ? { finiteOpaqueControl: true } : {}),
       },
+      ...(media && opticsSlots ? { media, opticsSlots } : {}),
       packParams: (n) =>
         fourD
           ? packSurfaceGpuParamsFinite4(
@@ -9581,6 +9641,9 @@ async function runSurfaceTransportAgreementLegs(
           t: r.t,
           normal: r.normal,
           anchor: r.anchor,
+          fromMedium: r.fromMedium,
+          toMedium: r.toMedium,
+          toBranch: r.toBranch,
         };
       },
       fixture: {
@@ -9620,6 +9683,48 @@ async function runSurfaceTransportAgreementLegs(
     rotatedPentatope,
     2,
     "finiteGeneralRotatedPentatope4",
+  );
+  // The per-map MEDIA legs: glass subtrees in front of opaque ones (the
+  // opaque terminal the control color shades), and two glass materials
+  // meeting (a glass-glass interface that bends), both dimensions.
+  const glassA = {
+    ior: DIELECTRIC_IOR,
+    absorption: [...DIELECTRIC_ABSORPTION] as Vec3,
+  };
+  // Glass B also halves its Beer radius (a map's own optical scale): the
+  // per-medium radius, not only the per-medium index, is on the wire.
+  const glassB = {
+    ior: 1.7,
+    absorption: [0.3, 0.1, 0.05] as Vec3,
+    radiusScale: 0.5,
+  };
+  const glassC = { ior: 1.3, absorption: [0.05, 0.12, 0.2] as Vec3 };
+  // Measured on the fixture's own probes (the dense-grid fallback these
+  // small solids take): the 3D glass/opaque leg crosses 4 glass entries and
+  // 1 opaque terminal, the two-glass leg 20 glass-glass interfaces and 16
+  // opaque terminals, the 4D leg (three materials) 5 entries, 9
+  // glass-glass interfaces and 4 opaque terminals — each leg exercises what
+  // it names.
+  pushFiniteGeneralLeg(
+    false,
+    defaultTransforms(),
+    3,
+    "finiteGeneralMediaDefault3",
+    { codes: [1, 0, 1, 0], materials: { 1: glassA } },
+  );
+  pushFiniteGeneralLeg(
+    false,
+    defaultTransforms(),
+    2,
+    "finiteGeneralTwoGlassDefault3",
+    { codes: [1, 2, 0, 2], materials: { 1: glassA, 2: glassB } },
+  );
+  pushFiniteGeneralLeg(
+    true,
+    rotatedPentatope,
+    2,
+    "finiteGeneralMediaRotatedPentatope4",
+    { codes: [1, 2, 3, 0, 1], materials: { 1: glassA, 2: glassB, 3: glassC } },
   );
 
   const escapeSys = systems.escape[0];
@@ -10499,17 +10604,31 @@ async function runSurfaceTransportAgreementLegs(
     // carries. The estimator legs' control entry never reaches it — the
     // helper is only emitted under the closed-solid backend — and an
     // unused binding must stay out of the derived layout's bind group.
-    const legOpticsMaps: GPUBuffer | null = surfaceTransportSignedBackend(
-      leg.backend,
-    )
-      ? await createSurfaceBuffer(
-          device,
-          `surface-de transport optics maps ${leg.core}`,
-          8 * 4,
-          GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        )
-      : null;
-    if (legOpticsMaps) {
+    let legMediaOptics: GPUBuffer | null = null;
+    // A per-map-media leg packs its OWN slots (one per map; the trace's
+    // medium lookups read them), on any backend.
+    if (leg.opticsSlots) {
+      const slotLanes = packSurfaceGpuOpticsMaps(leg.opticsSlots);
+      const mediaOptics = await createSurfaceBuffer(
+        device,
+        `surface-de transport media optics maps ${leg.core}`,
+        slotLanes.byteLength,
+        GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      );
+      device.queue.writeBuffer(mediaOptics, 0, new Float32Array(slotLanes));
+      legMediaOptics = mediaOptics;
+    }
+    const legOpticsMaps: GPUBuffer | null = legMediaOptics
+      ? legMediaOptics
+      : surfaceTransportSignedBackend(leg.backend)
+        ? await createSurfaceBuffer(
+            device,
+            `surface-de transport optics maps ${leg.core}`,
+            8 * 4,
+            GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+          )
+        : null;
+    if (legOpticsMaps && !legMediaOptics) {
       device.queue.writeBuffer(
         legOpticsMaps,
         0,
@@ -11137,6 +11256,7 @@ async function runSurfaceTransportAgreementLegs(
         // rule); absent (undefined) on every other backend, which the
         // fixture treats as the estimator query exactly as before.
         finiteQuery,
+        leg.media,
       );
       const traceStable =
         !discreteQuery ||
@@ -11147,6 +11267,7 @@ async function runSurfaceTransportAgreementLegs(
           legCaps,
           finiteQuery,
           solidQuery,
+          leg.media,
         );
       if (!traceStable) flipped++;
       const traceBase = pi * resultFloats;

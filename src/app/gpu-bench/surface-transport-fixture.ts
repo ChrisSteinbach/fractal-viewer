@@ -474,6 +474,10 @@ interface FixturePath {
   /** The finite DDA's continuation state — threaded only when the trace
    * runs the finite backend's query (inert, undefined, otherwise). */
   finiteAnchor?: FiniteSolidAnchor | null;
+  /** The per-map media's medium code (air 0, a glass code, never opaque —
+   * an opaque event terminates the path); set only under `media`, where
+   * it replaces `inside` as the claim exactly as the kernel's path word. */
+  medium?: number;
 }
 
 /** A backend-supplied boundary query, used by the trace in place of
@@ -501,6 +505,44 @@ export const SURFACE_GPU_TRANSPORT_REASON_DEGENERATE_NORMAL = 6;
  * queries' continuation state (the oracle's `FiniteSolidAnchor`). */
 export interface TransportFiniteBoundaryResult extends TransportBoundaryResult {
   anchor: FiniteSolidAnchor | null;
+  /** The general walk's media transition (the kernel FiniteBoundary's
+   * fields); on a state-mismatch refusal `toMedium` is the geometry's own
+   * start medium. Absent on the grid DDA. */
+  fromMedium?: number;
+  toMedium?: number;
+  toBranch?: number;
+}
+
+/** The per-map media a finite trace runs (the kernel's `finiteMedia`
+ * emission): each glass medium code's material, and the OPAQUE terminal's
+ * radiance — the bench's control color (`finiteOpaqueControl`), which
+ * {@link transportOpaqueControlRadiance} states once for both engines. */
+export interface TransportFixtureMedia {
+  /** A glass medium's material; `radius` (the Beer normalization) falls
+   * back to the trace's own material radius. */
+  material: (medium: number) => {
+    ior: number;
+    absorption: Vec3;
+    radius?: number;
+  };
+  opaque: (pos: Vec3, dir: Vec3, n: Vec3, branch: number) => Vec3;
+}
+
+/** The medium code of an opaque region on the finite wire. */
+export const TRANSPORT_MEDIUM_OPAQUE = 65535;
+
+/** The control kernel's opaque terminal (`finiteOpaqueControl`), f64: a
+ * per-branch color, Lambert on the event normal. */
+export function transportOpaqueControlRadiance(
+  _pos: Vec3,
+  dir: Vec3,
+  n: Vec3,
+  branch: number,
+): Vec3 {
+  const k =
+    (1 + 0.125 * branch) *
+    Math.abs(dir[0] * n[0] + dir[1] * n[1] + dir[2] * n[2]);
+  return [0.18 * k, 0.24 * k, 0.3 * k];
 }
 
 /** The finite backend's query signature, as the trace twin consumes it:
@@ -511,7 +553,8 @@ export type TransportFiniteQueryFn = (
   origin: Vec3,
   dir: Vec3,
   anchor: FiniteSolidAnchor | null,
-  inside: boolean,
+  /** The claim: the medium flag, or under per-map media the medium code. */
+  inside: boolean | number,
 ) => TransportFiniteBoundaryResult;
 
 /** The finite backend's boundary query, f64 — NOT a re-statement of the
@@ -527,8 +570,11 @@ export function transportFiniteBoundaryQueryCPU(
   origin: Vec3,
   dir: Vec3,
   anchor: FiniteSolidAnchor | null,
-  inside: boolean,
+  /** The grid DDA's medium flag; a single-material medium code (glass 1)
+   * reads as the flag it encodes. */
+  insideClaim: boolean | number,
 ): TransportFiniteBoundaryResult {
+  const inside = insideClaim === true || insideClaim === 1;
   const result = anchor
     ? finiteSolidNextBoundaryFromAnchor(construction, pose, dir, {
         inside,
@@ -588,6 +634,9 @@ export function transportTraceCPU(
   },
   query?: TransportQueryFn,
   finiteQuery?: TransportFiniteQueryFn,
+  /** The per-map media (finite queries only): paths carry medium codes,
+   * each glass medium its own material, opaque events terminate shaded. */
+  media?: TransportFixtureMedia,
 ): TransportTraceResult {
   const maxProcessed =
     caps?.maxProcessedPaths ??
@@ -631,6 +680,7 @@ export function transportTraceCPU(
       anchorPoint: [...origin],
       bound: dielectricBranchBound([1, 1, 1], ENVIRONMENT_BOUND),
       finiteAnchor: null,
+      ...(media ? { medium: 0 } : {}),
     });
   } else {
     // --- the primary split (the march's own hit, entering from outside) ---
@@ -723,7 +773,7 @@ export function transportTraceCPU(
         path.origin,
         path.dir,
         path.finiteAnchor ?? null,
-        path.inside,
+        media ? (path.medium ?? 0) : path.inside,
       );
       if (
         finiteHit.kind === "refused" &&
@@ -739,15 +789,22 @@ export function transportTraceCPU(
         // kernel retries identically (its transportTrace emission);
         // re-query ONCE with the flipped claim and adopt what the sweep
         // says. A query that refuses both ways stays unresolved.
+        // Under media the flip is the GEOMETRY's own start medium, which
+        // the refusal carries (the kernel's hit.toMedium).
+        const flippedMedium = finiteHit.toMedium ?? 0;
         const flipped = !path.inside;
         const retry = finiteQuery(
           path.origin,
           path.dir,
           path.finiteAnchor,
-          flipped,
+          media ? flippedMedium : flipped,
         );
         if (retry.kind !== "refused") {
-          path.inside = flipped;
+          if (media) {
+            path.medium = flippedMedium;
+          } else {
+            path.inside = flipped;
+          }
           finiteHit = retry;
         }
       }
@@ -782,7 +839,8 @@ export function transportTraceCPU(
       break;
     }
     if (hit.kind === "miss") {
-      if (path.inside && (finiteQuery || path.interfaces !== 1)) {
+      const insideNow = media ? (path.medium ?? 0) !== 0 : path.inside;
+      if (insideNow && (finiteQuery || path.interfaces !== 1)) {
         // An inside miss is unresolved, never a background hit — a path
         // that entered through a real crossing cannot miss a closed
         // solid, so this is an anomaly. The ONE exception is the primary
@@ -822,40 +880,68 @@ export function transportTraceCPU(
     // split. `path.inside` stays the claimed medium the boundary query
     // cross-checks.
     const incidentInGlass = finiteQuery
-      ? path.inside
+      ? media
+        ? (path.medium ?? 0) !== 0
+        : path.inside
       : (path.origin[0] - childOrigin[0]) * n[0] +
           (path.origin[1] - childOrigin[1]) * n[1] +
           (path.origin[2] - childOrigin[2]) * n[2] <
         0;
+    const segMaterial =
+      media && incidentInGlass ? media.material(path.medium ?? 0) : null;
+    const segAbsorption = segMaterial?.absorption ?? material.absorption;
+    const segRadius = segMaterial?.radius ?? material.radius;
     const energy: Vec3 = incidentInGlass
       ? [
           path.energy[0] *
-            dielectricBeerThroughput(
-              material.absorption[0],
-              hit.t,
-              material.radius,
-            ),
+            dielectricBeerThroughput(segAbsorption[0], hit.t, segRadius),
           path.energy[1] *
-            dielectricBeerThroughput(
-              material.absorption[1],
-              hit.t,
-              material.radius,
-            ),
+            dielectricBeerThroughput(segAbsorption[1], hit.t, segRadius),
           path.energy[2] *
-            dielectricBeerThroughput(
-              material.absorption[2],
-              hit.t,
-              material.radius,
-            ),
+            dielectricBeerThroughput(segAbsorption[2], hit.t, segRadius),
         ]
       : [...path.energy];
-    const fromIor = incidentInGlass ? material.ior : 1;
-    const toIor = incidentInGlass ? 1 : material.ior;
+    const toMedium =
+      media && hit.kind === "boundary"
+        ? ((hit as TransportFiniteBoundaryResult).toMedium ?? 0)
+        : 0;
+    if (media && toMedium === TRANSPORT_MEDIUM_OPAQUE) {
+      // An opaque subtree ends the path, shaded (the kernel's terminal).
+      const shaded = media.opaque(
+        childOrigin,
+        path.dir,
+        n,
+        (hit as TransportFiniteBoundaryResult).toBranch ?? -1,
+      );
+      radiance = [
+        radiance[0] + shaded[0] * energy[0],
+        radiance[1] + shaded[1] * energy[1],
+        radiance[2] + shaded[2] * energy[2],
+      ];
+      if (!radiance.every(Number.isFinite)) {
+        status = "invalid";
+        break;
+      }
+      continue;
+    }
+    const mediumIor = (code: number): number =>
+      code === 0 || !media ? 1 : media.material(code).ior;
+    const fromIor = media
+      ? mediumIor(path.medium ?? 0)
+      : incidentInGlass
+        ? material.ior
+        : 1;
+    const toIor = media
+      ? mediumIor(toMedium)
+      : incidentInGlass
+        ? 1
+        : material.ior;
     const bend = dielectricRefract(path.dir, n, fromIor, toIor);
     const makeChild = (
       childEnergy: Vec3,
       direction: Vec3,
       inside: boolean,
+      medium?: number,
     ): FixturePath => ({
       origin: childOrigin,
       dir: direction,
@@ -866,9 +952,15 @@ export function transportTraceCPU(
       anchorPoint: childOrigin,
       bound: dielectricBranchBound(childEnergy, ENVIRONMENT_BOUND),
       finiteAnchor: hitAnchor,
+      ...(media ? { medium } : {}),
     });
     if (bend.tir) {
-      const child = makeChild(energy, bend.direction, incidentInGlass);
+      const child = makeChild(
+        energy,
+        bend.direction,
+        incidentInGlass,
+        path.medium,
+      );
       if (!push(child)) {
         status = "unresolved";
         failure = 3;
@@ -881,6 +973,7 @@ export function transportTraceCPU(
       [energy[0] * (1 - f), energy[1] * (1 - f), energy[2] * (1 - f)],
       bend.direction,
       !incidentInGlass,
+      toMedium,
     );
     const reflected = makeChild(
       [energy[0] * f, energy[1] * f, energy[2] * f],
@@ -890,6 +983,7 @@ export function transportTraceCPU(
         path.dir[2] - 2 * dot * n[2],
       ],
       incidentInGlass,
+      path.medium,
     );
     const first =
       reflected.bound >= transmitted.bound ? reflected : transmitted;

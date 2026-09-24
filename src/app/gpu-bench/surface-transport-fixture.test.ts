@@ -555,7 +555,7 @@ describe("transportFiniteBoundaryQueryCPU — the DDA adapter", () => {
       origin: Vec3,
       dir: Vec3,
       anchor: Parameters<TransportFiniteQueryFn>[2],
-      inside: boolean,
+      inside: boolean | number,
     ) =>
       transportFiniteBoundaryQueryCPU(
         construction,
