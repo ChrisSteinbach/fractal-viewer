@@ -1666,6 +1666,9 @@ export function finiteSolidGeneralTransportSource(
   const endpointCap = leafCap * 2;
   const facetCount = generalFacetCount(dim, g);
   const facetRange = (1 << facetCount) - 1;
+  /** The fused walk's leaf body: clip the cell, cap the PRODUCED leaves,
+   * push the endpoint pair and drain (an abort unwinds the whole walk —
+   * the nests are one function's nested loops). */
   const pushLeaf = (
     forwardVar: string,
     inverseVar: string,
@@ -1675,29 +1678,121 @@ export function finiteSolidGeneralTransportSource(
 if (facets.ok) {
   let clip = finClipSimplex(facets, q, qd, select(0u, finAnchorMask, all(${word} == finAnchorWord)));
   if (clip.ok) {
-    if (finTotal + 2u > ${endpointCap}u) {
-      return false;
+    if (finProduced >= ${leafCap}u) {
+      finOut = finRefusal(1u);
+      finAbort = true;
+      return;
     }
-    finPushEndpoint(clip.enter, 1u, ${word}, clip.enterMask);
-    finPushEndpoint(clip.exit, 0u, ${word}, clip.exitMask);
+    finProduced = finProduced + 1u;
+    finPushPending(clip.enter, 1u, ${word}, clip.enterMask);
+    finPushPending(clip.exit, 0u, ${word}, clip.exitMask);
+    finDrain(q, qd, dir, claim, anchored);
+    if (finAbort) {
+      return;
+    }
   }
 }
 `;
+  /** The fused walk's nests: per level, every child's level-box entry t
+   * (the node prune's own clip, stored; a leaf child keys on its level-0
+   * box image), sorted ascending, visited in order; the leaf level's
+   * frontier term rides the same keys. */
+  const sortedNests = (
+    lvl: number,
+    key: (inverseVar: string, remaining: number) => string,
+    leaf: (forwardVar: string, inverseVar: string, word: string) => string,
+    glassOnly = false,
+  ): string => {
+    const indent = (depth: number): string => "  ".repeat(depth + 1);
+    const wordOf = (depth: number): string => {
+      const slots = [0, 1, 2, 3].map((slot) =>
+        slot < depth ? `i32(a${slot})` : "-1",
+      );
+      return `vec4i(${slots.join(", ")})`;
+    };
+    let open = "";
+    let close = "";
+    for (let depth = 0; depth < lvl; depth++) {
+      const pad = indent(depth);
+      const parentF = depth === 0 ? "finIdentity()" : `f${depth - 1}`;
+      const parentI = depth === 0 ? "finIdentity()" : `i${depth - 1}`;
+      const childDepth = depth + 1;
+      const remaining = lvl - childDepth;
+      open += `${pad}// The key phase: every child's level-box entry t (the node
+${pad}// prune's own clip, stored); keys are indexed BY MAP ID (skipped
+${pad}// glass-only children leave holes), the order ascending by key.
+${pad}var ord${depth}: array<u32, FIN_MAP_COUNT>;
+${pad}var key${depth}: array<f32, FIN_MAP_COUNT>;
+${pad}for (var a${depth} = 0u; a${depth} < FIN_MAP_COUNT; a${depth}++) {
+${
+  glassOnly && depth === 0
+    ? `${pad}  // The glass-only walk: an opaque map's subtree is the composite's
+${pad}  // attractor term, never a cell.
+${pad}  if (FIN_MEDIA[a0] == 0u) {
+${pad}    continue;
+${pad}  }
+`
+    : ""
+}${pad}  ord${depth}[a${depth}] = a${depth};
+${pad}  key${depth}[a${depth}] = FIN_FAR;
+${pad}  let i${depth} = finChildInverse(${parentI}, a${depth});
+${pad}  key${depth}[a${depth}] = ${key(`i${depth}`, remaining)};
+${pad}}
+${pad}for (var si${depth} = 1u; si${depth} < FIN_MAP_COUNT; si${depth}++) {
+${pad}  let id = ord${depth}[si${depth}];
+${pad}  let k = key${depth}[id];
+${pad}  var sj = si${depth};
+${pad}  loop {
+${pad}    if (sj == 0u) {
+${pad}      break;
+${pad}    }
+${pad}    if (!(key${depth}[ord${depth}[sj - 1u]] > k)) {
+${pad}      break;
+${pad}    }
+${pad}    ord${depth}[sj] = ord${depth}[sj - 1u];
+${pad}    sj = sj - 1u;
+${pad}  }
+${pad}  ord${depth}[sj] = id;
+${pad}}
+${pad}// The visit phase, front to back: this level's frontier term is the
+${pad}// next unvisited child's key.
+${pad}for (var ci${depth} = 0u; ci${depth} < FIN_MAP_COUNT; ci${depth}++) {
+${pad}  let a${depth} = ord${depth}[ci${depth}];
+${pad}  if (ci${depth} >= FIN_MAP_COUNT - 1u) {
+${pad}    finNextKey[${depth}] = FIN_FAR;
+${pad}  } else {
+${pad}    finNextKey[${depth}] = key${depth}[ord${depth}[ci${depth} + 1u]];
+${pad}  }
+${pad}  if (key${depth}[a${depth}] >= FIN_FAR) {
+${pad}    break;
+${pad}  }
+${pad}  let f${depth} = finCompose(${parentF}, a${depth});
+${pad}  let i${depth} = finChildInverse(${parentI}, a${depth});
+`;
+      if (childDepth === lvl) {
+        open += leaf(`f${depth}`, `i${depth}`, wordOf(lvl))
+          .split("\n")
+          .map((line) => (line.length > 0 ? `${pad}  ${line}` : line))
+          .join("\n");
+      }
+      close = `${pad}}\n${pad}finNextKey[${depth}] = FIN_FAR;\n${close}`;
+    }
+    return `${open}${close}`;
+  };
   const enumerate =
     level === 0
-      ? `  ${pushLeaf("finIdentity()", "finIdentity()", "vec4i(-1)").split("\n").join("\n  ")}
-  return true;`
+      ? pushLeaf("finIdentity()", "finIdentity()", "vec4i(-1)")
       : `  // The entry prune: the whole tree sits inside levelBoxes[level].
-  if (!finClipAxisBox(FIN_BOX_MIN[${level}], FIN_BOX_MAX[${level}], q, qd)) {
-    return true;
+  if (finClipAxisBoxEnter(FIN_BOX_MIN[${level}], FIN_BOX_MAX[${level}], q, qd) >= FIN_FAR) {
+    return;
   }
-${generalNestSource(
+${sortedNests(
   level,
   (inv, remaining) =>
-    `finClipAxisBox(FIN_BOX_MIN[${remaining}], FIN_BOX_MAX[${remaining}], finApply(${inv}, q) + ${inv}.t, finApply(${inv}, qd))`,
+    `finClipAxisBoxEnter(FIN_BOX_MIN[${remaining}], FIN_BOX_MAX[${remaining}], finApply(${inv}, q) + ${inv}.t, finApply(${inv}, qd))`,
   pushLeaf,
   g.glassOnly === true,
-)}  return true;`;
+)}`;
   return `struct FiniteBoundary {
   // 1 boundary, 2 miss, 3 refused — TransportBoundary's vocabulary.
   kind: u32,
@@ -1723,17 +1818,19 @@ ${generalNestSource(
   toBranch: i32,
 }
 
-// The axis-aligned slab clip (clipAxisAlignedBox) — the node prune. The
-// ray's parameter survives the inverse transform, so the node's line
-// interval contains its subtree's leaf intervals exactly.
-fn finClipAxisBox(lo: vec4f, hi: vec4f, p: vec4f, d: vec4f) -> bool {
+// The axis-aligned slab clip as an ENTER (clipAxisAlignedBox) — the
+// fused walk's sort key and frontier bound, one number: the ray's
+// parameter survives the inverse transform, so the node's line interval
+// contains its subtree's leaf intervals exactly. FIN_FAR on a miss.
+const FIN_FAR = 3.402823466e38;
+fn finClipAxisBoxEnter(lo: vec4f, hi: vec4f, p: vec4f, d: vec4f) -> f32 {
   var enter = -1.0e30;
   var exit = 1.0e30;
   for (var axis = 0; axis < ${dim}; axis++) {
     let da = d[axis];
     if (da == 0.0) {
       if (p[axis] < lo[axis] || p[axis] > hi[axis]) {
-        return false;
+        return FIN_FAR;
       }
       continue;
     }
@@ -1742,10 +1839,10 @@ fn finClipAxisBox(lo: vec4f, hi: vec4f, p: vec4f, d: vec4f) -> bool {
     enter = max(enter, min(ta, tb));
     exit = min(exit, max(ta, tb));
     if (exit < enter) {
-      return false;
+      return FIN_FAR;
     }
   }
-  return exit > enter;
+  return select(FIN_FAR, enter, exit > enter);
 }
 
 struct FinClip {
@@ -1814,38 +1911,70 @@ fn finClipSimplex(f: FinFacets, q: vec4f, qd: vec4f, onPlane: u32) -> FinClip {
 }
 
 ${generalRowXyzSource(dim)}
-// The pruned enumeration's storage: one record per leaf ENDPOINT —
-// (bits(t), packed) with packed bit 0 the delta (1 enter / 0 exit), bits
-// 1..23 the word as a mixed-radix index, bits 24..31 the endpoint's
-// binding facets (a 4D box has eight). Integer storage: the packed word is never
-// routed through an f32 (a denormal or NaN pattern could be canonicalized).
-// Module-scope private: per-invocation state, written before read.
+// The fused front-to-back walk's storage (the oracle's shapes, f32): one
+// record per leaf ENDPOINT — (bits(t), packed) with packed bit 0 the
+// delta (1 enter / 0 exit), bits 1..23 the word as a mixed-radix index,
+// bits 24..31 the endpoint's binding facets (a 4D box has eight).
+// Integer storage: the packed word is never routed through an f32 (a
+// denormal or NaN pattern could be canonicalized). finE holds the
+// CONSUMED endpoints in group order (closed windows, then the open
+// group's); finPending holds arrived-but-unassigned ones, drained as
+// groups open and close. Module-scope private: per-invocation state,
+// written before read.
 var<private> finE: array<vec2u, ${endpointCap}>;
 var<private> finTotal = 0u;
+var<private> finPending: array<vec2u, ${endpointCap}>;
+var<private> finPendingCount = 0u;
+var<private> finProduced = 0u;
+var<private> finGroupOpen = 0u;
+var<private> finGroupLo: u32 = 0u;
+var<private> finGroupT: f32 = 0.0;
+var<private> finAbort = false;
+var<private> finOut: FiniteBoundary;
+// The fused walk's per-level frontier keys: the next unvisited child's
+// level-box entry, FIN_FAR when the level is exhausted.
+var<private> finNextKey: array<f32, ${Math.max(level, 1)}>;
+// The medium chain (finSweep's state, driven by the group drain).
+var<private> finMedium = 0u;
+var<private> finStarted = false;
+var<private> finHaveStart = false;
+var<private> finStartMedium = 0u;
+var<private> finStartBranch: i32 = -1;
+var<private> finStartAtGroup = false;
+var<private> finStartLo = 0u;
+var<private> finStartHi = 0u;
+var<private> finVisits = 0u;
 // The anchored restart's own leaf (its word and masked facets; mask 0 on a
 // fresh query) — the enumeration's exact-zero residuals.
 var<private> finAnchorWord = vec4i(-1);
 var<private> finAnchorMask = 0u;
 
-fn finPushEndpoint(t: f32, delta: u32, word: vec4i, facets: u32) {
+fn finPackWord(word: vec4i) -> u32 {
   // The word as ONE mixed-radix index (first map most significant): at
-  // most 48^4 - 1 < 2^23, so bit 0 the delta, bits 1..23 the word, bits
-  // 24..31 the facets (a 4D box's eight).
+  // most 48^4 - 1 < 2^23.
   var index = 0u;
   for (var slot = 0; slot < i32(FIN_LEVEL); slot++) {
     index = index * FIN_MAP_COUNT + u32(max(word[slot], 0));
   }
-  let packed = (delta & 1u) | (index << 1u) | ((facets & 255u) << 24u);
-  finE[finTotal] = vec2u(bitcast<u32>(t), packed);
-  finTotal = finTotal + 1u;
+  return index;
 }
 
-fn finEndpointT(i: u32) -> f32 {
-  return bitcast<f32>(finE[i].x);
+fn finPackEndpoint(t: f32, delta: u32, word: vec4i, facets: u32) -> vec2u {
+  let packed = (delta & 1u) | (finPackWord(word) << 1u) | ((facets & 255u) << 24u);
+  return vec2u(bitcast<u32>(t), packed);
 }
 
-fn finEndpointWord(i: u32) -> vec4i {
-  var index = (finE[i].y >> 1u) & 0x7fffffu;
+fn finPushPending(t: f32, delta: u32, word: vec4i, facets: u32) {
+  finPending[finPendingCount] = finPackEndpoint(t, delta, word, facets);
+  finPendingCount = finPendingCount + 1u;
+}
+
+fn finRecordT(rec: vec2u) -> f32 {
+  return bitcast<f32>(rec.x);
+}
+
+fn finRecordWord(packed: u32) -> vec4i {
+  var index = (packed >> 1u) & 0x7fffffu;
   var word = vec4i(-1);
   for (var slot = i32(FIN_LEVEL) - 1; slot >= 0; slot--) {
     word[slot] = i32(index % FIN_MAP_COUNT);
@@ -1854,8 +1983,79 @@ fn finEndpointWord(i: u32) -> vec4i {
   return word;
 }
 
+fn finRecordFacets(packed: u32) -> u32 {
+  return (packed >> 24u) & 255u;
+}
+
+fn finEndpointT(i: u32) -> f32 {
+  return finRecordT(finE[i]);
+}
+
+fn finEndpointWord(i: u32) -> vec4i {
+  return finRecordWord(finE[i].y);
+}
+
 fn finEndpointFacets(i: u32) -> u32 {
-  return (finE[i].y >> 24u) & 255u;
+  return finRecordFacets(finE[i].y);
+}
+
+fn finPendingMin() -> i32 {
+  var best = -1;
+  for (var i = 0u; i < finPendingCount; i++) {
+    if (best < 0 || finRecordT(finPending[i]) < finRecordT(finPending[u32(best)])) {
+      best = i32(i);
+    }
+  }
+  return best;
+}
+
+fn finPendingRemove(i: i32) {
+  finPending[u32(i)] = finPending[finPendingCount - 1u];
+  finPendingCount = finPendingCount - 1u;
+}
+
+fn finConsumePending(i: i32) {
+  finE[finTotal] = finPending[u32(i)];
+  finTotal = finTotal + 1u;
+  finPendingRemove(i);
+}
+
+fn finTieOf(t: f32) -> f32 {
+  return FIN_TIE_REL * max(1.0, abs(t));
+}
+
+fn finFrontierMin() -> f32 {
+  var value = FIN_FAR;
+  for (var d = 0; d < ${level}; d++) {
+    if (finNextKey[d] < value) {
+      value = finNextKey[d];
+    }
+  }
+  return value;
+}
+
+// The window sort (the batch walk's stable sort's tie order): by t, then
+// the word, over the open group's consumed span.
+fn finSortWindow(lo: u32, hi: u32) {
+  for (var i = lo + 1u; i < hi; i++) {
+    let key = finE[i];
+    let keyT = finRecordT(key);
+    let keyW = finRecordWord(key.y);
+    var j = i;
+    loop {
+      if (j == lo) {
+        break;
+      }
+      let prevT = finEndpointT(j - 1u);
+      let prevW = finEndpointWord(j - 1u);
+      if (!(prevT > keyT || (prevT == keyT && finPackWord(prevW) > finPackWord(keyW)))) {
+        break;
+      }
+      finE[j] = finE[j - 1u];
+      j = j - 1u;
+    }
+    finE[j] = key;
+  }
 }
 
 // The anchor reconstruction (the event's snap and the anchored restart's):
@@ -2030,121 +2230,157 @@ fn finEvent(
   return result;
 }
 
-// The walk's DFS in explicit nests (the level baked): the word tree's
-// leaves in lexicographic word order, each subtree pruned when the ray
-// misses its word-image of the level box — the box contains the subtree by
-// construction, so the pruned enumeration equals the reference's unpruned
-// one endpoint for endpoint. Capped: past the leaf cap the walk refuses.
-fn finEnumerate(q: vec4f, qd: vec4f) -> bool {
+// The fused walk's nests (the level baked): per level, every child's
+// level-box entry t sorted ascending, visited in order; the leaf level's
+// frontier term rides the same keys. Capped on PRODUCED leaves: past the
+// leaf cap the walk refuses (a disclosed per-ray refusal, never a
+// truncation).
+fn finEnumerate(q: vec4f, qd: vec4f, dir: vec3f, claim: u32, anchored: bool) {
 ${enumerate}
 }
 
-// The stable sort (by t; ties keep the DFS enumeration order — the
-// reference's stable sort, which is what makes the group's sorted-first
-// endpoint and the facet order reproducible).
-fn finSortEndpoints() {
-  for (var i = 1u; i < finTotal; i++) {
-    let key = finE[i];
-    let keyT = bitcast<f32>(key.x);
-    var j = i;
-    loop {
-      if (j == 0u) {
-        break;
-      }
-      if (!(finEndpointT(j - 1u) > keyT)) {
-        break;
-      }
-      finE[j] = finE[j - 1u];
-      j = j - 1u;
+// The claim mismatching the geometry (finResolveFlip): the anchored
+// continuation takes no liberty; an unanchored query ON the start group
+// may anticipate the crossing (the display march's primary hit), FROM the
+// claimed medium.
+fn finResolveFlip(
+  q: vec4f,
+  qd: vec4f,
+  dir: vec3f,
+  claim: u32,
+  anchored: bool,
+  t: f32,
+  before: u32,
+  after: u32,
+  branch: i32,
+  lo: u32,
+  hi: u32,
+) {
+  if (finStartMedium != claim) {
+    if (finHaveStart && finStartAtGroup && !anchored) {
+      finOut = finEvent(q, qd, dir, 0.0, claim, finStartMedium, finStartBranch, finStartLo, finStartHi);
+    } else {
+      finOut = finRefusal(3u);
+      finOut.toMedium = finStartMedium;
     }
-    finE[j] = key;
+  } else {
+    finOut = finEvent(q, qd, dir, t, before, after, branch, lo, hi);
+  }
+  finAbort = true;
+}
+
+// One group's close (the batch walk's group walk, streamed): sort the
+// window (t, then the word — the stable sort's tie order), apply the
+// coverage PER BRANCH, and either update the start state at tMin (always
+// 0 on the transport — the fresh and anchored queries both start there;
+// every group with t <= its own tie is a start-state group) or, on the
+// first medium change past it, resolve the flip and abort.
+fn finCloseGroup(
+  q: vec4f,
+  qd: vec4f,
+  dir: vec3f,
+  claim: u32,
+  anchored: bool,
+) {
+  finSortWindow(finGroupLo, finTotal);
+  var i = finGroupLo;
+  while (i < finTotal) {
+    let branch = max(finEndpointWord(i)[0], 0);
+    finBranchCov[branch] = finBranchCov[branch] + select(-1, 1, (finE[i].y & 1u) == 1u);
+    i = i + 1u;
+  }
+  let before = finMedium;
+  let owner = finMediumOfCoverage();
+  finMedium = u32(owner.x);
+  let t = finGroupT;
+  let tie = finTieOf(t);
+  if (!finStarted && t <= tie) {
+    finHaveStart = true;
+    finStartMedium = finMedium;
+    finStartBranch = owner.y;
+    finStartAtGroup = abs(t) <= tie;
+    finStartLo = finGroupLo;
+    finStartHi = finTotal;
+    return;
+  }
+  finStarted = true;
+  finVisits = finVisits + 1u;
+  if (before == finMedium) {
+    return;
+  }
+  finResolveFlip(q, qd, dir, claim, anchored, t, before, u32(owner.x), owner.y, finGroupLo, finTotal);
+}
+
+// The streaming group drain: a group opens only when no future endpoint
+// can undercut its first endpoint (the frontier min bounds every
+// unvisited leaf's enter and exit — a leaf's cell nests inside every
+// ancestor's level box), and closes when neither the next pending
+// endpoint nor the frontier min can still tie it.
+fn finDrain(q: vec4f, qd: vec4f, dir: vec3f, claim: u32, anchored: bool) {
+  loop {
+    if (finAbort) {
+      return;
+    }
+    let frontier = finFrontierMin();
+    if (finGroupOpen == 0u) {
+      let idx = finPendingMin();
+      if (idx < 0) {
+        return;
+      }
+      let t = finRecordT(finPending[u32(idx)]);
+      if (frontier < t) {
+        return;
+      }
+      finGroupOpen = 1u;
+      finGroupLo = finTotal;
+      finGroupT = t;
+      finConsumePending(idx);
+    }
+    let tie = finTieOf(finGroupT);
+    loop {
+      let idx = finPendingMin();
+      if (idx < 0 || finRecordT(finPending[u32(idx)]) - finGroupT > tie) {
+        break;
+      }
+      finConsumePending(idx);
+    }
+    var nextT = FIN_FAR;
+    for (var i = 0u; i < finPendingCount; i++) {
+      nextT = min(nextT, finRecordT(finPending[i]));
+    }
+    if (min(nextT, frontier) > finGroupT + tie) {
+      finCloseGroup(q, qd, dir, claim, anchored);
+      finGroupOpen = 0u;
+      continue;
+    }
+    return;
   }
 }
 
-// The endpoint sweep (the reference's group walk): greedy groups from each
-// group's first t within FIN_TIE_REL, coverage counted PER BRANCH and the
-// medium after each group the owner rule's; the state at tMin (always 0 on
-// the transport — the fresh and anchored queries both start there) is the
-// last at-or-before group's AFTER-medium; the first later MEDIUM CHANGE is
-// the event. A group that leaves the medium unchanged (a shared face, an
-// overlap's interior face, a crossing between equal-material glass
-// subtrees) traverses silently. The claim is a medium code — the
-// single-material solid's 0/1 is its glass-code-1 case.
-fn finSweep(q: vec4f, qd: vec4f, dir: vec3f, claim: u32, anchored: bool) -> FiniteBoundary {
-  for (var a = 0; a < i32(FIN_MAP_COUNT); a++) {
-    finBranchCov[a] = 0;
+// The walk's end (finFinish): close everything (the frontier is
+// exhausted), then the claim check — a mismatching claim refuses or
+// emits the start event, a matching one reports the miss.
+fn finFinish(q: vec4f, qd: vec4f, dir: vec3f, claim: u32, anchored: bool) {
+  for (var d = 0; d < ${level}; d++) {
+    finNextKey[d] = FIN_FAR;
   }
-  var medium = 0u;
-  var idx = 0u;
-  var haveStart = false;
-  var startMedium = 0u;
-  var startBranch = -1;
-  var startAtGroup = false;
-  var startLo = 0u;
-  var startHi = 0u;
-  // The first medium change AFTER the start, held until the claim check
-  // has admitted the walk (the reference's order: a mismatching claim
-  // refuses before any walk event is emitted).
-  var haveFlip = false;
-  var flipT = 0.0;
-  var flipBefore = 0u;
-  var flipAfter = 0u;
-  var flipBranch = -1;
-  var flipLo = 0u;
-  var flipHi = 0u;
-  var started = false;
-  while (idx < finTotal) {
-    let groupT = finEndpointT(idx);
-    let tie = FIN_TIE_REL * max(1.0, abs(groupT));
-    var j = idx;
-    while (j < finTotal && finEndpointT(j) - groupT <= tie) {
-      let branch = max(finEndpointWord(j)[0], 0);
-      finBranchCov[branch] = finBranchCov[branch] + select(-1, 1, (finE[j].y & 1u) == 1u);
-      j = j + 1u;
-    }
-    let before = medium;
-    let owner = finMediumOfCoverage();
-    medium = u32(owner.x);
-    if (!started && groupT <= tie) {
-      haveStart = true;
-      startMedium = medium;
-      startBranch = owner.y;
-      startAtGroup = abs(groupT) <= tie;
-      startLo = idx;
-      startHi = j;
-      idx = j;
-      continue;
-    }
-    started = true;
-    if (!haveFlip && before != medium) {
-      haveFlip = true;
-      flipT = groupT;
-      flipBefore = before;
-      flipAfter = medium;
-      flipBranch = owner.y;
-      flipLo = idx;
-      flipHi = j;
-    }
-    idx = j;
+  finDrain(q, qd, dir, claim, anchored);
+  if (finAbort) {
+    return;
   }
-  // The claim check: off a boundary the claim must match; ON the start
-  // group the UNANCHORED query may anticipate the crossing (the display
-  // march's primary hit), FROM the claimed medium; the anchored
-  // continuation takes no liberty.
-  if (startMedium != claim) {
-    if (haveStart && startAtGroup && !anchored) {
-      return finEvent(q, qd, dir, 0.0, claim, startMedium, startBranch, startLo, startHi);
+  if (finStartMedium != claim) {
+    if (finHaveStart && finStartAtGroup && !anchored) {
+      finOut = finEvent(q, qd, dir, 0.0, claim, finStartMedium, finStartBranch, finStartLo, finStartHi);
+    } else {
+      finOut = finRefusal(3u);
+      finOut.toMedium = finStartMedium;
     }
-    var mismatch = finRefusal(3u);
-    mismatch.toMedium = startMedium;
-    return mismatch;
-  }
-  if (haveFlip) {
-    return finEvent(q, qd, dir, flipT, flipBefore, flipAfter, flipBranch, flipLo, flipHi);
+    finAbort = true;
+    return;
   }
   var miss = finRefusal(0u);
   miss.kind = 2u;
-  return miss;
+  finOut = miss;
 }
 
 // The word-tree boundary query (finiteSolidGeneralNextBoundary /
@@ -2206,15 +2442,28 @@ fn transportFiniteBoundary(
     q = vec4f(qA[0], qA[1], qA[2], qA[3]);
   }
   finTotal = 0u;
+  finPendingCount = 0u;
+  finProduced = 0u;
+  finGroupOpen = 0u;
+  finAbort = false;
+  finStarted = false;
+  finHaveStart = false;
+  finMedium = 0u;
+  finStartBranch = -1;
+  finVisits = 0u;
+  for (var a = 0; a < i32(FIN_MAP_COUNT); a++) {
+    finBranchCov[a] = 0;
+  }
+  for (var d = 0; d < ${Math.max(level, 1)}; d++) {
+    finNextKey[d] = FIN_FAR;
+  }
   finAnchorWord = anchorCellsIn;
   finAnchorMask = select(0u, anchorMask, anchorPresent == 1u);
-  if (!finEnumerate(q, qd)) {
-    // The pruned enumeration overflowed its cap: a disclosed refusal, the
-    // shipped DDA's own resource-refusal shape — never a truncation.
-    return finRefusal(1u);
+  finEnumerate(q, qd, dir, claim, anchorPresent == 1u);
+  if (!finAbort) {
+    finFinish(q, qd, dir, claim, anchorPresent == 1u);
   }
-  finSortEndpoints();
-  return finSweep(q, qd, dir, claim, anchorPresent == 1u);
+  return finOut;
 }
 `;
 }
