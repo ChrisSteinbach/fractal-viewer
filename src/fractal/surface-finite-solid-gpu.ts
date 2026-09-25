@@ -2829,7 +2829,6 @@ export function finiteSolidGeneralDdaF32(
     mapCount ** level,
     FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES,
   );
-  const endpointCap = leafCap * 2;
   // The cell's facet count by root kind (a simplex's dim + 1, a box's
   // 2·dim); the simplex construction's own vertex count stays dim + 1.
   const facetCount = generalFacetCount(dim, g);
@@ -3163,33 +3162,180 @@ export function finiteSolidGeneralDdaF32(
     q = [f(origin[0]), f(origin[1]), f(origin[2]), 0];
   }
 
-  // The node prune (finClipAxisBox) and the leaf clip (finClipSimplex).
-  const clipAxisBox = (
+  // The node clip as an ENTER (finClipAxisBoxEnter): the box image's entry
+  // t, or FIN_FAR on a miss — the fused walk's sort key and its frontier
+  // bound, one number.
+  const finFar = f(3.402823466e38);
+  const clipAxisBoxEnter = (
     lo: readonly number[],
     hi: readonly number[],
     p: readonly number[],
     d: readonly number[],
-  ): boolean => {
+  ): number => {
     let enter = f(-1e30);
     let exit = f(1e30);
     for (let axis = 0; axis < dim; axis++) {
       const da = d[axis];
       if (da === 0) {
-        if (p[axis] < lo[axis] || p[axis] > hi[axis]) return false;
+        if (p[axis] < lo[axis] || p[axis] > hi[axis]) return finFar;
         continue;
       }
       const ta = f(f(lo[axis] - p[axis]) / da);
       const tb = f(f(hi[axis] - p[axis]) / da);
-      enter = Math.max(enter, Math.min(ta, tb));
-      exit = Math.min(exit, Math.max(ta, tb));
-      if (exit < enter) return false;
+      enter = f(Math.max(enter, Math.min(ta, tb)));
+      exit = f(Math.min(exit, Math.max(ta, tb)));
+      if (exit < enter) return finFar;
     }
-    return exit > enter;
+    return exit > enter ? enter : finFar;
   };
-  const endpoints: GeneralEndpointF32[] = [];
-  const pushLeaf = (m: F32Aff, inv: F32Aff, word: number[]): boolean => {
+  // The fused front-to-back walk's state (the oracle's shapes, f32): the
+  // consumed endpoints in group order (closed windows then the open one),
+  // the pending pool, the per-level frontier keys and the medium chain.
+  const consumed: GeneralEndpointF32[] = [];
+  const pending: GeneralEndpointF32[] = [];
+  let groupOpen = false;
+  let groupLo = 0;
+  let groupT = 0;
+  let produced = 0;
+  let aborted: FiniteSolidDdaF32Result | null = null;
+  const nextKey: number[] = Array.from({ length: level }, () => finFar);
+  const coverage = new Array<number>(mapCount).fill(0);
+  let medium = 0;
+  let started = false;
+  let haveStart = false;
+  let startMedium = 0;
+  let startBranch = -1;
+  let startAtGroup = false;
+  let startLo = 0;
+  let startHi = 0;
+  const tieOf = (t: number): number => f(tieRel * Math.max(1, Math.abs(t)));
+  // The word's mixed-radix index (the WGSL's packed compare — first map
+  // most significant), the window sort's second key.
+  const wordKey = (word: readonly number[]): number => {
+    let index = 0;
+    for (let slot = 0; slot < level; slot++) {
+      index = index * mapCount + Math.max(word[slot], 0);
+    }
+    return index;
+  };
+  const pendingMin = (): number => {
+    let best = -1;
+    for (let i = 0; i < pending.length; i++) {
+      if (best < 0 || pending[i].t < pending[best].t) best = i;
+    }
+    return best;
+  };
+  const pendingRemove = (i: number): void => {
+    pending[i] = pending[pending.length - 1];
+    pending.pop();
+  };
+  const frontierMin = (): number => {
+    let value = finFar;
+    for (let d = 0; d < level; d++) {
+      if (nextKey[d] < value) value = nextKey[d];
+    }
+    return value;
+  };
+  const resolveFlip = (
+    t: number,
+    before: number,
+    after: number,
+    branch: number,
+    lo: number,
+    hi: number,
+  ): void => {
+    if (startMedium !== claim) {
+      if (haveStart && startAtGroup && !anchor) {
+        aborted = event(0, claim, startMedium, startBranch, startLo, startHi);
+      } else {
+        aborted = { ...refused(3), toMedium: startMedium };
+      }
+    } else {
+      aborted = event(t, before, after, branch, lo, hi);
+    }
+  };
+  const closeGroup = (): void => {
+    // The window sort (finSortWindow): by t, then the word — the stable
+    // sort's tie order, which fixes the group's sorted-first endpoint.
+    for (let i = groupLo + 1; i < consumed.length; i++) {
+      const key = consumed[i];
+      const keyW = wordKey(key.word);
+      let j = i;
+      while (j > groupLo) {
+        const prev = consumed[j - 1];
+        if (!(
+          prev.t > key.t ||
+          (prev.t === key.t && wordKey(prev.word) > keyW)
+        )) {
+          break;
+        }
+        consumed[j] = consumed[j - 1];
+        j--;
+      }
+      consumed[j] = key;
+    }
+    const hi = consumed.length;
+    for (let i = groupLo; i < consumed.length; i++) {
+      coverage[Math.max(consumed[i].word[0], 0)] +=
+        consumed[i].delta === 1 ? 1 : -1;
+    }
+    const before = medium;
+    const owner = mediumOf(coverage);
+    medium = owner.medium;
+    const t = groupT;
+    const tie = tieOf(t);
+    if (!started && t <= tie) {
+      haveStart = true;
+      startMedium = medium;
+      startBranch = owner.branch;
+      startAtGroup = Math.abs(t) <= tie;
+      startLo = groupLo;
+      startHi = hi;
+      return;
+    }
+    started = true;
+    if (before === medium) return;
+    resolveFlip(t, before, medium, owner.branch, groupLo, hi);
+  };
+  const drain = (): void => {
+    for (;;) {
+      if (aborted) return;
+      const frontier = frontierMin();
+      if (!groupOpen) {
+        const i = pendingMin();
+        if (i < 0) return;
+        const t = pending[i].t;
+        if (frontier < t) return;
+        groupOpen = true;
+        groupLo = consumed.length;
+        groupT = t;
+        consumed.push(pending[i]);
+        pendingRemove(i);
+      }
+      const tie = tieOf(groupT);
+      for (;;) {
+        const i = pendingMin();
+        if (i < 0 || f(pending[i].t - groupT) > tie) break;
+        consumed.push(pending[i]);
+        pendingRemove(i);
+      }
+      let nextT = finFar;
+      for (const endpoint of pending) {
+        if (endpoint.t < nextT) nextT = endpoint.t;
+      }
+      if (Math.min(nextT, frontier) > f(groupT + tie)) {
+        closeGroup();
+        groupOpen = false;
+        continue;
+      }
+      return;
+    }
+  };
+  // The leaf visit (pushLeaf): clip the cell, cap the PRODUCED leaves,
+  // push the endpoint pair and drain.
+  const pushLeaf = (m: F32Aff, inv: F32Aff, word: number[]): void => {
     const facets = facetsFor(m, inv);
-    if (!facets) return true;
+    if (!facets) return;
     // The anchor's own leaf reads its masked residuals as exact zeros
     // (enumerateGeneralLeaves's rule, finClipSimplex's `onPlane`).
     const forced =
@@ -3205,7 +3351,7 @@ export function finiteSolidGeneralDdaF32(
       const s =
         (forced & (1 << k)) !== 0 ? 0 : f(dot4(facets.n[k], q) - facets.c[k]);
       if (denom === 0) {
-        if (s > 0) return true;
+        if (s > 0) return;
         continue;
       }
       const t = f(-s / denom);
@@ -3223,61 +3369,58 @@ export function finiteSolidGeneralDdaF32(
         enterMask |= 1 << k;
       }
     }
-    if (!(exit > enter)) return true;
-    // The cap check precedes the pair, exactly the WGSL's.
-    if (endpoints.length + 2 > endpointCap) return false;
+    if (!(exit > enter)) return;
+    if (produced >= leafCap) {
+      aborted = refused(1);
+      return;
+    }
+    produced++;
     const slots: [number, number, number, number] = [-1, -1, -1, -1];
     for (let slot = 0; slot < word.length; slot++) slots[slot] = word[slot];
-    endpoints.push({ t: enter, delta: 1, word: slots, facets: enterMask });
-    endpoints.push({ t: exit, delta: 0, word: [...slots], facets: exitMask });
-    return true;
+    pending.push({ t: enter, delta: 1, word: [...slots], facets: enterMask });
+    pending.push({ t: exit, delta: 0, word: [...slots], facets: exitMask });
+    drain();
   };
-  // The pruned nests (finEnumerate): the leaves in lexicographic word
-  // order, subtrees pruned when the ray misses their level box, capped.
-  if (level === 0) {
-    if (!pushLeaf(identity(), identity(), [])) return refused(1);
-  } else if (clipAxisBox(boxMin[level], boxMax[level], q, qd)) {
-    const word: number[] = [];
-    const walk = (forward: F32Aff, inverse: F32Aff, depth: number): boolean => {
-      for (let a = 0; a < mapCount; a++) {
-        // The glass-only walk (generalNestSource's depth-0 filter).
-        if (g.glassOnly === true && depth === 0 && media[a] === 0) continue;
-        const childForward = compose(forward, a);
-        const childInverse_ = childInverse(inverse, a);
-        word.push(a);
-        if (depth + 1 < level) {
-          const remaining = level - (depth + 1);
-          if (
-            clipAxisBox(
-              boxMin[remaining],
-              boxMax[remaining],
-              add4(apply(childInverse_, q), childInverse_.t),
-              apply(childInverse_, qd),
-            ) &&
-            !walk(childForward, childInverse_, depth + 1)
-          ) {
-            return false;
-          }
-        } else if (!pushLeaf(childForward, childInverse_, word)) {
-          return false;
-        }
-        word.pop();
-      }
-      return true;
-    };
-    if (!walk(identity(), identity(), 0)) return refused(1);
-  }
-
-  // The stable sort (finSortEndpoints): by t, ties keep the DFS order.
-  for (let i = 1; i < endpoints.length; i++) {
-    const key = endpoints[i];
-    let j = i;
-    while (j > 0 && endpoints[j - 1].t > key.t) {
-      endpoints[j] = endpoints[j - 1];
-      j--;
+  // The fused nests (finEnumerate): per level, every child's level-box
+  // entry t (the node prune's own clip; a leaf child keys on its level-0
+  // box image), sorted ascending, visited in order; the leaf level's
+  // frontier term rides the same keys.
+  const word: number[] = [];
+  const walk = (forward: F32Aff, inverse: F32Aff, depth: number): void => {
+    const order: number[] = [];
+    const keys: number[] = new Array<number>(mapCount).fill(finFar);
+    for (let a = 0; a < mapCount; a++) {
+      // The glass-only walk (generalNestSource's depth-0 filter).
+      if (g.glassOnly === true && depth === 0 && media[a] === 0) continue;
+      const childInverse_ = childInverse(inverse, a);
+      const remaining = level - (depth + 1);
+      keys[a] = clipAxisBoxEnter(
+        boxMin[depth + 1 < level ? remaining : 0],
+        boxMax[depth + 1 < level ? remaining : 0],
+        add4(apply(childInverse_, q), childInverse_.t),
+        apply(childInverse_, qd),
+      );
+      let slot = order.length;
+      while (slot > 0 && keys[order[slot - 1]] > keys[a]) slot--;
+      order.splice(slot, 0, a);
     }
-    endpoints[j] = key;
-  }
+    for (let i = 0; i < order.length; i++) {
+      const a = order[i];
+      nextKey[depth] = i + 1 < order.length ? keys[order[i + 1]] : finFar;
+      if (keys[a] >= finFar) break;
+      const childForward = compose(forward, a);
+      const childInverse_ = childInverse(inverse, a);
+      word.push(a);
+      if (depth + 1 < level) {
+        walk(childForward, childInverse_, depth + 1);
+      } else {
+        pushLeaf(childForward, childInverse_, word);
+      }
+      word.pop();
+      if (aborted) return;
+    }
+    nextKey[depth] = finFar;
+  };
 
   // The rows the displayed normal reads (finiteRowXyz).
   const rowXyz = (axis: number): Vec3 => {
@@ -3310,12 +3453,12 @@ export function finiteSolidGeneralDdaF32(
     const basis: Vec3[] = [];
     for (let m = groupLo; m < groupHi && basis.length < 3; m++) {
       const facets = facetsFor(
-        wordAff(endpoints[m].word, level),
-        wordInverse(endpoints[m].word, level),
+        wordAff(consumed[m].word, level),
+        wordInverse(consumed[m].word, level),
       );
       if (!facets) return null;
       for (let k = 0; k < facetCount && basis.length < 3; k++) {
-        if ((endpoints[m].facets & (1 << k)) === 0) continue;
+        if ((consumed[m].facets & (1 << k)) === 0) continue;
         const n = facets.n[k];
         let vector: Vec3 = [
           f(rowXyz(0)[0] * n[0]),
@@ -3368,7 +3511,7 @@ export function finiteSolidGeneralDdaF32(
     const entering = after !== 0;
     const normal = groupNormal(groupLo, groupHi, entering);
     if (!normal) return refused(6);
-    const incident = endpoints[groupLo];
+    const incident = consumed[groupLo];
     const snapped = snapToLeaf(
       incident.word,
       incident.facets,
@@ -3392,68 +3535,25 @@ export function finiteSolidGeneralDdaF32(
       toBranch: afterBranch,
     };
   };
-  // The sweep (finSweep): greedy tie groups, coverage per branch, the
-  // start medium at tMin = 0, the first later medium change.
-  const total = endpoints.length;
-  const coverage = new Array<number>(mapCount).fill(0);
-  let medium = 0;
-  let idx = 0;
-  let haveStart = false;
-  let startMedium = 0;
-  let startBranch = -1;
-  let startAtGroup = false;
-  let startLo = 0;
-  let startHi = 0;
-  let haveFlip = false;
-  let flipT = 0;
-  let flipBefore = 0;
-  let flipAfter = 0;
-  let flipBranch = -1;
-  let flipLo = 0;
-  let flipHi = 0;
-  let started = false;
-  while (idx < total) {
-    const groupT = endpoints[idx].t;
-    const tie = f(tieRel * Math.max(1, Math.abs(groupT)));
-    let j = idx;
-    while (j < total && f(endpoints[j].t - groupT) <= tie) {
-      coverage[Math.max(endpoints[j].word[0], 0)] +=
-        endpoints[j].delta === 1 ? 1 : -1;
-      j++;
-    }
-    const before = medium;
-    const owner = mediumOf(coverage);
-    medium = owner.medium;
-    if (!started && groupT <= tie) {
-      haveStart = true;
-      startMedium = medium;
-      startBranch = owner.branch;
-      startAtGroup = Math.abs(groupT) <= tie;
-      startLo = idx;
-      startHi = j;
-      idx = j;
-      continue;
-    }
-    started = true;
-    if (!haveFlip && before !== medium) {
-      haveFlip = true;
-      flipT = groupT;
-      flipBefore = before;
-      flipAfter = medium;
-      flipBranch = owner.branch;
-      flipLo = idx;
-      flipHi = j;
-    }
-    idx = j;
+  // The fused walk: the fused nests, then the walk's end (finFinish) —
+  // close everything (the frontier is exhausted), then the claim check —
+  // a mismatching claim refuses or emits the start event, a matching one
+  // reports the miss.
+  if (level === 0) {
+    pushLeaf(identity(), identity(), word);
+  } else if (clipAxisBoxEnter(boxMin[level], boxMax[level], q, qd) < finFar) {
+    walk(identity(), identity(), 0);
   }
+  if (!aborted) {
+    for (let d = 0; d < level; d++) nextKey[d] = finFar;
+    drain();
+  }
+  if (aborted) return aborted;
   if (startMedium !== claim) {
     if (haveStart && startAtGroup && !anchor) {
       return event(0, claim, startMedium, startBranch, startLo, startHi);
     }
     return { ...refused(3), toMedium: startMedium };
-  }
-  if (haveFlip) {
-    return event(flipT, flipBefore, flipAfter, flipBranch, flipLo, flipHi);
   }
   return miss();
 }
