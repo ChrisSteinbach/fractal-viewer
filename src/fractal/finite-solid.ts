@@ -2591,27 +2591,53 @@ interface GeneralEndpoint {
   mask: number;
 }
 
-/** The pruned enumeration: the level-N leaves whose CELL the ray clips,
- * subtrees pruned when the ray misses the child node's LEVEL BOX — the
- * word-image of `levelBoxes[remaining]`, which contains the node's whole
- * subtree by construction (`U_k ⊆ levelBoxes[k]`), so the pruned
- * enumeration equals the unpruned one endpoint for endpoint WITHOUT any
- * root-invariance assumption (rotating maps admit no invariant simplex —
- * measured). The node clip transforms the ray by the composed word's
- * inverse and clips the axis-aligned box; the ray's parameter survives the
- * affine reparametrization, so the leaf clips' times compare directly.
- * Returns null when the leaf cap refused. */
-function enumerateGeneralLeaves(
+/** The fused front-to-back walk: the pruned enumeration and the endpoint
+ * sweep in ONE pass. The old query enumerated EVERY leaf the ray clips
+ * (to the 128-leaf cap) before sweeping for the next event; this walk
+ * visits the tree front to back — each node's children keyed ASCENDING by
+ * their level-box entry t (the node prune's own clip, stored), visited in
+ * that order — and streams each clipped leaf's two endpoints into a tie
+ * group that CLOSES as soon as nothing unvisited can precede it: the next
+ * pending endpoint and the DFS frontier min (the smallest next-unvisited
+ * child's box entry over the stack) must both exceed
+ * `groupT + generalTieAbs(groupT)`. The frontier bound is sound because a
+ * leaf's cell nests inside every ancestor's level box, so its enter and
+ * exit both sit at or after the divergence level's next-sibling key; an
+ * unvisited leaf's divergence ancestor is never before the current index
+ * in a level's sorted order (earlier subtrees are exhausted), so the
+ * stack min lower-bounds it. The first closed group with a medium change
+ * returns the event and aborts the whole DFS — every unvisited leaf's
+ * endpoints are past the event, so the first event IS the first.
+ *
+ * Equivalence with the batch walk, endpoint for endpoint: a closed group's
+ * members are exactly the endpoints within the tie of its first endpoint
+ * (arrived ones absorbed, future ones certified beyond), the groups close
+ * in ascending t so the medium chain and the start state at tMin read the
+ * same sequence, and the window is sorted by (t, word) at close — the
+ * batch's stable sort kept the lexicographic DFS order for ties, which is
+ * the (t, word) order. The one deliberate difference is the leaf cap: it
+ * counts PRODUCED clipped leaves, and the abort produces fewer, so a path
+ * the batch refused visit-cap can resolve (re-measured; the WGSL twin and
+ * the f32 twin count the same way). Returns the result and never null. */
+function finiteSolidGeneralFrontToBackWalk(
   c: FiniteSolidGeneralConstruction,
+  pose: FiniteSolidPose,
   q: Vec4,
   qd: Vec4,
-  cap: number,
-  anchor?: FiniteSolidAnchor,
-  keep: ((branch: number) => boolean) | null = null,
-): GeneralLeaf[] | null {
-  const leaves: GeneralLeaf[] = [];
+  direction: Vec3,
+  options: FiniteSolidGeneralQueryOptions & { anchor?: FiniteSolidAnchor },
+  tMin: number,
+  claimed: number,
+): FiniteSolidBoundaryResult {
   const dimension = c.dimension;
-  const word: number[] = [];
+  const media = options.media;
+  const keep = generalBranchKeep(media, options.glassOnly);
+  const anchor = options.anchor;
+  const leafCap = Math.min(
+    c.mapCount ** c.level,
+    FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES,
+  );
+  const inverseMapMatrix = finiteSolidGeneralInverseMaps(c).map((inv) => inv.m);
   // THE ANCHOR'S OWN LEAF CROSSES ITS MASKED FACETS AT EXACTLY t = 0. The
   // snap put the query point on those planes, but only to the precision it
   // rounds at: at a grazing angle the recomputed crossing `−s/denom`
@@ -2627,10 +2653,230 @@ function enumerateGeneralLeaves(
     anchor && leafWord.every((w, slot) => w === anchor.cellIndices[slot])
       ? anchor.planeMask
       : 0;
+  const word: number[] = [];
   const clipFrame = (frame: GeneralFrame): GeneralClip | null => {
     const facets = cellFacets(c, frame);
     if (!facets) return null;
     return clipGeneralCell(facets, dimension, q, qd, onPlaneMask(word));
+  };
+  // The child node's clip input: the ray transformed by the composed
+  // inverse — the node prune's own arithmetic, now also the sort key.
+  const nodeRay = (child: { m: number[]; t: Vec4 }): { p: Vec4; d: Vec4 } => {
+    const m = child.m;
+    const p: Vec4 = [
+      m[0] * q[0] + m[1] * q[1] + m[2] * q[2] + m[3] * q[3] + child.t[0],
+      m[4] * q[0] + m[5] * q[1] + m[6] * q[2] + m[7] * q[3] + child.t[1],
+      m[8] * q[0] + m[9] * q[1] + m[10] * q[2] + m[11] * q[3] + child.t[2],
+      m[12] * q[0] + m[13] * q[1] + m[14] * q[2] + m[15] * q[3] + child.t[3],
+    ];
+    const d: Vec4 = [
+      m[0] * qd[0] + m[1] * qd[1] + m[2] * qd[2] + m[3] * qd[3],
+      m[4] * qd[0] + m[5] * qd[1] + m[6] * qd[2] + m[7] * qd[3],
+      m[8] * qd[0] + m[9] * qd[1] + m[10] * qd[2] + m[11] * qd[3],
+      m[12] * qd[0] + m[13] * qd[1] + m[14] * qd[2] + m[15] * qd[3],
+    ];
+    return { p, d };
+  };
+  // --- streaming state ---
+  const consumed: GeneralEndpoint[] = [];
+  const pending: GeneralEndpoint[] = [];
+  let groupLo = -1;
+  let groupT = 0;
+  let produced = 0;
+  let aborted: FiniteSolidBoundaryResult | null = null;
+  // Per DFS level: the next unvisited child's level-box entry.
+  const nextKey = new Array<number>(c.level).fill(Infinity);
+  const coverage = new Array<number>(c.mapCount).fill(0);
+  let medium: number = FINITE_SOLID_MEDIUM_AIR;
+  let started = false;
+  let haveStart = false;
+  let startMedium = FINITE_SOLID_MEDIUM_AIR;
+  let startBefore = FINITE_SOLID_MEDIUM_AIR;
+  let startBranch = -1;
+  let startAtGroup = false;
+  let startLo = 0;
+  let startHi = 0;
+  let visits = 0;
+  const compareWord = (a: readonly number[], b: readonly number[]): number => {
+    for (let slot = 0; slot < a.length; slot++) {
+      if (a[slot] !== b[slot]) return a[slot] - b[slot];
+    }
+    return 0;
+  };
+  const pendingMin = (): number => {
+    let best = -1;
+    for (let i = 0; i < pending.length; i++) {
+      if (best < 0 || pending[i].t < pending[best].t) best = i;
+    }
+    return best;
+  };
+  const frontierMin = (): number => {
+    let value = Infinity;
+    for (let d = 0; d < nextKey.length; d++) {
+      if (nextKey[d] < value) value = nextKey[d];
+    }
+    return value;
+  };
+  const stateMatches = (): boolean => {
+    const stateAtStart = haveStart ? startMedium : FINITE_SOLID_MEDIUM_AIR;
+    return media
+      ? stateAtStart === claimed
+      : (stateAtStart !== FINITE_SOLID_MEDIUM_AIR) === options.inside;
+  };
+  /** The claim mismatching the geometry: the anchored continuation takes
+   * no liberty; an unanchored query ON the start group may anticipate the
+   * crossing (the display march's primary hit), FROM the claimed medium. */
+  const resolveMismatch = (): FiniteSolidBoundaryResult => {
+    if (anchor || !startAtGroup) {
+      return {
+        kind: "refused",
+        reason: "state-mismatch",
+        visits: 0,
+        geometryMedium: startMedium,
+      };
+    }
+    const event = simplicialBoundaryEvent(
+      c,
+      pose,
+      q,
+      qd,
+      direction,
+      {
+        t: tMin,
+        before: media ? claimed : startBefore,
+        after: startMedium,
+        afterBranch: startBranch,
+        faces: consumed
+          .slice(startLo, startHi)
+          .map((e) => ({ leaf: e.leaf, mask: e.mask })),
+      },
+      tMin,
+      0,
+    );
+    if (
+      event.kind === "boundary" &&
+      tMin === 0 &&
+      sameFace(options.previousFace, event.face)
+    ) {
+      return { kind: "refused", reason: "state-mismatch", visits: 0 };
+    }
+    return event;
+  };
+  /** Sort the group window (t, then the word — the batch walk's stable
+   * sort kept the lexicographic DFS order for ties), apply the coverage,
+   * and close: the start state at tMin, else the first medium change. */
+  const closeGroup = (): void => {
+    const window = consumed.slice(groupLo);
+    window.sort((a, b) => a.t - b.t || compareWord(a.leaf.word, b.leaf.word));
+    consumed.splice(groupLo, window.length, ...window);
+    const hi = consumed.length;
+    for (const endpoint of window) {
+      coverage[endpoint.leaf.word[0] ?? 0] += endpoint.delta;
+    }
+    const before = medium;
+    const owner = generalMediumOf(coverage, media);
+    medium = owner.medium;
+    const t = groupT;
+    if (!started && t <= tMin + generalTieAbs(t)) {
+      haveStart = true;
+      startMedium = medium;
+      startBefore = before;
+      startBranch = owner.branch;
+      startAtGroup = Math.abs(t - tMin) <= generalTieAbs(t);
+      startLo = groupLo;
+      startHi = hi;
+      return;
+    }
+    started = true;
+    visits++;
+    if (before === medium) return;
+    if (!stateMatches()) {
+      aborted = resolveMismatch();
+      return;
+    }
+    const event = simplicialBoundaryEvent(
+      c,
+      pose,
+      q,
+      qd,
+      direction,
+      {
+        t,
+        before,
+        after: medium,
+        afterBranch: owner.branch,
+        faces: window.map((e) => ({ leaf: e.leaf, mask: e.mask })),
+      },
+      t,
+      visits,
+    );
+    if (
+      event.kind === "boundary" &&
+      t === tMin &&
+      sameFace(options.previousFace, event.face)
+    ) {
+      aborted = { kind: "refused", reason: "state-mismatch", visits };
+      return;
+    }
+    aborted = event;
+  };
+  /** Consume arrived endpoints into tie groups as far as certification
+   * allows: a group opens only when no future endpoint can undercut its
+   * first endpoint, and closes when neither the next pending endpoint nor
+   * the frontier min can still tie it. */
+  const drain = (): void => {
+    for (;;) {
+      if (aborted) return;
+      const frontier = frontierMin();
+      if (groupLo < 0) {
+        const i = pendingMin();
+        if (i < 0) return;
+        const t = pending[i].t;
+        if (frontier < t) return;
+        groupLo = consumed.length;
+        groupT = t;
+        consumed.push(pending[i]);
+        pending.splice(i, 1);
+      }
+      for (;;) {
+        const i = pendingMin();
+        if (i < 0 || pending[i].t - groupT > generalTieAbs(groupT)) break;
+        consumed.push(pending[i]);
+        pending.splice(i, 1);
+      }
+      let nextT = Infinity;
+      for (const endpoint of pending) {
+        if (endpoint.t < nextT) nextT = endpoint.t;
+      }
+      if (Math.min(nextT, frontier) > groupT + generalTieAbs(groupT)) {
+        closeGroup();
+        groupLo = -1;
+        continue;
+      }
+      return;
+    }
+  };
+  const visitLeaf = (
+    step: { matrix: number[]; offset: Vec4 },
+    child: { m: number[]; t: Vec4 },
+  ): void => {
+    const childClip = clipFrame({ forward: step, inverse: child });
+    if (!childClip) return;
+    if (produced >= leafCap) {
+      aborted = { kind: "refused", reason: "visit-cap", visits: 0 };
+      return;
+    }
+    produced++;
+    const leaf: GeneralLeaf = {
+      word: [...word],
+      enter: childClip.enter,
+      exit: childClip.exit,
+      enterMask: childClip.enterMask,
+      exitMask: childClip.exitMask,
+    };
+    pending.push({ t: leaf.enter, delta: 1, leaf, mask: leaf.enterMask });
+    pending.push({ t: leaf.exit, delta: -1, leaf, mask: leaf.exitMask });
+    drain();
   };
   const walk = (
     matrix: number[],
@@ -2638,130 +2884,99 @@ function enumerateGeneralLeaves(
     invM: number[],
     invT: Vec4,
     depth: number,
-  ): boolean => {
+  ): void => {
+    if (aborted) return;
+    const childDepth = depth + 1;
+    // The key phase: every child's level-box entry t along the ray — the
+    // node prune's own clip, stored; a leaf child keys on the level-0 box
+    // image, which contains its cell. Stable insertion: ties keep the
+    // map's own order (the batch enumeration's lexicographic order).
+    // `keys` is indexed BY MAP ID (skipped glass-only children leave
+    // holes), `order` holds the visited ids ascending by key.
+    const order: number[] = [];
+    const keys: number[] = new Array<number>(c.mapCount).fill(Infinity);
     for (let a = 0; a < c.mapCount; a++) {
       if (depth === 0 && keep && !keep(a)) continue;
-      const step = composeWordStep(matrix, offset, {
-        matrix: c.mapMatrix[a],
-        offset: c.mapOffset[a],
-      });
-      // The child node's inverse: (parent ∘ M_a)⁻¹ = M_a⁻¹ ∘ parent⁻¹.
       const child = childInverse(inverseMapMatrix[a], c.mapOffset[a], {
         m: invM,
         t: invT,
       });
-      const childInvM = child.m;
-      const childInvT = child.t;
-      const childDepth = depth + 1;
-      if (childDepth < c.level) {
-        // The node prune: the subtree nests inside the child's word-image
-        // of its level box. Transform the ray by the composed inverse and
-        // clip the axis-aligned box; skip the subtree when the ray misses.
-        const nodeP: Vec4 = [
-          childInvM[0] * q[0] +
-            childInvM[1] * q[1] +
-            childInvM[2] * q[2] +
-            childInvM[3] * q[3] +
-            childInvT[0],
-          childInvM[4] * q[0] +
-            childInvM[5] * q[1] +
-            childInvM[6] * q[2] +
-            childInvM[7] * q[3] +
-            childInvT[1],
-          childInvM[8] * q[0] +
-            childInvM[9] * q[1] +
-            childInvM[10] * q[2] +
-            childInvM[11] * q[3] +
-            childInvT[2],
-          childInvM[12] * q[0] +
-            childInvM[13] * q[1] +
-            childInvM[14] * q[2] +
-            childInvM[15] * q[3] +
-            childInvT[3],
-        ];
-        const nodeD: Vec4 = [
-          childInvM[0] * qd[0] +
-            childInvM[1] * qd[1] +
-            childInvM[2] * qd[2] +
-            childInvM[3] * qd[3],
-          childInvM[4] * qd[0] +
-            childInvM[5] * qd[1] +
-            childInvM[6] * qd[2] +
-            childInvM[7] * qd[3],
-          childInvM[8] * qd[0] +
-            childInvM[9] * qd[1] +
-            childInvM[10] * qd[2] +
-            childInvM[11] * qd[3],
-          childInvM[12] * qd[0] +
-            childInvM[13] * qd[1] +
-            childInvM[14] * qd[2] +
-            childInvM[15] * qd[3],
-        ];
-        const nodeClip = clipAxisAlignedBox(
-          c.levelBoxes[c.level - childDepth],
-          dimension,
-          nodeP,
-          nodeD,
-        );
-        if (!nodeClip) continue;
-      }
+      const ray = nodeRay(child);
+      const nodeClip = clipAxisAlignedBox(
+        c.levelBoxes[childDepth < c.level ? c.level - childDepth : 0],
+        dimension,
+        ray.p,
+        ray.d,
+      );
+      const key = nodeClip ? nodeClip.enter : Infinity;
+      let slot = order.length;
+      while (slot > 0 && keys[order[slot - 1]] > key) slot--;
+      order.splice(slot, 0, a);
+      keys[a] = key;
+    }
+    for (let i = 0; i < order.length; i++) {
+      const a = order[i];
+      // The next unvisited child's box entry: this level's frontier term.
+      nextKey[depth] = i + 1 < order.length ? keys[order[i + 1]] : Infinity;
+      if (keys[a] === Infinity) break;
+      const step = composeWordStep(matrix, offset, {
+        matrix: c.mapMatrix[a],
+        offset: c.mapOffset[a],
+      });
+      const child = childInverse(inverseMapMatrix[a], c.mapOffset[a], {
+        m: invM,
+        t: invT,
+      });
       word.push(a);
-      if (childDepth === c.level) {
-        const childClip = clipFrame({ forward: step, inverse: child });
-        if (!childClip) {
-          word.pop();
-          continue;
-        }
-        if (leaves.length >= cap) {
-          word.pop();
-          return false;
-        }
-        leaves.push({
-          word: [...word],
-          enter: childClip.enter,
-          exit: childClip.exit,
-          enterMask: childClip.enterMask,
-          exitMask: childClip.exitMask,
-        });
-      } else if (
-        !walk(step.matrix, step.offset, childInvM, childInvT, childDepth)
-      ) {
-        word.pop();
-        return false;
+      if (childDepth < c.level) {
+        walk(step.matrix, step.offset, child.m, child.t, childDepth);
+      } else {
+        visitLeaf(step, child);
       }
       word.pop();
+      if (aborted) return;
     }
-    return true;
+    nextKey[depth] = Infinity;
+  };
+  /** The walk's end: close everything (the frontier is exhausted), then
+   * the claim check — a mismatching claim refuses or emits the start
+   * event, a matching one reports the miss. */
+  const finish = (): FiniteSolidBoundaryResult => {
+    if (aborted) return aborted;
+    for (let d = 0; d < nextKey.length; d++) nextKey[d] = Infinity;
+    drain();
+    if (aborted) return aborted;
+    if (!stateMatches()) return resolveMismatch();
+    return { kind: "miss", visits };
   };
   if (c.level === 0) {
     const facets = cellFacets(c, identityFrame());
-    if (!facets || (keep && !keep(0))) return leaves;
-    const clip = clipGeneralCell(facets, dimension, q, qd, onPlaneMask([]));
-    if (clip) {
-      leaves.push({
-        word: [],
-        enter: clip.enter,
-        exit: clip.exit,
-        enterMask: clip.enterMask,
-        exitMask: clip.exitMask,
-      });
+    if (facets && (!keep || keep(0))) {
+      const clip = clipGeneralCell(facets, dimension, q, qd, onPlaneMask([]));
+      if (clip) {
+        if (produced >= leafCap) {
+          return { kind: "refused", reason: "visit-cap", visits: 0 };
+        }
+        produced++;
+        const leaf: GeneralLeaf = {
+          word: [],
+          enter: clip.enter,
+          exit: clip.exit,
+          enterMask: clip.enterMask,
+          exitMask: clip.exitMask,
+        };
+        pending.push({ t: clip.enter, delta: 1, leaf, mask: clip.enterMask });
+        pending.push({ t: clip.exit, delta: -1, leaf, mask: clip.exitMask });
+      }
     }
-    return leaves;
+    return finish();
   }
   // The entry prune: the whole tree sits inside levelBoxes[level]; a ray
   // missing that axis-aligned box misses every leaf.
   const rootClip = clipAxisAlignedBox(c.levelBoxes[c.level], dimension, q, qd);
-  if (!rootClip) return leaves;
-  const inverseMapMatrix = finiteSolidGeneralInverseMaps(c).map((inv) => inv.m);
-  return walk(
-    identityMatrix4(),
-    [0, 0, 0, 0],
-    identityMatrix4(),
-    [0, 0, 0, 0],
-    0,
-  )
-    ? leaves
-    : null;
+  if (!rootClip) return finish();
+  walk(identityMatrix4(), [0, 0, 0, 0], identityMatrix4(), [0, 0, 0, 0], 0);
+  return finish();
 }
 
 function generalTieAbs(t: number): number {
@@ -3275,155 +3490,20 @@ function finiteSolidGeneralNextBoundaryInternal(
     q = finiteSolidIntrinsicPoint(pose, origin);
   }
   const qd = finiteSolidIntrinsicDirection(pose, direction);
-  const leafCap = Math.min(
-    c.mapCount ** c.level,
-    FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES,
-  );
-  const leaves = enumerateGeneralLeaves(
-    c,
-    q,
-    qd,
-    leafCap,
-    anchor,
-    generalBranchKeep(options.media, options.glassOnly),
-  );
-  if (!leaves) {
-    // The pruned enumeration overflowed its cap: a disclosed refusal —
-    // never a truncation.
-    return { kind: "refused", reason: "visit-cap", visits: 0 };
-  }
-  // Endpoint sweep with the declared-resolution ties: consecutive
-  // endpoints within the tie of a group's first endpoint are ONE boundary
-  // group. Coverage is counted PER BRANCH and the medium after each group
-  // is the owner rule's (generalMediumOf); an event is a MEDIUM CHANGE, so
-  // a group that leaves the medium unchanged (a shared face's exit tied
-  // with the neighbour's entry, an overlap's interior face, a crossing
-  // between equal-material glass subtrees) is traversed silently. Without
-  // media every branch is glass code 1 and this is the union's coverage
-  // crossing zero, exactly.
-  const media = options.media;
-  const endpoints: GeneralEndpoint[] = [];
-  for (const leaf of leaves) {
-    endpoints.push({ t: leaf.enter, delta: 1, leaf, mask: leaf.enterMask });
-    endpoints.push({ t: leaf.exit, delta: -1, leaf, mask: leaf.exitMask });
-  }
-  endpoints.sort((a, b) => a.t - b.t);
-  interface GeneralGroup {
-    t: number;
-    before: number;
-    after: number;
-    afterBranch: number;
-    faces: Array<{ leaf: GeneralLeaf; mask: number }>;
-  }
-  const groups: GeneralGroup[] = [];
-  const coverage = new Array<number>(c.mapCount).fill(0);
-  let medium: number = FINITE_SOLID_MEDIUM_AIR;
-  let i = 0;
-  while (i < endpoints.length) {
-    const groupT = endpoints[i].t;
-    const tie = generalTieAbs(groupT);
-    const faces: Array<{ leaf: GeneralLeaf; mask: number }> = [];
-    while (i < endpoints.length && endpoints[i].t - groupT <= tie) {
-      coverage[endpoints[i].leaf.word[0] ?? 0] += endpoints[i].delta;
-      faces.push({ leaf: endpoints[i].leaf, mask: endpoints[i].mask });
-      i++;
-    }
-    const before = medium;
-    const owner = generalMediumOf(coverage, media);
-    medium = owner.medium;
-    groups.push({
-      t: groupT,
-      before,
-      after: medium,
-      afterBranch: owner.branch,
-      faces,
-    });
-  }
-  // The state at tMin: the last group at or before it (within that
-  // group's tie); its after-medium owns the point (half-open, the
-  // entering side — the shipped ray-side convention).
-  let startGroupIndex = -1;
-  for (let g = 0; g < groups.length; g++) {
-    if (groups[g].t <= tMin + generalTieAbs(groups[g].t)) startGroupIndex = g;
-    else break;
-  }
-  const stateAtStart =
-    startGroupIndex >= 0
-      ? groups[startGroupIndex].after
-      : FINITE_SOLID_MEDIUM_AIR;
-  // The claim: a medium code when the caller carries one, else the
-  // single-material form's inside flag (glass code 1 / air).
+  // The fused front-to-back walk: the pruned enumeration and the endpoint
+  // sweep in one pass, stopping at the first medium change.
   const claimed =
     options.medium ?? (options.inside ? 1 : FINITE_SOLID_MEDIUM_AIR);
-  const stateMatches = media
-    ? stateAtStart === claimed
-    : (stateAtStart !== FINITE_SOLID_MEDIUM_AIR) === options.inside;
-  const startGroup = startGroupIndex >= 0 ? groups[startGroupIndex] : undefined;
-  const atStartGroup =
-    startGroup !== undefined &&
-    Math.abs(startGroup.t - tMin) <= generalTieAbs(startGroup.t);
-  if (!stateMatches) {
-    if (anchor || !atStartGroup) {
-      // Off a boundary the claim must match the geometry; the anchored
-      // continuation is the interior restart and takes no liberty with
-      // the claim at all. The geometry's own start medium rides the
-      // refusal for a transport re-anchoring its split.
-      return {
-        kind: "refused",
-        reason: "state-mismatch",
-        visits: 0,
-        geometryMedium: stateAtStart,
-      };
-    }
-    // The ray starts ON a boundary group with the claim anticipating the
-    // crossing (the display march's primary hit): emit the start event,
-    // FROM the claimed medium.
-    const event = simplicialBoundaryEvent(
-      c,
-      pose,
-      q,
-      qd,
-      direction,
-      { ...startGroup, before: media ? claimed : startGroup.before },
-      tMin,
-      0,
-    );
-    if (
-      event.kind === "boundary" &&
-      tMin === 0 &&
-      sameFace(options.previousFace, event.face)
-    ) {
-      return { kind: "refused", reason: "state-mismatch", visits: 0 };
-    }
-    return event;
-  }
-  // Walk the groups after the start; the first medium change is the next
-  // event.
-  let visits = 0;
-  for (let g = startGroupIndex + 1; g < groups.length; g++) {
-    const group = groups[g];
-    visits++;
-    if (group.before === group.after) continue;
-    const event = simplicialBoundaryEvent(
-      c,
-      pose,
-      q,
-      qd,
-      direction,
-      group,
-      group.t,
-      visits,
-    );
-    if (
-      event.kind === "boundary" &&
-      group.t === tMin &&
-      sameFace(options.previousFace, event.face)
-    ) {
-      return { kind: "refused", reason: "state-mismatch", visits };
-    }
-    return event;
-  }
-  return { kind: "miss", visits };
+  return finiteSolidGeneralFrontToBackWalk(
+    c,
+    pose,
+    q,
+    qd,
+    direction,
+    options,
+    tMin,
+    claimed,
+  );
 }
 
 /** The simplicial display marcher's bounded-work estimate: the certified
