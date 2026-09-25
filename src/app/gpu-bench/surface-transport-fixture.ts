@@ -1,5 +1,6 @@
 import type { Vec3 } from "../../fractal/types";
 import {
+  FINITE_COMPOSITE_MARCH_RELAX,
   finiteSolidOpaqueDistance,
   type FiniteSolidOpaqueContent,
 } from "../../fractal/finite-solid-composite";
@@ -96,6 +97,14 @@ export interface TransportFixtureSystem {
   stepScale: number;
   /** The domain radius (`params.visibleRadius`). */
   visibleRadius: number;
+  /** THE COMPOSITE's over-relaxed march (finite-solid-composite.ts's
+   * `FINITE_COMPOSITE_MARCH_RELAX`): each step rides relax x the estimate,
+   * and a step whose next evaluation can no longer certify it stayed
+   * before the surface (`prevD + dd <= prevStep`) rolls back to the safe
+   * point before it and halves the relaxation. Absent or 1 is the classic
+   * full-estimate step — the rollback test is gated on the step's own
+   * relax, so every other caller's path is unchanged. */
+  relax?: number;
   /** Exact membership in the displayed solid, for a field that is a
    * certified bound rather than a signed distance (interface doc). */
   contains?: (p: Vec3) => boolean;
@@ -167,7 +176,10 @@ export function transportOpticalNormal(
   return [gx / m, gy / m, gz / m];
 }
 
-/** The kernel's `transportNextBoundary`, f64. */
+/** The kernel's `transportNextBoundary`, f64. With `system.relax` > 1 the
+ * march rides over-relaxed steps with the overlap backtrack
+ * (`finite-solid-composite.ts`'s argument); absent or 1 it is the classic
+ * full-estimate march, unchanged. */
 export function transportBoundaryQueryCPU(
   system: TransportFixtureSystem,
   origin: Vec3,
@@ -178,6 +190,7 @@ export function transportBoundaryQueryCPU(
   /** Stop marching here (a miss at or past it); the domain exit otherwise. */
   tLimit = Infinity,
 ): TransportBoundaryResult {
+  const relaxMax = system.relax ?? 1;
   let px = origin[0];
   let py = origin[1];
   let pz = origin[2];
@@ -190,6 +203,19 @@ export function transportBoundaryQueryCPU(
     t += skip;
   }
   const tFar = Math.min(domainExit(system, origin, dir), tLimit);
+  // The relaxation for the NEXT step: full after a rollback cascade
+  // (validated arrivals reset it optimistically; the rollback halves the
+  // step's own value instead). relax 1 never rolls back, so callers
+  // without `relax` take the classic march below, branch for branch.
+  let stepRelax = relaxMax;
+  let stepped = false;
+  let prevPx = 0;
+  let prevPy = 0;
+  let prevPz = 0;
+  let prevT = 0;
+  let prevD = 0;
+  let prevStep = 0;
+  let prevRelax = 1;
   for (let i = 0; i < TRANSPORT_QUERY_MAX_STEPS; i++) {
     if (tFar < 0 || t >= tFar) {
       return { kind: "miss", reason: 0, t, normal: [0, 0, 0] };
@@ -199,6 +225,22 @@ export function transportBoundaryQueryCPU(
       return { kind: "refused", reason: 2, t, normal: [0, 0, 0] };
     }
     const dd = Math.max(d, 0);
+    // The over-relaxed backtrack comes FIRST: a step that crossed the
+    // surface lands past it, where the estimate may read non-positive and
+    // the epsilon hit test would accept the wrong side. The backtrack
+    // returns to the safe point before the crossing and halves the
+    // relaxation; relax 1 cannot fire the test, so the classic path never
+    // enters and the classic march's own acceptance order is unchanged.
+    if (stepped && prevRelax > 1 && prevD * system.stepScale + dd <= prevStep) {
+      const back = prevD * system.stepScale;
+      px = prevPx + dir[0] * back;
+      py = prevPy + dir[1] * back;
+      pz = prevPz + dir[2] * back;
+      t = prevT + back;
+      stepRelax = Math.max(prevRelax * 0.5, 1);
+      stepped = false;
+      continue;
+    }
     if (dd < eps) {
       const hx = px + dir[0] * dd;
       const hy = py + dir[1] * dd;
@@ -218,6 +260,7 @@ export function transportBoundaryQueryCPU(
         py = hy + dir[1] * skip;
         pz = hz + dir[2] * skip;
         t = tc + skip;
+        stepped = false;
         continue;
       }
       return {
@@ -227,7 +270,26 @@ export function transportBoundaryQueryCPU(
         normal: transportOpticalNormal(system, [hx, hy, hz], dir, eps),
       };
     }
-    const step = d * system.stepScale;
+    // A relaxed step that would not land strictly inside the remaining
+    // interval falls back to the classic step: the classic step cannot
+    // cross the surface (its ball is certified empty), so a crossing
+    // within [t, tFar] is always reachable and validated — the march
+    // never jumps the walk's boundary over an undetected terminal.
+    let usedRelax = stepRelax;
+    let step = d * system.stepScale * usedRelax;
+    if (!(step < tFar - t)) {
+      usedRelax = 1;
+      step = d * system.stepScale;
+    }
+    prevPx = px;
+    prevPy = py;
+    prevPz = pz;
+    prevT = t;
+    prevD = d;
+    prevStep = step;
+    prevRelax = usedRelax;
+    stepped = true;
+    stepRelax = relaxMax;
     px += dir[0] * step;
     py += dir[1] * step;
     pz += dir[2] * step;
@@ -574,6 +636,7 @@ export function transportCompositeOpaqueMarch(
     estimate: (p) => finiteSolidOpaqueDistance(content, intrinsic(p)).d,
     stepScale: 1,
     visibleRadius,
+    relax: FINITE_COMPOSITE_MARCH_RELAX,
   };
   return (origin, dir, eps, tLimit) => {
     if (content.branches.length === 0) return { kind: "miss" };

@@ -42,6 +42,7 @@
  */
 
 import type { FiniteSolidOpaqueBranch } from "./finite-solid-composite";
+import { FINITE_COMPOSITE_MARCH_RELAX } from "./finite-solid-composite";
 
 /** Where the opaque-descent block starts in the finite params struct: past
  * the frozen ground-plane block (3D 288..335, 4D 576..623), which a
@@ -605,6 +606,15 @@ fn transportOpaqueNormal(p: vec3f, dir: vec3f, eps: f32, li: u32) -> vec3f {
 // a walk miss, which leaves the domain exit): only a hit strictly before
 // that boundary is a terminal, so marching past it bought nothing — and
 // could spend the step budget into a refusal the path never needed.
+// Steps ride OVER-RELAXATION (finite-solid-composite.ts's
+// FINITE_COMPOSITE_MARCH_RELAX, the fixture's system.relax): relax x the
+// estimate, and a step whose next evaluation can no longer certify it
+// stayed before the surface — a crossing at D in (d_prev, step] stands
+// step - D behind the landing point, so the DE there is at most
+// step - d_prev, and d_prev + d_new > step certifies no crossing — rolls
+// back to the safe point before it and halves the relaxation, floored at
+// 1 where the test cannot fire. No crossing is ever passed unhit; the
+// full-estimate march is the floor.
 fn transportOpaqueMarch(origin: vec3f, dir: vec3f, eps: f32, li: u32, tLimit: f32) -> FinOpaqueHit {
   var result: FinOpaqueHit;
   result.kind = 3u;
@@ -616,6 +626,13 @@ fn transportOpaqueMarch(origin: vec3f, dir: vec3f, eps: f32, li: u32, tLimit: f3
   var t = 0.0;
   let tExit = transportDomainExit(origin, dir);
   let tFar = select(tExit, min(tExit, tLimit), tLimit >= 0.0);
+  var relax = ${floatLit(FINITE_COMPOSITE_MARCH_RELAX)};
+  var stepped = false;
+  var prevP = origin;
+  var prevT = 0.0;
+  var prevD = 0.0;
+  var prevStep = 0.0;
+  var prevRelax = 1.0;
   for (var i = 0u; i < TRANSPORT_QUERY_MAX_STEPS; i++) {
     if (tFar < 0.0 || t >= tFar) {
       result.kind = 2u;
@@ -630,6 +647,18 @@ fn transportOpaqueMarch(origin: vec3f, dir: vec3f, eps: f32, li: u32, tLimit: f3
       return result;
     }
     let dd = max(d, 0.0);
+    // The over-relaxed backtrack comes FIRST: a step that crossed the
+    // surface lands past it, where the estimate may read non-positive and
+    // the epsilon hit test would accept the wrong side. The backtrack
+    // returns to the safe point before the crossing and halves the
+    // relaxation; relax 1 cannot fire the test.
+    if (stepped && prevD + dd <= prevStep) {
+      p = prevP + dir * prevD;
+      t = prevT + prevD;
+      relax = max(prevRelax * 0.5, 1.0);
+      stepped = false;
+      continue;
+    }
     if (dd < eps) {
       let hitP = p + dir * dd;
       result.kind = 1u;
@@ -639,8 +668,26 @@ fn transportOpaqueMarch(origin: vec3f, dir: vec3f, eps: f32, li: u32, tLimit: f3
       result.branch = finOpaqueAt(hitP, 0.0, li).branch;
       return result;
     }
-    p = p + dir * d;
-    t = t + d;
+    var step = d * relax;
+    // A relaxed step that would not land strictly inside the remaining
+    // interval falls back to the classic step: the classic step cannot
+    // cross the surface (its ball is certified empty), so a crossing
+    // within [t, tFar] is always reachable and validated — the march
+    // never jumps the walk's boundary over an undetected terminal.
+    var usedRelax = relax;
+    if (!(step < tFar - t)) {
+      usedRelax = 1.0;
+      step = d;
+    }
+    prevP = p;
+    prevT = t;
+    prevD = d;
+    prevStep = step;
+    prevRelax = usedRelax;
+    stepped = true;
+    relax = ${floatLit(FINITE_COMPOSITE_MARCH_RELAX)};
+    p = p + dir * step;
+    t = t + step;
   }
   return result;
 }

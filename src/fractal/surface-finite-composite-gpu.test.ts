@@ -187,6 +187,11 @@ describe("composite kernel", () => {
           expect(src.match(/\nfn surfaceDEHitInfo\(/g)).toHaveLength(1);
           expect(src).toContain("fn transportOpaqueMarch(");
           expect(src).toContain("transportOpaqueMarch(path.origin");
+          // The over-relaxed march (finite-solid-composite.ts's
+          // FINITE_COMPOSITE_MARCH_RELAX): the backtrack and the halving.
+          expect(src).toContain("prevD + dd <= prevStep");
+          expect(src).toContain("relax = max(prevRelax * 0.5, 1.0);");
+          expect(src).toContain("var relax = 1.25;");
         }
         if (mode === "march") {
           expect(src).toContain("let tGlass = st.w;");
