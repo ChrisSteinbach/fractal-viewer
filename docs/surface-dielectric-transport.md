@@ -2869,6 +2869,70 @@ orbits: they now settle in 7.9 s against 6.3 s for 3D, where the pre-fix
 record was 43.1 s against 10.4 s. What remains of the 4D cost question is
 open work (fr-7y60).
 
+## The fused front-to-back walk (2026-09-25)
+
+A general word-tree transport query had enumerated EVERY leaf the ray clips
+(up to the 128-leaf cap) and then swept for the next event, so every processed
+path paid a whole-ray pruned DFS — ~4 ms per processed path at the owner's
+20-map Menger depth 4. The fused front-to-back walk replaces the pruned
+enumeration plus the batch endpoint sweep inside
+`finiteSolidGeneralNextBoundaryInternal` (oracle), the WGSL general transport
+emission, and the f32 twin, in ONE arc:
+
+- **The shape.** Each node's children are keyed ASCENDING by their level-box
+  entry t along the ray — the node prune's own clip, now stored and sorted
+  (a leaf child keys on its level-0 box image, which contains its cell;
+  keys are indexed BY MAP ID, so skipped glass-only children leave holes) —
+  and visited in that order. Each clipped leaf's two endpoints stream into a
+  tie-group drain: a group opens only when no future endpoint can undercut
+  its first endpoint, and closes when neither the next pending endpoint nor
+  the DFS frontier min (`finNextKey`: the smallest next-unvisited child's box
+  entry over the stack) can still tie it — the frontier bound is sound
+  because a leaf's cell nests inside every ancestor's level box, so its
+  enter and exit both sit at or after the divergence level's next-sibling
+  key. The first closed group with `before != after` after the tMin state
+  check returns the event and aborts the whole DFS.
+- **Equivalence with the batch walk, endpoint for endpoint.** A closed
+  group's members are exactly the endpoints within the tie of its first
+  endpoint (arrived ones absorbed, future ones certified beyond); groups
+  close in ascending t so the medium chain and the tMin state read the same
+  sequence; and the window sorts by (t, word) at close — the batch's stable
+  sort kept the lexicographic DFS order for ties. The judge (the harness's
+  uncapped reference) holds unchanged: the chained legs pin each hop's FIRST
+  event, and the first flip group's t equals the union's interval endpoint
+  bit for bit.
+- **The cap re-measured.** The leaf cap still counts PRODUCED clipped
+  leaves, and the abort produces fewer, so the refusal set shrinks by
+  design: a fresh outside ray whose first event lands early now resolves
+  where the batch refused visit-cap (the 12-map document's centre ray —
+  re-pinned), and the honest refusal witness is the ANCHORED interior
+  continuation, which must produce past the cap before the coverage exits
+  to air. On the owner's depth-4 document the visit-cap refusal MOVED from
+  the primary split into the traces: BEFORE, the split's boundary queries
+  refused visit-cap for most of the solid's ~311k settled rays (only ~340
+  classified glass, of which 185 unresolved); AFTER, every classified ray
+  reaches a trace (70250 of them per sample) and 60802 of those end
+  `f4/r1` — visit-cap inside a boundary query deep in the sponge. The cap
+  stays 128; nothing was raised to make a leg green.
+- **The A/B, same authored document, RX 7900 XTX, quiet-certified** (the
+  probe: `scripts/glass-depth4-cost.probe.mjs`, two phases — `--author-only`
+  logs the settled `#v1=` hash, `--hash=` measures on it, so a BEFORE/AFTER
+  pair rides ONE document; the harness's uncapped reference stays the
+  judge). BEFORE: the first settle frame's transport ran 660.98 s (6 passes;
+  32-path continuation chunks at ~270-354 ms; preview chunks ~141 ms);
+  AFTER: 139-146 s per settle frame (~20 ms chunks), the full 8-sample
+  settle completing at ~1150 s with the exact census covered=311183,
+  miss=1128817, exhausted=0. The per-path cost collapsed as designed; the
+  cap-bound count did not (60802 of 70250 transported traces still refuse at
+  the cap and render black) — exactly the coupling the arc predicted.
+- **Disclosed, not decided:** whether depth 4 of a 20-map sponge is a
+  SUPPORTED glass depth remains an owner question — a cheaper walk fixes
+  per-path cost, not the ~87% of transported traces that still cap out at
+  this depth; the shipped depths' envelope rows are unchanged inside the
+  decided envelope (glassMenger preview 739 ms / settle 6.29 s; glassMenger4
+  1034 ms / 9.89 s, 0 unresolved everywhere; full bench verdict=pass with 64
+  agreement legs true; the app gate verdict=pass, 8 legs).
+
 ## What is not yet qualified
 
 The backend and routing sections above record the current implementation;

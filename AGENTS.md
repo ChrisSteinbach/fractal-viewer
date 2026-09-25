@@ -983,15 +983,15 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     exact walk — the grid's ternary DDA for `{shape, level}`, and `{level}`
     alone (0..4) as the document's OWN maps' word tree (any contracting
     affine; root: an invariant hull simplex, else the invariant box; the
-    prune rides level boxes; the 128-leaf cap refuses disclosed); the
-    hybrid DE shades. PER-MAP MEDIA: Glass maps' subtrees are glass
-    cells; beside them other maps render as the TRUE ATTRACTOR (the
-    composite kernel, <=24 maps), else opaque cells; opaque owns overlaps.
-    Anchors snap to the clip's planes (general: facet mask, envelope
-    scaled to the arithmetic, own leaf on-plane); a split child's stale
-    medium re-anchors once; one-cell anchor gaps fail agreement.
-    Gates pin every AA sample, copied pose and export identity; the word
-    tree's reference is an independent simplex/box union.
+    walk stops at the first medium change (fused front to back); the
+    prune rides level boxes; the 128-leaf cap refuses, disclosed — in
+    the traces); the hybrid DE shades. PER-MAP MEDIA: Glass maps'
+    subtrees are glass cells; beside them other maps render as the TRUE
+    ATTRACTOR (the composite kernel, <=24 maps), else opaque cells; opaque
+    owns overlaps. Anchors snap to the clip's planes (general: facet
+    mask, own leaf on-plane); a split child's stale medium re-anchors
+    once. Gates pin every AA sample, copied pose and export identity; the
+    word tree's reference is an independent union.
     Evidence: `docs/surface-dielectric-transport.md`.
   - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its
