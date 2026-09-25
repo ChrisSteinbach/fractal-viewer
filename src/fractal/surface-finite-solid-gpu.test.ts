@@ -1754,25 +1754,36 @@ describe("general finite-solid GPU sources", () => {
       expect(src).toContain("params.finiteLevel");
       // Endpoints ride integer storage, never an f32 bit pattern.
       expect(src).toContain("var<private> finE: array<vec2u,");
-      expect(src).toContain("FIN_TIE_REL * max(1.0, abs(groupT))");
+      expect(src).toContain("FIN_TIE_REL * max(1.0, abs(t))");
       // The grid arithmetic is absent.
       expect(src).not.toContain("finiteGridPlane");
       expect(src).not.toContain("fn finiteOccupied(");
     }
   });
 
-  it("nests one DFS loop per level, each non-leaf nest pruned by its level box", () => {
+  it("nests one key loop and one visit loop per level, ordered by the level-box entry", () => {
     const maps = defaultTransforms();
     for (let level = 1; level <= 4; level++) {
       const c = generalConstruction(maps, level, 3);
       const src = finiteSolidGeneralTransportSource(3, c, level);
       const enumerate = src.slice(
         src.indexOf("fn finEnumerate("),
-        src.indexOf("fn finSortEndpoints("),
+        src.indexOf("fn finResolveFlip("),
       );
+      // One key loop per nest (the level-box entry t, stored and sorted);
+      // the visit loop walks the sorted order.
       expect(enumerate.match(/for \(var a\d = 0u;/g)).toHaveLength(level);
-      // Every nest carries its inverse — a box leaf's facets are its rows.
-      expect(enumerate.match(/finChildInverse\(/g) ?? []).toHaveLength(level);
+      expect(enumerate.match(/for \(var ci\d = 0u;/g)).toHaveLength(level);
+      // Every nest carries its inverse twice — the key loop's node clip
+      // and the visit loop's own (a box leaf's facets are its rows).
+      expect(enumerate.match(/finChildInverse\(/g) ?? []).toHaveLength(
+        2 * level,
+      );
+      // The frontier bound rides the sorted keys (two assignments in the
+      // visit loop, one reset at the nest's end).
+      expect(enumerate.match(/finNextKey\[\d+\] =/g) ?? []).toHaveLength(
+        3 * level,
+      );
     }
   });
 
