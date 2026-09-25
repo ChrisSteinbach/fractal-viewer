@@ -8115,7 +8115,12 @@ function surfaceFiniteBalloonFrameFixtures(): {
     id,
     position,
     rotation: [0, 0, 0],
-    scale: [0.8, 0.8, 0.8],
+    // The classic just-touching scale, load-bearing for the balloon legs:
+    // 0.8 makes the four maps overlap into a solid interior whose refined
+    // descent dips slightly negative, so every balloon shell term wins at
+    // the march's first step — 5184/5184 shell hits, source=0, and the
+    // unproj leg's anti-vacuity gate fails on both counts.
+    scale: [0.5, 0.5, 0.5],
   }));
   const transforms4 = pentatope();
   const pair = normalizeRotorPair(
