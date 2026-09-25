@@ -1120,10 +1120,14 @@ describe("finite-solid general walk", () => {
     }
   });
 
-  it("refuses a ray that clips more pruned leaves than the cap, never truncating", () => {
+  it("resolves a deep-clipping ray's first event and refuses the interior walk past the cap", () => {
     // Twelve heavily overlapping 0.8-scale maps whose fixed points sit on
-    // a small shell: a ray through the centre clips nearly every one of the
-    // 144 level-2 cells, past the 128-leaf cap.
+    // a small shell: a centre ray clips nearly every one of the 144
+    // level-2 cells, past the 128-leaf cap. The fused front-to-back walk
+    // resolves its FIRST event after producing only the leaves the event
+    // needs; the interior continuation must cross the whole overlapped
+    // blob before its coverage exits to air, produces past the cap, and
+    // refuses — a disclosed per-ray refusal, never a truncation.
     const directions: Vec3[] = [
       [1, 0, 0],
       [-1, 0, 0],
@@ -1155,6 +1159,8 @@ describe("finite-solid general walk", () => {
     expect(c.mapCount ** 2).toBeGreaterThan(
       FINITE_SOLID_GENERAL_MAX_ENUM_LEAVES,
     );
+    // The fresh ray's first event lands long before the cap: the batch
+    // walk refused this ray visit-cap.
     const result = finiteSolidGeneralNextBoundary(
       c,
       FINITE_SOLID_IDENTITY_POSE,
@@ -1162,7 +1168,19 @@ describe("finite-solid general walk", () => {
       [0, 1, 0],
       { inside: false },
     );
-    expect(result).toMatchObject({ kind: "refused", reason: "visit-cap" });
+    expect(result.kind).toBe("boundary");
+    // The interior continuation: every leaf the ray clips ahead of the
+    // coverage's exit to air is produced before the event, past the cap.
+    if (result.kind !== "boundary" || !result.entering) {
+      throw new Error("entry missing");
+    }
+    const interior = finiteSolidGeneralNextBoundaryFromAnchor(
+      c,
+      FINITE_SOLID_IDENTITY_POSE,
+      [0, 1, 0],
+      { inside: true, anchor: result.anchor },
+    );
+    expect(interior).toMatchObject({ kind: "refused", reason: "visit-cap" });
     // The uncapped reference still sees the solid on that ray.
     expect(
       finiteSolidGeneralIntervals(
