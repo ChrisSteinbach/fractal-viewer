@@ -53,6 +53,29 @@ import { estimateDistance4Refined, singularValues4 } from "./surface-de-4d";
 import type { SurfaceDE4 } from "./surface-de-4d";
 import type { Vec3, Vec4 } from "./types";
 
+/**
+ * The composite's opaque march relaxation. The march steps `relax x DE`
+ * instead of `DE`; a step that MAY have crossed the surface is detected
+ * one evaluation later — a crossing at parameter D in (d_prev, step]
+ * stands at distance step - D behind the landing point, so the DE there
+ * is at most step - d_prev, and `d_prev + d_new > step` CERTIFIES no
+ * crossing (the certified balls at both ends cover the travelled
+ * interval). A step failing that test rolls back to the safe point
+ * `p_prev + dir x d_prev` — inside the ball the descent certifies empty —
+ * and halves the relaxation, floored at 1, where the test can never fire
+ * (d_prev + d_new <= d_prev needs d_new <= 0, and the march only steps
+ * from d >= eps). So no crossing is ever passed unhit — the march stays
+ * EXACT — while clean stretches advance relax-fold. The full-estimate
+ * step (relax 1) is the floor: worst case the rollback cycle re-marches
+ * what classic would have, at the same eval cost. The value is measured
+ * (the boot document's segment corpus, classic sweep): 1.25 cut march
+ * evaluations 6.1% and the longest march 43 -> 37 with the classic
+ * hit/miss classification unchanged march for march; 1.5 matched the
+ * steps but flipped two classifications and left the max at 41, and 2.0
+ * lost everywhere (rollback cascades grew the longest march to 48).
+ */
+export const FINITE_COMPOSITE_MARCH_RELAX = 1.25;
+
 /** One opaque first-level branch: its inverse (row-major 4x4 + offset),
  * its smallest singular value, and its certified image ball. */
 export interface FiniteSolidOpaqueBranch {

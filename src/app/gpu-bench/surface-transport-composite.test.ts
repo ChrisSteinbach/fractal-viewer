@@ -7,6 +7,7 @@ import {
 } from "../../fractal/finite-solid";
 import {
   buildFiniteSolidOpaqueContent,
+  finiteSolidOpaqueDistance,
   type FiniteSolidOpaqueContent,
 } from "../../fractal/finite-solid-composite";
 import {
@@ -27,6 +28,7 @@ import { buildSurfaceDE } from "../../fractal/surface-de";
 import { buildSurfaceDE4 } from "../../fractal/surface-de-4d";
 import type { Transform, Vec3 } from "../../fractal/types";
 import {
+  transportBoundaryQueryCPU,
   transportCompositeOpaqueMarch,
   transportFiniteGeneralBoundaryQueryCPU,
   transportOpaqueControlRadiance,
@@ -235,6 +237,16 @@ describe("the composite trace (opaque maps as the attractor, glass maps as cells
     );
     expect(inside.kind).toBe("hit");
     if (inside.kind !== "hit") return;
+    console.log(
+      "DIAG inside",
+      JSON.stringify(inside),
+      "branches",
+      branches,
+      "radiance",
+      r.radiance,
+      "status",
+      r.status,
+    );
     expect(inside.t).toBeCloseTo(0.5, 3);
     expect(inside.normal[2]).toBeGreaterThan(0.95);
     expect(inside.branch).toBe(branches[0]);
@@ -244,12 +256,36 @@ describe("the composite trace (opaque maps as the attractor, glass maps as cells
       inside.normal,
       branches[0],
     );
+    console.log(
+      "DIAG f",
+      f,
+      "radius",
+      radius,
+      "opaque",
+      opaque,
+      "eps",
+      DIELECTRIC_CROSSING_EPS_REL * radius,
+    );
     for (let axis = 0; axis < 3; axis++) {
       const expected =
         BG[axis] * f +
         (1 - f) *
           dielectricBeerThroughput(DIELECTRIC_ABSORPTION[axis], 0.5, radius) *
           opaque[axis];
+      console.log(
+        "DIAG axis",
+        axis,
+        "got",
+        r.radiance[axis],
+        "exp",
+        expected,
+        "diff",
+        Math.abs(r.radiance[axis] - expected),
+        "beer",
+        dielectricBeerThroughput(DIELECTRIC_ABSORPTION[axis], 0.5, radius),
+        "abs",
+        DIELECTRIC_ABSORPTION[axis],
+      );
       expect(Math.abs(r.radiance[axis] - expected)).toBeLessThan(f * f + 1e-4);
     }
   });
@@ -339,5 +375,142 @@ describe("the composite trace (opaque maps as the attractor, glass maps as cells
       expect(r.status).not.toBe("unresolved");
     }
     expect(opaqueTerminals).toBeGreaterThan(20);
+  });
+});
+
+describe("the composite's over-relaxed march", () => {
+  /** A counted march twin of {@link transportCompositeOpaqueMarch}: the
+   * same unanchored query over the masked opaque distance, optionally
+   * relaxed, reporting its estimate evaluations. */
+  function countedMarch(
+    content: FiniteSolidOpaqueContent,
+    radius: number,
+    relax?: number,
+  ) {
+    let steps = 0;
+    const system = {
+      estimate: (p: Vec3) => {
+        steps++;
+        return finiteSolidOpaqueDistance(content, [p[0], p[1], p[2], 0]).d;
+      },
+      stepScale: 1,
+      visibleRadius: radius,
+      ...(relax !== undefined ? { relax } : {}),
+    };
+    return {
+      run: (origin: Vec3, dir: Vec3, eps: number, tLimit: number) => {
+        steps = 0;
+        return {
+          r: transportBoundaryQueryCPU(
+            system,
+            origin,
+            dir,
+            false,
+            origin,
+            eps,
+            tLimit,
+          ),
+          steps: () => steps,
+        };
+      },
+    };
+  }
+
+  /** Rays from above at the construction: random targets inside the
+   * attractor's bounding cube, the corpus the cell-invariant pins use. */
+  function corpus(
+    count: number,
+    seed: number,
+  ): Array<{ origin: Vec3; dir: Vec3 }> {
+    const rng = mulberry32(seed);
+    const out: Array<{ origin: Vec3; dir: Vec3 }> = [];
+    for (let i = 0; i < count; i++) {
+      const origin: Vec3 = [rng() * 6 - 3, rng() * 2 + 2.5, rng() * 6 - 3];
+      const target: Vec3 = [rng() - 0.5, rng() - 0.5, rng() - 0.5];
+      const d = target.map((x, a) => x - origin[a]);
+      const len = Math.hypot(...d);
+      out.push({ origin, dir: d.map((x) => x / len) as Vec3 });
+    }
+    return out;
+  }
+
+  it("agrees with the classic march: the same kind, within two epsilons on hits", () => {
+    const { maps } = mengerComposite();
+    const c = construction(maps, 2, 3);
+    const media = maps.map((_, i) =>
+      i === 0 || i === maps.length - 1 ? 1 : 0,
+    );
+    const content = buildFiniteSolidOpaqueContent(
+      c,
+      media,
+      buildSurfaceDE(maps),
+    );
+    const radius = finiteSolidGeneralBoundingRadius(c);
+    const eps = DIELECTRIC_CROSSING_EPS_REL * radius;
+    const classic = countedMarch(content, radius);
+    const relaxed = countedMarch(content, radius, 1.5);
+    let hits = 0;
+    let classicMax = 0;
+    let relaxedMax = 0;
+    for (const { origin, dir } of corpus(80, 9)) {
+      const a = classic.run(origin, dir, eps, Infinity);
+      const b = relaxed.run(origin, dir, eps, Infinity);
+      expect(a.r.kind).toBe(b.r.kind);
+      if (a.r.kind === "boundary" && b.r.kind === "boundary") {
+        hits++;
+        expect(Math.abs(b.r.t - a.r.t)).toBeLessThanOrEqual(2 * eps + 1e-9);
+      }
+      classicMax = Math.max(classicMax, a.steps());
+      relaxedMax = Math.max(relaxedMax, b.steps());
+    }
+    expect(hits).toBeGreaterThan(20);
+    // The lever's claim is the WAVE-SETTER, not the corpus total: the
+    // longest march in a lockstep group sets its cost, and the relaxation
+    // shortens the long crawls even where rollback churn costs medium
+    // marches (the trace-level totals are the scratch stats' record).
+    expect(relaxedMax).toBeLessThan(classicMax);
+  });
+
+  it("never lands nearer than the opaque cells on random rays", () => {
+    const maps = defaultTransforms();
+    const c = construction(maps, 3, 3);
+    const media = [0, 0, 0, 0];
+    const content = buildFiniteSolidOpaqueContent(
+      c,
+      media,
+      buildSurfaceDE(maps),
+    );
+    const radius = finiteSolidGeneralBoundingRadius(c);
+    const eps = DIELECTRIC_CROSSING_EPS_REL * radius;
+    const march = transportCompositeOpaqueMarch(
+      content,
+      FINITE_SOLID_IDENTITY_POSE,
+      radius,
+    );
+    const rng = mulberry32(21);
+    let hits = 0;
+    for (let i = 0; i < 60; i++) {
+      const origin: Vec3 = [rng() * 6 - 3, rng() * 2 + 2.5, rng() * 6 - 3];
+      const target: Vec3 = [rng() - 0.5, rng() - 0.5, rng() - 0.5];
+      const d = target.map((x, a) => x - origin[a]);
+      const len = Math.hypot(...d);
+      const dir = d.map((x) => x / len) as Vec3;
+      const m = march(origin, dir, eps, Infinity);
+      expect(m.kind).not.toBe("refused");
+      if (m.kind !== "hit") continue;
+      hits++;
+      const cell = finiteSolidGeneralNextBoundary(
+        c,
+        FINITE_SOLID_IDENTITY_POSE,
+        origin,
+        dir,
+        { inside: false, media, medium: 0 },
+      );
+      expect(cell.kind).toBe("boundary");
+      if (cell.kind === "boundary") {
+        expect(m.t).toBeGreaterThanOrEqual(cell.t - eps);
+      }
+    }
+    expect(hits).toBeGreaterThan(20);
   });
 });

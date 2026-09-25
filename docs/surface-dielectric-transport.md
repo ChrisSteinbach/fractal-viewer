@@ -1924,6 +1924,40 @@ accelerates are cheap lanes that already wait on their wave's slowest
 lane — a 17-64-step march near an opaque surface — so it was reverted
 rather than shipped. A GPU lever has to shorten those long marches.
 
+SHIPPED (WEAK WIN): the long marches are over-relaxed. Each step rides
+`FINITE_COMPOSITE_MARCH_RELAX` (1.25) x the estimate, and a step whose
+NEXT evaluation can no longer certify it stayed before the surface — a
+crossing at parameter `D` in `(d_prev, step]` stands `step - D` behind the
+landing point, so the DE there is at most `step - d_prev`, and
+`d_prev + d_new > step` certifies no crossing — rolls back to the safe
+point `p_prev + dir·d_prev` (inside the ball the descent certifies empty)
+and halves the relaxation, floored at 1, where the test can never fire. The
+backtrack runs BEFORE the epsilon hit test — a crossed step lands past the
+surface where the estimate reads non-positive and the hit test would accept
+the wrong side — and a step that would not land strictly inside the
+remaining interval falls back to the classic step, whose certified ball
+cannot cross, so a terminal within `[t, tFar]` is always reachable (without
+that clamp the relaxed step jumps the walk's next boundary and turns a
+terminal into a miss — the through-glass pin caught it). No crossing is
+ever passed unhit, so the march stays exact; the fixture
+(`transportBoundaryQueryCPU`, the `system.relax` opt-in) mirrors the kernel
+`transportOpaqueMarch` term for term, and relax 1 keeps the classic path
+byte-identical for every other caller. The value is MEASURED (the boot
+document's segment corpus, classic vs relaxed over 9,571 marches): 1.25
+cut march evaluations 6.1% and the longest march 43 to 37 with the
+hit/miss classification unchanged march for march; 1.5 matched the steps
+but flipped two classifications (Menger: max 37 to 29 vs 1.25's 32) and
+2.0 lost everywhere (rollback cascades grew the longest march to 48).
+GPU settle on the same pane as the table above (quiet-certified runs,
+real driver): Menger 37.2 to 35.2 s, the boot document 120.4 to 107.5 s
+(repeat 107.5 s, ±0.1%), the pentatope 5.4 to 4.4 s. Both composite bench
+legs still agree (3D radiance 8.81e-5, residual 1.94e-11; 4D radiance
+9.51e-6, residual 3.48e-11 — the same deltas the cell route records). The
+scaled boot figure moves to ~12.9 s — still over the 10 s line: the march
+is now the smaller share, and the level-3 glass walk itself (55 s
+march-off, ~48 s of the boot document) is what the remaining gap prices;
+its lever is the front-to-back walk, not this one.
+
 GATE: `scripts/glass-solid-panel.verify.mjs` legs 6-8 are mixed blocks
 (the boot document, the pentatope, and the owner's Menger document with
 Glass on maps 1 and 20) and assert `finiteComposite`, complete transport
