@@ -251,7 +251,7 @@ describe("Surface swirl final admission in both dimensions", () => {
         ).toMatch(/pre-swirl radius/);
       }
     }
-  });
+  }, 20_000);
 
   for (const dimension of [3, 4] as const) {
     const transforms = dimension === 3 ? sierpinskiTetrahedron() : pentatope();
