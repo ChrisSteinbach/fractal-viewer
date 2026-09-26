@@ -51,12 +51,18 @@
  *
  * CI RUNS BOTH LEGS. The runner image ships xvfb but no Mesa GL driver, so
  * the job installs libgl1-mesa-dri + libegl-mesa0 (Mesa's software driver,
- * llvmpipe — the whole measured delta; without it Firefox has no WebGL and
- * the app refuses to boot, main.ts's `webglAvailable()` gate) and runs this
- * script twice: `--engine=chromium` display-less on SwiftShader, then
- * `--engine=firefox --headed` under `xvfb-run -a` with
- * `LIBGL_ALWAYS_SOFTWARE=1`. Chromium needs none of that because it bundles
- * SwiftShader.
+ * llvmpipe) and runs this script twice: `--engine=chromium` display-less on
+ * SwiftShader, then `--engine=firefox --headed` under `xvfb-run -a` with
+ * `LIBGL_ALWAYS_SOFTWARE=1 MOZ_X11_EGL=1` — EGL is the provider
+ * scripts/webgl-under-xvfb.probe.mjs verified creates contexts there
+ * (glxinfo under Xvfb was never measured working). TWO defects stacked in
+ * this job's early history, each producing the same boot-timeout
+ * signature: no driver on the image, AND the bare `--headed` flag the
+ * first cut passed being silently dropped by flag()'s `--name=value`-only
+ * parsing — a headless, display-less Firefox, which can create no WebGL
+ * context at all. The boot diagnostics (appProbe/composite/renderer on
+ * every boot, full state on failure) and the probe exist so the next
+ * such failure names its own cause.
  *
  * Usage (build + `npm run preview` first — this measures a real build):
  *   npm run build && npm run preview &
@@ -109,8 +115,14 @@ if (!["both", "chromium", "firefox"].includes(ENGINE)) {
 }
 /** Run Firefox HEADED on the ambient display (CI: Xvfb + llvmpipe). See
  * `launchEngine` for why a display-less GPU-less host cannot run the
- * Firefox leg. Chromium ignores this flag — it is always headless. */
-const HEADED = flag("headed", "false") === "true";
+ * Firefox leg. Chromium ignores this flag — it is always headless.
+ * The bare `--headed` form counts: flag() only parses `--name=value`,
+ * and the first cut of the CI job passed the bare flag, which silently
+ * left HEADED false — Firefox launched headless with its DISPLAY deleted
+ * and could create no WebGL context at all, the boot-timeout signature
+ * every round of this job's early history actually shows. */
+const HEADED =
+  flag("headed", "false") === "true" || process.argv.includes("--headed");
 
 const MODES = [
   ["modePointsBtn", "points"],
