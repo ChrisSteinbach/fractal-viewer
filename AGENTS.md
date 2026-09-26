@@ -304,8 +304,7 @@ once the accumulation FINISHED. Record and figures: `docs/architecture.md`.
 Husky runs lint-staged on every commit, auto-fixing ESLint + Prettier on staged
 `src/` `.ts` files (a staged `scripts/*.ts` gets Prettier only — its lint waits
 for `npm run lint`) and Stylelint + Prettier on staged `.css` files. Hooks are installed by
-`npm install` (via the `prepare` script). The beads integration block in each hook
-keeps issues synced with git.
+`npm install` (via the `prepare` script).
 
 ## Architecture
 
@@ -2067,8 +2066,8 @@ alongside source as `*.test.ts`. DOM tests opt into jsdom with a
 ## Issue Tracking
 
 This project uses **beads** (`bd`) for issue tracking — never markdown TODO
-files, and never a harness's own in-session task list, which dies with the
-session and is invisible to the next agent.
+files and never a harness's in-session task list, which dies with the session,
+invisible to the next agent.
 
 ```bash
 bd list               # View all issues
@@ -2081,28 +2080,31 @@ bd close <id>         # Complete work
 
 Use `--json` for programmatic calls. Link discovered work with
 `--deps discovered-from:<parent-id>`; do not create a second tracker.
+Tracker state syncs via the bd dolt remote — `bd dolt pull` on a fresh clone,
+`bd dolt push` after writes; the `.beads` jsonl mirrors are git-ignored and
+never committed.
 
 **THE CODEBASE MUST NOT CITE THE TRACKER.** A bead id is not a stable
-foreign key: this tracker has been corrupted before and may be replaced
-outright, and either event turns every `see fr-xxxx` into a pointer at
+foreign key: the tracker has been corrupted before and may be replaced
+outright; either event turns every `see fr-xxxx` into a pointer at
 nothing. So ids are never written into `src/`, `docs/`, `scripts/`, the
 build and workflow files, or the agent instruction files — nor may the
-tracker itself be the CARRIER of a claim ("the bead expected", "per the
-bead's ask", "the epic's figures"), which dangles exactly as badly while
+tracker be the CARRIER of a claim ("the bead expected", "per the
+bead's ask", "the epic's figures"), which dangles as badly while
 looking innocent.
 What a decision, a measurement or a refutation WAS is written out in full
 where it lives — rules here, evidence in `docs/`, per the split at the top
 — and named in the project's own words ("the march-epsilon cutoff
 contract", "the kernel-confirmed i915 preemption hang"). Writing ABOUT the
 practice is fine — "filing a 4D-lift bead and closing the epic" names the
-standing failure mode two sections up — but citing an item's contents as
-your source is not. The ONE exception is work still OPEN: a comment may
-name the id of an unfinished item it waits on, and deleting that reference
-is part of closing the item. Commit messages are out of scope and may cite
-freely — git history is immutable and is not loaded into a session's
-context. One sweep removed ~7,500 ids and ~130 such citations, so
+standing failure mode two sections up — but citing an item's contents is
+not. The ONE exception is OPEN work: a comment may
+name the id of an unfinished item it waits on; deleting that reference is
+part of closing it. Commit messages may cite freely — git history is
+immutable and never loaded into a session's context. A sweep removed
+~7,500 ids and ~130 citations, so
 `grep -rE 'fr-[a-z0-9]{3,6}' src docs scripts AGENTS.md CLAUDE.md` finding
-anything but open work is a regression, not a style preference.
+anything but open work is a regression.
 
 ## Branching & Deployment
 
