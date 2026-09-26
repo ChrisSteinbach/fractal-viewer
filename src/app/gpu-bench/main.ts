@@ -52,6 +52,7 @@ import {
   surfaceChaosFrameAcceptance,
   surfaceChaosKernelSpec,
   surfaceChaosMarchAcceptance,
+  surfaceChaosStateBounds,
 } from "./chaos";
 import {
   SURFACE_SCHEDULE_ROW_3D,
@@ -13663,7 +13664,11 @@ async function ensureSurfaceEvalBuffers(
   // Re-wrapped copy: packSurfaceGpuMaps' bare Float32Array type
   // (ArrayBufferLike-backed) doesn't satisfy writeBuffer's non-shared
   // buffer requirement, and the kernel module stays untouched.
-  const mapsData = new Float32Array(packSurfaceGpuMaps(sys.de));
+  const mapsData = new Float32Array(
+    packSurfaceGpuMaps(sys.de, {
+      stateBounds: surfaceChaosStateBounds(sys.de),
+    }),
+  );
   const inputData = new Float32Array(n * 4);
   sys.queries.forEach((q, i) => {
     inputData[i * 4] = q[0];
@@ -13827,7 +13832,11 @@ async function ensureSurface4EvalBuffers(
     cutoff: 0,
   });
   // Re-wrapped copy — see ensureSurfaceEvalBuffers' mapsData note.
-  const mapsData = new Float32Array(packSurfaceGpuMaps4(sys.de));
+  const mapsData = new Float32Array(
+    packSurfaceGpuMaps4(sys.de, {
+      stateBounds: surfaceChaosStateBounds(sys.de),
+    }),
+  );
   const inputData = new Float32Array(n * 4);
   sys.queries.forEach((q, i) => {
     inputData[i * 4] = q[0];
@@ -14037,7 +14046,13 @@ function surfaceFiniteBalloonAbiSpec(
       tiling,
     ),
     maps: new Float32Array(
-      "view4" in sys ? packSurfaceGpuMaps4(sys.de) : packSurfaceGpuMaps(sys.de),
+      "view4" in sys
+        ? packSurfaceGpuMaps4(sys.de, {
+            stateBounds: surfaceChaosStateBounds(sys.de),
+          })
+        : packSurfaceGpuMaps(sys.de, {
+            stateBounds: surfaceChaosStateBounds(sys.de),
+          }),
     ),
     queries,
     cpu,
@@ -15074,6 +15089,7 @@ async function runSurfaceUnprojectLeg(
       : {}),
     ...(sys.de.schedule ? { schedule: surfaceScheduleKernelSpec(sys.de) } : {}),
     ...(sys.de.chaos ? { chaos: surfaceChaosKernelSpec(sys.de) } : {}),
+    stateBounds: surfaceChaosStateBounds(sys.de),
   });
   const { pipeline, compileMs } = await buildSurfacePipeline(
     device,
@@ -15102,7 +15118,13 @@ async function runSurfaceUnprojectLeg(
   );
   // Re-wrapped copy — see ensureSurfaceEvalBuffers' mapsData note.
   const mapsData = new Float32Array(
-    "view4" in sys ? packSurfaceGpuMaps4(sys.de) : packSurfaceGpuMaps(sys.de),
+    "view4" in sys
+      ? packSurfaceGpuMaps4(sys.de, {
+          stateBounds: surfaceChaosStateBounds(sys.de),
+        })
+      : packSurfaceGpuMaps(sys.de, {
+          stateBounds: surfaceChaosStateBounds(sys.de),
+        }),
   );
   const maps = await createSurfaceBuffer(
     device,
@@ -21222,6 +21244,7 @@ async function runSurfaceDeSection(
           sharedFrontier: false,
           bnbStage2: false,
           chaos: surfaceChaosKernelSpec(chaosSystem.de),
+          stateBounds: surfaceChaosStateBounds(chaosSystem.de),
         });
         ({ pipeline: chaosPipeline } = await buildSurfacePipeline(
           device,
@@ -21913,6 +21936,7 @@ async function runSurfaceDeSection(
           sharedFrontier: false,
           bnbStage2: false,
           chaos: surfaceChaosKernelSpec(chaosSystem4.de),
+          stateBounds: surfaceChaosStateBounds(chaosSystem4.de),
         });
         ({ pipeline: chaosPipeline4 } = await buildSurfacePipeline(
           device,

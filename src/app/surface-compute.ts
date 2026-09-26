@@ -3420,6 +3420,19 @@ export class SurfaceComputeRenderer {
     const targetHasLensPost =
       isDescentTarget(target) &&
       (target.de.foldFinal?.postInvM ?? null) !== null;
+    // The per-map STATE-BOUND lane (surface-de-gpu.ts): an xaos descent's
+    // per-component balls, live for the affine ladders the CPU's
+    // `descend`/`descend4` mirror. Same routing as the core pick below —
+    // fold frontiers' oracle reads no state ball, and a hybrid schedule's
+    // level bounds govern instead — so kernel and maps packer agree by
+    // one derivation.
+    const targetStateBounds =
+      (target.kind === "ifs" || target.kind === "ifs4") &&
+      target.de.chaos !== undefined &&
+      (target.de.schedule?.depth ?? 0) === 0 &&
+      (target.kind === "ifs4"
+        ? !deHasFolds4(target.de)
+        : !deHasFolds(target.de));
     const compileEntry = async (
       mode: "march" | "shade",
       slabExt: boolean,
@@ -3542,6 +3555,7 @@ export class SurfaceComputeRenderer {
                 }
               : null
             : null,
+          stateBounds: targetStateBounds,
           width: SURFACE_FOLD_BEAM_WIDTH,
           shadeDeWidth: mode === "shade" ? shadeDeWidth : undefined,
           workgroupSize: SURFACE_COMPUTE_WORKGROUP_SIZE,
@@ -4048,8 +4062,16 @@ export class SurfaceComputeRenderer {
                 // zero stride, the bulb/sphereInversion convention.
                 new Float32Array(SURFACE_GPU_MAP_VEC4 * 4)
               : target.kind === "ifs4"
-                ? new Float32Array(packSurfaceGpuMaps4(target.de))
-                : new Float32Array(packSurfaceGpuMaps(target.de));
+                ? new Float32Array(
+                    packSurfaceGpuMaps4(target.de, {
+                      stateBounds: targetStateBounds,
+                    }),
+                  )
+                : new Float32Array(
+                    packSurfaceGpuMaps(target.de, {
+                      stateBounds: targetStateBounds,
+                    }),
+                  );
     const mapsBuf = device.createBuffer({
       size: mapsData.byteLength,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,

@@ -842,6 +842,12 @@ import type { Vec3 } from "./types";
  *          generated `foldRadiiOf` (`surfaceFoldRadii` field for field)
  *          rather than reading eight packed combinations; a plain-affine
  *          slot carries the classic (0.5, 1, 1) and never reads them.
+ * Under the `stateBounds` option one more vec4f appends after the post
+ * tail (`stateBound` = the per-component fit centre xyz + radius w, zero
+ * radius meaning the global ball) and the affine ladder's ball operands
+ * read the per-state accessors; every other core's source text is
+ * byte-identical to the pre-lane emission (module doc,
+ * docs/surface-gpu-kernels.md).
  * `core: "escape"` shares that layout for its formula CHAIN
  * ({@link packEscapeGpuMaps}) — one entry per LINK in document order,
  * carrying FORWARD affines in r0/r1/r2 and the GLSL `uEscParams` quartet
@@ -869,6 +875,11 @@ import type { Vec3 } from "./types";
  *            `SurfaceFoldRadii` is SHARED by the two oracles, so a 3D
  *            system and its 4D lift cannot disagree about what an absent
  *            field means
+ * Under the `stateBounds` option TWO more vec4f append after the post
+ * tail (`stateBound` = the 4D fit centre xyzw, `stateRadius.x` = its
+ * radius, zero meaning the global ball) — the centre is itself four
+ * components, so one lane cannot hold centre and radius. Every other
+ * core's source text is byte-identical to the pre-lane emission.
  * ONE layout for all three 4D cores, exactly as the 3D GpuMap carries the
  * fold lanes for a core ("affine") that never reads them: the affine4 body
  * reads `p0.x` alone, the fold4 body reads the whole `p0`, and NEITHER
@@ -1215,7 +1226,18 @@ export const SURFACE_GPU_MAP_VEC4 = 10;
  * fold lane's own growth discipline, so every pre-post offset is
  * unchanged. */
 export const SURFACE_GPU_MAP_POST_VEC4 = 3;
+/** vec4f slots of the OPTIONAL per-map STATE-BOUND lane (`stateBound`),
+ * appended after the post tail when {@link SurfaceGpuKernelOptions.stateBounds}
+ * is on and packed by {@link packSurfaceGpuMaps} under the same option:
+ * `xyz` = `SurfaceDEMap.stateBoundCenter`, `w` = `stateBoundRadius`
+ * (zero/absent = the global ball, so a zero lane is value-exact). The
+ * affine ladders read it in place of the global ball wherever the CPU's
+ * `descend`/`refinedCertValue` do; no other core declares it. */
+export const SURFACE_GPU_MAP_STATE_VEC4 = 1;
 export const SURFACE_GPU_MAP_STRIDE_BYTES = SURFACE_GPU_MAP_VEC4 * 16;
+/** Under an explicit state-bounds pack: one appended lane. */
+export const SURFACE_GPU_MAP_STATE_STRIDE_VEC4 =
+  SURFACE_GPU_MAP_VEC4 + SURFACE_GPU_MAP_STATE_VEC4;
 /** vec4f slots per 4D map (`struct GpuMap4`): four invM rows, invT, and
  * the three parameter lanes p0/bnb/p1 (the 4D fold-branch sweep grew it
  * from 6 — the fold lanes the fold4 core decodes, plus the stage-2 lanes
@@ -1226,6 +1248,13 @@ export const SURFACE_GPU_MAP4_VEC4 = 14;
  * rows (4 vec4f) plus the inverse translation (1 vec4f), appended at the
  * struct's end like the 3D tail. */
 export const SURFACE_GPU_MAP4_POST_VEC4 = 5;
+/** Under an explicit state-bounds pack: one appended lane, the 3D
+ * {@link SURFACE_GPU_MAP_STATE_VEC4} one dimension up — except the 4D
+ * fit centre is itself four components, so the lane pair carries the
+ * centre (xyzw) and the radius (next lane's `.x`). */
+export const SURFACE_GPU_MAP4_STATE_VEC4 = 2;
+export const SURFACE_GPU_MAP4_STATE_STRIDE_VEC4 =
+  SURFACE_GPU_MAP4_VEC4 + SURFACE_GPU_MAP4_STATE_VEC4;
 /** Byte size of the ShadeParams uniform (march "unproject" + mode
  * "shade"; layout contract in the module doc). 144 through the fog tint
  * pair, then 160 with `pixelJitter` at 144 — a WGSL uniform struct rounds
@@ -2191,6 +2220,19 @@ export interface SurfaceGpuKernelOptions {
     activeStateCount: number;
     predecessorMasks: ArrayLike<number>;
   } | null;
+  /** Per-map STATE-BOUND lane. When on, `GpuMap`/`GpuMap4` gain one
+   * appended `stateBound: vec4f` member (`xyz` center, `w` radius) and the
+   * affine ladders read it in place of the global ball wherever the CPU's
+   * `descend`/`refinedCertValue` read a `SurfaceDEMap.stateBound*` field —
+   * the multi-component fit that gives each xaos block its own descent
+   * frame. Pack the maps buffer with `packSurfaceGpuMaps`/
+   * `packSurfaceGpuMaps4` under the SAME `{ stateBounds: true }`, or the
+   * stride disagrees; a zero lane falls back to the global ball, so a
+   * DE without per-state bounds renders value for value either way.
+   * Supported by `core: "affine"`/`"affine4"` only (every other core
+   * THROWS: the fold frontiers' oracle reads no state ball). Absent or
+   * false emits the pre-lane source byte for byte. */
+  stateBounds?: boolean;
   /** March-mode ray derivation. "pose" (default) keeps the bench baseline:
    * NDC pixel centers against the pose basis — byte-identical output to
    * the pre-shade-split generator. "unproject" derives rays the GLSL
@@ -3979,20 +4021,37 @@ export function packSurfaceGpuParamsFinite4(
   return buf;
 }
 
+/** Packer options shared by the 3D and 4D map packers. */
+export interface SurfaceGpuMapPackOptions {
+  /** Append the per-map STATE-BOUND lane (`stateBound`) to every record
+   * (maps, schedule suffixes, condensation emitters — zero for the latter
+   * two, which carry no bounds). Pass this exactly when the kernel that
+   * binds the buffer was generated with {@link
+   * SurfaceGpuKernelOptions.stateBounds}: the lane presence IS the record
+   * stride, so a mismatch reads every lane as garbage. Absent/false
+   * reproduces the pre-lane bytes value for value. */
+  stateBounds?: boolean;
+}
+
 /** Pack the per-map storage array (layout contract above). */
-export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
+export function packSurfaceGpuMaps(
+  de: SurfaceDE,
+  options: SurfaceGpuMapPackOptions = {},
+): Float32Array {
   const schedule = surfaceScheduleWireInfo(de);
   const condensation = condensationWireInfo(de);
   const emitterCount = condensation?.emitterCount ?? 0;
   validateSurfacePhysicalMapCount(de, emitterCount);
   const scheduleMapCount = schedule?.mapCount ?? 0;
+  const stride = options.stateBounds
+    ? SURFACE_GPU_MAP_STATE_STRIDE_VEC4
+    : SURFACE_GPU_MAP_VEC4;
   const out = new Float32Array(
-    (de.maps.length + scheduleMapCount + emitterCount) *
-      SURFACE_GPU_MAP_VEC4 *
-      4 || SURFACE_GPU_MAP_VEC4 * 4,
+    (de.maps.length + scheduleMapCount + emitterCount) * stride * 4 ||
+      stride * 4,
   );
   de.maps.forEach((m, j) => {
-    const base = j * SURFACE_GPU_MAP_VEC4 * 4;
+    const base = j * stride * 4;
     out[base + 0] = m.invM[0];
     out[base + 1] = m.invM[1];
     out[base + 2] = m.invM[2];
@@ -4037,12 +4096,20 @@ export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
       out[base + 32 + 1] = 1;
       out[base + 36 + 2] = 1;
     }
+    if (options.stateBounds) {
+      const sb = m.stateBoundCenter;
+      const lane = base + SURFACE_GPU_MAP_VEC4 * 4;
+      out[lane] = sb === undefined ? 0 : sb[0];
+      out[lane + 1] = sb === undefined ? 0 : sb[1];
+      out[lane + 2] = sb === undefined ? 0 : sb[2];
+      out[lane + 3] = m.stateBoundRadius ?? 0;
+    }
   });
   if (schedule) {
     const scheduleMaps = de.schedule?.maps ?? [];
     scheduleMaps.forEach((raw, j) => {
       const m = raw;
-      const base = (de.maps.length + j) * SURFACE_GPU_MAP_VEC4 * 4;
+      const base = (de.maps.length + j) * stride * 4;
       out[base + 0] = m.invM[0];
       out[base + 1] = m.invM[1];
       out[base + 2] = m.invM[2];
@@ -4072,8 +4139,7 @@ export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
   }
   de.condensation?.emitters.forEach((emitter, j) => {
     if (!condensation) return;
-    const base =
-      (de.maps.length + scheduleMapCount + j) * SURFACE_GPU_MAP_VEC4 * 4;
+    const base = (de.maps.length + scheduleMapCount + j) * stride * 4;
     out[base + 0] = emitter.invM[0];
     out[base + 1] = emitter.invM[1];
     out[base + 2] = emitter.invM[2];
@@ -4105,19 +4171,24 @@ export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
  * the fold lanes ride along inert under "affine4" exactly as they do for
  * the 3D "affine" core. Pads to one zero stride when empty, like
  * {@link packSurfaceGpuMaps}. */
-export function packSurfaceGpuMaps4(de: SurfaceDE4): Float32Array {
+export function packSurfaceGpuMaps4(
+  de: SurfaceDE4,
+  options: SurfaceGpuMapPackOptions = {},
+): Float32Array {
   const schedule = surfaceScheduleWireInfo(de);
   const condensation = condensationWireInfo(de);
   const emitterCount = condensation?.emitterCount ?? 0;
   validateSurfacePhysicalMapCount(de, emitterCount);
   const scheduleMapCount = schedule?.mapCount ?? 0;
+  const stride = options.stateBounds
+    ? SURFACE_GPU_MAP4_STATE_STRIDE_VEC4
+    : SURFACE_GPU_MAP4_VEC4;
   const out = new Float32Array(
-    (de.maps.length + scheduleMapCount + emitterCount) *
-      SURFACE_GPU_MAP4_VEC4 *
-      4 || SURFACE_GPU_MAP4_VEC4 * 4,
+    (de.maps.length + scheduleMapCount + emitterCount) * stride * 4 ||
+      stride * 4,
   );
   de.maps.forEach((m, j) => {
-    const base = j * SURFACE_GPU_MAP4_VEC4 * 4;
+    const base = j * stride * 4;
     for (let i = 0; i < 16; i++) {
       out[base + i] = m.invM[i];
     }
@@ -4164,12 +4235,21 @@ export function packSurfaceGpuMaps4(de: SurfaceDE4): Float32Array {
       out[base + 36 + 10] = 1;
       out[base + 36 + 15] = 1;
     }
+    if (options.stateBounds) {
+      const sb = m.stateBoundCenter;
+      const lane = base + SURFACE_GPU_MAP4_VEC4 * 4;
+      out[lane] = sb === undefined ? 0 : sb[0];
+      out[lane + 1] = sb === undefined ? 0 : sb[1];
+      out[lane + 2] = sb === undefined ? 0 : sb[2];
+      out[lane + 3] = sb === undefined ? 0 : sb[3];
+      out[lane + 4] = m.stateBoundRadius ?? 0;
+    }
   });
   if (schedule) {
     const scheduleMaps = de.schedule?.maps ?? [];
     scheduleMaps.forEach((raw, j) => {
       const m = raw;
-      const base = (de.maps.length + j) * SURFACE_GPU_MAP4_VEC4 * 4;
+      const base = (de.maps.length + j) * stride * 4;
       for (let i = 0; i < 16; i++) {
         out[base + i] = m.invM[i];
       }
@@ -4193,8 +4273,7 @@ export function packSurfaceGpuMaps4(de: SurfaceDE4): Float32Array {
   }
   de.condensation?.emitters.forEach((emitter, j) => {
     if (!condensation) return;
-    const base =
-      (de.maps.length + scheduleMapCount + j) * SURFACE_GPU_MAP4_VEC4 * 4;
+    const base = (de.maps.length + scheduleMapCount + j) * stride * 4;
     for (let i = 0; i < 16; i++) {
       out[base + i] = emitter.invM[i];
     }
@@ -5225,6 +5304,30 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
     throw new Error(
       "surface-de-gpu: graph-directed selection is supported only by the " +
         "affine/fold/affine4/fold4 descent cores",
+    );
+  }
+  // Per-state bounds exist for the AFFINE ladders alone — their oracle
+  // (`descend`/`descend4`) is the only one that reads a state ball; a fold
+  // frontier's (`descendFold*`) does not. A mismatch would be a silent
+  // stride disagreement with the packer, so anything else is loud.
+  const stateBounds = opts.stateBounds === true;
+  if (stateBounds && core !== "affine" && core !== "affine4") {
+    throw new Error(
+      "surface-de-gpu: state bounds are supported only by the " +
+        "affine/affine4 cores",
+    );
+  }
+  if (stateBounds && !chaos) {
+    throw new Error(
+      "surface-de-gpu: state bounds require a chaos graph (there is no " +
+        "state to bound without one)",
+    );
+  }
+  if (stateBounds && schedule) {
+    throw new Error(
+      "surface-de-gpu: state bounds are not supported with a hybrid " +
+        "schedule (the scheduled levels' bounds, not the state balls, " +
+        "govern them)",
     );
   }
   // Stage-2's packed center-specific metadata and stationary-root radii do
@@ -6643,10 +6746,10 @@ ${
 }
           let m = maps[j];
           let img = mapApply(m, mapUnpost(m, sQ));
-          let r = length(img - params.boundCenter);
-          let key = pScale * (r - R);
+          let r = length(img - ${stateBounds ? "stateCenterOf(j, params.boundCenter)" : "params.boundCenter"});
+          let key = pScale * (r - ${stateBounds ? "stateRadiusOf(j, R)" : "R"});
           let childScale = pScale * m.p0.x;
-${chaos ? "          let childState = chaosChildState(depth, j);\n" : ""}${condensationHitFold("img", "childScale", "depth + 1u", "best", "childState")}${condensationShapes ? "          let cert = select(childScale * (r - R), 1e30, lastLevel);\n" : ""}          // Top-2 insert-shift; the displaced tuple (or the candidate
+${chaos ? "          let childState = chaosChildState(depth, j);\n" : ""}${condensationHitFold("img", "childScale", "depth + 1u", "best", "childState")}${condensationShapes ? (stateBounds ? `          let cert = select(childScale * (r - stateRadiusOf(j, R)), 1e30, lastLevel);\n` : "          let cert = select(childScale * (r - R), 1e30, lastLevel);\n") : ""}          // Top-2 insert-shift; the displaced tuple (or the candidate
           // itself) spills into the rank-3/4 ladder. Certificates are
           // value-side and trimmed; radii flow through — the spill
           // ladder routes on them.
@@ -6746,10 +6849,10 @@ ${chaos ? "            eState = tState;\n" : ""}
 }          }
 ${
   condensationShapes
-    ? `          if (eR > R && eCert < best) {
+    ? `          if (eR > ${stateBounds ? "stateRadiusOf(eState, R)" : "R"} && eCert < best) {
             best = min(best, refinedCert(eQ, eR, eScale, depth + 1u${chaos ? ", eState" : ""}));
-          } else if (eKey < 1e30 && futureCondensation && eR <= R && !condensationBandOpenAtNextDepth(depth)) {
-            best = min(best, eScale * (eR - R));
+          } else if (eKey < 1e30 && futureCondensation && eR <= ${stateBounds ? "stateRadiusOf(eState, R)" : "R"} && !condensationBandOpenAtNextDepth(depth)) {
+            best = min(best, eScale * (eR - ${stateBounds ? "stateRadiusOf(eState, R)" : "R"}));
           }
 `
     : ""
@@ -6771,11 +6874,11 @@ ${
     if (c1Key < 1e29) {
 ${
   condensationShapes
-    ? `      if (c1R > params.escapeRadius) {
+    ? `      if (c1R > ${stateBounds ? `2.0 * stateRadiusOf(c1State, params.boundingRadius)` : "params.escapeRadius"}) {
         best = min(best, c1Cert);
       } else {
 `
-    : `      if (c1R <= params.escapeRadius) {
+    : `      if (c1R <= ${stateBounds ? `2.0 * stateRadiusOf(c1State, params.boundingRadius)` : "params.escapeRadius"}) {
 `
 }        aQ = c1Q;
         aScale = c1Scale;
@@ -6786,11 +6889,11 @@ ${condensationShapes ? "        aR = c1R;\n" : ""}        aLive = true;
     if (c2Key < 1e29) {
 ${
   condensationShapes
-    ? `      if (c2R > params.escapeRadius) {
+    ? `      if (c2R > ${stateBounds ? `2.0 * stateRadiusOf(c2State, params.boundingRadius)` : "params.escapeRadius"}) {
         best = min(best, c2Cert);
       } else {
 `
-    : `      if (c2R <= params.escapeRadius) {
+    : `      if (c2R <= ${stateBounds ? `2.0 * stateRadiusOf(c2State, params.boundingRadius)` : "params.escapeRadius"}) {
 `
 }        bQ = c2Q;
         bScale = c2Scale;
@@ -6801,13 +6904,13 @@ ${condensationShapes ? "        bR = c2R;\n" : ""}        bLive = true;
     if (c3Key < 1e29) {
 ${
   condensationShapes
-    ? `      if (c3R > R) {
+    ? `      if (c3R > ${stateBounds ? "stateRadiusOf(c3State, R)" : "R"}) {
         if (c3Cert < best) {
           best = min(best, refinedCert(c3Q, c3R, c3Scale, depth + 1u${chaos ? ", c3State" : ""}));
         }
       } else {
 `
-    : `      if (c3R <= R) {
+    : `      if (c3R <= ${stateBounds ? "stateRadiusOf(c3State, R)" : "R"}) {
 `
 }        v1Q = c3Q;
         v1Scale = c3Scale;
@@ -6818,13 +6921,13 @@ ${chaos ? "        v1State = c3State;\n" : ""}
     if (c4Key < 1e29) {
 ${
   condensationShapes
-    ? `      if (c4R > R) {
+    ? `      if (c4R > ${stateBounds ? "stateRadiusOf(c4State, R)" : "R"}) {
         if (c4Cert < best) {
           best = min(best, refinedCert(c4Q, c4R, c4Scale, depth + 1u${chaos ? ", c4State" : ""}));
         }
       } else {
 `
-    : `      if (c4R <= R) {
+    : `      if (c4R <= ${stateBounds ? "stateRadiusOf(c4State, R)" : "R"}) {
 `
 }        v2Q = c4Q;
         v2Scale = c4Scale;
@@ -6836,10 +6939,10 @@ ${condensationShapes ? "    if (lastLevel) {\n      bandEnded = true;\n      bre
 ${
   condensationShapes
     ? `${condensationLiveHitFold("aLive", "aQ", "aScale", "params.maxDepth", "best", "aState")}${condensationLiveHitFold("bLive", "bQ", "bScale", "params.maxDepth", "best", "bState")}${condensationLiveHitFold("v1Live", "v1Q", "v1Scale", "params.maxDepth", "best", "v1State")}${condensationLiveHitFold("v2Live", "v2Q", "v2Scale", "params.maxDepth", "best", "v2State")}  if (aLive && !bandEnded) {
-    best = min(best, aScale * (aR - R));
+    best = min(best, aScale * (aR - ${stateBounds ? "stateRadiusOf(aState, R)" : "R"}));
   }
   if (bLive && !bandEnded) {
-    best = min(best, bScale * (bR - R));
+    best = min(best, bScale * (bR - ${stateBounds ? "stateRadiusOf(bState, R)" : "R"}));
   }
 `
     : ""
@@ -7155,16 +7258,16 @@ ${
           if (segment) {
             imgExt = mapApplyLinear4(m, mapUnpostLinear4(m, sExt));
           }
-          let r = segmentRadius4(img, imgExt);
+          let r = ${stateBounds ? "select(\n            length(img - stateCenterOf4(j, vec4f(0.0))),\n            segmentRadius4(img, imgExt),\n            segment,\n          )" : "segmentRadius4(img, imgExt)"};
+${stateBounds ? `          let boundR = select(R, stateRadiusOf4(j, R), !segment);\n` : ""}`
+    : `          let r = length(${stateBounds ? "img - stateCenterOf4(j, vec4f(0.0))" : "img"});${stateBounds ? `\n          let boundR = stateRadiusOf4(j, R);` : ""}
 `
-    : `          let r = length(img);
-`
-}          let key = pScale * (r - R);
+}          let key = pScale * (r - ${stateBounds ? "boundR" : "R"});
           let childScale = pScale * m.p0.x;
 ${chaos ? "          let childState = chaosChildState(depth, j);\n" : ""}
 ${
   condensationShapes
-    ? `${condensationHitFold("img", "childScale", "depth + 1u", "best", "childState")}          let cert = select(childScale * (r - R), 1e30, lastLevel);
+    ? `${condensationHitFold("img", "childScale", "depth + 1u", "best", "childState")}          let cert = select(childScale * (r - ${stateBounds ? "stateRadiusOf4(j, R)" : "R"}), 1e30, lastLevel);
 `
     : ""
 }${
@@ -7321,10 +7424,10 @@ ${chaos ? "            eState = tState;\n" : ""}
 }          }
 ${
   condensationShapes
-    ? `          if (eR > R && eCert < best) {
+    ? `          if (eR > ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(eState, R), !segment)" : "stateRadiusOf4(eState, R)") : "R"} && eCert < best) {
             best = min(best, refinedCert(eQ, ${slabExt ? "eExt, " : ""}eR, eScale, depth + 1u${chaos ? ", eState" : ""}));
-          } else if (eKey < 1e30 && futureCondensation && eR <= R && !condensationBandOpenAtNextDepth(depth)) {
-            best = min(best, eScale * (eR - R));
+          } else if (eKey < 1e30 && futureCondensation && eR <= ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(eState, R), !segment)" : "stateRadiusOf4(eState, R)") : "R"} && !condensationBandOpenAtNextDepth(depth)) {
+            best = min(best, eScale * (eR - ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(eState, R), !segment)" : "stateRadiusOf4(eState, R)") : "R"}));
           }
 `
     : ""
@@ -7360,11 +7463,11 @@ ${
     if (c1Key < 1e29) {
 ${
   condensationShapes
-    ? `      if (c1R > params.escapeRadius) {
+    ? `      if (c1R > ${stateBounds ? (slabExt ? "select(params.escapeRadius, 2.0 * stateRadiusOf4(c1State, params.boundingRadius), !segment)" : "2.0 * stateRadiusOf4(c1State, params.boundingRadius)") : "params.escapeRadius"}) {
         best = min(best, c1Cert);
       } else {
 `
-    : `      if (c1R <= params.escapeRadius) {
+    : `      if (c1R <= ${stateBounds ? (slabExt ? "select(params.escapeRadius, 2.0 * stateRadiusOf4(c1State, params.boundingRadius), !segment)" : "2.0 * stateRadiusOf4(c1State, params.boundingRadius)") : "params.escapeRadius"}) {
 `
 }        aQ = c1Q;
 ${
@@ -7380,11 +7483,11 @@ ${condensationShapes ? "        aR = c1R;\n" : ""}        aLive = true;
     if (c2Key < 1e29) {
 ${
   condensationShapes
-    ? `      if (c2R > params.escapeRadius) {
+    ? `      if (c2R > ${stateBounds ? (slabExt ? "select(params.escapeRadius, 2.0 * stateRadiusOf4(c2State, params.boundingRadius), !segment)" : "2.0 * stateRadiusOf4(c2State, params.boundingRadius)") : "params.escapeRadius"}) {
         best = min(best, c2Cert);
       } else {
 `
-    : `      if (c2R <= params.escapeRadius) {
+    : `      if (c2R <= ${stateBounds ? (slabExt ? "select(params.escapeRadius, 2.0 * stateRadiusOf4(c2State, params.boundingRadius), !segment)" : "2.0 * stateRadiusOf4(c2State, params.boundingRadius)") : "params.escapeRadius"}) {
 `
 }        bQ = c2Q;
 ${
@@ -7400,13 +7503,13 @@ ${condensationShapes ? "        bR = c2R;\n" : ""}        bLive = true;
     if (c3Key < 1e29) {
 ${
   condensationShapes
-    ? `      if (c3R > R) {
+    ? `      if (c3R > ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(c3State, R), !segment)" : "stateRadiusOf4(c3State, R)") : "R"}) {
         if (c3Cert < best) {
           best = min(best, refinedCert(c3Q, ${slabExt ? "c3Ext, " : ""}c3R, c3Scale, depth + 1u${chaos ? ", c3State" : ""}));
         }
       } else {
 `
-    : `      if (c3R <= R) {
+    : `      if (c3R <= ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(c3State, R), !segment)" : "stateRadiusOf4(c3State, R)") : "R"}) {
 `
 }        v1Q = c3Q;
 ${
@@ -7422,13 +7525,13 @@ ${chaos ? "        v1State = c3State;\n" : ""}
     if (c4Key < 1e29) {
 ${
   condensationShapes
-    ? `      if (c4R > R) {
+    ? `      if (c4R > ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(c4State, R), !segment)" : "stateRadiusOf4(c4State, R)") : "R"}) {
         if (c4Cert < best) {
           best = min(best, refinedCert(c4Q, ${slabExt ? "c4Ext, " : ""}c4R, c4Scale, depth + 1u${chaos ? ", c4State" : ""}));
         }
       } else {
 `
-    : `      if (c4R <= R) {
+    : `      if (c4R <= ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(c4State, R), !segment)" : "stateRadiusOf4(c4State, R)") : "R"}) {
 `
 }        v2Q = c4Q;
 ${
@@ -7445,10 +7548,10 @@ ${condensationShapes ? "    if (lastLevel) {\n      bandEnded = true;\n      bre
 ${
   condensationShapes
     ? `${condensationLiveHitFold("aLive", "aQ", "aScale", "params.maxDepth", "best", "aState")}${condensationLiveHitFold("bLive", "bQ", "bScale", "params.maxDepth", "best", "bState")}${condensationLiveHitFold("v1Live", "v1Q", "v1Scale", "params.maxDepth", "best", "v1State")}${condensationLiveHitFold("v2Live", "v2Q", "v2Scale", "params.maxDepth", "best", "v2State")}  if (aLive && !bandEnded) {
-    best = min(best, aScale * (aR - R));
+    best = min(best, aScale * (aR - ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(aState, R), !segment)" : "stateRadiusOf4(aState, R)") : "R"}));
   }
   if (bLive && !bandEnded) {
-    best = min(best, bScale * (bR - R));
+    best = min(best, bScale * (bR - ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(bState, R), !segment)" : "stateRadiusOf4(bState, R)") : "R"}));
   }
 `
     : ""
@@ -12532,7 +12635,16 @@ struct GpuMap4 {
   postI1: vec4f,
   postI2: vec4f,
   postI3: vec4f,
-  postT: vec4f,
+  postT: vec4f,${
+    stateBounds
+      ? `
+  // The per-map STATE BOUND one dimension up (the affine4 ladder's
+  // per-component descent frame): the fit centre (xyzw) and its radius in
+  // the next lane's .x; a zero radius means the global ball.
+  stateBound: vec4f,
+  stateRadius: vec4f,`
+      : ""
+  }
 }`
         : /* wgsl */ `
 
@@ -12549,7 +12661,14 @@ struct GpuMap {
   // the unconditional apply is value-exact.
   postI0: vec4f,
   postI1: vec4f,
-  postI2: vec4f,
+  postI2: vec4f,${
+    stateBounds
+      ? `
+  // The per-map STATE BOUND (the affine ladder's per-component descent
+  // frame): xyz center, w radius; a zero lane means the global ball.
+  stateBound: vec4f,`
+      : ""
+  }
 }`
   }
 
@@ -12849,6 +12968,51 @@ fn chaosAllows(source: u32, current: u32) -> bool {
 
 fn chaosChildState(depth: u32, source: u32) -> u32 {
   return ${schedule ? "select(source, CHAOS_WILDCARD, depth < params.scheduleDepth)" : "source"};
+}
+`
+    : "";
+
+  // The per-map STATE BOUND accessors (the affine ladders' per-component
+  // descent frame, gated by `stateBounds`): a zero lane means "no
+  // per-component fit", so the fallback is the global ball value for
+  // value. The CHAIN accessors take a state index: states index the
+  // recursive map records, while emitter states past them and the idle
+  // wildcard take the fallback (the CPU's `state >= 0 &&
+  // de.maps[state] !== undefined` guard).
+  const stateBoundHelperText = stateBounds
+    ? core4
+      ? /* wgsl */ `
+fn stateCenterOf4(state: u32, fallback: vec4f) -> vec4f {
+  if (state >= params.mapCount) {
+    return fallback;
+  }
+  let bound = maps[state];
+  return select(fallback, bound.stateBound, bound.stateRadius.x > 0.0);
+}
+
+fn stateRadiusOf4(state: u32, fallback: f32) -> f32 {
+  if (state >= params.mapCount) {
+    return fallback;
+  }
+  let bound = maps[state].stateRadius.x;
+  return select(fallback, bound, bound > 0.0);
+}
+`
+      : /* wgsl */ `
+fn stateCenterOf(state: u32, fallback: vec3f) -> vec3f {
+  if (state >= params.mapCount) {
+    return fallback;
+  }
+  let bound = maps[state];
+  return select(fallback, bound.stateBound.xyz, bound.stateBound.w > 0.0);
+}
+
+fn stateRadiusOf(state: u32, fallback: f32) -> f32 {
+  if (state >= params.mapCount) {
+    return fallback;
+  }
+  let bound = maps[state].stateBound.w;
+  return select(fallback, bound, bound > 0.0);
 }
 `
     : "";
@@ -13366,11 +13530,11 @@ ${
       let jImg = mapApply(m, mapUnpost(m, sImg));
       inner = min(
         inner,
-        m.p0.x * (length(jImg - params.boundCenter) - params.boundingRadius),
+        m.p0.x * (length(jImg - ${stateBounds ? "stateCenterOf(j, params.boundCenter)" : "params.boundCenter"}) - ${stateBounds ? "stateRadiusOf(j, params.boundingRadius)" : "params.boundingRadius"}),
       );
     }
   }
-  return childScale * max(r - params.boundingRadius, inner);
+  return childScale * max(r - ${stateBounds ? "stateRadiusOf(currentState, params.boundingRadius)" : "params.boundingRadius"}, inner);
 }
 
 fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
@@ -13509,8 +13673,8 @@ ${
 }
           let m = maps[j];
           let img = mapApply(m, mapUnpost(m, sQ));
-          let r = length(img - params.boundCenter);
-          let key = pScale * (r - R);
+          let r = length(img - ${stateBounds ? "stateCenterOf(j, params.boundCenter)" : "params.boundCenter"});
+          let key = pScale * (r - ${stateBounds ? "stateRadiusOf(j, R)" : "R"});
           let childScale = pScale * m.p0.x;
 ${chaos ? "          let childState = chaosChildState(depth, j);\n" : ""}
 ${
@@ -13518,7 +13682,7 @@ ${
     ? `          best = min(best, condensationTerm(img, childScale, depth + 1u${chaos ? ", childState" : ""}));
 `
     : ""
-}${condensationShapes ? "          let cert = select(childScale * (r - R), 1e30, lastLevel);\n" : "          let cert = childScale * (r - R);\n"}          // Exactly one tuple leaves the top-2 ladder per candidate —
+}${condensationShapes ? (stateBounds ? `          let cert = select(childScale * (r - stateRadiusOf(j, R)), 1e30, lastLevel);\n` : "          let cert = select(childScale * (r - R), 1e30, lastLevel);\n") : stateBounds ? `          let cert = childScale * (r - stateRadiusOf(j, R));\n` : "          let cert = childScale * (r - R);\n"}          // Exactly one tuple leaves the top-2 ladder per candidate —
           // the displaced runner-up, or the candidate itself. It spills
           // into the rank-3/4 ladder or folds below; empty-slot
           // sentinels flow through both harmlessly (key 1e30 never
@@ -13616,7 +13780,7 @@ ${chaos ? "            eState = tState;\n" : ""}
           // oracle's laziness guard, bit-exact); an in-sphere tuple
           // carries no positive certificate — it can only get here past
           // FOUR smaller keys, the shrunken validity-slot residual drop.
-          if (eR > R && eCert < best) {
+          if (eR > ${stateBounds ? "stateRadiusOf(eState, R)" : "R"} && eCert < best) {
             best = min(best, refinedCert(eQ, eR, eScale${
               condensationShapes || schedule || chaos ? ", depth + 1u" : ""
             }${chaos ? ", eState" : ""}));
@@ -13634,8 +13798,8 @@ ${chaos ? "            eState = tState;\n" : ""}
             }
           }${
             condensationShapes
-              ? ` else if (eKey < 1e30 && futureCondensation && eR <= R && !condensationBandOpenAtNextDepth(depth)) {
-            best = min(best, eScale * (eR - R));
+              ? ` else if (eKey < 1e30 && futureCondensation && eR <= ${stateBounds ? "stateRadiusOf(eState, R)" : "R"} && !condensationBandOpenAtNextDepth(depth)) {
+            best = min(best, eScale * (eR - ${stateBounds ? "stateRadiusOf(eState, R)" : "R"}));
           }`
               : ""
           }
@@ -13653,7 +13817,7 @@ ${chaos ? "            eState = tState;\n" : ""}
     v1Live = false;
     v2Live = false;
     if (c1Key < 1e29) {
-      if (c1R > params.escapeRadius) {
+      if (c1R > ${stateBounds ? `2.0 * stateRadiusOf(c1State, params.boundingRadius)` : "params.escapeRadius"}) {
         best = min(best, c1Cert);
       } else {
         aQ = c1Q;
@@ -13664,7 +13828,7 @@ ${chaos ? "        aState = c1State;\n" : ""}
       }
     }
     if (c2Key < 1e29) {
-      if (c2R > params.escapeRadius) {
+      if (c2R > ${stateBounds ? `2.0 * stateRadiusOf(c2State, params.boundingRadius)` : "params.escapeRadius"}) {
         best = min(best, c2Cert);
       } else {
         bQ = c2Q;
@@ -13675,7 +13839,7 @@ ${chaos ? "        bState = c2State;\n" : ""}
       }
     }
     if (c3Key < 1e29) {
-      if (c3R > R) {
+      if (c3R > ${stateBounds ? "stateRadiusOf(c3State, R)" : "R"}) {
         if (c3Cert < best) {
           best = min(best, refinedCert(c3Q, c3R, c3Scale${
             condensationShapes || schedule || chaos ? ", depth + 1u" : ""
@@ -13689,7 +13853,7 @@ ${chaos ? "        v1State = c3State;\n" : ""}
       }
     }
     if (c4Key < 1e29) {
-      if (c4R > R) {
+      if (c4R > ${stateBounds ? "stateRadiusOf(c4State, R)" : "R"}) {
         if (c4Cert < best) {
           best = min(best, refinedCert(c4Q, c4R, c4Scale${
             condensationShapes || schedule || chaos ? ", depth + 1u" : ""
@@ -13737,10 +13901,10 @@ ${
 `
     : ""
 }  if (${condensationShapes ? "aLive && !bandEnded" : "aLive"}) {
-    best = min(best, aScale * (aR - R));
+    best = min(best, aScale * (aR - ${stateBounds ? "stateRadiusOf(aState, R)" : "R"}));
   }
   if (${condensationShapes ? "bLive && !bandEnded" : "bLive"}) {
-    best = min(best, bScale * (bR - R));
+    best = min(best, bScale * (bR - ${stateBounds ? "stateRadiusOf(bState, R)" : "R"}));
   }
   return max(best, sphereBound) * params.finalSigmaMin;
 }`;
@@ -13847,14 +14011,14 @@ ${
         inner,
 ${
   slabExt
-    ? `        m.p0.x * (segmentRadius4(jImg, jExt) - params.boundingRadius),
+    ? `${stateBounds ? `        m.p0.x * (select(segmentRadius4(jImg, jExt), length(jImg - stateCenterOf4(j, vec4f(0.0))), !segment) - select(params.boundingRadius, stateRadiusOf4(j, params.boundingRadius), !segment)),` : `        m.p0.x * (segmentRadius4(jImg, jExt) - params.boundingRadius),`}
 `
-    : `        m.p0.x * (length(jImg) - params.boundingRadius),
+    : `${stateBounds ? `        m.p0.x * (length(jImg - stateCenterOf4(j, vec4f(0.0))) - stateRadiusOf4(j, params.boundingRadius)),` : `        m.p0.x * (length(jImg) - params.boundingRadius),`}
 `
 }      );
     }
   }
-  return childScale * max(r - params.boundingRadius, inner);
+  return childScale * max(r - ${stateBounds ? (slabExt ? "select(params.boundingRadius, stateRadiusOf4(currentState, params.boundingRadius), !segment)" : "stateRadiusOf4(currentState, params.boundingRadius)") : "params.boundingRadius"}, inner);
 }
 
 fn surfaceDE(${core4Params("pIn", slabExt, lens)}, cutoff: f32, li: u32) -> f32 {
@@ -14134,11 +14298,11 @@ ${
           if (segment) {
             imgExt = mapApplyLinear4(m, mapUnpostLinear4(m, sExt));
           }
-          let r = segmentRadius4(img, imgExt);
+          let r = ${stateBounds ? "select(\n            length(img - stateCenterOf4(j, vec4f(0.0))),\n            segmentRadius4(img, imgExt),\n            segment,\n          )" : "segmentRadius4(img, imgExt)"};
+${stateBounds ? `          let boundR = select(R, stateRadiusOf4(j, R), !segment);\n` : ""}`
+    : `          let r = length(${stateBounds ? "img - stateCenterOf4(j, vec4f(0.0))" : "img"});${stateBounds ? `\n          let boundR = stateRadiusOf4(j, R);` : ""}
 `
-    : `          let r = length(img);
-`
-}          let key = pScale * (r - R);
+}          let key = pScale * (r - ${stateBounds ? "boundR" : "R"});
           let childScale = pScale * m.p0.x;
 ${chaos ? "          let childState = chaosChildState(depth, j);\n" : ""}
 ${
@@ -14146,7 +14310,7 @@ ${
     ? `          best = min(best, condensationTerm(img, childScale, depth + 1u${chaos ? ", childState" : ""}));
 `
     : ""
-}${condensationShapes ? "          let cert = select(childScale * (r - R), 1e30, lastLevel);\n" : "          let cert = childScale * (r - R);\n"}          // Exactly one tuple leaves the top-2 ladder per candidate —
+}${condensationShapes ? (stateBounds ? `          let cert = select(childScale * (r - stateRadiusOf4(j, R)), 1e30, lastLevel);\n` : "          let cert = select(childScale * (r - R), 1e30, lastLevel);\n") : stateBounds ? `          let cert = childScale * (r - stateRadiusOf4(j, R));\n` : "          let cert = childScale * (r - R);\n"}          // Exactly one tuple leaves the top-2 ladder per candidate —
           // the displaced runner-up, or the candidate itself. It spills
           // into the rank-3/4 ladder or folds below; empty-slot
           // sentinels flow through both harmlessly (key 1e30 never
@@ -14320,7 +14484,7 @@ ${chaos ? "            eState = tState;\n" : ""}
           // tuple carries no positive certificate — it can only get
           // here past FOUR smaller keys, the shrunken validity-slot
           // residual drop.
-          if (eR > R && eCert < best) {
+          if (eR > ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(eState, R), !segment)" : "stateRadiusOf4(eState, R)") : "R"} && eCert < best) {
 ${
   slabExt
     ? `            best = min(best, refinedCert(eQ, eExt, eR, eScale${
@@ -14345,8 +14509,8 @@ ${
             }
           }${
             condensationShapes
-              ? ` else if (eKey < 1e30 && futureCondensation && eR <= R && !condensationBandOpenAtNextDepth(depth)) {
-            best = min(best, eScale * (eR - R));
+              ? ` else if (eKey < 1e30 && futureCondensation && eR <= ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(eState, R), !segment)" : "stateRadiusOf4(eState, R)") : "R"} && !condensationBandOpenAtNextDepth(depth)) {
+            best = min(best, eScale * (eR - ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(eState, R), !segment)" : "stateRadiusOf4(eState, R)") : "R"}));
           }`
               : ""
           }
@@ -14364,7 +14528,7 @@ ${
     v1Live = false;
     v2Live = false;
     if (c1Key < 1e29) {
-      if (c1R > params.escapeRadius) {
+      if (c1R > ${stateBounds ? (slabExt ? "select(params.escapeRadius, 2.0 * stateRadiusOf4(c1State, params.boundingRadius), !segment)" : "2.0 * stateRadiusOf4(c1State, params.boundingRadius)") : "params.escapeRadius"}) {
         best = min(best, c1Cert);
       } else {
         aQ = c1Q;
@@ -14380,7 +14544,7 @@ ${chaos ? "        aState = c1State;\n" : ""}
       }
     }
     if (c2Key < 1e29) {
-      if (c2R > params.escapeRadius) {
+      if (c2R > ${stateBounds ? (slabExt ? "select(params.escapeRadius, 2.0 * stateRadiusOf4(c2State, params.boundingRadius), !segment)" : "2.0 * stateRadiusOf4(c2State, params.boundingRadius)") : "params.escapeRadius"}) {
         best = min(best, c2Cert);
       } else {
         bQ = c2Q;
@@ -14396,7 +14560,7 @@ ${chaos ? "        bState = c2State;\n" : ""}
       }
     }
     if (c3Key < 1e29) {
-      if (c3R > R) {
+      if (c3R > ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(c3State, R), !segment)" : "stateRadiusOf4(c3State, R)") : "R"}) {
         if (c3Cert < best) {
 ${
   slabExt
@@ -14422,7 +14586,7 @@ ${chaos ? "        v1State = c3State;\n" : ""}
       }
     }
     if (c4Key < 1e29) {
-      if (c4R > R) {
+      if (c4R > ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(c4State, R), !segment)" : "stateRadiusOf4(c4State, R)") : "R"}) {
         if (c4Cert < best) {
 ${
   slabExt
@@ -14482,10 +14646,10 @@ ${
 `
     : ""
 }  if (${condensationShapes ? "aLive && !bandEnded" : "aLive"}) {
-    best = min(best, aScale * (aR - R));
+    best = min(best, aScale * (aR - ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(aState, R), !segment)" : "stateRadiusOf4(aState, R)") : "R"}));
   }
   if (${condensationShapes ? "bLive && !bandEnded" : "bLive"}) {
-    best = min(best, bScale * (bR - R));
+    best = min(best, bScale * (bR - ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(bState, R), !segment)" : "stateRadiusOf4(bState, R)") : "R"}));
   }
   return max(best, sphereBound) * params.final4SigmaMin;
 }`;
@@ -16423,7 +16587,7 @@ ${tilingProbeWrapText}`
   return surfaceDEMarchLens(pIn, cutoff, li);
 }`;
 
-  return /* wgsl */ `${headerText}${tilingFoldText}${latticeCarrierText}${tilingClipText}${scheduleHelperText}${chaosHelperText}
+  return /* wgsl */ `${headerText}${tilingFoldText}${latticeCarrierText}${tilingClipText}${scheduleHelperText}${chaosHelperText}${stateBoundHelperText}
 
 ${meshSdfHelperText}${trapGeometryHelperText}${condensationHelperText}${tiledBodyBlock}${marchSample ? `\n${balloon ? inversionDistanceShaderSource("wgsl") : ""}\n${sampleLensText}\n${sampleOuterText}` : ""}
 ${finiteCore && mode === "march" ? `${finiteGeneral ? finiteSolidGeneralTransportSource(core4 ? 4 : 3, finiteGeneral, finiteLevel ?? 0) : finiteSolidTransportSource(core4 ? 4 : 3, opts.finiteCacheCrossings)}\n` : ""}${entry}
