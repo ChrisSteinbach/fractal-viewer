@@ -5859,6 +5859,19 @@ ${
     : "  return params.mapCount > 0u && max(childDepth + 1u, params.condDepthMin) <= params.condDepthMax;"
 }
 }
+
+// The affine descent's firstCondensationDepth gate: the band is enabled
+// at the candidate level AFTER loopDepth. An evicted in-ball subtree may
+// only fold its enclosing-ball terminal before that point; afterwards the
+// candidate's own C0 term already spoke, and the loose enclosure would
+// otherwise read as a hit across its whole interior.
+fn condensationBandOpenAtNextDepth(loopDepth: u32) -> bool {
+${
+  schedule
+    ? "  return loopDepth + 1u >= params.condDepthMin + params.scheduleDepth;"
+    : "  return loopDepth + 1u >= params.condDepthMin;"
+}
+}
 `
     : "";
   // Shade-only descents must carry the winning C0 emitter's shade slot,
@@ -6735,7 +6748,7 @@ ${
   condensationShapes
     ? `          if (eR > R && eCert < best) {
             best = min(best, refinedCert(eQ, eR, eScale, depth + 1u${chaos ? ", eState" : ""}));
-          } else if (eKey < 1e30 && futureCondensation && eR <= R) {
+          } else if (eKey < 1e30 && futureCondensation && eR <= R && !condensationBandOpenAtNextDepth(depth)) {
             best = min(best, eScale * (eR - R));
           }
 `
@@ -7310,7 +7323,7 @@ ${
   condensationShapes
     ? `          if (eR > R && eCert < best) {
             best = min(best, refinedCert(eQ, ${slabExt ? "eExt, " : ""}eR, eScale, depth + 1u${chaos ? ", eState" : ""}));
-          } else if (eKey < 1e30 && futureCondensation && eR <= R) {
+          } else if (eKey < 1e30 && futureCondensation && eR <= R && !condensationBandOpenAtNextDepth(depth)) {
             best = min(best, eScale * (eR - R));
           }
 `
@@ -13621,7 +13634,7 @@ ${chaos ? "            eState = tState;\n" : ""}
             }
           }${
             condensationShapes
-              ? ` else if (eKey < 1e30 && futureCondensation && eR <= R) {
+              ? ` else if (eKey < 1e30 && futureCondensation && eR <= R && !condensationBandOpenAtNextDepth(depth)) {
             best = min(best, eScale * (eR - R));
           }`
               : ""
@@ -14332,7 +14345,7 @@ ${
             }
           }${
             condensationShapes
-              ? ` else if (eKey < 1e30 && futureCondensation && eR <= R) {
+              ? ` else if (eKey < 1e30 && futureCondensation && eR <= R && !condensationBandOpenAtNextDepth(depth)) {
             best = min(best, eScale * (eR - R));
           }`
               : ""

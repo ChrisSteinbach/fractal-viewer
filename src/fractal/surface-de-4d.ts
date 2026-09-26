@@ -3009,6 +3009,10 @@ function descend4(
 
   const R = de.boundingRadius;
   const condensation = de.condensation;
+  // The 3D body's `firstCondensationDepth` gate, verbatim.
+  const firstCondensationDepth = condensation
+    ? condensation.depthBand.minDepth + (de.schedule?.depth ?? 0)
+    : Infinity;
   const startR = segmentRadius(x, y, z, w, ext);
   const sphereBound = startR - R;
   const wide = de.beamWidth > 1;
@@ -3438,7 +3442,12 @@ function descend4(
           // certificate — on widths 3/4 it can only get here past FOUR
           // smaller keys, the (shrunken) residual drop the slots exist for.
           if (eR > R && eCert < best) best = eCert;
-          else if (eKey < Infinity && futureCondensation && eR <= R) {
+          else if (
+            eKey < Infinity &&
+            futureCondensation &&
+            eR <= R &&
+            depth + 1 < firstCondensationDepth
+          ) {
             const subtree = eScale * (eR - R);
             if (subtree < best) best = subtree;
           }
@@ -3473,7 +3482,12 @@ function descend4(
     if (c2Key < Infinity) {
       if (!wide || c2R > escapeRadius) {
         if (c2R > R && c2Cert < best) best = c2Cert;
-        else if (!wide && futureCondensation && c2R <= R) {
+        else if (
+          !wide &&
+          futureCondensation &&
+          c2R <= R &&
+          depth + 1 < firstCondensationDepth
+        ) {
           const subtree = c2Scale * (c2R - R);
           if (subtree < best) best = subtree;
         }
@@ -3834,6 +3848,10 @@ function descend4Refined(
 
   const R = de.boundingRadius;
   const condensation = de.condensation;
+  // The 3D body's `firstCondensationDepth` gate, verbatim.
+  const firstCondensationDepth = condensation
+    ? condensation.depthBand.minDepth + (de.schedule?.depth ?? 0)
+    : Infinity;
   const startR = segmentRadius(x, y, z, w, ext);
   const sphereBound = startR - R;
   const wide = de.beamWidth > 1;
@@ -4432,7 +4450,12 @@ function descend4Refined(
                 return descentValue(best, sphereBound, finalScale);
               }
             }
-          } else if (eKey < Infinity && futureCondensation && eR <= R) {
+          } else if (
+            eKey < Infinity &&
+            futureCondensation &&
+            eR <= R &&
+            depth + 1 < firstCondensationDepth
+          ) {
             const subtree = eScale * (eR - R);
             if (subtree < best) best = subtree;
           }
@@ -4480,7 +4503,11 @@ function descend4Refined(
             c2State,
           );
           if (rc < best) best = rc;
-        } else if (futureCondensation && c2R <= R) {
+        } else if (
+          futureCondensation &&
+          c2R <= R &&
+          depth + 1 < firstCondensationDepth
+        ) {
           const subtree = c2Scale * (c2R - R);
           if (subtree < best) best = subtree;
         }

@@ -1268,6 +1268,28 @@ local w=0 rather than extruding it. A nonzero 4D slice thickness is refused.
 Hit-info carries the winning emitter's shade index, so base color, pattern and
 finish all read the emitter slot that actually supplied the minimum.
 
+AN EVICTED IN-BALL SUBTREE MAY ONLY FOLD ITS BALL TERMINAL BEFORE THE BAND
+OPENS. The eviction terminal `scale * (radius - R)` is the distance to the
+invariant ball enclosing the subtree's enabled descendants — a sound lower
+bound, but not a hit signal, because that ball encloses the whole attractor
+and any query inside it reads as a hit. A two-cluster xaos document with two
+emitters (band `minDepth 1 / maxDepth 24`, ten recursive maps against the
+width-4 beam) inflated the analytic ball to `R = 4.226` against a ~2.42
+probe-fit enclosure: the CPU oracle returned plain/refined `-0.828` at a
+point whose sampled-cloud clearance is `+0.176`, so the whole ball rendered
+as one surface. Once the candidate's own level is band-enabled its C0 term
+has already been folded at generation, and the terminal is redundant; only
+the pre-band levels, which no C0 term can speak for, keep it. The gate is
+one shared predicate (`condensationBandOpenAtNextDepth`) mirrored in the CPU
+oracles, both fragment tracers and the WGSL cores. It leaves the closed-band
+adversary intact (`surface-de.test.ts` "evaluates every child C0 before beam
+pruning and covers evicted future bands") and is pinned by the open-band
+regression beside it ("never folds an evicted in-ball subtree's enclosing
+ball as a hit once the band is open": a gearworks plus remote-contraction
+void probe measured `-0.221` before the gate and positive after). The
+condensation harness's coverage figures are unchanged (its four-map systems
+never evict).
+
 Mesh-bearing trap or condensation bodies call the same catalog-indexed
 `shapeMeshSdf` seam. The material lazily creates one cached 64³ R32F
 `Data3DTexture`; one `sampler3D` and one eight-`texelFetch` manual trilinear
@@ -1286,8 +1308,8 @@ compile it. Balloon and the surface grid remain admissible because both wrap
 or sample the same condensation-aware public estimator.
 
 Source-size verification on the landed generator (resolved / emitted bytes):
-3D condensation 90,873 / 35,304; 3D condensation + finish 93,274 / 36,415;
-4D condensation 68,213 / 20,573; 4D condensation + finish 69,328 / 21,612.
+3D condensation 92,067 / 35,524; 3D condensation + finish 94,468 / 36,635;
+4D condensation 69,529 / 20,970; 4D condensation + finish 71,460 / 22,453.
 Every emitted program stays below 65,536 bytes. As a feature-off control,
 escape + finish remains 59,134 / 59,134 bytes.
 

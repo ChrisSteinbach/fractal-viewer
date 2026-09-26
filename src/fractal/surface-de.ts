@@ -3687,6 +3687,17 @@ function descend(
   const R = de.boundingRadius;
   const [bcX, bcY, bcZ] = de.boundCenter;
   const condensation = de.condensation;
+  // Absolute depth of the band's FIRST enabled level. An evicted in-ball
+  // candidate whose own level is already enabled had its C0 term folded at
+  // generation (the candidate loop's `shapeTerm`), so the invariant-ball
+  // terminal the eviction would add is redundant there — and, because the
+  // ball encloses the whole attractor, it is a HIT over every query inside
+  // it, fabricating a surface across voids whenever the ball is loose
+  // (multi-cluster bounds). It survives only for the pre-band levels, where
+  // no C0 term can speak for the subtree at all.
+  const firstCondensationDepth = condensation
+    ? condensation.depthBand.minDepth + (de.schedule?.depth ?? 0)
+    : Infinity;
   const startR = Math.hypot(x - bcX, y - bcY, z - bcZ);
   const sphereBound = startR - R;
   const wide = de.beamWidth > 1;
@@ -4103,10 +4114,18 @@ function descend(
                 return descentValue(best, sphereBound, finalScale);
               }
             }
-          } else if (eKey < Infinity && futureCondensation && eR <= R) {
-            // Immediate C0 was evaluated above.  If this evicted in-ball
-            // subtree can still reach a later enabled C0, its invariant-ball
-            // terminal is the conservative certificate for all descendants.
+          } else if (
+            eKey < Infinity &&
+            futureCondensation &&
+            eR <= R &&
+            depth + 1 < firstCondensationDepth
+          ) {
+            // Pre-band eviction: no C0 term can speak for this subtree yet
+            // (its own level is disabled), so the invariant-ball terminal
+            // stands in for the first enabled stamps. Once the band opens
+            // at the candidate's level the immediate term above has already
+            // covered its own stamp and this terminal is suppressed — see
+            // `firstCondensationDepth`.
             const subtree = eScale * (eR - R);
             if (subtree < best) best = subtree;
           }
@@ -4161,7 +4180,11 @@ function descend(
               )
             : c2Cert;
           if (folded < best) best = folded;
-        } else if (futureCondensation && c2R <= R) {
+        } else if (
+          futureCondensation &&
+          c2R <= R &&
+          depth + 1 < firstCondensationDepth
+        ) {
           const subtree = c2Scale * (c2R - R);
           if (subtree < best) best = subtree;
         }
@@ -4504,6 +4527,13 @@ function descendFold(
   const R = de.boundingRadius;
   const [bcX, bcY, bcZ] = de.boundCenter;
   const condensation = de.condensation;
+  // The affine body's `firstCondensationDepth` gate, verbatim: the in-ball
+  // eviction terminal is suppressed once the band is open at the
+  // candidate's own level (its C0 term already spoke), where the enclosing
+  // ball would otherwise read as a hit across its whole interior.
+  const firstCondensationDepth = condensation
+    ? condensation.depthBand.minDepth + (de.schedule?.depth ?? 0)
+    : Infinity;
   const startR = Math.hypot(x - bcX, y - bcY, z - bcZ);
   const sphereBound = startR - R;
   let best = Infinity;
@@ -5105,7 +5135,10 @@ function descendFold(
                     }
                   }
                 }
-              } else if (futureCondensation) {
+              } else if (
+                futureCondensation &&
+                depth + 1 < firstCondensationDepth
+              ) {
                 const subtree = evScale * (evR - R);
                 if (subtree < best) best = subtree;
                 if (best <= sphereBound || best * finalScale < bailBelow) {

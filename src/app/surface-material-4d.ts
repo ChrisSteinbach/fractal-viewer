@@ -385,6 +385,15 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     return loopDepth + 1 < 0 ||
       (mapCount > 0 && max(loopDepth + 2, uCondMinDepth) <= uCondMaxDepth);
   }
+  /** The affine descent's firstCondensationDepth gate, the 3D tracer's
+   * condensationBandOpenAtNextDepth one dimension up. */
+  bool condensationBandOpenAtNextDepth4(int loopDepth) {
+#if SURFACE_SCHEDULE
+    return loopDepth + 1 >= uCondMinDepth + uScheduleDepth;
+#else
+    return loopDepth + 1 >= uCondMinDepth;
+#endif
+  }
   void condensationFold4(
     vec4 q,
     float scale,
@@ -1339,10 +1348,12 @@ uniform float uBalloonPaletteEnabled;
               }
 #if SURFACE_CONDENSATION
 #if SURFACE_SCHEDULE
-            } else if (eKey < 1e29 && futureCondensation && eR <= childBound.x) {
+            } else if (eKey < 1e29 && futureCondensation && eR <= childBound.x &&
+                       !condensationBandOpenAtNextDepth4(depth)) {
               best = min(best, eScale * (eR - childBound.x));
 #else
-            } else if (eKey < 1e29 && futureCondensation && eR <= uBoundingRadius) {
+            } else if (eKey < 1e29 && futureCondensation && eR <= uBoundingRadius &&
+                       !condensationBandOpenAtNextDepth4(depth)) {
               best = min(best, eScale * (eR - uBoundingRadius));
 #endif
 #endif
@@ -2033,10 +2044,12 @@ uniform float uBalloonPaletteEnabled;
 #endif
 #if SURFACE_CONDENSATION
 #if SURFACE_SCHEDULE
-            } else if (eKey < 1e29 && futureCondensation && eR <= childBound.x) {
+            } else if (eKey < 1e29 && futureCondensation && eR <= childBound.x &&
+                       !condensationBandOpenAtNextDepth4(depth)) {
               best = min(best, eScale * (eR - childBound.x));
 #else
-            } else if (eKey < 1e29 && futureCondensation && eR <= uBoundingRadius) {
+            } else if (eKey < 1e29 && futureCondensation && eR <= uBoundingRadius &&
+                       !condensationBandOpenAtNextDepth4(depth)) {
               best = min(best, eScale * (eR - uBoundingRadius));
 #endif
 #endif
