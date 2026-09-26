@@ -224,6 +224,14 @@ the CPU descents, both GLSL arms (value and hit-info) and the WGSL
 affine/affine4 value and hit-info bodies, gated on the emitted condensation
 text. Unbounded bands and emitter-only systems never reach it. The fold
 frontier's port is owed (fr-kg89).
+THE EVICTED-SUBTREE BALL TERMINAL is gated the same way and for the
+complementary reason: it folds only before the band opens at the
+candidate's level, where no C0 term can speak for the subtree. Once the
+band is enabled there, the terminal's enclosing ball spans the whole
+attractor and fabricated a surface across its interior. The WGSL cores
+carry the shared `condensationBandOpenAtNextDepth` predicate; the measured
+before/after and the regression are recorded in
+[Surface GLSL tracers](surface-glsl-tracers.md#condensation-shape-arm).
 Balloon needs no kernel fork: it
 wraps the same public estimator, and the existing balloon/plane mutual
 exclusion still applies. The separate 3D fragment-side grid also samples that

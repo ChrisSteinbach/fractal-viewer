@@ -4243,6 +4243,24 @@ describe("analyzeSurfaceSystem shape emitters", () => {
     }
   });
 
+  it("never folds an evicted in-ball subtree's enclosing ball as a hit once the band is open", () => {
+    // A remote contraction inflates the analytic invariant ball — the
+    // enclosure an evicted subtree's terminal carries — until it spans the
+    // void between the two clusters. With the band open at the candidate's
+    // own level its C0 term has already been folded, so that enclosure's
+    // distance must not double as a hit: before the gate it read the whole
+    // ball as surface (old plain/refined -0.221 at the probe below, whose
+    // sampled-cloud clearance is 0.159).
+    const transforms: Transform[] = [
+      ...gearworks(),
+      map({ id: 5, position: [5, 0, 0], scale: [0.5, 0.5, 0.5] }),
+    ];
+    const de = buildSurfaceDE(transforms);
+    const voidPoint: Vec3 = [2, 1, 0];
+    expect(estimateDistance(de, voidPoint)).toBeGreaterThan(0);
+    expect(estimateDistanceRefined(de, voidPoint)).toBeGreaterThan(0);
+  });
+
   it("does not turn Gearworks' empty rank-3/4 sentinels into a future-band sphere", () => {
     const symmetry = { order: 1, plane: "xz" as const };
     const root = buildSurfaceDE(gearworks(), null, symmetry, {

@@ -2408,6 +2408,18 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
     return loopDepth + 1 < 0 ||
       (mapCount > 0 && max(loopDepth + 2, uCondMinDepth) <= uCondMaxDepth);
   }
+  /** The affine descent's firstCondensationDepth gate: the band is
+   * enabled at the candidate level AFTER loopDepth. An evicted in-ball
+   * subtree may only fold its enclosing-ball terminal before that point —
+   * afterwards the candidate's own C0 term already spoke, and the loose
+   * enclosure would otherwise read as a hit across its whole interior. */
+  bool condensationBandOpenAtNextDepth(int loopDepth) {
+#if SURFACE_SCHEDULE
+    return loopDepth + 1 >= uCondMinDepth + uScheduleDepth;
+#else
+    return loopDepth + 1 >= uCondMinDepth;
+#endif
+  }
   void condensationFold(
     vec3 q,
     float scale,
@@ -4236,9 +4248,11 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
               }
 #if SURFACE_CONDENSATION
 #if SURFACE_SCHEDULE
-            } else if (eKey < 1e29 && futureCondensation && eR <= childBound.w) {
+            } else if (eKey < 1e29 && futureCondensation && eR <= childBound.w &&
+                       !condensationBandOpenAtNextDepth(depth)) {
 #else
-            } else if (eKey < 1e29 && futureCondensation && eR <= uBoundingRadius) {
+            } else if (eKey < 1e29 && futureCondensation && eR <= uBoundingRadius &&
+                       !condensationBandOpenAtNextDepth(depth)) {
 #endif
 #if SURFACE_SCHEDULE
               best = min(best, eScale * (eR - childBound.w));
@@ -5194,10 +5208,12 @@ ${foldValueFormGlsl(shadeDeWidth)}
 #endif
 #if SURFACE_CONDENSATION
 #if SURFACE_SCHEDULE
-            } else if (eKey < 1e29 && futureCondensation && eR <= childBound.w) {
+            } else if (eKey < 1e29 && futureCondensation && eR <= childBound.w &&
+                       !condensationBandOpenAtNextDepth(depth)) {
               best = min(best, eScale * (eR - childBound.w));
 #else
-            } else if (eKey < 1e29 && futureCondensation && eR <= uBoundingRadius) {
+            } else if (eKey < 1e29 && futureCondensation && eR <= uBoundingRadius &&
+                       !condensationBandOpenAtNextDepth(depth)) {
               best = min(best, eScale * (eR - uBoundingRadius));
 #endif
 #endif
