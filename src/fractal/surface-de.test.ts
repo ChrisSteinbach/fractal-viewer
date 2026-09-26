@@ -4017,6 +4017,46 @@ describe("analyzeSurfaceSystem chaos rows", () => {
     }));
     expect(analyzeSurfaceSystem(trivial).status).toBe("eligible");
   });
+
+  it("probes every xaos component, so the fit is not anchored to whichever block one window sampled", () => {
+    // Two congruent six-map blocks, the second translated by DELTA. A single
+    // 8192-point probe window enters a block by chance (its re-fused
+    // sub-orbits) and here lands entirely in the first, so the old fit
+    // anchored on block one and the analytic closure covered block two
+    // around that center: the far block rendered with a visibly looser frame
+    // — the reported "second system is always poorer". The coverage probe
+    // must place the fit between the blocks instead.
+    const delta = 1.6;
+    const rowsA = [1, 1, 1, 1, 0, 0, 0, 0];
+    const rowsB = [0, 0, 0, 0, 1, 1, 1, 1];
+    const corner = (t: Transform): Transform => ({
+      id: t.id,
+      position: [...t.position] as Vec3,
+      rotation: [...t.rotation] as Vec3,
+      scale: [...t.scale] as Vec3,
+    });
+    const blockA = sierpinskiTetrahedron()
+      .slice(0, 6)
+      .map((t) => ({ ...corner(t), chaos: [...rowsA] }));
+    const blockB = sierpinskiTetrahedron()
+      .slice(0, 6)
+      .map((t) => {
+        const m = composeAffine(t).m;
+        const d = [delta, 0, 0];
+        return {
+          ...corner(t),
+          position: [
+            t.position[0] + d[0] - m[0] * d[0],
+            t.position[1] + d[1] - m[3] * d[0],
+            t.position[2] + d[2] - m[6] * d[0],
+          ] as Vec3,
+          chaos: [...rowsB],
+        };
+      });
+    const de = buildSurfaceDE([...blockA, ...blockB]);
+    expect(Math.abs(de.boundCenter[0] - delta / 2)).toBeLessThan(0.4);
+    expect(de.boundingRadius).toBeLessThan(3);
+  });
 });
 
 describe("analyzeSurfaceSystem shape emitters", () => {

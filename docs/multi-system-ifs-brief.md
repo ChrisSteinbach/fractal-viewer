@@ -91,6 +91,42 @@ Three constructions do what the questions actually ask:
   only predecessors whose forward edge reaches it. Positive matrix magnitudes change measure, not
   geometry; degenerate rows use the same global fallback. CPU, GLSL and WGSL implementations cover
   affine/fold, 3D/4D, lens/slab, schedule and condensation combinations under one global bound.
+- **The global bound's PROBE must see every block.** The build probe is one fixed 8192-point window
+  (two chaos sub-orbit re-fuses), and its sub-orbits enter blocks by chance, so a block-diagonal
+  document could leave a whole block unsampled: the probe-fit ball anchored on the sampled block and
+  the analytic invariant closure covered the rest around that center. Measured on a two-block document
+  (six maps each, block two at x ≈ 1.2–2.5): the chosen ball was `R = 4.19` centred on block one's fit
+  with the window's own maxR covering only block one (0.82 against the 1M-point cloud's 2.41), and the
+  far block's refined estimates over-shot the sampled-cloud clearance (up to 3.66×, 14 of 342 void
+  probes) while the near block over-shot none — the reported "the second system always renders
+  poorer". The build now walks the selection graph's connected components and repeats the probe with
+  derived seeds until every component is represented, shared by both dimensions
+  (`coverageProbeWindows`); a connected or chaos-free system keeps the single historical window
+  byte-for-byte. The same document now builds `R = 2.57` centred between the blocks and the far
+  block's over-shots are zero; a congruent-translation fixture's mean corresponding-point discrepancy
+  drops from 0.0186 to 0.0087. Pinned by the component-coverage case in `surface-de.test.ts`.
+- **Per-state descent balls.** The union ball is still the right OBJECT bound, but a chain that lives
+  in one component should descend against that component's own frame, not the union's: the estimates
+  widen by the component-to-union offset exactly where the two blocks sit apart, which is the residual
+  "second system renders poorer" after the coverage fix. `buildSurfaceDE`/`buildSurfaceDE4` now derive
+  each selection-graph component's ball — the per-component invariant-closure radius (the same
+  `1/(1−L)` algebra as the global build, over that component's maps and its reachable emitters) about
+  a probe-fit centre — onto `SurfaceDEMap.stateBoundCenter`/`stateBoundRadius` (4D twins are a
+  `Vec4` centre). A 4D centre follows the module's projection rule (order 1 keeps the fit; a twist
+  zeroes it; a plain rotation zeroes the rotation plane's in-plane coordinates), and the flat 3D/4D
+  alignment invariant is pinned at 1e-6 (`surface-chaos.test.ts`). The descents read the state ball
+  wherever the union ball stood: the candidate `key`/`cert` radius, the promotion escape thresholds,
+  the rank-3/4 in-sphere tests, the condensation certificate gates and pre-band subtree terminals
+  (lifted to per-state in 3D to match 4D — the certificate itself is per-state, so its gate is too),
+  the depth-cap A/B terminals, and `refinedCertValue`'s scanned image bounds and `r − currentR`
+  return. Absent state balls leave every site bit-identical (single component, scheduled levels).
+  Measured on the reported two-block document: per-block refined means move from 0.064/0.073
+  (union) to 0.0835/0.0898 against solo-block 0.088/0.0945, and the worst former over-shoot
+  (0.173 against a 0.057 clearance) falls to 0.0367. The GLSL tracers mirror the sites with
+  `uStateCenter`/`uStateRadius` arrays and `stateBoundCenter(int)`/`stateBoundRadius(int)` helpers
+  (the 4D pair rides `SurfaceMaps4` unconditionally so std140 offsets never move); the WGSL affine
+  ladders carry the same sites behind the `stateBounds` lane — record and probe numbers in
+  `docs/surface-gpu-kernels.md`.
 
 ### Import/export, UI, tests
 

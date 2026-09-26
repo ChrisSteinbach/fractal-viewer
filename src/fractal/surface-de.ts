@@ -10,13 +10,14 @@ import {
   effectiveSymmetryOrder,
   buildChaosSelection,
   prepareSchedule,
+  resolveChaosEntry,
   runChaosGame,
   symmetryRotation,
   systemHasChaos,
   transformHasEmitter,
 } from "./chaos-game";
+import type { ChaosGameResult } from "./chaos-game";
 import {
-  condensationBoundingRadius3,
   condensationHasFutureDepth,
   condensationTerm3,
   condensationTraversalDepth,
@@ -48,6 +49,7 @@ import type {
   SurfaceNativeCarrierSample,
 } from "./surface-pattern";
 import type {
+  Bounds,
   HybridSchedule,
   SymmetryParams,
   SymmetryPlane,
@@ -505,6 +507,301 @@ function fitEnclosingBall(positions: Float32Array): {
   return { center: [cx, cy, cz], radius: r };
 }
 
+/** Probe windows a bounds build may spend covering every selection-graph
+ * component; the first window is the historical probe, so a covered system
+ * (or one with no chaos) never allocates another. */
+const MAX_PROBE_ATTEMPTS = 8;
+
+/**
+ * The certified invariant-ball radius about `center` for a transform
+ * SUBSET: `R >= |F(c) − c| / (1 − L)` over every (sector, map) copy in
+ * `indices`, plus the C0 enclosure of `emitters`. The global build passes
+ * every active recursive map and the full condensation set; the
+ * per-component pass passes one selection component's maps and the
+ * emitters that component can select. Same algebra as the historical
+ * inline block — fold maps use their certified global Lipschitz, sector
+ * rotations are isometries — with `sigmas` the caller's per-transform
+ * analysis (indexed by the GLOBAL transform index, so a subset reuses it).
+ */
+function invariantClosureRadius(
+  transforms: readonly Transform[],
+  indices: readonly number[],
+  sigmas: readonly MapSigmas[],
+  emitters: readonly {
+    center: Vec3;
+    radius: number;
+  }[],
+  center: Vec3,
+  order: number,
+  step: number,
+  symmetry: SymmetryParams,
+): number {
+  let radius = 0;
+  for (const emitter of emitters) {
+    radius = Math.max(
+      radius,
+      Math.hypot(
+        emitter.center[0] - center[0],
+        emitter.center[1] - center[1],
+        emitter.center[2] - center[2],
+      ) + emitter.radius,
+    );
+  }
+  for (let k = 0; k < order; k++) {
+    const post = k === 0 ? null : symmetryRotation(symmetry.plane, step * k);
+    for (const i of indices) {
+      const transform = transforms[i];
+      const affine = composeAffine(transform);
+      const postLive =
+        transform.post !== undefined && !isIdentityAffine(transform.post);
+      const postA = transform.post;
+      let fx =
+        affine.m[0] * center[0] +
+        affine.m[1] * center[1] +
+        affine.m[2] * center[2] +
+        affine.t[0];
+      let fy =
+        affine.m[3] * center[0] +
+        affine.m[4] * center[1] +
+        affine.m[5] * center[2] +
+        affine.t[1];
+      let fz =
+        affine.m[6] * center[0] +
+        affine.m[7] * center[1] +
+        affine.m[8] * center[2] +
+        affine.t[2];
+      const fold = pureFoldVariation(transform);
+      // The certified Lipschitz of the recursive map INCLUDING its post:
+      // the post's sigma multiplies the map's own (the fold's local
+      // Jacobian sits BETWEEN post and map, so the certified product form —
+      // sigma_max(post)·sigma_max(M) — is the bound the invariant ball
+      // needs; the composite alone can under-read it). Without a post this
+      // is exactly `sigmas[i].max`, bit for bit.
+      let lipschitz = postLive
+        ? singularValues3(postA!.m).max * singularValues3(affine.m).max
+        : sigmas[i].max;
+      if (fold) {
+        const q = foldVariationFn(
+          fold.type as "boxfold" | "spherefold" | "mandelbox",
+          resolveFoldRadii(fold),
+        )(fx, fy, fz, mulberry32(0));
+        fx = fold.weight * q[0];
+        fy = fold.weight * q[1];
+        fz = fold.weight * q[2];
+        lipschitz *= foldLipschitz(fold);
+      }
+      // The map's own post-affine, before the symmetry rotation — the
+      // engine ordering this certified image mirrors.
+      if (postLive) {
+        const pm = postA!.m;
+        const pt = postA!.t;
+        const px = pm[0] * fx + pm[1] * fy + pm[2] * fz + pt[0];
+        const py = pm[3] * fx + pm[4] * fy + pm[5] * fz + pt[1];
+        const pz = pm[6] * fx + pm[7] * fy + pm[8] * fz + pt[2];
+        fx = px;
+        fy = py;
+        fz = pz;
+      }
+      if (post !== null) {
+        const rx = post[0] * fx + post[1] * fy + post[2] * fz;
+        const ry = post[3] * fx + post[4] * fy + post[5] * fz;
+        const rz = post[6] * fx + post[7] * fy + post[8] * fz;
+        fx = rx;
+        fy = ry;
+        fz = rz;
+      }
+      radius = Math.max(
+        radius,
+        Math.hypot(fx - center[0], fy - center[1], fz - center[2]) /
+          (1 - lipschitz),
+      );
+    }
+  }
+  // Preserve a small numerical margin around the analytic fixed point.
+  return radius * RADIUS_PAD + 1e-3;
+}
+
+/**
+ * A kaleidoscope attractor is exactly n-fold symmetric about the FIXED AXIS
+ * of its rotation plane — the one coordinate the plane leaves alone (plane
+ * `yz` fixes x, `xz` fixes y, `xy` fixes z) — so its true smallest
+ * enclosing ball is CENTERED ON that axis. But the raw fit of a finite
+ * sample lands epsilon off it, and that epsilon breaks the descent's exact
+ * on-axis sector ties (the sweep tests pin that tie behavior). Project the
+ * center onto the axis and re-measure the enclosing radius with one exact
+ * pass over the cloud. `null`/order 1 leaves the fit untouched.
+ */
+function projectFitOntoAxis(
+  fit: { center: Vec3; radius: number },
+  positions: Float32Array,
+  order: number,
+  plane: SymmetryPlane,
+): void {
+  if (order <= 1) return;
+  if (plane === "yz") {
+    fit.center[1] = 0;
+    fit.center[2] = 0;
+  } else if (plane === "xz") {
+    fit.center[0] = 0;
+    fit.center[2] = 0;
+  } else {
+    fit.center[0] = 0;
+    fit.center[1] = 0;
+  }
+  let maxSq = 0;
+  for (let i = 0; i < positions.length; i += 3) {
+    const dx = positions[i] - fit.center[0];
+    const dy = positions[i + 1] - fit.center[1];
+    const dz = positions[i + 2] - fit.center[2];
+    const d = dx * dx + dy * dy + dz * dz;
+    if (d > maxSq) maxSq = d;
+  }
+  fit.radius = Math.sqrt(maxSq);
+}
+
+/** Concatenate probe windows into the single cloud the fit, the origin ball
+ * and the native-carrier calibration all read. */
+function mergeChaosProbes(probes: readonly ChaosGameResult[]): ChaosGameResult {
+  let total = 0;
+  for (const p of probes) total += p.count;
+  const positions = new Float32Array(total * 3);
+  const transformIndices = new Uint8Array(total);
+  const bounds: Bounds = {
+    minX: Infinity,
+    maxX: -Infinity,
+    minY: Infinity,
+    maxY: -Infinity,
+    minZ: Infinity,
+    maxZ: -Infinity,
+    minR: Infinity,
+    maxR: -Infinity,
+  };
+  let offset = 0;
+  for (const p of probes) {
+    positions.set(p.positions.subarray(0, p.count * 3), offset * 3);
+    transformIndices.set(p.transformIndices.subarray(0, p.count), offset);
+    offset += p.count;
+    bounds.minX = Math.min(bounds.minX, p.bounds.minX);
+    bounds.maxX = Math.max(bounds.maxX, p.bounds.maxX);
+    bounds.minY = Math.min(bounds.minY, p.bounds.minY);
+    bounds.maxY = Math.max(bounds.maxY, p.bounds.maxY);
+    bounds.minZ = Math.min(bounds.minZ, p.bounds.minZ);
+    bounds.maxZ = Math.max(bounds.maxZ, p.bounds.maxZ);
+    bounds.minR = Math.min(bounds.minR, p.bounds.minR);
+    bounds.maxR = Math.max(bounds.maxR, p.bounds.maxR);
+  }
+  return { positions, transformIndices, count: total, bounds };
+}
+
+/**
+ * Connected components of an xaos document's selection graph, as one
+ * component id per transform index (-1 for inactive and emitter records).
+ * Edges are the positive-support transitions the picker can take, plus the
+ * degenerate-row fallback's edge to every active map — the same support rule
+ * {@link buildChaosSelection} applies.
+ *
+ * THE BUILD PROBE NEEDS THIS. Its re-fused sub-orbits enter a block by
+ * chance ({@link PROBE_POINTS} is two `CHAOS_SUB_ORBIT_POINTS` windows), so
+ * a fixed probe can leave a whole block unvisited. The probe-fit ball then
+ * anchors on the visited block and the analytic closure covers the rest
+ * around that center, which measures as a visibly coarser render for the
+ * missed block — the reported "second system is always poorer". Probing
+ * until every component is covered is what keeps the fit on the plotted
+ * set. `null` means no chaos: one implicit component, the classic path.
+ */
+export function chaosComponentIds(
+  transforms: readonly Transform[],
+): Int8Array | null {
+  if (!systemHasChaos(transforms)) return null;
+  const ids = new Int8Array(transforms.length).fill(-1);
+  const active: number[] = [];
+  for (let i = 0; i < transforms.length; i++) {
+    if (isActive(transforms[i]) && !transformHasEmitter(transforms[i])) {
+      active.push(i);
+    }
+  }
+  if (active.length === 0) return ids;
+  const parent = new Map<number, number>();
+  const find = (node: number): number => {
+    let root = node;
+    while (parent.get(root)! !== root) root = parent.get(root)!;
+    let x = node;
+    while (parent.get(x)! !== root) {
+      const next = parent.get(x)!;
+      parent.set(x, root);
+      x = next;
+    }
+    return root;
+  };
+  const union = (a: number, b: number): void => {
+    parent.set(find(a), find(b));
+  };
+  for (const i of active) parent.set(i, i);
+  for (const i of active) {
+    const row = transforms[i].chaos;
+    let supported = false;
+    for (const j of active) {
+      if (resolveChaosEntry(row?.[j]) > 0) {
+        union(i, j);
+        supported = true;
+      }
+    }
+    if (!supported) for (const j of active) union(i, j);
+  }
+  const remap = new Map<number, number>();
+  for (const i of active) {
+    const root = find(i);
+    let id = remap.get(root);
+    if (id === undefined) {
+      id = remap.size;
+      remap.set(root, id);
+    }
+    ids[i] = id;
+  }
+  return ids;
+}
+
+/**
+ * Probe windows covering every selection-graph component. The historical
+ * first window (PROBE_SEED) is always the first, so a system whose graph is
+ * connected — or which has no chaos at all — returns exactly that one and
+ * nothing downstream changes. A graph-directed system repeats with derived
+ * seeds until every component has been visited (or {@link
+ * MAX_PROBE_ATTEMPTS} is spent, leaving the analytic closure to cover what a
+ * vanishingly-rare component still misses, as today). Shared by the 3D and
+ * 4D builders so the coverage rule cannot drift between them.
+ */
+export function coverageProbeWindows<
+  T extends { count: number; transformIndices: Uint8Array },
+>(transforms: readonly Transform[], runWindow: (seed: number) => T): T[] {
+  const windows = [runWindow(PROBE_SEED)];
+  const componentIds = chaosComponentIds(transforms);
+  if (!componentIds) return windows;
+  const componentCount = componentIds.reduce(
+    (max, id) => Math.max(max, id + 1),
+    0,
+  );
+  if (componentCount <= 1) return windows;
+  const seen = new Uint8Array(componentCount);
+  const mark = (window: T): void => {
+    for (let i = 0; i < window.count; i++) {
+      const id = componentIds[window.transformIndices[i]];
+      if (id >= 0) seen[id] = 1;
+    }
+  };
+  mark(windows[0]);
+  for (
+    let attempt = 1;
+    attempt < MAX_PROBE_ATTEMPTS && seen.some((value) => value === 0);
+    attempt++
+  ) {
+    const window = runWindow(PROBE_SEED + attempt * 0x9e3779b1);
+    windows.push(window);
+    mark(window);
+  }
+  return windows;
+}
+
 /** Descent stops once the tracked point escapes this multiple of `R`:
  * beyond it, deeper certificates cannot improve the min. */
 export const ESCAPE_FACTOR = 2;
@@ -790,6 +1087,19 @@ export interface SurfaceDEMap {
   /** Compact graph-directed state. Present only when chi is non-trivial;
    * scheduled B maps deliberately omit it because B carries wildcard. */
   stateIndex?: number;
+  /**
+   * Per-component bounding ball for the DESCENT's local frame (the build's
+   * PER-COMPONENT LOCAL FRAMES note): the enclosing ball of this map's
+   * selection component, present only when the graph has more than one
+   * component. A chain never leaves its component, so every radius this
+   * chain measures — candidate keys, the escape test, validity-slot
+   * holding, refined image certificates and the cap terminal — can use its
+   * component's own tight ball instead of the union's looser one. Absent
+   * keeps the single global ball, byte for byte.
+   */
+  stateBoundCenter?: Vec3;
+  /** See {@link stateBoundCenter}. */
+  stateBoundRadius?: number;
   /** Smallest singular value of `invM` — exactly `1 / sigma_max(M)`, where
    * `M` is the base map's OWN (PRE-post) linear part: the stage-2 bound
    * prices `|invM·pre|` with `pre` the fold-branch preimage AFTER the post
@@ -2464,106 +2774,49 @@ export function buildSurfaceDE(
   // (sector, map) copy proves B contains the least fixed set
   // A = C0 union_j F_j(A).  Fold maps use the same certified global
   // Lipschitz constants as eligibility; sector rotations are isometries.
+  const activeRecursiveIndices: number[] = [];
+  for (let i = 0; i < transforms.length; i++) {
+    if (isActive(transforms[i]) && !transformHasEmitter(transforms[i])) {
+      activeRecursiveIndices.push(i);
+    }
+  }
+  const globalEmitterBounds = condensation
+    ? condensation.emitters.map((emitter) => ({
+        center: emitter.center,
+        radius: emitter.radius,
+      }))
+    : [];
   const condensationInvariantRadius =
     condensation || chaos
-      ? (center: Vec3): number => {
-          let radius = condensation
-            ? condensationBoundingRadius3(condensation, center)
-            : 0;
-          for (let k = 0; k < order; k++) {
-            const post =
-              k === 0 ? null : symmetryRotation(symmetry.plane, step * k);
-            for (let i = 0; i < transforms.length; i++) {
-              if (
-                !isActive(transforms[i]) ||
-                transformHasEmitter(transforms[i])
-              ) {
-                continue;
-              }
-              const transform = transforms[i];
-              const affine = composeAffine(transform);
-              const postLive =
-                transform.post !== undefined &&
-                !isIdentityAffine(transform.post);
-              const postA = transform.post;
-              let fx =
-                affine.m[0] * center[0] +
-                affine.m[1] * center[1] +
-                affine.m[2] * center[2] +
-                affine.t[0];
-              let fy =
-                affine.m[3] * center[0] +
-                affine.m[4] * center[1] +
-                affine.m[5] * center[2] +
-                affine.t[1];
-              let fz =
-                affine.m[6] * center[0] +
-                affine.m[7] * center[1] +
-                affine.m[8] * center[2] +
-                affine.t[2];
-              const fold = pureFoldVariation(transform);
-              // The certified Lipschitz of the recursive map INCLUDING its
-              // post: the post's sigma multiplies the map's own (the fold's
-              // local Jacobian sits BETWEEN post and map, so the certified
-              // product form — sigma_max(post)·sigma_max(M) — is the bound
-              // the invariant ball needs; the composite alone can
-              // under-read it). Without a post this is exactly
-              // `analysis.sigmas[i].max`, bit for bit.
-              let lipschitz = postLive
-                ? singularValues3(postA!.m).max * singularValues3(affine.m).max
-                : analysis.sigmas[i].max;
-              if (fold) {
-                const q = foldVariationFn(
-                  fold.type as "boxfold" | "spherefold" | "mandelbox",
-                  resolveFoldRadii(fold),
-                )(fx, fy, fz, mulberry32(0));
-                fx = fold.weight * q[0];
-                fy = fold.weight * q[1];
-                fz = fold.weight * q[2];
-                lipschitz *= foldLipschitz(fold);
-              }
-              // The map's own post-affine, before the symmetry rotation —
-              // the engine ordering this certified image mirrors.
-              if (postLive) {
-                const pm = postA!.m;
-                const pt = postA!.t;
-                const px = pm[0] * fx + pm[1] * fy + pm[2] * fz + pt[0];
-                const py = pm[3] * fx + pm[4] * fy + pm[5] * fz + pt[1];
-                const pz = pm[6] * fx + pm[7] * fy + pm[8] * fz + pt[2];
-                fx = px;
-                fy = py;
-                fz = pz;
-              }
-              if (post !== null) {
-                const rx = post[0] * fx + post[1] * fy + post[2] * fz;
-                const ry = post[3] * fx + post[4] * fy + post[5] * fz;
-                const rz = post[6] * fx + post[7] * fy + post[8] * fz;
-                fx = rx;
-                fy = ry;
-                fz = rz;
-              }
-              radius = Math.max(
-                radius,
-                Math.hypot(fx - center[0], fy - center[1], fz - center[2]) /
-                  (1 - lipschitz),
-              );
-            }
-          }
-          // Preserve a small numerical margin around the analytic fixed point.
-          return radius * RADIUS_PAD + 1e-3;
-        }
+      ? (center: Vec3): number =>
+          invariantClosureRadius(
+            transforms,
+            activeRecursiveIndices,
+            analysis.sigmas,
+            globalEmitterBounds,
+            center,
+            order,
+            step,
+            symmetry,
+          )
       : null;
 
   // Bounding radius of the RAW attractor: seeded probe of the exact plotted
   // set (full transform list + symmetry, but NO final transform — the DE
   // descends the raw attractor and applies the lens to the query instead).
-  const aProbe = runChaosGame(
-    transforms,
-    PROBE_POINTS,
-    mulberry32(PROBE_SEED),
-    null,
-    symmetry,
+  // Under a graph-directed selection one PROBE_POINTS window can leave a
+  // whole selection-graph component unvisited (its re-fused sub-orbits enter
+  // blocks by chance), so {@link coverageProbeWindows} repeats with derived
+  // seeds until every component is represented. Without chaos the first
+  // window is the only one, and its cloud is byte-identical to the
+  // pre-coverage build.
+  const probeWindows = coverageProbeWindows(transforms, (seed) =>
+    runChaosGame(transforms, PROBE_POINTS, mulberry32(seed), null, symmetry),
   );
+  const aProbe =
+    probeWindows.length === 1
+      ? probeWindows[0]
+      : mergeChaosProbes(probeWindows);
   const originRadius = Math.max(
     aProbe.bounds.maxR * RADIUS_PAD + 1e-3,
     condensationInvariantRadius ? condensationInvariantRadius([0, 0, 0]) : 0,
@@ -2575,35 +2828,8 @@ export function buildSurfaceDE(
   // the same convention, so the choice is a pure tightness win and no
   // system can regress to a looser bound than it shipped with.
   const fit = fitEnclosingBall(aProbe.positions);
-  // A kaleidoscope attractor is exactly n-fold symmetric about the FIXED
-  // AXIS of its rotation plane — the one coordinate the plane leaves alone
-  // (plane `yz` fixes x, `xz` fixes y, `xy` fixes z) — so its true smallest
-  // enclosing ball is CENTERED ON that axis. But the raw fit of a finite
-  // sample lands epsilon off it, and that epsilon breaks the descent's exact
-  // on-axis sector ties (the sweep tests pin that tie behavior). Project the
-  // center onto the axis (zero the two IN-PLANE coordinates) and re-measure
-  // the enclosing radius with one exact pass over the cloud.
-  if (order > 1) {
-    if (symmetry.plane === "yz") {
-      fit.center[1] = 0;
-      fit.center[2] = 0;
-    } else if (symmetry.plane === "xz") {
-      fit.center[0] = 0;
-      fit.center[2] = 0;
-    } else {
-      fit.center[0] = 0;
-      fit.center[1] = 0;
-    }
-    let maxSq = 0;
-    for (let i = 0; i < aProbe.positions.length; i += 3) {
-      const dx = aProbe.positions[i] - fit.center[0];
-      const dy = aProbe.positions[i + 1] - fit.center[1];
-      const dz = aProbe.positions[i + 2] - fit.center[2];
-      const d = dx * dx + dy * dy + dz * dz;
-      if (d > maxSq) maxSq = d;
-    }
-    fit.radius = Math.sqrt(maxSq);
-  }
+  // Kaleidoscope projection: see `projectFitOntoAxis`.
+  projectFitOntoAxis(fit, aProbe.positions, order, symmetry.plane);
   const fitRadius = Math.max(
     fit.radius * RADIUS_PAD + 1e-3,
     condensationInvariantRadius ? condensationInvariantRadius(fit.center) : 0,
@@ -2611,6 +2837,115 @@ export function buildSurfaceDE(
   const centered = fitRadius < originRadius;
   const aBoundingRadius = centered ? fitRadius : originRadius;
   const aBoundCenter: Vec3 = centered ? fit.center : [0, 0, 0];
+
+  // PER-COMPONENT LOCAL FRAMES. One shared ball must enclose every
+  // selection component, so on a two-block document every chain's keys,
+  // escape test, validity-slot holding and certificates are measured
+  // against a centre between the blocks and a radius larger than either
+  // block's own — measured: a union chain's refined estimate averaged
+  // 0.064/0.073 near blocks A/B against the 0.088/0.094 the same systems
+  // reach when built alone (truth 0.105/0.112), which shows as wasted
+  // detail against the march budget. A chaos chain never leaves its
+  // component, so each map can carry its component's own fitted ball and
+  // the descent measures that chain in its solo frame. Built from the
+  // same coverage windows, partitioned by `chaosComponentIds`; the global
+  // ball stays the marcher's ray gate and the fallback everywhere.
+  const componentIds = chaosComponentIds(transforms);
+  const componentCount = componentIds
+    ? componentIds.reduce((max, id) => Math.max(max, id + 1), 0)
+    : 0;
+  if (componentCount > 1 && !preparedSchedule) {
+    const recursiveByComponent: number[][] = Array.from(
+      { length: componentCount },
+      () => [],
+    );
+    const emitterCopies = new Map<number, { center: Vec3; radius: number }[]>();
+    for (const emitter of condensation?.emitters ?? []) {
+      const list = emitterCopies.get(emitter.baseIndex) ?? [];
+      list.push({ center: emitter.center, radius: emitter.radius });
+      emitterCopies.set(emitter.baseIndex, list);
+    }
+    for (const i of activeRecursiveIndices) {
+      const c = componentIds![i];
+      if (c >= 0) recursiveByComponent[c].push(i);
+    }
+    const emittersByComponent: number[][] = Array.from(
+      { length: componentCount },
+      () => [],
+    );
+    for (let e = 0; e < transforms.length; e++) {
+      if (!isActive(transforms[e]) || !transformHasEmitter(transforms[e])) {
+        continue;
+      }
+      for (let c = 0; c < componentCount; c++) {
+        const reachable = recursiveByComponent[c].some((from) => {
+          const row = transforms[from].chaos;
+          let supported = false;
+          for (const j of activeRecursiveIndices) {
+            if (resolveChaosEntry(row?.[j]) > 0) supported = true;
+          }
+          // A degenerate row falls back to global support; multi-component
+          // graphs have none, but keep the predicate total.
+          return !supported || resolveChaosEntry(row?.[e]) > 0;
+        });
+        if (reachable) emittersByComponent[c].push(e);
+      }
+    }
+    const componentCenters: Vec3[] = [];
+    const componentRadii: number[] = [];
+    for (let c = 0; c < componentCount; c++) {
+      let count = 0;
+      for (let i = 0; i < aProbe.count; i++) {
+        if (componentIds![aProbe.transformIndices[i]] === c) count++;
+      }
+      const closure = (center: Vec3): number =>
+        invariantClosureRadius(
+          transforms,
+          recursiveByComponent[c],
+          analysis.sigmas,
+          emittersByComponent[c].flatMap((e) => emitterCopies.get(e) ?? []),
+          center,
+          order,
+          step,
+          symmetry,
+        );
+      if (count === 0) {
+        const radius = Math.max(aBoundingRadius, closure([0, 0, 0]));
+        componentCenters.push([0, 0, 0]);
+        componentRadii.push(radius);
+        continue;
+      }
+      const pts = new Float32Array(count * 3);
+      let at = 0;
+      for (let i = 0; i < aProbe.count; i++) {
+        if (componentIds![aProbe.transformIndices[i]] !== c) continue;
+        pts[at * 3] = aProbe.positions[i * 3];
+        pts[at * 3 + 1] = aProbe.positions[i * 3 + 1];
+        pts[at * 3 + 2] = aProbe.positions[i * 3 + 2];
+        at++;
+      }
+      const cFit = fitEnclosingBall(pts);
+      projectFitOntoAxis(cFit, pts, order, symmetry.plane);
+      let maxR = 0;
+      for (let i = 0; i < pts.length; i += 3) {
+        maxR = Math.max(maxR, Math.hypot(pts[i], pts[i + 1], pts[i + 2]));
+      }
+      const originR = Math.max(maxR * RADIUS_PAD + 1e-3, closure([0, 0, 0]));
+      const fitR = Math.max(
+        cFit.radius * RADIUS_PAD + 1e-3,
+        closure(cFit.center),
+      );
+      const useFit = fitR < originR;
+      componentCenters.push(useFit ? cFit.center : [0, 0, 0]);
+      componentRadii.push(useFit ? fitR : originR);
+    }
+    for (const map of maps) {
+      const c = componentIds![map.baseIndex];
+      if (c < 0) continue;
+      map.stateBoundCenter = componentCenters[c];
+      map.stateBoundRadius = componentRadii[c];
+    }
+  }
 
   let probe = aProbe;
   let boundingRadius = aBoundingRadius;
@@ -2762,8 +3097,15 @@ export function buildSurfaceDE(
   const nativeCarrierSamples = new Array<SurfaceNativeCarrierSample>(
     SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
   );
-  const nativeProbeStride =
-    PROBE_POINTS / SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT;
+  // One evenly strided sample per calibration slot from whatever cloud the
+  // bounds build settled on (a merged multi-window cloud keeps the stride
+  // integral: every window is PROBE_POINTS, itself a whole multiple).
+  const nativeProbeStride = Math.max(
+    1,
+    Math.floor(
+      probe.positions.length / 3 / SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
+    ),
+  );
   for (
     let sample = 0;
     sample < SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT;
@@ -3379,7 +3721,14 @@ function refinedCertValue(
   const currentBound = de.schedule
     ? de.schedule.bounds[Math.min(depth, de.schedule.depth)]
     : null;
-  const currentR = currentBound ? currentBound.radius : de.boundingRadius;
+  // The radius the candidate was selected in: its own component's ball
+  // when one is carried (the caller's `r` is measured against that same
+  // centre), the global ball otherwise.
+  const currentStateRadius =
+    currentState >= 0 ? de.maps[currentState]?.stateBoundRadius : undefined;
+  const currentR = currentBound
+    ? currentBound.radius
+    : (currentStateRadius ?? de.boundingRadius);
   const R = childBound ? childBound.radius : de.boundingRadius;
   const bcX = childBound ? childBound.center[0] : de.boundCenter[0];
   const bcY = childBound ? childBound.center[1] : de.boundCenter[1];
@@ -3621,11 +3970,15 @@ function refinedCertValue(
           jz = imJ[6] * cx + imJ[7] * cy + imJ[8] * cz + itJ[2];
           branchSigma = mapJ.foldSigma * sfSigma;
         }
-        const jcx = jx - bcX;
-        const jcy = jy - bcY;
-        const jcz = jz - bcZ;
+        // A state-bound image measures to its own component's ball
+        // (absent on scheduled/fold builds, where the level bound stands).
+        const imageBoundR = mapJ.stateBoundRadius ?? R;
+        const imageBoundC = mapJ.stateBoundCenter;
+        const jcx = imageBoundC === undefined ? jx - bcX : jx - imageBoundC[0];
+        const jcy = imageBoundC === undefined ? jy - bcY : jy - imageBoundC[1];
+        const jcz = imageBoundC === undefined ? jz - bcZ : jz - imageBoundC[2];
         const rj = Math.sqrt(jcx * jcx + jcy * jcy + jcz * jcz);
-        let innerTerm = branchSigma * (rj - R);
+        let innerTerm = branchSigma * (rj - imageBoundR);
         if (branchRd > 0) {
           const regionTerm = regionAbsWJ * branchRd;
           if (regionTerm > innerTerm) innerTerm = regionTerm;
@@ -3701,6 +4054,15 @@ function descend(
   const startR = Math.hypot(x - bcX, y - bcY, z - bcZ);
   const sphereBound = startR - R;
   const wide = de.beamWidth > 1;
+  // A chain's own component ball selects its escape / in-ball thresholds;
+  // with no per-state bounds (single component, or a scheduled level) the
+  // level's constants apply, bit for bit.
+  const stateBallRadius = (state: number): number =>
+    state >= 0 &&
+    de.maps[state] !== undefined &&
+    de.maps[state].stateBoundRadius !== undefined
+      ? de.maps[state].stateBoundRadius
+      : R;
   let best = Infinity;
 
   // Early-out threshold: the value below which the descent may
@@ -3943,13 +4305,18 @@ function descend(
           const ix = im[0] * pX + im[1] * pY + im[2] * pZ + it[0];
           const iy = im[3] * pX + im[4] * pY + im[5] * pZ + it[1];
           const iz = im[6] * pX + im[7] * pY + im[8] * pZ + it[2];
-          const icx = ix - bcX;
-          const icy = iy - bcY;
-          const icz = iz - bcZ;
+          // Per-component local frame when this map carries one (see
+          // SurfaceDEMap.stateBoundCenter); the global ball otherwise, so
+          // single-component builds are bit-identical.
+          const mapBoundR = map.stateBoundRadius ?? R;
+          const mapBoundC = map.stateBoundCenter;
+          const icx = mapBoundC === undefined ? ix - bcX : ix - mapBoundC[0];
+          const icy = mapBoundC === undefined ? iy - bcY : iy - mapBoundC[1];
+          const icz = mapBoundC === undefined ? iz - bcZ : iz - mapBoundC[2];
           const r = Math.sqrt(icx * icx + icy * icy + icz * icz);
-          const key = pScale * (r - R);
+          const key = pScale * (r - mapBoundR);
           const childScale = pScale * map.sigmaMin;
-          const cert = lastLevel ? Infinity : childScale * (r - R);
+          const cert = lastLevel ? Infinity : childScale * (r - mapBoundR);
           if (condensation) {
             const shapeTerm = scheduledCondensationTerm3(
               de,
@@ -4094,7 +4461,7 @@ function descend(
           // min); an in-sphere tuple carries no positive certificate — on
           // widths 3/4 it can only get here past FOUR smaller keys, the
           // (shrunken) residual drop the slots exist for.
-          if (eR > R && eCert < best) {
+          if (eR > stateBallRadius(eState) && eCert < best) {
             const folded = refine
               ? refinedCertValue(de, eX, eY, eZ, eR, eScale, depth + 1, eState)
               : eCert;
@@ -4117,7 +4484,7 @@ function descend(
           } else if (
             eKey < Infinity &&
             futureCondensation &&
-            eR <= R &&
+            eR <= stateBallRadius(eState) &&
             depth + 1 < firstCondensationDepth
           ) {
             // Pre-band eviction: no C0 term can speak for this subtree yet
@@ -4126,7 +4493,7 @@ function descend(
             // at the candidate's level the immediate term above has already
             // covered its own stamp and this terminal is suppressed — see
             // `firstCondensationDepth`.
-            const subtree = eScale * (eR - R);
+            const subtree = eScale * (eR - stateBallRadius(eState));
             if (subtree < best) best = subtree;
           }
         }
@@ -4145,7 +4512,10 @@ function descend(
     v1Live = false;
     v2Live = false;
     if (c1Key < Infinity) {
-      if (c1R > escapeRadius) {
+      if (
+        c1R >
+        (childBound ? escapeRadius : ESCAPE_FACTOR * stateBallRadius(c1State))
+      ) {
         if (c1Cert < best) best = c1Cert;
       } else {
         aX = c1X;
@@ -4166,7 +4536,7 @@ function descend(
         // candidate past 2R folds a bound already >= childScale * R —
         // comfortably positive, so it can never read as a ghost and
         // refining it buys nothing a marcher could see).
-        if (c2R > R && c2Cert < best) {
+        if (c2R > stateBallRadius(c2State) && c2Cert < best) {
           const folded = refine
             ? refinedCertValue(
                 de,
@@ -4182,13 +4552,16 @@ function descend(
           if (folded < best) best = folded;
         } else if (
           futureCondensation &&
-          c2R <= R &&
+          c2R <= stateBallRadius(c2State) &&
           depth + 1 < firstCondensationDepth
         ) {
-          const subtree = c2Scale * (c2R - R);
+          const subtree = c2Scale * (c2R - stateBallRadius(c2State));
           if (subtree < best) best = subtree;
         }
-      } else if (c2R > escapeRadius) {
+      } else if (
+        c2R >
+        (childBound ? escapeRadius : ESCAPE_FACTOR * stateBallRadius(c2State))
+      ) {
         if (c2Cert < best) best = c2Cert;
       } else {
         bX = c2X;
@@ -4201,7 +4574,7 @@ function descend(
       }
     }
     if (extra > 0 && c3Key < Infinity) {
-      if (c3R > R) {
+      if (c3R > stateBallRadius(c3State)) {
         if (c3Cert < best) {
           const folded = refine
             ? refinedCertValue(
@@ -4227,7 +4600,7 @@ function descend(
       }
     }
     if (extra > 1 && c4Key < Infinity) {
-      if (c4R > R) {
+      if (c4R > stateBallRadius(c4State)) {
         if (c4Cert < best) {
           const folded = refine
             ? refinedCertValue(
@@ -4319,18 +4692,19 @@ function descend(
       );
     }
   }
-  const terminalR = de.schedule
-    ? de.schedule.bounds[Math.min(maxDepth, de.schedule.depth)].radius
-    : R;
+  const terminalRadius = (state: number): number =>
+    de.schedule
+      ? de.schedule.bounds[Math.min(maxDepth, de.schedule.depth)].radius
+      : stateBallRadius(state);
   // A band that ENDED the descent leaves nothing below its chains: their
   // ball terminal would be the plain attractor's hit signal (the phantom
   // the last-level rule removes), so it folds only at a real depth cap.
   if (aLive && !bandEnded) {
-    const terminal = aScale * (aR - terminalR);
+    const terminal = aScale * (aR - terminalRadius(aState));
     if (terminal < best) best = terminal;
   }
   if (bLive && !bandEnded) {
-    const terminal = bScale * (bR - terminalR);
+    const terminal = bScale * (bR - terminalRadius(bState));
     if (terminal < best) best = terminal;
   }
   // Validity chains fold NO cap terminal — deliberately asymmetric with

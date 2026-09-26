@@ -311,6 +311,11 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   // Float arithmetic avoids a pathological dynamic-u32 shift in Mesa's
   // fragment compiler while preserving the same binary support test.
   uniform vec4 uChaosPredecessorMasks[6];
+  // Per-state certified balls, slot == state (surfaceChaosChildState4's
+  // identity); the build packs the origin ball into every slot when no
+  // per-component bounds exist.
+  uniform vec4 uStateCenter[${SURFACE4_MAX_MAPS}];
+  uniform float uStateRadius[${SURFACE4_MAX_MAPS}];
   bool surfaceChaosAllows4(int currentState, int predecessorState) {
     if (currentState < 0) return true;
     vec4 group = uChaosPredecessorMasks[currentState / 4];
@@ -447,6 +452,15 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   /** Bounding-hypersphere radius R of the RAW attractor (pre final
    * transform), in 4D. */
   uniform float uBoundingRadius;
+  // Per-state local frame; slot == state under SURFACE_CHAOS, global ball
+  // packed into every slot when no per-component bounds exist.
+#if SURFACE_CHAOS
+  vec4 stateBoundCenter4(int s) { return (s >= 0 && uSliceHalfW <= 0.0) ? uStateCenter[s] : vec4(0.0); }
+  float stateBoundRadius4(int s) { return (s >= 0 && uSliceHalfW <= 0.0) ? uStateRadius[s] : uBoundingRadius; }
+#else
+  vec4 stateBoundCenter4(int s) { return vec4(0.0); }
+  float stateBoundRadius4(int s) { return uBoundingRadius; }
+#endif
   /** Descent stops once the greedy image escapes this (2R): deeper
    * certificates cannot improve the min. */
   uniform float uEscapeRadius;
@@ -712,13 +726,9 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     vec4 imgExt,
     float r,
     float childScale,
-    int depth
-#if SURFACE_CHAOS
-    , int currentState
-#endif
+    int depth,
+    int currentState
   ) {
-#else
-  float refinedCert4(vec4 img, vec4 imgExt, float r, float childScale) {
 #endif
     bool segment = uSliceHalfW > 0.0;
 #if SURFACE_CONDENSATION
@@ -762,18 +772,21 @@ const SURFACE4_FRAGMENT = /* glsl */ `
         vec4 jImg =
           uInvM[j] * (uInvPostM[j] * sImg + uInvPostT[j]) + uInvT[j];
         vec4 jExt = segment ? uInvM[j] * uInvPostM[j] * sExt : vec4(0.0);
-        float rj = segmentRadius(jImg, jExt);
+        float rj = segmentRadius(jImg - stateBoundCenter4(j), jExt);
 #if SURFACE_SCHEDULE
         inner = min(inner, uMapColorSigma[j].w * (rj - childBound.x));
 #else
-        inner = min(inner, uMapColorSigma[j].w * (rj - uBoundingRadius));
+        inner = min(
+          inner,
+          uMapColorSigma[j].w * (rj - stateBoundRadius4(j))
+        );
 #endif
       }
     }
 #if SURFACE_SCHEDULE
     return childScale * max(r - currentBound.x, inner);
 #else
-    return childScale * max(r - uBoundingRadius, inner);
+    return childScale * max(r - stateBoundRadius4(currentState), inner);
 #endif
   }
 
@@ -823,12 +836,11 @@ uniform float uBalloonPaletteEnabled;
    * 4D surface spike) with REFINED sibling certificates (that spike's
    * measured ghost-eliminator: one extra Hutchinson level applied to a
    * candidate's own inverse image before it freezes into the running min)
-   * — hardcoded here exactly as 3D hardcodes its beam width, so there is
-   * no 'wide' flag and no width-1 branch to port. The rank-3/4 validity
-   * slots ride along as extra V1/V2 chains, live only while their image
-   * stays in-sphere — an escaped rank-3/4 candidate folds the same refined
-   * certificate instead, exactly as it would without the slots. Refined
-   * folds replace plain ones at the single per-candidate EVICTION fold
+   * — hardcoded as 3D hardcodes its beam width, so there is no 'wide'
+   * flag. The rank-3/4 validity slots ride along as extra V1/V2 chains,
+   * live only while their image stays in-sphere — an escaped rank-3/4
+   * candidate folds the same refined certificate instead. Refined folds
+   * replace plain ones at the single per-candidate EVICTION fold
    * (whichever tuple the rank-1..4 ladders displace) and the two rank-3/4
    * PROMOTE folds (a validity candidate that escaped before it could
    * occupy V1/V2); the two ESCAPE-RADIUS folds and the two TERMINAL folds
@@ -836,76 +848,67 @@ uniform float uBalloonPaletteEnabled;
    * all) stay PLAIN, exactly as estimateDistance4Refined keeps them —
    * refining those would cost another inverse-map sweep for candidates
    * already destined for the running min by a cheaper route. Every refined
-   * fold site carries the oracle's laziness guard: refinement can only
-   * RAISE a certificate, so a fold whose PLAIN certificate already fails
-   * to beat the running min is skipped whole — bit-exact, and it caps the
-   * inner sweeps at the folds that actually advance the min (measured on
-   * the beam harness: tesseract 1504 -> 450 apps/call, values unchanged).
-   * 1e30 stands in for Infinity (slot-occupancy tests use < 1e29): with
-   * sigma products <= 1 and real distances O(1..10) it can never be
-   * confused for a real bound. This plain overload is the workhorse
+   * fold site carries the oracle's laziness guard:
+   * refinement can only RAISE a certificate, so a fold whose PLAIN
+   * certificate already fails to beat the running min is skipped whole —
+   * bit-exact, and it caps the inner sweeps at the folds that actually
+   * advance the min (measured on the beam harness: tesseract 1504 -> 450
+   * apps/call, values unchanged). 1e30 stands in for Infinity
+   * (slot-occupancy tests use < 1e29). This plain overload is the workhorse
    * (march, normals, shadow, occlusion); the out-param overload below adds
    * hit-shading extras.
    *
    * EARLY-OUT CUTOFF, mirroring the oracle's cutoff parameter. The march
    * needs a HIT DECISION, not a distance, so it passes its own acceptance
    * epsilon and the descent stops as soon as the value it would return is
-   * already below it. A cutoff of 0.0 — the zero-argument overload below,
-   * every tap that needs the DISTANCE — is the full descent. Above the
-   * cutoff the value is the full-descent one (early exits only ever return
-   * BELOW it, so step lengths never drift); below it, the full descent
-   * would have landed below too, so the hit verdict is identical. Both
-   * rest on best only ever FALLING, and on the exits testing it only after
-   * a fold has SETTLED it — refined, here — never on the raw plain
-   * certificate that gates the fold. Exiting on the latter would re-open
-   * the ghost class refinement exists to kill: a barely-escaped sibling
-   * dips under the epsilon, the full descent lifts it back above.
+   * already below it; a cutoff of 0.0 is the full descent. Above the
+   * cutoff the value is the full-descent one (exits only ever return
+   * BELOW it), so step lengths never drift; below it the hit verdict is
+   * identical. Both rest on best only ever FALLING, and on the exits
+   * testing it only after a fold has SETTLED it — refined, here — never on
+   * the raw plain certificate that gates the fold, which would re-open the
+   * ghost class refinement exists to kill.
    *
-   * SPHERE FLOOR, mirroring the oracle's own unconditional exit. Once best
+   * SPHERE FLOOR, mirroring the oracle's own unconditional exit: once best
    * falls to or below sphereBound the return is already pinned at
-   * sphereBound * uFinalSigmaMin — the epilogue clamps through max(best,
-   * sphereBound), and best only ever falls, so no later fold can lift the
-   * clamp back off sphereBound. The descent therefore exits the instant
-   * best <= sphereBound, unconditionally — no cutoff involved. Unlike the
-   * cutoff exit above, this one is value-exact for EVERY caller, including
-   * a cutoff of 0.0 (the zero-argument overload below): it returns the
-   * full-descent value bit-for-bit, always. Live on anisotropic maps
-   * (certificates lose a sigmaMin/sigmaMax factor per level and dip under
-   * the floor); provably dead on isotropic invariant-ball maps, where
-   * certificates never dip (see the oracle's paragraph).
+   * sphereBound * uFinalSigmaMin by the epilogue's max(best, sphereBound),
+   * so the descent exits the instant best <= sphereBound, unconditionally
+   * — no cutoff involved. Unlike the cutoff exit above, this one is
+   * value-exact for EVERY caller, including a cutoff of 0.0 (the
+   * zero-argument overload below): it returns the full-descent value
+   * bit-for-bit, always. Live on anisotropic maps (certificates lose a
+   * sigmaMin/sigmaMax factor per level and dip under the floor); provably
+   * dead on isotropic invariant-ball maps (see the oracle's paragraph).
    *
    * SLAB QUERIES, mirroring the oracle's halfExtent parameter. The query
-   * is no longer the single point (p, uW0) but the SEGMENT it spans
-   * through the slab of half-thickness uSliceHalfW — the part of |w - uW0|
-   * less than or equal to uSliceHalfW sitting over p — so the marched
-   * object is the slab's shadow rather than one cross-section. Affine maps
-   * take segments to segments, so the whole descent carries one extra vec4
-   * beside each chain's and candidate's point, pushed through the inverse
-   * map's LINEAR part alone (a translation slides a segment's centre and
-   * leaves its extent alone), and every |q| - R ball certificate becomes
-   * segmentRadius(q, ext) - R. Beam, validity slots, refined certificates,
-   * terminal KIFS bound, depth-0 sphere floor, final lens and both early
-   * exits are structurally untouched; the bound only loosens, by at most
-   * uSliceHalfW (see the oracle's HOW MUCH THE BOUND CAN LOSE), and the
-   * zero set is exactly the shadow being marched, so nothing new can go
-   * unsound. Cost: uSliceHalfW greater than 0 is the segment flag each
-   * body hoists, DYNAMICALLY UNIFORM across a draw, so the propagation
-   * branches cost nothing when the slab is off — but the extra vec4 per
-   * chain, candidate, eviction and image slot is live register pressure
-   * either way, the one price this pays unconditionally. At uSliceHalfW ==
-   * 0 every value here is today's, bit for bit: segmentRadius degenerates
-   * to length, and a zero extent stays zero through any linear map.
+   * is the SEGMENT through the slab of half-thickness uSliceHalfW — the
+   * part of |w - uW0| <= uSliceHalfW over p — so the marched object is the
+   * slab's shadow. Affine maps take segments to segments, so the descent
+   * carries one extra vec4 beside each chain's and candidate's point,
+   * pushed through the inverse map's LINEAR part alone (a translation
+   * slides a segment's centre and leaves its extent alone), and every
+   * |q| - R ball certificate becomes segmentRadius(q, ext) - R. Beam,
+   * validity slots, refined certificates, terminal KIFS bound, depth-0
+   * sphere floor, final lens and both early exits are structurally
+   * untouched; the bound only loosens, by at most uSliceHalfW (see the
+   * oracle's HOW MUCH THE BOUND CAN LOSE), and the zero set is exactly
+   * the shadow being marched, so nothing new can go unsound. Cost:
+   * uSliceHalfW greater than 0
+   * is the segment flag each body hoists, DYNAMICALLY UNIFORM across a
+   * draw, so the propagation branches cost nothing when the slab is off —
+   * but the extra vec4 per chain, candidate, eviction and image slot is
+   * live register pressure either way. At uSliceHalfW == 0 every value
+   * here is today's, bit for bit.
    *
    * SECTOR SWEEP, mirroring the oracle's kaleidoscope. Each chain point
-   * (and its slab half-extent — an isometry maps segments to segments)
-   * turns one backward step per sector via uSymStepBack, and every base
-   * map is applied to it there, sector-major (k*n + i, the chaos-game
-   * expansion's slot order), so the candidate stream — keys, certificates,
-   * tie-breaks — is exactly the expanded system's without a single
-   * expanded slot. uSymOrder 1 leaves the k > 0 branches dead:
-   * non-symmetric systems run the pre-sweep arithmetic unchanged. The
-   * oracle module's SYMMETRY section carries the validity argument and why
-   * a single wedge FOLD would not be sound here.
+   * (and its slab half-extent) turns one backward step per sector via
+   * uSymStepBack, and every base map is applied to it there, sector-major
+   * (k*n + i, the chaos-game expansion's slot order), so the candidate
+   * stream — keys, certificates, tie-breaks — is exactly the expanded
+   * system's without a single expanded slot. uSymOrder 1 leaves the k > 0
+   * branches dead: non-symmetric systems run the pre-sweep arithmetic
+   * unchanged. The oracle module's SYMMETRY section carries the validity
+   * argument and why a single wedge FOLD would not be sound here.
    */
   float surfaceDE(vec3 p, float cutoff) {
     // View -> attractor frame: a rotation is an isometry, so the DE's
@@ -966,12 +969,10 @@ uniform float uBalloonPaletteEnabled;
     vec4 v2Ext = vec4(0.0);
     float v2Scale = 1.0;
     bool v2Live = false;
-#if SURFACE_CHAOS
     int aState = -1;
     int bState = -1;
     int v1State = -1;
     int v2State = -1;
-#endif
 #if SURFACE_CONDENSATION
     bool bandEnded = false;
 #endif
@@ -1021,18 +1022,14 @@ uniform float uBalloonPaletteEnabled;
       float c1Scale = 1.0;
       float c1R = 0.0;
       float c1Cert = 0.0;
-#if SURFACE_CHAOS
       int c1State = -1;
-#endif
       float c2Key = 1e30;
       vec4 c2Q = vec4(0.0);
       vec4 c2Ext = vec4(0.0);
       float c2Scale = 1.0;
       float c2R = 0.0;
       float c2Cert = 0.0;
-#if SURFACE_CHAOS
       int c2State = -1;
-#endif
       // Ranks 3/4, tracked the same way: a second insert-shift ladder fed
       // by everything the top-2 ladder evicts, so the pair holds exactly
       // the level's third- and fourth-smallest keys.
@@ -1042,25 +1039,19 @@ uniform float uBalloonPaletteEnabled;
       float c3Scale = 1.0;
       float c3R = 0.0;
       float c3Cert = 0.0;
-#if SURFACE_CHAOS
       int c3State = -1;
-#endif
       float c4Key = 1e30;
       vec4 c4Q = vec4(0.0);
       vec4 c4Ext = vec4(0.0);
       float c4Scale = 1.0;
       float c4R = 0.0;
       float c4Cert = 0.0;
-#if SURFACE_CHAOS
       int c4State = -1;
-#endif
       for (int c = 0; c < 4; c++) {
         vec4 pQ = vec4(0.0);
         vec4 pExt = vec4(0.0);
         float pScale = 1.0;
-#if SURFACE_CHAOS
         int pState = -1;
-#endif
         if (c == 0) {
           if (!aLive) {
             continue;
@@ -1131,8 +1122,9 @@ uniform float uBalloonPaletteEnabled;
 #else
           for (int j = 0; j < uMapCount; j++) {
 #endif
+            int childState = -1;
 #if SURFACE_CHAOS
-            int childState = surfaceChaosChildState4(depth, j);
+            childState = surfaceChaosChildState4(depth, j);
             if (!surfaceChaosAllows4(pState, childState)) continue;
 #endif
             // Un-post stage, then the base inverse.
@@ -1140,11 +1132,11 @@ uniform float uBalloonPaletteEnabled;
               uInvM[j] * (uInvPostM[j] * sQ + uInvPostT[j]) + uInvT[j];
             vec4 imgExt =
               segment ? uInvM[j] * uInvPostM[j] * sExt : vec4(0.0);
-            float r = segmentRadius(img, imgExt);
+            float r = segmentRadius(img - stateBoundCenter4(childState), imgExt);
 #if SURFACE_SCHEDULE
             float key = pScale * (r - childBound.x);
 #else
-            float key = pScale * (r - uBoundingRadius);
+            float key = pScale * (r - stateBoundRadius4(childState));
 #endif
             float childScale = pScale * uMapColorSigma[j].w;
 #if SURFACE_CONDENSATION
@@ -1157,7 +1149,7 @@ uniform float uBalloonPaletteEnabled;
 #if SURFACE_SCHEDULE
             float cert = childScale * (r - childBound.x);
 #else
-            float cert = childScale * (r - uBoundingRadius);
+            float cert = childScale * (r - stateBoundRadius4(childState));
 #endif
 #if SURFACE_CONDENSATION
             if (lastLevel) cert = 1e30;
@@ -1321,20 +1313,12 @@ uniform float uBalloonPaletteEnabled;
 #if SURFACE_SCHEDULE
             if (eR > childBound.x && eCert < best) {
 #else
-            if (eR > uBoundingRadius && eCert < best) {
+            if (eR > stateBoundRadius4(eState) && eCert < best) {
 #endif
-#if SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS
-#if SURFACE_CHAOS
               best = min(
                 best,
                 refinedCert4(eQ, eExt, eR, eScale, depth + 1, eState)
               );
-#else
-              best = min(best, refinedCert4(eQ, eExt, eR, eScale, depth + 1));
-#endif
-#else
-              best = min(best, refinedCert4(eQ, eExt, eR, eScale));
-#endif
               // Cutoff exit plus the sphere-floor pin: the folded
               // certificate is FINALIZED (already refined), and best only
               // falls from here. Once best is at or below sphereBound the
@@ -1352,9 +1336,9 @@ uniform float uBalloonPaletteEnabled;
                        !condensationBandOpenAtNextDepth4(depth)) {
               best = min(best, eScale * (eR - childBound.x));
 #else
-            } else if (eKey < 1e29 && futureCondensation && eR <= uBoundingRadius &&
+            } else if (eKey < 1e29 && futureCondensation && eR <= stateBoundRadius4(eState) &&
                        !condensationBandOpenAtNextDepth4(depth)) {
-              best = min(best, eScale * (eR - uBoundingRadius));
+              best = min(best, eScale * (eR - stateBoundRadius4(eState)));
 #endif
 #endif
             }
@@ -1376,7 +1360,7 @@ uniform float uBalloonPaletteEnabled;
 #if SURFACE_SCHEDULE
         if (c1R > childBound.y) {
 #else
-        if (c1R > uEscapeRadius) {
+        if (c1R > 2.0 * stateBoundRadius4(c1State)) {
 #endif
           best = min(best, c1Cert);
         } else {
@@ -1394,7 +1378,7 @@ uniform float uBalloonPaletteEnabled;
 #if SURFACE_SCHEDULE
         if (c2R > childBound.y) {
 #else
-        if (c2R > uEscapeRadius) {
+        if (c2R > 2.0 * stateBoundRadius4(c2State)) {
 #endif
           best = min(best, c2Cert);
         } else {
@@ -1412,21 +1396,13 @@ uniform float uBalloonPaletteEnabled;
 #if SURFACE_SCHEDULE
         if (c3R > childBound.x) {
 #else
-        if (c3R > uBoundingRadius) {
+        if (c3R > stateBoundRadius4(c3State)) {
 #endif
           if (c3Cert < best) {
-#if SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS
-#if SURFACE_CHAOS
             best = min(
               best,
               refinedCert4(c3Q, c3Ext, c3R, c3Scale, depth + 1, c3State)
             );
-#else
-            best = min(best, refinedCert4(c3Q, c3Ext, c3R, c3Scale, depth + 1));
-#endif
-#else
-            best = min(best, refinedCert4(c3Q, c3Ext, c3R, c3Scale));
-#endif
           }
         } else {
           v1Q = c3Q;
@@ -1442,21 +1418,13 @@ uniform float uBalloonPaletteEnabled;
 #if SURFACE_SCHEDULE
         if (c4R > childBound.x) {
 #else
-        if (c4R > uBoundingRadius) {
+        if (c4R > stateBoundRadius4(c4State)) {
 #endif
           if (c4Cert < best) {
-#if SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS
-#if SURFACE_CHAOS
             best = min(
               best,
               refinedCert4(c4Q, c4Ext, c4R, c4Scale, depth + 1, c4State)
             );
-#else
-            best = min(best, refinedCert4(c4Q, c4Ext, c4R, c4Scale, depth + 1));
-#endif
-#else
-            best = min(best, refinedCert4(c4Q, c4Ext, c4R, c4Scale));
-#endif
           }
         } else {
           v2Q = c4Q;
@@ -1522,7 +1490,7 @@ uniform float uBalloonPaletteEnabled;
       vec2 terminalBound = surface4LevelBound(uMaxDepth);
       best = min(best, aScale * (aR - terminalBound.x));
 #else
-      best = min(best, aScale * (aR - uBoundingRadius));
+      best = min(best, aScale * (aR - stateBoundRadius4(aState)));
 #endif
     }
 #if SURFACE_CONDENSATION
@@ -1534,7 +1502,7 @@ uniform float uBalloonPaletteEnabled;
       vec2 terminalBound = surface4LevelBound(uMaxDepth);
       best = min(best, bScale * (bR - terminalBound.x));
 #else
-      best = min(best, bScale * (bR - uBoundingRadius));
+      best = min(best, bScale * (bR - stateBoundRadius4(bState)));
 #endif
     }
     // Validity chains fold NO cap terminal — deliberately asymmetric with
@@ -1665,12 +1633,10 @@ uniform float uBalloonPaletteEnabled;
     vec4 v2Ext = vec4(0.0);
     float v2Scale = 1.0;
     bool v2Live = false;
-#if SURFACE_CHAOS
     int aState = -1;
     int bState = -1;
     int v1State = -1;
     int v2State = -1;
-#endif
     firstChoice = 0;
     trap = 0.0;
     rings = 1.0;
@@ -1723,18 +1689,14 @@ uniform float uBalloonPaletteEnabled;
       float c1R = 0.0;
       float c1Cert = 0.0;
       int c1Map = 0;
-#if SURFACE_CHAOS
       int c1State = -1;
-#endif
       float c2Key = 1e30;
       vec4 c2Q = vec4(0.0);
       vec4 c2Ext = vec4(0.0);
       float c2Scale = 1.0;
       float c2R = 0.0;
       float c2Cert = 0.0;
-#if SURFACE_CHAOS
       int c2State = -1;
-#endif
       // Ranks 3/4, tracked the same way: a second insert-shift ladder fed
       // by everything the top-2 ladder evicts, so the pair holds exactly
       // the level's third- and fourth-smallest keys.
@@ -1744,25 +1706,19 @@ uniform float uBalloonPaletteEnabled;
       float c3Scale = 1.0;
       float c3R = 0.0;
       float c3Cert = 0.0;
-#if SURFACE_CHAOS
       int c3State = -1;
-#endif
       float c4Key = 1e30;
       vec4 c4Q = vec4(0.0);
       vec4 c4Ext = vec4(0.0);
       float c4Scale = 1.0;
       float c4R = 0.0;
       float c4Cert = 0.0;
-#if SURFACE_CHAOS
       int c4State = -1;
-#endif
       for (int c = 0; c < 4; c++) {
         vec4 pQ = vec4(0.0);
         vec4 pExt = vec4(0.0);
         float pScale = 1.0;
-#if SURFACE_CHAOS
         int pState = -1;
-#endif
         if (c == 0) {
           if (!aLive) {
             continue;
@@ -1833,8 +1789,9 @@ uniform float uBalloonPaletteEnabled;
 #else
           for (int j = 0; j < uMapCount; j++) {
 #endif
+            int childState = -1;
 #if SURFACE_CHAOS
-            int childState = surfaceChaosChildState4(depth, j);
+            childState = surfaceChaosChildState4(depth, j);
             if (!surfaceChaosAllows4(pState, childState)) continue;
 #endif
             // Un-post stage, then the base inverse.
@@ -1842,11 +1799,11 @@ uniform float uBalloonPaletteEnabled;
               uInvM[j] * (uInvPostM[j] * sQ + uInvPostT[j]) + uInvT[j];
             vec4 imgExt =
               segment ? uInvM[j] * uInvPostM[j] * sExt : vec4(0.0);
-            float r = segmentRadius(img, imgExt);
+            float r = segmentRadius(img - stateBoundCenter4(childState), imgExt);
 #if SURFACE_SCHEDULE
             float key = pScale * (r - childBound.x);
 #else
-            float key = pScale * (r - uBoundingRadius);
+            float key = pScale * (r - stateBoundRadius4(childState));
 #endif
             float childScale = pScale * uMapColorSigma[j].w;
 #if SURFACE_CONDENSATION
@@ -1864,7 +1821,7 @@ uniform float uBalloonPaletteEnabled;
 #if SURFACE_SCHEDULE
             float cert = childScale * (r - childBound.x);
 #else
-            float cert = childScale * (r - uBoundingRadius);
+            float cert = childScale * (r - stateBoundRadius4(childState));
 #endif
 #if SURFACE_CONDENSATION
             if (lastLevel) cert = 1e30;
@@ -2028,29 +1985,21 @@ uniform float uBalloonPaletteEnabled;
 #if SURFACE_SCHEDULE
             if (eR > childBound.x && eCert < best) {
 #else
-            if (eR > uBoundingRadius && eCert < best) {
+            if (eR > stateBoundRadius4(eState) && eCert < best) {
 #endif
-#if SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS
-#if SURFACE_CHAOS
               best = min(
                 best,
                 refinedCert4(eQ, eExt, eR, eScale, depth + 1, eState)
               );
-#else
-              best = min(best, refinedCert4(eQ, eExt, eR, eScale, depth + 1));
-#endif
-#else
-              best = min(best, refinedCert4(eQ, eExt, eR, eScale));
-#endif
 #if SURFACE_CONDENSATION
 #if SURFACE_SCHEDULE
             } else if (eKey < 1e29 && futureCondensation && eR <= childBound.x &&
                        !condensationBandOpenAtNextDepth4(depth)) {
               best = min(best, eScale * (eR - childBound.x));
 #else
-            } else if (eKey < 1e29 && futureCondensation && eR <= uBoundingRadius &&
+            } else if (eKey < 1e29 && futureCondensation && eR <= stateBoundRadius4(eState) &&
                        !condensationBandOpenAtNextDepth4(depth)) {
-              best = min(best, eScale * (eR - uBoundingRadius));
+              best = min(best, eScale * (eR - stateBoundRadius4(eState)));
 #endif
 #endif
             }
@@ -2111,7 +2060,7 @@ uniform float uBalloonPaletteEnabled;
 #if SURFACE_SCHEDULE
         if (c1R > childBound.y) {
 #else
-        if (c1R > uEscapeRadius) {
+        if (c1R > 2.0 * stateBoundRadius4(c1State)) {
 #endif
           best = min(best, c1Cert);
         } else {
@@ -2129,7 +2078,7 @@ uniform float uBalloonPaletteEnabled;
 #if SURFACE_SCHEDULE
         if (c2R > childBound.y) {
 #else
-        if (c2R > uEscapeRadius) {
+        if (c2R > 2.0 * stateBoundRadius4(c2State)) {
 #endif
           best = min(best, c2Cert);
         } else {
@@ -2147,21 +2096,13 @@ uniform float uBalloonPaletteEnabled;
 #if SURFACE_SCHEDULE
         if (c3R > childBound.x) {
 #else
-        if (c3R > uBoundingRadius) {
+        if (c3R > stateBoundRadius4(c3State)) {
 #endif
           if (c3Cert < best) {
-#if SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS
-#if SURFACE_CHAOS
             best = min(
               best,
               refinedCert4(c3Q, c3Ext, c3R, c3Scale, depth + 1, c3State)
             );
-#else
-            best = min(best, refinedCert4(c3Q, c3Ext, c3R, c3Scale, depth + 1));
-#endif
-#else
-            best = min(best, refinedCert4(c3Q, c3Ext, c3R, c3Scale));
-#endif
           }
         } else {
           v1Q = c3Q;
@@ -2177,21 +2118,13 @@ uniform float uBalloonPaletteEnabled;
 #if SURFACE_SCHEDULE
         if (c4R > childBound.x) {
 #else
-        if (c4R > uBoundingRadius) {
+        if (c4R > stateBoundRadius4(c4State)) {
 #endif
           if (c4Cert < best) {
-#if SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS
-#if SURFACE_CHAOS
             best = min(
               best,
               refinedCert4(c4Q, c4Ext, c4R, c4Scale, depth + 1, c4State)
             );
-#else
-            best = min(best, refinedCert4(c4Q, c4Ext, c4R, c4Scale, depth + 1));
-#endif
-#else
-            best = min(best, refinedCert4(c4Q, c4Ext, c4R, c4Scale));
-#endif
           }
         } else {
           v2Q = c4Q;
@@ -2241,7 +2174,7 @@ uniform float uBalloonPaletteEnabled;
       vec2 terminalBound = surface4LevelBound(uMaxDepth);
       best = min(best, aScale * (aR - terminalBound.x));
 #else
-      best = min(best, aScale * (aR - uBoundingRadius));
+      best = min(best, aScale * (aR - stateBoundRadius4(aState)));
 #endif
     }
 #if SURFACE_CONDENSATION
@@ -2253,7 +2186,7 @@ uniform float uBalloonPaletteEnabled;
       vec2 terminalBound = surface4LevelBound(uMaxDepth);
       best = min(best, bScale * (bR - terminalBound.x));
 #else
-      best = min(best, bScale * (bR - uBoundingRadius));
+      best = min(best, bScale * (bR - stateBoundRadius4(bState)));
 #endif
     }
     // Validity chains fold NO cap terminal — deliberately asymmetric with
@@ -3571,6 +3504,15 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uChaosPredecessorMasks: {
         value: Array.from({ length: 6 }, () => new THREE.Vector4()),
       },
+      uStateCenter: {
+        value: Array.from(
+          { length: SURFACE4_MAX_MAPS },
+          () => new THREE.Vector4(),
+        ),
+      },
+      uStateRadius: {
+        value: new Array<number>(SURFACE4_MAX_MAPS).fill(1),
+      },
       // No kaleidoscope until a system says otherwise: order 1 + identity
       // is the "no symmetry" encoding, and the sweep never reads the
       // matrix at order 1.
@@ -3978,6 +3920,22 @@ export function setSurfaceSystem4(
   );
   u.uBoundingRadius.value = de.boundingRadius;
   u.uEscapeRadius.value = de.escapeRadius;
+  // Per-state local frames, slot j == state j (the graph-state wire check
+  // above). Slots without per-component bounds keep the origin ball.
+  const stateCenters4 = u.uStateCenter.value as THREE.Vector4[];
+  const stateRadii4 = u.uStateRadius.value as number[];
+  for (let j = 0; j < SURFACE4_MAX_MAPS; j++) {
+    stateCenters4[j].set(0, 0, 0, 0);
+    stateRadii4[j] = de.boundingRadius;
+  }
+  de.maps.forEach((map, j) => {
+    if (map.stateBoundCenter !== undefined) {
+      stateCenters4[j].set(...map.stateBoundCenter);
+    }
+    if (map.stateBoundRadius !== undefined) {
+      stateRadii4[j] = map.stateBoundRadius;
+    }
+  });
   u.uMaxDepth.value = condensationTraversalDepth(de, de.maxDepth);
   u.uStepScale.value = de.stepScale;
   u.uVisibleRadius.value = de.visibleBoundingRadius;

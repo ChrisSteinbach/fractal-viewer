@@ -136,36 +136,36 @@ const BALLOON_PALETTE_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "3D balloon finish0": {
-    resolved: "0b31fb692019f37e",
-    emitted: "d08ca00b0c99a92c",
+    resolved: "70ae21b7b8f9aa5f",
+    emitted: "6b4ed7591abffb3a",
   },
   "3D balloon finish1": {
-    resolved: "573db1fc59cc0d1e",
-    emitted: "99208e73b12d72e4",
+    resolved: "25498ef13dfdba60",
+    emitted: "1af650ee7870bc07",
   },
   "3D lens+balloon finish0": {
-    resolved: "6dd170601d64fe73",
-    emitted: "d8677e27d22928a1",
+    resolved: "03b4111f5d980874",
+    emitted: "87a1a56207fb75cf",
   },
   "3D lens+balloon finish1": {
-    resolved: "9faaf9f832a8cea1",
-    emitted: "a1b3ae4e0de26b23",
+    resolved: "a1afbb88a8b97461",
+    emitted: "c53f51b53b76113f",
   },
   "3D escape+balloon finish0": {
-    resolved: "4aff6eaba479d054",
-    emitted: "49b0d5603e41990c",
+    resolved: "9c30049fc8515b60",
+    emitted: "58d721115127d974",
   },
   "3D escape+balloon finish1": {
-    resolved: "705124986854f173",
-    emitted: "c237c2d4daff4da0",
+    resolved: "b2fde1cc151ae4d5",
+    emitted: "b98b784d9fafaf73",
   },
   "3D bulb+balloon finish0": {
-    resolved: "0e853527eaf55af4",
-    emitted: "0e853527eaf55af4",
+    resolved: "7a8394e699b0a9b5",
+    emitted: "7a8394e699b0a9b5",
   },
   "3D bulb+balloon finish1": {
-    resolved: "e01c3d36251472eb",
-    emitted: "e01c3d36251472eb",
+    resolved: "829091730b88f503",
+    emitted: "829091730b88f503",
   },
 };
 
@@ -177,28 +177,28 @@ const SWIRL_LENS_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "3D lens finish0": {
-    resolved: "5c7160a3f854e2dd",
-    emitted: "45e816f5d716e715",
+    resolved: "c3960880cd5ed47c",
+    emitted: "fe456ad3746e17ae",
   },
   "3D lens+balloon finish0": {
-    resolved: "a84284a9d531b96c",
-    emitted: "fd2a95a8e60cb460",
+    resolved: "03b4111f5d980874",
+    emitted: "87a1a56207fb75cf",
   },
   "3D lens+plane finish0": {
-    resolved: "e96787236933926c",
-    emitted: "e65fb82e3cfaed66",
+    resolved: "74c30165026b4989",
+    emitted: "91341d638ce9196e",
   },
   "3D lens finish1": {
-    resolved: "d4ed0986c311ae5c",
-    emitted: "caa88ce115f9a009",
+    resolved: "4289e7ed76395ef6",
+    emitted: "688c1a87bc8f6257",
   },
   "3D lens+balloon finish1": {
-    resolved: "988fa8ee0cd8d9f1",
-    emitted: "b2074895bd911552",
+    resolved: "a1afbb88a8b97461",
+    emitted: "c53f51b53b76113f",
   },
   "3D lens+plane finish1": {
-    resolved: "04ee48da7dc96dac",
-    emitted: "b4384f62f0af62ac",
+    resolved: "bdf919de4a9934cf",
+    emitted: "a4513cfaabe2d185",
   },
 };
 
@@ -208,100 +208,100 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "3D affine finish0": {
-    resolved: "87155b2380d0ce9d",
-    emitted: "9e8ffc12aa11c2f8",
+    resolved: "13e90ad814943235",
+    emitted: "e80d0cdb03208f27",
   },
   "3D lens finish0": {
-    resolved: "a588c95b6a9357b2",
-    emitted: "5898a35d60540b64",
+    resolved: "c3960880cd5ed47c",
+    emitted: "fe456ad3746e17ae",
   },
   "3D balloon finish0": {
-    resolved: "2553770bebb22d4a",
-    emitted: "27c0cc0f1b1b5fc0",
+    resolved: "70ae21b7b8f9aa5f",
+    emitted: "6b4ed7591abffb3a",
   },
   "3D plane finish0": {
-    resolved: "ee58344008c3c12e",
-    emitted: "cdb41fd6ff2c1784",
+    resolved: "7ef9e2b976ded4fc",
+    emitted: "c04b1711531f23f2",
   },
   "3D lens+balloon finish0": {
-    resolved: "ffe6bdf2d90a7920",
-    emitted: "6579e37fd4ec9597",
+    resolved: "03b4111f5d980874",
+    emitted: "87a1a56207fb75cf",
   },
   "3D lens+plane finish0": {
-    resolved: "f206a3e9b71b8642",
-    emitted: "cbc63d042d9a1f35",
+    resolved: "74c30165026b4989",
+    emitted: "91341d638ce9196e",
   },
   "3D escape finish0": {
-    resolved: "fc3b5eecf090fd50",
-    emitted: "fc3b5eecf090fd50",
+    resolved: "45b732e37233ffbb",
+    emitted: "45b732e37233ffbb",
   },
   "3D escape+balloon finish0": {
-    resolved: "78f3949f80bbac2c",
-    emitted: "441881d3d6dcddf5",
+    resolved: "9c30049fc8515b60",
+    emitted: "58d721115127d974",
   },
   "3D escape+plane finish0": {
-    resolved: "56ac81a3bf8adfc2",
-    emitted: "44138e09099bbd38",
+    resolved: "b5ad6fbe4595fd37",
+    emitted: "b561d279dc8505a8",
   },
   "3D bulb finish0": {
-    resolved: "68625d8191aae5d9",
-    emitted: "68625d8191aae5d9",
+    resolved: "52c03c36902ed756",
+    emitted: "52c03c36902ed756",
   },
   "3D bulb+balloon finish0": {
-    resolved: "ee6815b4a9b46f01",
-    emitted: "ee6815b4a9b46f01",
+    resolved: "7a8394e699b0a9b5",
+    emitted: "7a8394e699b0a9b5",
   },
   "3D bulb+plane finish0": {
-    resolved: "52e3a9619ac1764d",
-    emitted: "38ff35ac5765e842",
+    resolved: "c6a4713443fd783b",
+    emitted: "40a8c5fec38e4c26",
   },
   "3D affine finish1": {
-    resolved: "a0619b96de2c5aac",
-    emitted: "03580e57ec07fe47",
+    resolved: "a100886e3686a6c3",
+    emitted: "a915ba16492f2ed4",
   },
   "3D lens finish1": {
-    resolved: "ab8ff01454039c55",
-    emitted: "887c47b063db1b7f",
+    resolved: "4289e7ed76395ef6",
+    emitted: "688c1a87bc8f6257",
   },
   "3D balloon finish1": {
-    resolved: "1ba3183defc84a98",
-    emitted: "56853af5a9459b54",
+    resolved: "25498ef13dfdba60",
+    emitted: "1af650ee7870bc07",
   },
   "3D plane finish1": {
-    resolved: "f7ddf629f2765877",
-    emitted: "e806201d0cf3b015",
+    resolved: "3bc69b5223e7ee21",
+    emitted: "6e4a49d70b570d35",
   },
   "3D lens+balloon finish1": {
-    resolved: "dee76813efd09bcd",
-    emitted: "d826e47ceaf72e34",
+    resolved: "a1afbb88a8b97461",
+    emitted: "c53f51b53b76113f",
   },
   "3D lens+plane finish1": {
-    resolved: "fa81806a0940b144",
-    emitted: "c6826145915a35ee",
+    resolved: "bdf919de4a9934cf",
+    emitted: "a4513cfaabe2d185",
   },
   "3D escape finish1": {
-    resolved: "ec3e7ee94f8643e3",
-    emitted: "ec3e7ee94f8643e3",
+    resolved: "3cbff0834e4e07b8",
+    emitted: "3cbff0834e4e07b8",
   },
   "3D escape+balloon finish1": {
-    resolved: "076b79080509f31d",
-    emitted: "6d98c7e3bf1564de",
+    resolved: "b2fde1cc151ae4d5",
+    emitted: "b98b784d9fafaf73",
   },
   "3D escape+plane finish1": {
-    resolved: "3527516ca49ffdd7",
-    emitted: "dca6b4cb765dc2aa",
+    resolved: "ca0bc1f642fa74b3",
+    emitted: "c975d39f02e7e0b6",
   },
   "3D bulb finish1": {
-    resolved: "8a2cd95308953315",
-    emitted: "8a2cd95308953315",
+    resolved: "4874ab75db831eec",
+    emitted: "4874ab75db831eec",
   },
   "3D bulb+balloon finish1": {
-    resolved: "250de4bfd8daad20",
-    emitted: "250de4bfd8daad20",
+    resolved: "829091730b88f503",
+    emitted: "829091730b88f503",
   },
   "3D bulb+plane finish1": {
-    resolved: "0dc18c2d33878971",
-    emitted: "6b667e362c8cdd28",
+    resolved: "b7e8dac27c68dd8b",
+    emitted: "124b2f903b559393",
   },
 };
 
@@ -652,9 +652,7 @@ describe("GLSL finite schedule packing and source", () => {
     expect(src).toContain("return depth < uScheduleDepth ? uMapCount : 0;");
     expect(src).toContain("return depth < uScheduleDepth ? 1 : uSymOrder;");
     expect(src).toContain("vec4 childBound = surfaceLevelBound(depth + 1);");
-    expect(src).toContain(
-      "best = min(best, refinedCert(eQ, eR, eScale, depth + 1));",
-    );
+    expect(src).toContain("refinedCert(eQ, eR, eScale, depth + 1, eState)");
     expect(src).toContain("if (depth == uScheduleDepth)");
     expect(src).toContain("if (depth >= uScheduleDepth)");
   });
@@ -1672,7 +1670,7 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
 
   it("keeps the pre-lattice finite source bytes frozen", () => {
     expect(sha256(sourceFor(a3))).toBe(
-      "9f3290c2d2a2133279eae88b11227711803af6db543f080e325bec471372c651",
+      "13e1162533ce9384b33c3ddbd8308c68e8a9485bb3cd8a38aa4ca8f581a8054a",
     );
     expect(
       sha256(
@@ -1694,9 +1692,9 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
           a3,
         ),
       ),
-    ).toBe("6b43c768ac2a2cabeebe8d9f40a8c9832d12a41b73f334c2ce9b71e5d105b1ce");
+    ).toBe("ddc11b5d4239119b493f57f078e8c1640c53fd0f8f4153823aa36d7960803432");
     expect(sha256(sourceFor(a3, { escape: 1 }))).toBe(
-      "0b1a8765b8d7a8a910442f81c8dd897d15b2efb9c2873a5724bdf3b3dfd67d6d",
+      "91a7867dabd81747dd0c1006147db2334db08814fa1aea3311587defce1f70ff",
     );
   });
 
@@ -3997,12 +3995,12 @@ describe("SURFACE_SPHERE_INVERSION variant", () => {
         1,
       );
     // Plain: under the threshold, so it reaches the driver unstripped.
-    expect(resolved(0, 0, 0).length).toBe(41695);
-    expect(emitted(0, 0, 0).length).toBe(41695);
+    expect(resolved(0, 0, 0).length).toBe(42030);
+    expect(emitted(0, 0, 0).length).toBe(42030);
     expect(resolved(0, 0, 0).length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
     // Plane + finish + lighting crosses the threshold and strips.
-    expect(resolved(1, 1, 1).length).toBe(60006);
-    expect(emitted(1, 1, 1).length).toBe(23903);
+    expect(resolved(1, 1, 1).length).toBe(60341);
+    expect(emitted(1, 1, 1).length).toBe(23992);
     expect(emitted(1, 1, 1).length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
   });
 
@@ -5627,7 +5625,7 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
     const cases = [
       {
         source: surfaceFragmentResolvedFor(1, 0),
-        hash: "fc3b5eecf090fd501baed63e808f088d6d56b6b7ef98d2d36a124eacfeaae610",
+        hash: "45b732e37233ffbb6721d51f24dedc0899b3f382b6b8686429c025631f167445",
       },
       {
         source: surfaceFragmentResolvedFor(
@@ -5641,7 +5639,7 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
           undefined,
           PEACE_SIGN_SHAPE,
         ),
-        hash: "3c9f51402e8cbd9ee207d9009068ed8019edfd1073f15b9d82b275dfccf41e8b",
+        hash: "190f6afc755cd183496c158e1d4e623d1dc9d868aa83f28aad2bc8244f033465",
       },
       {
         source: surfaceFragmentResolvedFor(
@@ -5655,7 +5653,7 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
           undefined,
           PEACE_SIGN_SHAPE,
         ),
-        hash: "5ce6434ccbc2cc3252eedcc4292fed2256cc71935125a397866f392cd325810a",
+        hash: "cee674e070f67878d91aa1016432a42d9718508e52544cf484daef1920acf2fd",
       },
     ];
     for (const { source, hash } of cases) {

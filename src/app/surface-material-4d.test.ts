@@ -58,12 +58,12 @@ const BALLOON_PALETTE_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "4D balloon finish0": {
-    resolved: "31b6bf11b2764031",
-    emitted: "e0048922718b5bcb",
+    resolved: "aba8832def9fc872",
+    emitted: "0d23ec9c7f261087",
   },
   "4D balloon finish1": {
-    resolved: "62e202ba5c488c7c",
-    emitted: "a66d90c86b8d1447",
+    resolved: "73ffde2749c5800f",
+    emitted: "03ed8ae6ce24f137",
   },
 };
 
@@ -73,28 +73,28 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "4D base finish0": {
-    resolved: "dad07bdc2b02798c" /* optics lane pair appended to the block */,
-    emitted: "dad07bdc2b02798c" /* optics lane pair appended to the block */,
+    resolved: "1faa5443d7485caa" /* optics lane pair appended to the block */,
+    emitted: "1faa5443d7485caa" /* optics lane pair appended to the block */,
   },
   "4D balloon finish0": {
-    resolved: "31b6bf11b2764031",
-    emitted: "e0048922718b5bcb",
+    resolved: "aba8832def9fc872",
+    emitted: "0d23ec9c7f261087",
   },
   "4D plane finish0": {
-    resolved: "8db4aafe4a033a5a",
-    emitted: "24293ccbafd8159c",
+    resolved: "e5d93a55c42a7f02",
+    emitted: "368d3043c330bb61",
   },
   "4D base finish1": {
-    resolved: "f6665d1c11aec7c5",
-    emitted: "7817748ebf0c2de1",
+    resolved: "d2be72fc4d28af5f",
+    emitted: "ebf0adc4beb672a7",
   },
   "4D balloon finish1": {
-    resolved: "42240c43bffd4549",
-    emitted: "3918bd029ac43b4b",
+    resolved: "73ffde2749c5800f",
+    emitted: "03ed8ae6ce24f137",
   },
   "4D plane finish1": {
-    resolved: "858fe22ffa50aaf7",
-    emitted: "231ab60a0e457612",
+    resolved: "b7fdf1b1f4d92b7b",
+    emitted: "71f12f0a7b7105b3",
   },
 };
 
@@ -380,7 +380,7 @@ describe("4D GLSL finite schedule packing and source", () => {
     expect(src).toContain("return depth < uScheduleDepth ? 1 : uSymOrder;");
     expect(src).toContain("vec2 childBound = surface4LevelBound(depth + 1);");
     expect(src).toContain(
-      "best = min(best, refinedCert4(eQ, eExt, eR, eScale, depth + 1));",
+      "refinedCert4(eQ, eExt, eR, eScale, depth + 1, eState)",
     );
     expect(src).toContain("if (depth == uScheduleDepth)");
     expect(src).toContain("if (depth >= uScheduleDepth)");
@@ -1298,10 +1298,10 @@ describe("compile-gated finite tiling in the 4D GLSL tracer", () => {
 
   it("keeps the pre-lattice finite source bytes frozen", () => {
     expect(sha256(sourceFor(f4))).toBe(
-      "49d89efdeab9fa2bdd9e21a819cb3934cea300d9f4f02639184a3654afb05ecf" /* optics lane pair appended to the block */,
+      "c928c41d0a2ed1070c5e56615add56e6b9b34977c33794925a6e6410fb178ad4" /* optics lane pair appended to the block */,
     );
     expect(sha256(surface4FragmentFor(0, 0, 0, 0, null, 0, 0, f4))).toBe(
-      "6de34fb8f2fa57f34bc46f6b6e078a00f9fb5dea16e516af25653b836f6b33d9" /* optics lane pair appended to the block */,
+      "23271f014db5a77aa2df5ed990fd7a50f8e8e32a6f9b3b15241dcb1680eddc30" /* optics lane pair appended to the block */,
     );
   });
 
