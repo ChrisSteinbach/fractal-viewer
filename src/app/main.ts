@@ -661,6 +661,10 @@ interface SurfaceStateProbe {
   /** Whether a general Glass solid renders its opaque maps as the true
    * attractor under the glass cells (the composite kernel). */
   finiteComposite: boolean;
+  /** The live session's resolved per-map media codes (`finiteSolidGeneral
+   * MediaCodes`: 0 opaque, k > 0 glass, equal codes one medium) — null
+   * outside surface mode or off the general Glass solid's route. */
+  mediaCodes: number[] | null;
   /** The renderer actually executing this surface session. */
   backend: { label: string | null; software: boolean } | null;
   /** Exact terminal statuses for the current completed settle pass. */
@@ -4893,6 +4897,12 @@ async function main(): Promise<void> {
   // Whether this session's general Glass solid renders its opaque maps as
   // the attractor (finite-composite-route.ts) — the probe's route signal.
   let sessionFiniteComposite = false;
+  // The same session's resolved per-map media codes (finiteSolidGeneral
+  // MediaCodes: 0 opaque, k > 0 glass, equal codes one medium) — the probe's
+  // media signal, so a gate can read WHICH media the live session resolved
+  // (two authored glass indices must read two distinct codes) without
+  // touching the document.
+  let sessionMediaCodes: number[] | null = null;
 
   // The compute path's first-frame gate — the compile gate's twin, one
   // async resource over: device + pipeline instead of a GLSL link. Same
@@ -6008,6 +6018,7 @@ async function main(): Promise<void> {
       // device + pipeline instead of the GLSL link.
       let computeTarget: SurfaceComputeAnyTarget | null = null;
       sessionFiniteComposite = false;
+      sessionMediaCodes = null;
       // Resolve the authored tiling block against ONE arm's estimator
       // authority radius — the exact rule the shader wrappers and packers
       // enforce (a lattice block resolved against a different radius
@@ -6337,6 +6348,7 @@ async function main(): Promise<void> {
               sessionMaterials,
               materialSlots.length,
             );
+            sessionMediaCodes = media;
             const decision = decideFiniteComposite(
               generalConstruction,
               media,
@@ -13143,6 +13155,11 @@ async function main(): Promise<void> {
         // fixture is live only where the routing ADMITTED the session.
         opticsBackend: !inSurface ? null : sessionOpticsBackend,
         finiteComposite: inSurface && sessionFiniteComposite,
+        // The live session's resolved per-map media codes (0 opaque,
+        // k > 0 glass, equal codes one medium) — the media signal the
+        // transport gates read; null outside surface mode or off the
+        // general Glass solid's route.
+        mediaCodes: inSurface ? sessionMediaCodes : null,
         backend: !inSurface
           ? null
           : compute !== null

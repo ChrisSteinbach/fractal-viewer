@@ -7,14 +7,21 @@ import {
 } from "../surface-slots";
 import {
   analyzeFiniteSolidGeneral,
+  FINITE_SOLID_HALF_EXTENT,
   FINITE_SOLID_IDENTITY_POSE,
+  buildFiniteSolidConstruction,
+  finiteSolidDisplayDistance,
   finiteSolidGeneralBoundingRadius,
   finiteSolidGeneralOpticsRadius,
   type FiniteSolidGeneralConstruction,
 } from "../../fractal/finite-solid";
 import {
   DIELECTRIC_ABSORPTION,
+  DIELECTRIC_CROSSING_EPS_REL,
+  DIELECTRIC_ERROR_BUDGET,
+  DIELECTRIC_INITIAL_BRANCH_THETA,
   DIELECTRIC_IOR,
+  type DielectricMaterial,
 } from "../../fractal/surface-dielectric";
 import {
   resolveSphereInversion,
@@ -45,28 +52,15 @@ import {
   transportSolidBoundaryQueryCPU,
   transportTraceCPU,
   TRANSPORT_SHADOW_BAND_SUBSTEPS,
-  type TransportFiniteBoundaryResult,
   type TransportFiniteQueryFn,
   type TransportFixtureMedia,
   type TransportFixtureSystem,
 } from "./surface-transport-fixture";
 import {
-  DIELECTRIC_CROSSING_EPS_REL,
-  DIELECTRIC_ERROR_BUDGET,
-  DIELECTRIC_INITIAL_BRANCH_THETA,
-  type DielectricMaterial,
-} from "../../fractal/surface-dielectric";
-import {
   SHAPE_MARCH_SAFETY,
   shapeSdf,
   type ShapeSpec,
 } from "../../fractal/shapes";
-import {
-  FINITE_SOLID_HALF_EXTENT,
-  FINITE_SOLID_IDENTITY_POSE,
-  buildFiniteSolidConstruction,
-  finiteSolidDisplayDistance,
-} from "../../fractal/finite-solid";
 import type { Vec3 } from "../../fractal/types";
 
 /**
@@ -1212,7 +1206,7 @@ describe("the authored glass index bends a glass-glass crossing", () => {
     };
     return {
       codes,
-      construction: { ...construction, media: codes },
+      construction,
       boundingRadius,
       opticsRadius,
       media,
@@ -1220,33 +1214,41 @@ describe("the authored glass index bends a glass-glass crossing", () => {
     };
   };
 
-  /** A recording wrapper over the general boundary query, so a probe's
-   * event log can name its crossings. */
-  const recordingQuery = (fixture: BuiltFixture): TransportFiniteQueryFn => {
+  /** A recording wrapper over the general boundary query: the probe's
+   * event log names its crossings, and `crossedDistinctGlass` answers
+   * whether one ran between the two DISTINCT media. */
+  const recordingQuery = (
+    fixture: BuiltFixture,
+  ): {
+    query: TransportFiniteQueryFn;
+    crossedDistinctGlass: () => boolean;
+  } => {
     const events: { fromMedium?: number; toMedium?: number }[] = [];
-    const seen = (from?: number, to?: number): boolean =>
-      (from === 1 && to === 2) || (from === 2 && to === 1);
-    const record = (r: TransportFiniteBoundaryResult): void => {
-      if (r.kind === "boundary") events.push(r);
-    };
     const query: TransportFiniteQueryFn = (origin, dir, anchor, claim) => {
       const r = transportFiniteGeneralBoundaryQueryCPU(
         fixture.construction,
         FINITE_SOLID_IDENTITY_POSE,
-        fixture.construction.media,
+        fixture.codes,
         false,
         origin,
         dir,
         anchor,
         claim,
       );
-      record(r);
+      if (r.kind === "boundary") {
+        events.push({ fromMedium: r.fromMedium, toMedium: r.toMedium });
+      }
       return r;
     };
-    return Object.assign(query, {
+    return {
+      query,
       crossedDistinctGlass: () =>
-        events.some((e) => seen(e.fromMedium, e.toMedium)),
-    });
+        events.some(
+          (e) =>
+            (e.fromMedium === 1 && e.toMedium === 2) ||
+            (e.fromMedium === 2 && e.toMedium === 1),
+        ),
+    };
   };
 
   it("splits two authored indices into distinct media and bends where the equal-index pair passes straight", () => {
@@ -1304,7 +1306,7 @@ describe("the authored glass index bends a glass-glass crossing", () => {
         common.bgLinear,
         undefined,
         undefined,
-        bentRun,
+        bentRun.query,
         bent.media,
       );
       if (!bentRun.crossedDistinctGlass()) continue;
@@ -1318,7 +1320,7 @@ describe("the authored glass index bends a glass-glass crossing", () => {
         common.bgLinear,
         undefined,
         undefined,
-        straightRun,
+        straightRun.query,
         straight.media,
       );
       expect(straightRun.crossedDistinctGlass()).toBe(false);
