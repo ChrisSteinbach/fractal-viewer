@@ -467,16 +467,100 @@ const auditSource = (label) =>
 
 /* ── the walk ───────────────────────────────────────────────────────────── */
 
+/** The renderer line the boot actually drew against, printed every run:
+ * the check-the-renderer-line record (a software-GL run must not be read
+ * as a real-driver one). */
+const RENDERER_SOURCE = `(() => {
+  try {
+    const canvas = document.createElement("canvas");
+    const gl =
+      canvas.getContext("webgl") ?? canvas.getContext("experimental-webgl");
+    if (!gl) return "context=null";
+    const info = gl.getExtension("WEBGL_debug_renderer_info");
+    return info
+      ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL))
+      : String(gl.getParameter(gl.RENDERER));
+  } catch (error) {
+    return "threw: " + String(error);
+  }
+})()`;
+
+/** What the page saw when a boot wait failed, for a self-explanatory log:
+ * the app's own webglAvailable() body verbatim, a composited-draw probe,
+ * the isolation state, and the counter the wait reads. */
+const BOOT_DIAG_SOURCE = `(() => {
+  const appProbe = (() => {
+    try {
+      const canvas = document.createElement("canvas");
+      const gl =
+        canvas.getContext("webgl") ?? canvas.getContext("experimental-webgl");
+      return Boolean(window.WebGLRenderingContext && gl);
+    } catch {
+      return false;
+    }
+  })();
+  let composite = "no context";
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = 64;
+    canvas.height = 64;
+    const gl = canvas.getContext("webgl");
+    if (gl) {
+      gl.clearColor(0.25, 0.5, 0.75, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      const px = new Uint8Array(4);
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      composite = "[rgb " + px[0] + "," + px[1] + "," + px[2] + "]";
+    }
+  } catch (error) {
+    composite = "threw: " + String(error);
+  }
+  return {
+    appProbe,
+    composite,
+    isolated: window.crossOriginIsolated ?? false,
+    pointCount: document.getElementById("pointCount")?.textContent ?? "(none)",
+  };
+})()`;
+
 async function boot(page) {
-  await page.goto(`${BASE}/`, { waitUntil: "load", timeout: 60_000 });
-  await page.waitForFunction(
-    () => {
-      const el = document.getElementById("pointCount");
-      return !!el && Number((el.textContent || "").replace(/[^\d]/g, "")) > 0;
-    },
-    undefined,
-    { timeout: 60_000, polling: 100 },
-  );
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await page.goto(`${BASE}/`, { waitUntil: "load", timeout: 60_000 });
+      await page.waitForFunction(
+        () => {
+          const el = document.getElementById("pointCount");
+          return (
+            !!el && Number((el.textContent || "").replace(/[^\d]/g, "")) > 0
+          );
+        },
+        undefined,
+        { timeout: 60_000, polling: 100 },
+      );
+      console.log(
+        `[panel-contrast] boot: WebGL renderer = ${await page.evaluate(
+          RENDERER_SOURCE,
+        )}`,
+      );
+      break;
+    } catch (error) {
+      let diag = "(page gone, no diagnostics)";
+      try {
+        const state = await page.evaluate(BOOT_DIAG_SOURCE);
+        diag = `appProbe=${String(state.appProbe)} composite=${state.composite} isolated=${String(state.isolated)} pointCount=${state.pointCount}`;
+      } catch {
+        // The page/browser may itself be gone; report the wait failure alone.
+      }
+      if (attempt >= 2) {
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}; boot diagnostics: ${diag}`,
+        );
+      }
+      console.error(
+        `[panel-contrast] boot attempt 1 failed (${diag}); retrying once`,
+      );
+    }
+  }
   await page.click("#menuToggle");
   await page.waitForFunction(
     () => document.getElementById("panel")?.classList.contains("open"),
