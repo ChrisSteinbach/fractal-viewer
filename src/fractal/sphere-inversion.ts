@@ -518,6 +518,7 @@ const OPTICS_FIELDS: Record<keyof SurfaceOptics, true> = {
   model: true,
   scale: true,
   distortion: true,
+  ior: true,
 };
 
 /** Most material entries a block may carry: one per generation slot at the
@@ -582,7 +583,7 @@ function sphereInversionMaterialReasons(raw: unknown): string[] {
             `${where} optics model ${JSON.stringify(optics.model ?? null)} is not one of: ${SURFACE_OPTICS_MODELS.join(", ")}`,
           );
         }
-        for (const key of ["scale", "distortion"] as const) {
+        for (const key of ["scale", "distortion", "ior"] as const) {
           if (optics[key] !== undefined && !isFiniteNumber(optics[key])) {
             reasons.push(`${where} optics ${key} is not a finite number`);
           }

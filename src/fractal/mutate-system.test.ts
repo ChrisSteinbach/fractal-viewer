@@ -15,6 +15,8 @@ import { mulberry32 } from "./rng";
 import { SURFACE_FINISH_SHININESS_FLOOR } from "./surface-finish";
 import {
   SURFACE_OPTICS_DISTORTION_CEILING,
+  SURFACE_OPTICS_IOR_CEILING,
+  SURFACE_OPTICS_IOR_FLOOR,
   SURFACE_OPTICS_SCALE_CEILING,
   SURFACE_OPTICS_SCALE_FLOOR,
 } from "./surface-optics";
@@ -1052,6 +1054,49 @@ describe("mutateSystem optics", () => {
       ).toBe(0);
       expect(
         "distortion" in
+          mutateSystem(absent, mulberry32(7), { wildcard }).transforms[0]
+            .optics!,
+      ).toBe(false);
+    }
+  });
+
+  it("jitters a present glass index within its band and never materializes an absent one", () => {
+    const base = system({
+      transforms: [
+        { ...optickedMap, optics: { model: "dielectric", ior: 1.7 } },
+        ...sierpinskiTetrahedron().slice(1),
+      ],
+    });
+    let sawChange = false;
+    for (let seed = 0; seed < 10; seed++) {
+      for (const wildcard of [false, true]) {
+        const optics = mutateSystem(base, mulberry32(seed), { wildcard })
+          .transforms[0].optics!;
+        // The jitter stays inside the resolver's band — the resolved
+        // index pair stays a pair of valid, distinct-in-principle media;
+        // the mutator clamps, the resolver still refuses nothing here.
+        expect(
+          optics.ior,
+          `seed ${seed} wildcard=${wildcard}`,
+        ).toBeGreaterThanOrEqual(SURFACE_OPTICS_IOR_FLOOR);
+        expect(
+          optics.ior,
+          `seed ${seed} wildcard=${wildcard}`,
+        ).toBeLessThanOrEqual(SURFACE_OPTICS_IOR_CEILING);
+        if (optics.ior !== 1.7) sawChange = true;
+      }
+    }
+    expect(sawChange).toBe(true);
+    // An absent index stays absent, never a synthesized default.
+    const absent = system({
+      transforms: [
+        { ...optickedMap, optics: { model: "dielectric", scale: 1.5 } },
+        ...sierpinskiTetrahedron().slice(1),
+      ],
+    });
+    for (const wildcard of [false, true]) {
+      expect(
+        "ior" in
           mutateSystem(absent, mulberry32(7), { wildcard }).transforms[0]
             .optics!,
       ).toBe(false);

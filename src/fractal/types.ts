@@ -353,6 +353,19 @@ export interface SurfaceOptics {
    * exceeds the authored slab.
    */
   distortion?: number;
+  /**
+   * This slot's glass interior index of refraction (the exterior is 1). The
+   * DIFFERENCE between two glass slots' indices is what makes their shared
+   * boundary a bending interface — two maps at one index merge into one
+   * medium that passes rays through silently. Absent ⇒ `DIELECTRIC_IOR`,
+   * the qualified appearance, byte-identically to every document predating
+   * the field. An out-of-band finite value REFUSES the whole optics block
+   * (`surface-optics.ts`'s resolver — the sphere-inversion vocabulary's
+   * refuse-not-clamp rule: a clamped index could silently merge two authored
+   * media into one), never clamps; a non-finite value resolves to the
+   * default like the other leaves.
+   */
+  ior?: number;
 }
 
 /**

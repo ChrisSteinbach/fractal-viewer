@@ -58,9 +58,12 @@ import type { ResolvedSurfaceFinish } from "../fractal/surface-finish";
 import {
   resolveSurfaceOptics,
   SURFACE_OPTICS_DISTORTION_CEILING,
+  SURFACE_OPTICS_IOR_CEILING,
+  SURFACE_OPTICS_IOR_FLOOR,
   SURFACE_OPTICS_SCALE_CEILING,
   SURFACE_OPTICS_SCALE_FLOOR,
 } from "../fractal/surface-optics";
+import { DIELECTRIC_IOR } from "../fractal/surface-dielectric";
 import {
   PATTERN_DEFAULT_SCALE,
   resolveSurfacePattern,
@@ -1306,18 +1309,22 @@ function finishSummary(t: Transform): string[] {
 
 // --------------------------------------------------------------- the optics
 
-/** The two authored optics fields, in row order — `SurfaceOptics`'s leaves
- * under the `model` selector (the spine a bundle names). */
-type OpticsKey = "distortion" | "scale";
+/** The authored optics fields, in row order — `SurfaceOptics`'s leaves
+ * under the `model` selector (the spine a bundle names). The index row
+ * leads: it is the glass's defining property, and the two-glass interface
+ * the per-map media render is the DIFFERENCE of two maps' indices. */
+type OpticsKey = "ior" | "distortion" | "scale";
 
-const OPTICS_FIELDS: readonly OpticsKey[] = ["distortion", "scale"];
+const OPTICS_FIELDS: readonly OpticsKey[] = ["ior", "distortion", "scale"];
 
 const OPTICS_LABELS: Record<OpticsKey, string> = {
+  ior: "Glass index",
   distortion: "Distortion",
   scale: "Optical scale",
 };
 
 const OPTICS_TITLES: Record<OpticsKey, string> = {
+  ior: "How strongly this map's glass bends light. Two Glass maps at different indices bend where they meet; 1.45 is the default.",
   distortion:
     "Bends the view seen through the glass — the frosted look. 0 is straight transmission; the working value is about 0.08.",
   scale:
@@ -1332,12 +1339,21 @@ const OPTICS_TITLES: Record<OpticsKey, string> = {
  * distortion study's working value in easy reach. `scale` runs the
  * resolver's whole `[0.01, 100]` band on the logarithmic position grid
  * below — same "STEPS MATTER" rule as FINISH_RANGES: the default 1 is an
- * exact grid point, so dragging back to it REMOVES the field.
+ * exact grid point, so dragging back to it REMOVES the field. `ior` runs
+ * the resolver's own `[1.01, 3]` band linearly at the 0.01 step — the
+ * default 1.45 is an exact step point (floor + 44 steps), so dragging back
+ * to it removes the field the same way. Every band is the resolver's own;
+ * the slider never offers a value the resolver would refuse or clamp.
  */
 const OPTICS_RANGES: Record<
   OpticsKey,
   { min: number; max: number; step: number }
 > = {
+  ior: {
+    min: SURFACE_OPTICS_IOR_FLOOR,
+    max: SURFACE_OPTICS_IOR_CEILING,
+    step: 0.01,
+  },
   distortion: {
     min: 0,
     max: SURFACE_OPTICS_DISTORTION_CEILING,
@@ -1351,9 +1367,10 @@ const OPTICS_RANGES: Record<
 };
 
 /** Each optics field's CLASSIC (absent-state) value — the number a drag
- * back to removes the field for. Scale's is the qualified default 1,
- * distortion's is the straight 0. */
+ * back to removes the field for. The index's is the qualified default
+ * `DIELECTRIC_IOR`, distortion's the straight 0, scale's the default 1. */
 const OPTICS_CLASSIC: Record<OpticsKey, number> = {
+  ior: DIELECTRIC_IOR,
   distortion: 0,
   scale: 1,
 };
@@ -1408,9 +1425,10 @@ function opticsScaleFromSlider(position: number): number {
   return OPTICS_SCALE_GRID[index];
 }
 
-/** Readout text for one optics field: two decimals for both — scale's
+/** Readout text for one optics field: two decimals for all three — scale's
  * decades are coarse enough that two decimals separate adjacent grid
- * points across the whole band. */
+ * points across the whole band, and the index band is as wide as a slider
+ * step on that resolution. */
 function formatOpticsValue(key: OpticsKey, value: number): string {
   return value.toFixed(2);
 }
@@ -2001,9 +2019,9 @@ interface FinishControls {
    * (a disabled option, so it can be shown but never picked). */
   bundle: HTMLSelectElement;
   rows: Record<FinishKey, AxisControl>;
-  /** The two optics rows (distortion, optical scale) — dormant until the
-   * transform authors an optics model, like the pattern rows under a
-   * None family. */
+  /** The optics rows (glass index, distortion, optical scale) — dormant
+   * until the transform authors an optics model, like the pattern rows
+   * under a None family. */
   opticsRows: Record<OpticsKey, AxisControl>;
   /** Adjacent reason for any Surface refusal affecting this map's finish. */
   note: HTMLElement;
@@ -10254,7 +10272,9 @@ export class Ui {
       const value = opticsResolved
         ? key === "scale"
           ? opticsResolved.radius // derived radius 1, so radius IS the scale
-          : opticsResolved.distortion
+          : key === "ior"
+            ? opticsResolved.ior
+            : opticsResolved.distortion
         : OPTICS_CLASSIC[key];
       const row = this.doc.createElement("div");
       row.className = "editor-row finish-row optics-row";
@@ -10379,7 +10399,9 @@ export class Ui {
       const value = opticsResolved
         ? key === "scale"
           ? opticsResolved.radius // derived radius 1, so radius IS the scale
-          : opticsResolved.distortion
+          : key === "ior"
+            ? opticsResolved.ior
+            : opticsResolved.distortion
         : OPTICS_CLASSIC[key];
       opticsRows[key].numeric.setValue(value);
       opticsRows[key].readout.textContent = formatOpticsValue(key, value);

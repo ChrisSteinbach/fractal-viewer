@@ -1876,6 +1876,75 @@ describe("decodeScene transform optics", () => {
     }
   });
 
+  it("round-trips an authored glass index beside the selector", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          optics: { model: "dielectric", ior: 1.7 },
+        },
+      ],
+    };
+    const wire = encodeScene(s);
+    const decoded = decodeScene(wire)!;
+    expect(decoded.transforms[0].optics).toEqual({
+      model: "dielectric",
+      ior: 1.7,
+    });
+    // Re-encode is byte-identical — the field rides the round4 precision
+    // and no "is classic" early return ever drops it (its absence is the
+    // only classic state).
+    expect(encodeScene(decoded)).toBe(wire);
+  });
+
+  it("keeps the selector and drops only a malformed glass index", () => {
+    for (const ior of ["wide", null, true, Number.NaN]) {
+      const raw = {
+        ...baseSnapshot(),
+        transforms: [
+          {
+            position: [0, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [0.5, 0.5, 0.5],
+            optics: { model: "dielectric", ior },
+          },
+        ],
+      };
+      const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+      expect(result, `ior = ${JSON.stringify(ior)}`).not.toBeNull();
+      expect(
+        result!.transforms[0].optics,
+        `ior = ${JSON.stringify(ior)}`,
+      ).toEqual({ model: "dielectric" });
+    }
+  });
+
+  it("keeps an out-of-band but finite glass index through decode untouched", () => {
+    // The band is the RESOLVER's, not persistence's: an out-of-band index
+    // survives decode (a future version may widen it) and the resolver
+    // refuses the block there — never a silent clamp at the wire.
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          optics: { model: "dielectric", ior: 0.5 },
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.transforms[0].optics).toEqual({
+      model: "dielectric",
+      ior: 0.5,
+    });
+  });
+
   it("a legacy optics document (selector + scale, no distortion) re-encodes byte-identically", () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),
