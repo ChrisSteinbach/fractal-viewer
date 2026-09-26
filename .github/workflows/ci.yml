@@ -190,7 +190,19 @@ jobs:
       - name: Install Mesa software GL driver + Xvfb (Firefox leg)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgl1-mesa-dri libegl-mesa0 xvfb
+          sudo apt-get install -y --no-install-recommends libgl1-mesa-dri libegl-mesa0 xvfb mesa-utils
+
+      # The check-the-renderer-line record for the Firefox leg's display
+      # source: what GLX says under Xvfb, then what FIREFOX itself can
+      # create under the exact env the gate launches with. The probe exits
+      # 2 (CHECKING-side) when webgl1 does not come up, so a broken GL
+      # stack fails here, before the panel gate, with a self-explanatory
+      # log.
+      - name: GL stack record (Firefox leg)
+        run: |
+          xvfb-run -a glxinfo -B | grep -E "OpenGL (renderer|version)" || true
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 MOZ_X11_EGL=1 \
+            node scripts/webgl-under-xvfb.probe.mjs
 
       - name: Panel contrast gate (Chromium)
         run: |
@@ -208,10 +220,13 @@ jobs:
 
       # Firefox has no bundled software GL (Chromium's SwiftShader
       # equivalent), so the leg runs HEADED on a virtual display against
-      # the llvmpipe driver installed above, with software WebRender and
-      # webgl.force-enabled prefs already inside the gate's launch. The
-      # gate re-boots its own preview server; same reap-and-wait dance as
-      # the Chromium step.
+      # the llvmpipe driver installed above. MOZ_X11_EGL=1 sends Firefox
+      # down the EGL provider: measured on the runner, GLX under Xvfb
+      # yields no WebGL context at all (the app's console said "WebGL is
+      # not supported"), while EGL+llvmpipe creates one. Software
+      # WebRender and webgl.force-enabled prefs live inside the gate's
+      # launch. The gate re-boots its own preview server; same reap-and-
+      # wait dance as the Chromium step.
       - name: Panel contrast gate (Firefox, Xvfb + llvmpipe)
         run: |
           npm run preview >/tmp/panel-preview-fx.log 2>&1 &
@@ -221,5 +236,5 @@ jobs:
             if curl -sk -o /dev/null https://localhost:4173/; then break; fi
             sleep 1
           done
-          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 \
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 MOZ_X11_EGL=1 \
             node scripts/panel-contrast.verify.mjs --engine=firefox --headed
