@@ -549,14 +549,19 @@ async function loadPreset(page, value) {
     harnessFail(`#presetSelect has no "${value}" option`);
     return false;
   }
-  // The point count refreshes as the new system generates.
+  // The point count refreshes as the new system generates. Under a
+  // software-GL Firefox (the CI leg's llvmpipe) a preset load's morph
+  // streams intermediates the main thread renders on llvmpipe, which can
+  // hold the counter's refresh well past a desktop driver's time — the
+  // measured local rehearsal stalled at 15s only under MOZ_X11_EGL=1.
+  // Generous deadline, 100ms polling, still first-satisfied.
   await page.waitForFunction(
     () => {
       const el = document.getElementById("pointCount");
       return !!el && Number((el.textContent || "").replace(/[^\d]/g, "")) > 0;
     },
     undefined,
-    { timeout: 15_000, polling: 100 },
+    { timeout: 45_000, polling: 100 },
   );
   await sleep(600);
   return true;
