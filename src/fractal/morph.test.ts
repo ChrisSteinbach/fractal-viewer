@@ -1,5 +1,6 @@
 import { systemPartsAreNonFlat } from "./affine4";
 import { derivedColorIndex } from "./chaos-game";
+import { DIELECTRIC_IOR } from "./surface-dielectric";
 import type { MeshAssetId } from "./mesh-shapes";
 import { lerpShapeTrap, lerpSystem, lerpTiling } from "./morph";
 import type { MorphSystem } from "./morph";
@@ -1236,6 +1237,44 @@ describe("lerpSystem optics", () => {
     expect(lerpSystem(plain, glass, 0.5).transforms[0].optics).toEqual({
       model: "dielectric",
       scale: 3,
+    });
+  });
+
+  it("lerps the glass index through the qualified default and keeps a shared sparsity", () => {
+    const a = system({
+      transforms: [transform({ optics: { model: "dielectric", ior: 1.7 } })],
+    });
+    const b = system({
+      transforms: [
+        transform({ position: [1, 1, 1], optics: { model: "dielectric" } }),
+      ],
+    });
+    // Absent on one side morphs default <-> authored, endpoint-exact; the
+    // intermediate stays inside the resolver's band by convexity, so a
+    // morphing two-glass document never blinks its optics off mid-leg.
+    expect(lerpSystem(a, b, 0.5).transforms[0].optics).toEqual({
+      model: "dielectric",
+      ior: (1.7 + DIELECTRIC_IOR) / 2,
+    });
+    expect(lerpSystem(a, b, 0).transforms[0].optics).toEqual({
+      model: "dielectric",
+      ior: 1.7,
+    });
+    // Endpoint-exact: t = 1 is b's own block by reference — an absent index
+    // stays absent there.
+    expect(lerpSystem(a, b, 1).transforms[0].optics).toEqual({
+      model: "dielectric",
+    });
+    // Both sides omit the index: the result omits it too, never a
+    // synthesized default.
+    const sparseA = system({
+      transforms: [transform({ optics: { model: "dielectric" } })],
+    });
+    const sparseB = system({
+      transforms: [transform({ optics: { model: "dielectric" } })],
+    });
+    expect(lerpSystem(sparseA, sparseB, 0.5).transforms[0].optics).toEqual({
+      model: "dielectric",
     });
   });
 

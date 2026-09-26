@@ -3185,8 +3185,9 @@ describe("Ui.renderTransformEditor", () => {
     // 3 Shear W — always built, just collapsed for a w-less transform like
     // this one); a plain transform has no variations, so the Variations
     // group adds no range sliders (just a menu).
-    // 31 classic rows + the two optics rows (distortion, optical scale).
-    expect(editorSliders()).toHaveLength(33);
+    // 31 classic rows + the three optics rows (glass index, distortion,
+    // optical scale).
+    expect(editorSliders()).toHaveLength(34);
   });
 
   it("pairs every rendered dynamic range and retains formatted/unit readouts", () => {
@@ -4220,8 +4221,9 @@ describe("Ui.renderTransformEditor", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     ui.renderTransformEditor(transforms[0], 0, transforms.length);
-    // 31 classic rows + the two optics rows (distortion, optical scale).
-    expect(editorSliders()).toHaveLength(33);
+    // 31 classic rows + the three optics rows (glass index, distortion,
+    // optical scale).
+    expect(editorSliders()).toHaveLength(34);
 
     ui.renderTransformEditor(null, null, 1);
     expect(document.getElementById("transformEditor")?.children).toHaveLength(
@@ -5760,6 +5762,8 @@ describe("Ui finish editor", () => {
       ui.renderTransformEditor(plain, 0, 1);
 
       expect(bundleSelect().value).toBe("classic");
+      expect(opticsSlider("Optics Glass index").value).toBe("1.45");
+      expect(opticsReadout("Optics Glass index").textContent).toBe("1.45");
       expect(opticsSlider("Optics Distortion").value).toBe("0");
       expect(opticsSlider("Optics Optical scale").value).toBe("26");
       expect(opticsReadout("Optics Optical scale").textContent).toBe("1.00");
@@ -5803,6 +5807,40 @@ describe("Ui finish editor", () => {
       // default is real data, not absence. The bundle still names it.
       expect(last.optics).toEqual({ model: "dielectric" });
       expect(bundleSelect().value).toBe("glass");
+    });
+
+    it("drags a glass index in, and dragging back to the qualified 1.45 removes the field", () => {
+      const handlers = noopHandlers();
+      const ui = new Ui(document);
+      ui.bind(handlers);
+      ui.renderTransformEditor(plain, 0, 1);
+
+      pickBundle("glass");
+      dragOptics("Optics Glass index", "1.7");
+      expect(lastGeometry(handlers).optics).toEqual({
+        model: "dielectric",
+        ior: 1.7,
+      });
+
+      // Back to the qualified default: the leaf is gone, the model spine
+      // stays — the same removal rule the distortion row rides, at the
+      // index's own classic value.
+      dragOptics("Optics Glass index", "1.45");
+      expect(lastGeometry(handlers).optics).toEqual({ model: "dielectric" });
+      expect(bundleSelect().value).toBe("glass");
+
+      // The band's edges are reachable, and a first drag on a dormant row
+      // opts in exactly like the distortion row's.
+      dragOptics("Optics Glass index", "1.01");
+      expect(lastGeometry(handlers).optics).toEqual({
+        model: "dielectric",
+        ior: 1.01,
+      });
+      dragOptics("Optics Glass index", "3");
+      expect(lastGeometry(handlers).optics).toEqual({
+        model: "dielectric",
+        ior: 3,
+      });
     });
 
     it("maps the scale slider through its logarithmic grid, 1 landing exactly on the middle position", () => {

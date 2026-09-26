@@ -34,6 +34,8 @@ import type {
 import { SURFACE_FINISH_SHININESS_FLOOR } from "./surface-finish";
 import {
   SURFACE_OPTICS_DISTORTION_CEILING,
+  SURFACE_OPTICS_IOR_CEILING,
+  SURFACE_OPTICS_IOR_FLOOR,
   SURFACE_OPTICS_SCALE_CEILING,
   SURFACE_OPTICS_SCALE_FLOOR,
 } from "./surface-optics";
@@ -976,7 +978,9 @@ function jitterSurfacePattern(
  * multiplicatively into the resolver's own band; `distortion` likewise,
  * into its own band (a present zero stays zero — multiplicative jitter
  * never crosses it, so the straight state never gains a bend it was not
- * authored with). */
+ * authored with); `ior` likewise into its own band, so an authored index
+ * pair stays a pair of distinct in-band media (a clamp at the band edge is
+ * the mutator's totality, not the resolver's refusal). */
 function jitterSurfaceOptics(
   rng: Rng,
   base: SurfaceOptics,
@@ -1005,6 +1009,18 @@ function jitterSurfaceOptics(
         ),
       0,
       SURFACE_OPTICS_DISTORTION_CEILING,
+    );
+  }
+  if (base.ior !== undefined) {
+    optics.ior = clamp(
+      base.ior *
+        uniform(
+          rng,
+          1 - SURFACE_OPTICS_SCALE_JITTER_HALF_RANGE * spread,
+          1 + SURFACE_OPTICS_SCALE_JITTER_HALF_RANGE * spread,
+        ),
+      SURFACE_OPTICS_IOR_FLOOR,
+      SURFACE_OPTICS_IOR_CEILING,
     );
   }
   return optics;

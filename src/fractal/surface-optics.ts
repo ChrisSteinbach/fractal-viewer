@@ -45,14 +45,16 @@ import type { Vec3 } from "./types";
  * that are indistinguishable, and the clamp keeps the oracle's `radius > 0`
  * assertion satisfied for every resolved value.
  *
- * NOT AUTHORED (deliberately). IOR and the per-channel absorption ride the
+ * NOT AUTHORED (deliberately). The per-channel absorption rides the
  * qualified constants as defaults — the oracle takes them as parameters so
  * the qualified numbers ride in, and authoring them is a later, separately
  * reviewed decision. The restrained optical distortion IS in this vocabulary
  * now (one authored word: the virtual slab's thickness multiplier, absent ⇒
  * 0 = straight byte-identically; the transport contract's displaced rear
  * seam, qualified by the straight-vs-distorted panels), and the transport
- * lane's first reserved word carries it. Work and chunk budgets (processed
+ * lane's first reserved word carries it. The glass INDEX is authored too
+ * (one word; the bending between two glass maps is the index DIFFERENCE),
+ * while absorption stays constant. Work and chunk budgets (processed
  * paths, interfaces, stack) stay OUT of material identity: they are the
  * runtime's, not the document's.
  *
@@ -84,6 +86,21 @@ export const SURFACE_OPTICS_SCALE_CEILING = 100;
 export const SURFACE_OPTICS_DISTORTION_CEILING = 0.25;
 
 /**
+ * Glass-index domain: the interior index of refraction band an authored
+ * `ior` must sit in. The floor is just above 1 — 1 itself is air (no
+ * interface, no bend, no Fresnel), and below it the medium is faster than
+ * light (the distortion path's own `ior >= 1` refusal). The ceiling keeps
+ * the stylized band inside the physically plausible: real solids top out
+ * near diamond (2.42), and past ~3 every interior ray that is not
+ * near-normal takes total internal reflection, which the transport's
+ * interface budget would spend on mirror bounces rather than transmission.
+ * The qualified default {@link DIELECTRIC_IOR} (1.45) sits inside on the
+ * 0.01 grid the panel row rides (floor + 44 steps).
+ */
+export const SURFACE_OPTICS_IOR_FLOOR = 1.01;
+export const SURFACE_OPTICS_IOR_CEILING = 3;
+
+/**
  * The per-slot optical material a backend consumes — the transport oracle's
  * own {@link import("./surface-dielectric").DielectricMaterial} shape by
  * construction (the type alias makes the two structurally ONE, so a backend
@@ -112,11 +129,18 @@ export type ResolvedSurfaceOptics = {
  * resolves to 1; an out-of-band finite `scale` clamps. The derived radius is
  * the one input this resolver does NOT synthesize: a non-finite or
  * non-positive value is a broken session, not an authoring choice, and
- * throws — the pattern calibration's own refusal shape. `ior`/`absorption`
- * always ride the qualified constants; `distortion` resolves through its
- * own band (absent/non-finite ⇒ 0 — the straight state byte-identically;
- * negative clamps to 0, past the ceiling clamps down — the resolver is the
- * ONE domain a resolved value is read through).
+ * throws — the pattern calibration's own refusal shape. `absorption` rides
+ * the qualified constant; `distortion` resolves through its own band
+ * (absent/non-finite ⇒ 0 — the straight state byte-identically; negative
+ * clamps to 0, past the ceiling clamps down); the authored `ior` sits in
+ * its own band (absent/non-finite ⇒ {@link DIELECTRIC_IOR} — the qualified
+ * appearance byte-identically) and is the one leaf that REFUSES rather than
+ * clamps: an out-of-band finite index drops the WHOLE block to the classic
+ * state, the unknown-model rule — the sphere-inversion vocabulary's
+ * refuse-not-clamp discipline, because a clamped index could silently merge
+ * two authored glass media into one (the per-map media codes key on the
+ * resolved lanes, so the bend the author asked for would vanish without a
+ * trace), while a refused block renders its map opaque and visibly so.
  */
 export function resolveSurfaceOptics(
   optics: SurfaceOptics | undefined,
@@ -131,6 +155,14 @@ export function resolveSurfaceOptics(
       "surface-optics: the derived optical radius must be finite and positive",
     );
   }
+  const ior = optics?.ior;
+  if (
+    ior !== undefined &&
+    Number.isFinite(ior) &&
+    !(ior >= SURFACE_OPTICS_IOR_FLOOR && ior <= SURFACE_OPTICS_IOR_CEILING)
+  ) {
+    return undefined;
+  }
   const scale = Number.isFinite(optics?.scale)
     ? Math.min(
         SURFACE_OPTICS_SCALE_CEILING,
@@ -144,7 +176,7 @@ export function resolveSurfaceOptics(
       )
     : 0;
   return {
-    ior: DIELECTRIC_IOR,
+    ior: ior === undefined || !Number.isFinite(ior) ? DIELECTRIC_IOR : ior,
     absorption: [...DIELECTRIC_ABSORPTION] as Vec3,
     radius: derivedRadius * scale,
     distortion,

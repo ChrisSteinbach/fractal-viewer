@@ -542,4 +542,34 @@ describe("finiteSolidGeneralMediaCodes", () => {
       ]),
     ).toEqual([1, 1]);
   });
+
+  it("splits two glass maps that differ only in their authored index into distinct media", () => {
+    // The index is the bending difference: two maps at one index merge
+    // (the equal-index crossing passes straight), two at different indices
+    // are two media with a real bending interface between them.
+    expect(
+      codesFor([
+        transform({ id: 0, optics: { model: "dielectric" } }),
+        transform({ id: 1, optics: { model: "dielectric", ior: 1.7 } }),
+      ]),
+    ).toEqual([1, 2]);
+    expect(
+      codesFor([
+        transform({ id: 0, optics: { model: "dielectric", ior: 1.7 } }),
+        transform({ id: 1, optics: { model: "dielectric", ior: 1.7 } }),
+      ]),
+    ).toEqual([1, 1]);
+  });
+
+  it("refuses a glass map whose authored index sits outside the resolver's band", () => {
+    // Refuse-not-clamp: an out-of-band index drops the WHOLE optics block
+    // (the unknown-model rule), so the map codes OPAQUE — never a clamped
+    // medium that silently merges with another.
+    expect(
+      codesFor([
+        transform({ id: 0, optics: { model: "dielectric" } }),
+        transform({ id: 1, optics: { model: "dielectric", ior: 0.9 } }),
+      ]),
+    ).toEqual([1, 0]);
+  });
 });
