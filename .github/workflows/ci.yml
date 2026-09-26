@@ -147,9 +147,10 @@ jobs:
   # matches smoke's, so the Firefox download is the only new network cost.
   panel-contrast:
     runs-on: ubuntu-latest
-    # Measured locally: build ~40s, the gate ~90s per engine; 15 keeps a
-    # generous margin for a cold browser cache.
-    timeout-minutes: 15
+    # Measured locally: build ~40s, the gate ~90s per engine on Chromium,
+    # ~2-3 min headed under Xvfb on software GL; 20 keeps a generous margin
+    # for a cold browser cache plus the Firefox leg's driver install.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -176,16 +177,40 @@ jobs:
 
       - run: npm run build
 
-      # CHROMIUM LEG ONLY, measured rather than preferred. Firefox on this
-      # runner has no WebGL: the image ships xvfb but NOT Mesa's GL drivers
-      # (its apt package list carries no libgl1-mesa-dri), so even a headed
-      # `xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1` run leaves the app's own
-      # `webglAvailable()` false and main.ts never boots the panel — the
-      # first cut of this job timed out in boot() with the app console
-      # saying \"WebGL is not supported\". Chromium needs none of that: it
-      # bundles SwiftShader, which is the whole reason the smoke job can run
-      # display-less. The Firefox leg stays a hand-run gate beside the other
-      # panel gates (AGENTS.md) until the runner image grows a GL driver.
+      # The Firefox leg needs a GL driver the runner image does not ship
+      # (measured: its apt package list carries no libgl1-mesa-dri, so
+      # Firefox has no WebGL even headed under xvfb-run with
+      # LIBGL_ALWAYS_SOFTWARE=1 — main.ts's webglAvailable() gate refuses
+      # and the app never boots). Mesa's software driver is the whole
+      # delta; Chromium needs none of this because it bundles SwiftShader.
+      # The plain apt-get install is safe: the repo's --with-deps hang
+      # record is about playwright-core's long dependency list, not these
+      # two packages. Idempotent, so a future image that ships the driver
+      # changes nothing.
+      - name: Install Mesa software GL driver + Xvfb (Firefox leg)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgl1-mesa-dri libegl-mesa0 xvfb mesa-utils
+
+      # The check-the-renderer-line record for the Firefox leg's display
+      # source: what GLX says under Xvfb, then what FIREFOX itself can
+      # create under the exact env the gate launches with. The probe exits
+      # 2 (CHECKING-side) when webgl1 does not come up, so a broken GL
+      # stack fails here, before the panel gate, with a self-explanatory
+      # log.
+      - name: GL stack record (Firefox leg)
+        run: |
+          npm run preview >/tmp/panel-preview-record.log 2>&1 &
+          PREVIEW_PID=$!
+          trap 'kill "$PREVIEW_PID" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 60); do
+            if curl -sk -o /dev/null https://localhost:4173/; then break; fi
+            sleep 1
+          done
+          xvfb-run -a glxinfo -B | grep -E "OpenGL (renderer|version)" || true
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 MOZ_X11_EGL=1 \
+            node scripts/webgl-under-xvfb.probe.mjs
+
       - name: Panel contrast gate (Chromium)
         run: |
           # The preview's output is redirected so the backgrounded server
@@ -199,3 +224,30 @@ jobs:
             sleep 1
           done
           node scripts/panel-contrast.verify.mjs --engine=chromium
+
+      # Firefox has no bundled software GL (Chromium's SwiftShader
+      # equivalent), so the leg runs HEADED on a virtual display against
+      # the llvmpipe driver installed above. MOZ_X11_EGL=1 sends Firefox
+      # down the EGL provider: measured on the runner, GLX under Xvfb
+      # yields no WebGL context at all (the app's console said "WebGL is
+      # not supported"), while EGL+llvmpipe creates one. Software
+      # WebRender and webgl.force-enabled prefs live inside the gate's
+      # launch. The gate re-boots its own preview server; same reap-and-
+      # wait dance as the Chromium step.
+      - name: Panel contrast gate (Firefox, Xvfb + llvmpipe)
+        run: |
+          npm run preview >/tmp/panel-preview-fx.log 2>&1 &
+          PREVIEW_PID=$!
+          trap 'kill "$PREVIEW_PID" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 60); do
+            if curl -sk -o /dev/null https://localhost:4173/; then break; fi
+            sleep 1
+          done
+          # The probe first, in this step's own Xvfb, against the same
+          # server: if it boots the app and the gate seconds later does
+          # not, the difference is the gate's exact launch/context
+          # construction, and the probe's gate-launch-clone line names it.
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 MOZ_X11_EGL=1 \
+            node scripts/webgl-under-xvfb.probe.mjs
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 MOZ_X11_EGL=1 \
+            node scripts/panel-contrast.verify.mjs --engine=firefox --headed
