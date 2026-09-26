@@ -43,6 +43,10 @@ const VARIANTS = [
   ["gate-prefs", GATE_PREFS],
   ["basic-compositor", { ...GATE_PREFS, "layers.acceleration.disabled": true }],
   ["no-gpu-process", { ...GATE_PREFS, "layers.gpu-process.enabled": false }],
+  // The gate's launch verbatim, `env` passed explicitly the way
+  // launchEngine does: the one mechanical difference between a probe
+  // stage and the gate itself.
+  ["gate-launch-clone", GATE_PREFS, { passEnv: true }],
 ];
 
 /** The app's exact webglAvailable() body, verbatim (main.ts). */
@@ -93,11 +97,12 @@ let anyBoot = false;
 }
 
 // APP: one launch per prefs variant against the real page.
-for (const [name, prefs] of VARIANTS) {
+for (const [name, prefs, opts] of VARIANTS) {
   const browser = await firefox.launch({
     executablePath: firefox.executablePath(),
     headless: false,
     firefoxUserPrefs: prefs,
+    ...(opts?.passEnv ? { env: { ...process.env } } : {}),
   });
   try {
     const context = await browser.newContext({

@@ -243,5 +243,11 @@ jobs:
             if curl -sk -o /dev/null https://localhost:4173/; then break; fi
             sleep 1
           done
+          # The probe first, in this step's own Xvfb, against the same
+          # server: if it boots the app and the gate seconds later does
+          # not, the difference is the gate's exact launch/context
+          # construction, and the probe's gate-launch-clone line names it.
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 MOZ_X11_EGL=1 \
+            node scripts/webgl-under-xvfb.probe.mjs
           xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 MOZ_X11_EGL=1 \
             node scripts/panel-contrast.verify.mjs --engine=firefox --headed
