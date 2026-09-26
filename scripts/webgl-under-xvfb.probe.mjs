@@ -41,11 +41,12 @@ const GATE_PREFS = {
 };
 const VARIANTS = [
   ["gate-prefs", GATE_PREFS],
-  ["basic-compositor", { ...GATE_PREFS, "layers.acceleration.disabled": true }],
-  ["no-gpu-process", { ...GATE_PREFS, "layers.gpu-process.enabled": false }],
   // The gate's launch verbatim, `env` passed explicitly the way
   // launchEngine does: the one mechanical difference between a probe
-  // stage and the gate itself.
+  // stage and the gate itself. (The diagnostic variants that found the
+  // bare-flag headless bug — basic compositor, no GPU process — were
+  // removed from this record once the diagnosis closed; the launch
+  // object itself was never the difference.)
   ["gate-launch-clone", GATE_PREFS, { passEnv: true }],
 ];
 
