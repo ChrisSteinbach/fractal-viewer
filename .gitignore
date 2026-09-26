@@ -9,6 +9,10 @@ coverage/
 .dolt/
 .beads-credential-key
 .beads/proxieddb/
+# Beads tracker state syncs via the bd dolt remote (bd dolt push/pull) —
+# the jsonl mirrors are regenerated locally and never committed.
+.beads/*.jsonl
+.beads/hooks/
 *.db
 .prep-pr/
 .dispatch/
