@@ -701,39 +701,39 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     new part is the FOURTH box axis, whose `pw0/pw1/pw2` and `dwUp/dwDn`
     take the same treatment as x/y/z and whose visible-radius bound's `+ 4`
     — the axis COUNT — becomes `4·wall²`.
-    Measured verdict + numbers in the module doc — the off-centre slice
-    measurements included: the SLICE CAVEAT costs ~10% and is FLAT in `w0`,
-    so slice-aware certificates are a measured won't-do
-    (`scripts/slice-cost.harness.ts`), and the 20-40x off-centre cost cliff
-    they were for does not reproduce on either engine
-    (`scripts/slice-cliff.probe.mjs`, the app-level pose-cost instrument).
+    Measured verdict + numbers in the module doc: the SLICE CAVEAT costs
+    ~10% flat in `w0` (slice-aware certificates a measured won't-do,
+    `scripts/slice-cost.harness.ts`), and their 20-40x off-centre cliff
+    does not reproduce on either engine (`scripts/slice-cliff.probe.mjs`).
     Slab queries (`halfExtent`) route three ways — exact segment arithmetic
-    for boxfold/affine systems, the BOUNDED MIDPOINT COVER
-    (`SLAB_COVER_PIECES` 16, complete-partition sound at any count) for
-    nonlinear folds and final lenses, refusal only for swirl/condensation —
-    mirrored by `surface-de-gpu.ts`'s `slabCover`, routed by the app, both
-    gates green in both browsers; tiling composition remains
-    owed. Proof, measured rows and scope: `docs/surface-slice-thickness.md`.
+    (boxfold/affine), the BOUNDED MIDPOINT COVER (`SLAB_COVER_PIECES` 16,
+    sound at any count) for nonlinear folds and final lenses, refusal only
+    for swirl/condensation — mirrored by `surface-de-gpu.ts`'s
+    `slabCover`, routed by the app, both gates green in both browsers;
+    tiling composition remains owed. Proof:
+    `docs/surface-slice-thickness.md`.
   - `surface-de-gpu.ts` — WGSL fold-DE compute kernel (a spike, gated in by
     the beam-width occupancy verdict; integrated as the app's compute
     surface path): mirrors `estimateDistance`'s refine=false fold path term
     for term (the estimator the fold GLSL marches) under the `flame-gpu.ts`
     oracle discipline, source-generated per config — frontier width,
-    workgroup-SHARED (banked, transposed) vs private frontier storage,
-    stage-2 B&B on/off (WGSL has no Mesa link cliff). Measured
-    verdicts: private frontier, stage 2 OFF — the config stays
-    stage-1-only.
+    workgroup-SHARED vs private frontier storage, stage-2 B&B on/off (no
+    Mesa link cliff in WGSL). Measured: private frontier, stage 2 OFF —
+    the config stays stage-1-only.
     Both map layouts keep the authored fold lane and append per-map post
     tails (`GpuMap` 10 vec4, `GpuMap4` 14); `fold.w` carries
     `sigma_min(post)` for branch floors. Descent stores inverse posts; escape
-    reuses the lanes FORWARD. A live fold-final post appends 48/80 B after
-    every params tail, moving no older offset. Fold radii stay
+    reuses the lanes FORWARD. A live fold-final post appends 48/80 B past
+    every params tail, moving no offset. Fold radii stay
     `(mR,fR,wall)` for descent versus squared for escape, oracle-packed;
-    `foldRadiiOf` emits only in fold-reading cores.
+    `foldRadiiOf` emits only in fold-reading cores. The xaos descent's
+    per-component balls ride an optional appended `stateBounds` lane
+    (3D one vec4; 4D two — the fit centre is 4D), kernel and packer
+    gated together, affine/affine4 only, off byte-identical; bench-pinned
+    0/6912 at 4.5e-7 (union-bound kernel: 4790).
     THE PARAMS WIRE IS FROZEN LAYOUT, and appending to it blind is this
     file's standing hazard. 3D: 0-207 frozen, 208-271 the VARIANT block
-    (escape/bulb head-link ballast, mutually exclusive with the lens block
-    by construction), the lens fold's lengths at 272, and the
+    (escape/bulb head-link ballast, never with the lens block), the lens fold's lengths at 272, and the
     plane/balloon block SHARED at 288 — the escape and bulb cores declare
     a matching pad so that block keeps ONE offset across every 3D core
     (`SURFACE_GPU_PARAMS_BYTES` 288, balloon 320,
@@ -741,10 +741,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     (`SURFACE_GPU_PARAMS4_BYTES` 464), the lens4 block 464..575
     (`SURFACE_GPU_PARAMS4_LENS_BYTES` 576, the authored fold lengths'
     `lens4Fold` quartet at 560), and the plane/balloon block at the frozen
-    576 for EVERY 4D core — which the lens4 block being declared
-    unconditionally under either is what buys, the 3D
-    `lens || balloon || groundPlane` rule one dimension up, zero-filled by
-    the packer when there is no lens (4D balloon 608,
+    576 for EVERY 4D core — which the lens4 block declared unconditionally
+    under either buys (the 3D `lens || balloon || groundPlane` rule one
+    dimension up, zero-filled when there is no lens) (4D balloon 608,
     `SURFACE_GPU_PARAMS4_PLANE_BYTES` 624). The forward shape-trap tail is
     frozen at 336/624 and ends at `SURFACE_GPU_PARAMS_TRAP_BYTES` 400 /
     `SURFACE_GPU_PARAMS4_TRAP_BYTES` 688; the plane region stays declared

@@ -163,6 +163,51 @@ graph-only program forces the established variant prefix before that tail, so
 the pinned params sizes are 384 bytes in 3D and 672 bytes in 4D; combinations
 append the same 96 bytes after their last enabled feature block.
 
+### The per-state descent balls (`stateBounds`)
+
+The probe-fit bound the build carries is a UNION of the selection graph's
+components; descending every chain against it re-derives the multi-block
+quality asymmetry the coverage probe fixed at build time. So the affine
+ladders can instead descend each chain in its OWN component's frame, mirroring
+`surface-de.ts`'s per-state ball sites one for one:
+
+- the per-candidate `key`/`cert` radius, measured to the candidate state's
+  ball (`descend`'s `mapBoundR`/`mapBoundC`),
+- the promotion escape thresholds (`ESCAPE_FACTOR` × the chain state's ball),
+- the rank-3/4 in-sphere tests and the condensation certificate gates and
+  pre-band subtree terminals,
+- the depth-cap A/B terminals, and
+- `refinedCert`: each scanned map's image bound plus the
+  `r - stateRadiusOf(currentState, …)` return.
+
+A codegen option `stateBounds` appends the per-map lane after the post tail —
+3D one `vec4f` (`xyz` centre, `w` radius, zero meaning the global ball),
+4D two (`xyzw` fit centre, radius in the next lane's `.x` — the centre is
+itself four components) — with `stateCenterOf`/`stateRadiusOf` (and `…4`)
+accessors that fall back to the global ball for a zero lane, for a state at or
+past `mapCount` (emitter states, the idle wildcard), and — 4D — for a segment
+query, where the slab's level bound governs exactly as the CPU's
+`segment ? R : stateBoundRadius` does. `packSurfaceGpuMaps`/`…4` append the
+same lanes under `{ stateBounds: true }`, so the record stride and the kernel
+struct change together; anything other than the affine/affine4 cores, a
+missing chaos graph, or a hybrid schedule THROWS (the fold frontiers' oracle
+reads no state ball, and a schedule's level bounds govern its levels). Off,
+the emitted source is byte-identical to the pre-lane text — the digest pins
+hold unchanged. The app turns the flag on for chaos descent targets with no
+schedule (`surface-compute.ts`'s `targetStateBounds`, kernel and packer from
+one derivation), and the bench's xaos legs derive it through
+`surfaceChaosStateBounds` the same way.
+
+Measured on the Iris Xe at `:0` (6912-query grid over the fernSponge union
+ball, eval mode, the bench's own tolerance): the union-bound kernels fail
+4790/6912 (3D) and 4923/6912 (4D) against the per-state CPU oracles — maxAbs
+0.67/0.80, maxRel 1.99/1.91 — while the state-bound kernels agree at 0
+failures, maxAbs 4.5e-7 (3D) and 5.0e-7 (4D), maxRel 1.6e-6/2.1e-6, the fold
+rows' error scale. The full `bench:surface` section cannot reach these legs on
+this machine (the recorded device loss lands earlier); the focused probe page
+that measured them was deleted after the run — the numbers above are the
+record.
+
 ## Condensation shape term
 
 The affine/fold and affine4/fold4 descent cores can compile Barnsley

@@ -3,7 +3,9 @@ import { presetTransforms } from "../../fractal/presets";
 import { buildSurfaceDE } from "../../fractal/surface-de";
 import { buildSurfaceDE4 } from "../../fractal/surface-de-4d";
 import {
+  SURFACE_GPU_MAP4_STATE_STRIDE_VEC4,
   SURFACE_GPU_MAP4_VEC4,
+  SURFACE_GPU_MAP_STATE_STRIDE_VEC4,
   SURFACE_GPU_MAP_VEC4,
   SURFACE_GPU_PARAMS4_CHAOS_BYTES,
   SURFACE_GPU_PARAMS_CHAOS_BYTES,
@@ -76,6 +78,104 @@ describe("graph-directed Surface benchmark fixture", () => {
       expect(wgsl).toContain("source < 24u");
       expect(wgsl).toContain("params.chaosMask5[lane]");
     }
+  });
+
+  it("appends the state-bound lane exactly under the option, value for value", () => {
+    const transforms = presetTransforms("fernSponge");
+    const de3 = buildSurfaceDE(transforms);
+    const de4 = buildSurfaceDE4(transforms);
+    expect(de3.maps[0].stateBoundRadius).toBeDefined();
+    expect(de4.maps[0].stateBoundRadius).toBeDefined();
+
+    // 3D: one appended lane (center xyz + radius w) after the 10-vec4
+    // record; off stays the pre-lane stride.
+    const on3 = packSurfaceGpuMaps(de3, { stateBounds: true });
+    expect(on3.byteLength).toBe(24 * SURFACE_GPU_MAP_STATE_STRIDE_VEC4 * 16);
+    for (const j of [0, 7, 23]) {
+      const lane = j * SURFACE_GPU_MAP_STATE_STRIDE_VEC4 * 4 + 40;
+      const c = de3.maps[j].stateBoundCenter!;
+      expect(on3[lane]).toBeCloseTo(c[0], 6);
+      expect(on3[lane + 1]).toBeCloseTo(c[1], 6);
+      expect(on3[lane + 2]).toBeCloseTo(c[2], 6);
+      expect(on3[lane + 3]).toBeCloseTo(de3.maps[j].stateBoundRadius!, 6);
+    }
+    expect(packSurfaceGpuMaps(de3).byteLength).toBe(
+      24 * SURFACE_GPU_MAP_VEC4 * 16,
+    );
+
+    // 4D: the fit centre is itself four components, so the lane pair
+    // carries center xyzw then the radius in the next lane's .x.
+    const on4 = packSurfaceGpuMaps4(de4, { stateBounds: true });
+    expect(on4.byteLength).toBe(24 * SURFACE_GPU_MAP4_STATE_STRIDE_VEC4 * 16);
+    for (const j of [0, 7, 23]) {
+      const lane = j * SURFACE_GPU_MAP4_STATE_STRIDE_VEC4 * 4 + 56;
+      const c = de4.maps[j].stateBoundCenter!;
+      expect(on4[lane]).toBeCloseTo(c[0], 6);
+      expect(on4[lane + 1]).toBeCloseTo(c[1], 6);
+      expect(on4[lane + 2]).toBeCloseTo(c[2], 6);
+      expect(on4[lane + 3]).toBeCloseTo(c[3], 6);
+      expect(on4[lane + 4]).toBeCloseTo(de4.maps[j].stateBoundRadius!, 6);
+    }
+    expect(packSurfaceGpuMaps4(de4).byteLength).toBe(
+      24 * SURFACE_GPU_MAP4_VEC4 * 16,
+    );
+  });
+
+  it("compiles the affine ladders with the lane and refuses every other pairing", () => {
+    const transforms = presetTransforms("fernSponge");
+    const de3 = buildSurfaceDE(transforms);
+    const spec3 = surfaceChaosKernelSpec(de3);
+    const base = {
+      mode: "eval" as const,
+      width: 4,
+      workgroupSize: 64,
+      sharedFrontier: false,
+      bnbStage2: false,
+      chaos: spec3,
+      stateBounds: true,
+    };
+    const on3 = surfaceDeKernelWgsl({ ...base, core: "affine" });
+    expect(on3).toContain("stateBound: vec4f");
+    expect(on3).toContain("fn stateCenterOf(");
+    expect(on3).toContain("fn stateRadiusOf(");
+    expect(on3).toContain("stateRadiusOf(c1State");
+    // Off stays the pinned classic source: no lane, no helpers, no
+    // state-radius reads.
+    const off3 = surfaceDeKernelWgsl({
+      ...base,
+      core: "affine",
+      stateBounds: false,
+    });
+    expect(off3).not.toContain("stateBound");
+    expect(off3).not.toContain("stateRadiusOf");
+
+    const de4 = buildSurfaceDE4(transforms);
+    const on4 = surfaceDeKernelWgsl({
+      ...base,
+      core: "affine4",
+      chaos: surfaceChaosKernelSpec(de4),
+    });
+    expect(on4).toContain("stateBound: vec4f");
+    expect(on4).toContain("stateRadius: vec4f");
+    expect(on4).toContain("fn stateCenterOf4(");
+    expect(on4).toContain("fn stateRadiusOf4(");
+
+    // Loud refusals: the fold frontier's oracle reads no state ball; the
+    // lane is meaningless without a chaos graph; a hybrid schedule's
+    // level bounds govern instead.
+    expect(() => surfaceDeKernelWgsl({ ...base, core: "fold" })).toThrow(
+      /state bounds are supported only by the affine/,
+    );
+    expect(() =>
+      surfaceDeKernelWgsl({ ...base, core: "affine", chaos: null }),
+    ).toThrow(/state bounds require a chaos graph/);
+    expect(() =>
+      surfaceDeKernelWgsl({
+        ...base,
+        core: "affine",
+        schedule: { mapCount: 1, scheduleMapCount: 1 },
+      }),
+    ).toThrow(/state bounds are not supported with a hybrid schedule/);
   });
 
   it("refuses to let an xaos row silently compile the classic kernel", () => {

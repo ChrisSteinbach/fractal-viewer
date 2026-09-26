@@ -10,6 +10,19 @@ export interface SurfaceChaosKernelSpec {
 }
 
 /**
+ * The per-map STATE-BOUND lane's bench gate (surface-de-gpu.ts's
+ * `stateBounds`): on exactly when the app's own routing turns it on — a
+ * chaos descent with no hybrid schedule (the affine ladders alone read
+ * the lane; the codegen throws for any other core pairing, so a stray
+ * `true` is loud, not silent).
+ */
+export function surfaceChaosStateBounds(
+  de: Pick<SurfaceDE | SurfaceDE4, "chaos" | "schedule">,
+): boolean {
+  return de.chaos !== undefined && (de.schedule?.depth ?? 0) === 0;
+}
+
+/**
  * Project a graph-directed DE onto the source-generation contract. The
  * benchmark calls this unconditionally for its xaos rows so an absent chi
  * table cannot silently compile and time the classic all-paths kernel.
