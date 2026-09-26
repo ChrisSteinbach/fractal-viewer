@@ -879,6 +879,17 @@ finish within 1200000ms; active=adaptive-display; completed=1`: the scenario
   noise floors, so shrinking it for one scenario would mean re-measuring its
   floor. Shard 28 (`emitter-menagerie-4d`, about 17 minutes) is the next
   longest; at 30 it has the same headroom.
+- **Second wave, and the post-raise record.** The flake recurred 2026-09-18
+  through 09-20 (runs 35367842793, 35428890329, 35468412384, 35500905922) and
+  once more on 09-22 at 19:41Z (35775406930, a comment-only tree) with the
+  identical message, before the raise reached CI — five more timeouts on the
+  inherited 20 minutes. Since the 30-minute cap (runs after 2026-09-22T21:30Z):
+  **47 successes, 15 cancelled (concurrent supersessions), zero shard-8
+  timeouts** across four days of frequent sweeps, several of them concurrent
+  with other in-flight sweeps. The mechanism the waves share is runner-side
+  SwiftShader slowdown against a margin-sized cap, which is why the reruns
+  always cleared; the cap now carries the measured worst page work instead of
+  the era's typical.
 
 ## Earlier partition evidence
 
