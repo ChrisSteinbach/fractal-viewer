@@ -227,13 +227,15 @@ jobs:
 
       # Firefox has no bundled software GL (Chromium's SwiftShader
       # equivalent), so the leg runs HEADED on a virtual display against
-      # the llvmpipe driver installed above. MOZ_X11_EGL=1 sends Firefox
-      # down the EGL provider: measured on the runner, GLX under Xvfb
-      # yields no WebGL context at all (the app's console said "WebGL is
-      # not supported"), while EGL+llvmpipe creates one. Software
-      # WebRender and webgl.force-enabled prefs live inside the gate's
-      # launch. The gate re-boots its own preview server; same reap-and-
-      # wait dance as the Chromium step.
+      # the llvmpipe driver installed above, down Firefox's EGL provider
+      # (the probe-verified one; GLX under Xvfb was never measured
+      # working). Software WebRender and webgl.force-enabled prefs live
+      # inside the gate's launch. The bare --headed is load-bearing: the
+      # first cut of this job passed it while the gate's flag parser only
+      # read --name=value, so Firefox silently launched headless and
+      # display-less — every early boot timeout's actual cause, not the
+      # missing driver alone. The gate re-boots its own preview server;
+      # same reap-and-wait dance as the Chromium step.
       - name: Panel contrast gate (Firefox, Xvfb + llvmpipe)
         run: |
           npm run preview >/tmp/panel-preview-fx.log 2>&1 &
@@ -243,11 +245,5 @@ jobs:
             if curl -sk -o /dev/null https://localhost:4173/; then break; fi
             sleep 1
           done
-          # The probe first, in this step's own Xvfb, against the same
-          # server: if it boots the app and the gate seconds later does
-          # not, the difference is the gate's exact launch/context
-          # construction, and the probe's gate-launch-clone line names it.
-          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 MOZ_X11_EGL=1 \
-            node scripts/webgl-under-xvfb.probe.mjs
           xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 MOZ_X11_EGL=1 \
             node scripts/panel-contrast.verify.mjs --engine=firefox --headed
