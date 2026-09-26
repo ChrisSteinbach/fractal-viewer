@@ -1,4 +1,21 @@
 import { mulberry32 } from "../../fractal/rng";
+import { defaultTransforms } from "../../fractal/presets";
+import {
+  finiteSolidGeneralSlots,
+  finiteSolidGeneralMediaCodes,
+  surfaceSlotMaterials,
+} from "../surface-slots";
+import {
+  analyzeFiniteSolidGeneral,
+  FINITE_SOLID_IDENTITY_POSE,
+  finiteSolidGeneralBoundingRadius,
+  finiteSolidGeneralOpticsRadius,
+  type FiniteSolidGeneralConstruction,
+} from "../../fractal/finite-solid";
+import {
+  DIELECTRIC_ABSORPTION,
+  DIELECTRIC_IOR,
+} from "../../fractal/surface-dielectric";
 import {
   resolveSphereInversion,
   type SphereInversionAuthored,
@@ -20,13 +37,17 @@ import {
   SURFACE_GPU_TRANSPORT_REASON_STATE_MISMATCH,
   transportBoundaryQueryCPU,
   transportFiniteBoundaryQueryCPU,
+  transportFiniteGeneralBoundaryQueryCPU,
+  transportOpaqueControlRadiance,
   transportShadowCorridorGate,
   transportShadowVisibilityCPU,
   transportTerminalDisplacementCPU,
   transportSolidBoundaryQueryCPU,
   transportTraceCPU,
   TRANSPORT_SHADOW_BAND_SUBSTEPS,
+  type TransportFiniteBoundaryResult,
   type TransportFiniteQueryFn,
+  type TransportFixtureMedia,
   type TransportFixtureSystem,
 } from "./surface-transport-fixture";
 import {
@@ -1118,5 +1139,200 @@ describe("the sphere-inversion arm's transport", () => {
       }
       expect(crossings).toBeGreaterThan(80);
     });
+  });
+});
+
+describe("the authored glass index bends a glass-glass crossing", () => {
+  // The whole authoring chain, oracle-side: the DOCUMENT's optics leaves
+  // resolve through `resolveSurfaceOptics` (the one domain), the per-map
+  // media codes key the resolved lanes, and the trace's per-code materials
+  // are those resolved lanes read back — so the bend below is the authored
+  // index's, never a fixture constant's. Glass A (the qualified default
+  // index) on map 0, glass B (1.7) on maps 1 and 2 — the bench's measured
+  // two-glass shape, whose probes cross real 1↔2 interfaces — and the
+  // equal-index control where the same maps merge into ONE medium.
+  interface BuiltFixture {
+    codes: number[];
+    construction: FiniteSolidGeneralConstruction;
+    boundingRadius: number;
+    opticsRadius: number;
+    media: TransportFixtureMedia;
+    slotCount: number;
+  }
+
+  const build = (indexB: number | undefined): BuiltFixture => {
+    const transforms = defaultTransforms().map((t, i) => ({
+      ...t,
+      optics:
+        i === 0
+          ? { model: "dielectric" as const }
+          : i === 1 || i === 2
+            ? {
+                model: "dielectric" as const,
+                ...(indexB === undefined ? {} : { ior: indexB }),
+              }
+            : undefined,
+    }));
+    const analysis = analyzeFiniteSolidGeneral(
+      transforms,
+      null,
+      { order: 1, plane: "xz" },
+      2,
+      3,
+    );
+    if (analysis.status !== "eligible" || !analysis.construction) {
+      throw new Error(
+        `the general admission refused its own fixture: ${analysis.reasons.join("; ")}`,
+      );
+    }
+    const construction = analysis.construction;
+    const boundingRadius = finiteSolidGeneralBoundingRadius(construction);
+    const opticsRadius = finiteSolidGeneralOpticsRadius(construction);
+    const slots = finiteSolidGeneralSlots(transforms);
+    const materials = surfaceSlotMaterials(
+      transforms,
+      slots,
+      undefined,
+      opticsRadius,
+      true,
+    );
+    if (!materials?.optics) throw new Error("the fixture resolved no optics");
+    const codes = finiteSolidGeneralMediaCodes(materials, slots.length);
+    const media: TransportFixtureMedia = {
+      // Code k names slot k - 1 (the first slot of its material).
+      material: (code) => {
+        const optics = materials.slots[code - 1].optics!;
+        return {
+          ior: optics.ior,
+          absorption: optics.absorption,
+          radius: optics.radius,
+        };
+      },
+      opaque: transportOpaqueControlRadiance,
+    };
+    return {
+      codes,
+      construction: { ...construction, media: codes },
+      boundingRadius,
+      opticsRadius,
+      media,
+      slotCount: slots.length,
+    };
+  };
+
+  /** A recording wrapper over the general boundary query, so a probe's
+   * event log can name its crossings. */
+  const recordingQuery = (fixture: BuiltFixture): TransportFiniteQueryFn => {
+    const events: { fromMedium?: number; toMedium?: number }[] = [];
+    const seen = (from?: number, to?: number): boolean =>
+      (from === 1 && to === 2) || (from === 2 && to === 1);
+    const record = (r: TransportFiniteBoundaryResult): void => {
+      if (r.kind === "boundary") events.push(r);
+    };
+    const query: TransportFiniteQueryFn = (origin, dir, anchor, claim) => {
+      const r = transportFiniteGeneralBoundaryQueryCPU(
+        fixture.construction,
+        FINITE_SOLID_IDENTITY_POSE,
+        fixture.construction.media,
+        false,
+        origin,
+        dir,
+        anchor,
+        claim,
+      );
+      record(r);
+      return r;
+    };
+    return Object.assign(query, {
+      crossedDistinctGlass: () =>
+        events.some((e) => seen(e.fromMedium, e.toMedium)),
+    });
+  };
+
+  it("splits two authored indices into distinct media and bends where the equal-index pair passes straight", () => {
+    const bent = build(1.7);
+    const straight = build(undefined);
+    expect(bent.codes).toEqual([1, 2, 2, 0]);
+    expect(straight.codes).toEqual([1, 1, 1, 0]);
+
+    // A probe search over the measured shape: the bench's own two-glass leg
+    // measured 4 glass-glass interfaces on this document family, so some
+    // aimed ray must cross one. The found probe pins the bend; the
+    // equal-index control runs the SAME probe and must record none — the
+    // merged medium's crossings are silent.
+    const material: DielectricMaterial = {
+      ior: DIELECTRIC_IOR,
+      absorption: [...DIELECTRIC_ABSORPTION],
+      radius: bent.opticsRadius,
+    };
+    const bgLinear: Vec3 = [0.125, 0.25, 0.5];
+    const origin: Vec3 = [
+      0.9 * bent.boundingRadius,
+      0.55 * bent.boundingRadius,
+      1.7 * bent.boundingRadius,
+    ];
+    const rng = mulberry32(24);
+    let found: { bent: Vec3; straight: Vec3 } | null = null;
+    for (let attempt = 0; attempt < 60 && !found; attempt++) {
+      const target = [0, 1, 2].map(() => (rng() * 2 - 1) * 0.8) as Vec3;
+      const v: Vec3 = [
+        target[0] - origin[0],
+        target[1] - origin[1],
+        target[2] - origin[2],
+      ];
+      const len = Math.hypot(v[0], v[1], v[2]);
+      if (!(len > 0)) continue;
+      const dir = v.map((x) => x / len) as Vec3;
+      const common = {
+        system: {
+          estimate: () => 1,
+          stepScale: 1,
+          visibleRadius: bent.boundingRadius,
+        } satisfies TransportFixtureSystem,
+        origin,
+        theta: DIELECTRIC_INITIAL_BRANCH_THETA,
+        material,
+        bgLinear,
+      };
+      const bentRun = recordingQuery(bent);
+      const bentTrace = transportTraceCPU(
+        common.system,
+        origin,
+        dir,
+        common.theta,
+        common.material,
+        common.bgLinear,
+        undefined,
+        undefined,
+        bentRun,
+        bent.media,
+      );
+      if (!bentRun.crossedDistinctGlass()) continue;
+      const straightRun = recordingQuery(straight);
+      const straightTrace = transportTraceCPU(
+        common.system,
+        origin,
+        dir,
+        common.theta,
+        common.material,
+        common.bgLinear,
+        undefined,
+        undefined,
+        straightRun,
+        straight.media,
+      );
+      expect(straightRun.crossedDistinctGlass()).toBe(false);
+      found = { bent: bentTrace.radiance, straight: straightTrace.radiance };
+    }
+    expect(found).not.toBeNull();
+    // Two pieces of evidence together: the bent run's event log carries a
+    // 1↔2 crossing the equal-index run's never does (the merged medium's
+    // crossings are silent), and the traced radiance moves far above float
+    // noise when the index does — the authored index reaches the transport
+    // and the interface between the two media bends the paths through it.
+    const drift = Math.max(
+      ...[0, 1, 2].map((a) => Math.abs(found!.bent[a] - found!.straight[a])),
+    );
+    expect(drift).toBeGreaterThan(1e-4);
   });
 });
