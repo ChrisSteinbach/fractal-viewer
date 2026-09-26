@@ -49,12 +49,14 @@
  * or boot failure on one engine is a CHECKING-side failure (exit 2) for
  * the whole run, never a verdict about the app.
  *
- * CI RUNS THE CHROMIUM LEG ONLY, measured rather than preferred: the
- * ubuntu runner ships xvfb but no Mesa GL driver, so Firefox there has no
- * WebGL and the app refuses to boot (main.ts's `webglAvailable()` gate) —
- * Chromium needs none of that because it bundles SwiftShader. The Firefox
- * leg is a hand-run gate locally, beside the other panel gate, until the
- * runner image grows a GL driver.
+ * CI RUNS BOTH LEGS. The runner image ships xvfb but no Mesa GL driver, so
+ * the job installs libgl1-mesa-dri + libegl-mesa0 (Mesa's software driver,
+ * llvmpipe — the whole measured delta; without it Firefox has no WebGL and
+ * the app refuses to boot, main.ts's `webglAvailable()` gate) and runs this
+ * script twice: `--engine=chromium` display-less on SwiftShader, then
+ * `--engine=firefox --headed` under `xvfb-run -a` with
+ * `LIBGL_ALWAYS_SOFTWARE=1`. Chromium needs none of that because it bundles
+ * SwiftShader.
  *
  * Usage (build + `npm run preview` first — this measures a real build):
  *   npm run build && npm run preview &
@@ -67,9 +69,9 @@
  *   --headed   run Firefox on the ambient display instead of headless
  *              (e.g. `xvfb-run -a` on a host whose Firefox needs the
  *              display for software GL). Chromium ignores it — always
- *              headless on its bundled SwiftShader. CI does not use it:
- *              the runner has no GL driver at all, so headed changes
- *              nothing there.
+ *              headless on its bundled SwiftShader. CI uses it for the
+ *              Firefox leg (xvfb-run -a, LIBGL_ALWAYS_SOFTWARE=1): without
+ *              a display a GPU-less host has no Firefox WebGL path at all.
  *   --outdir   where PNGs land (default .playwright-mcp/, gitignored)
  *
  * Exit codes: 0 every verdict passed; 1 a verdict failed (real contrast
