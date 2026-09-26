@@ -2139,10 +2139,10 @@ dispatch. The GPU sweep is keyed by TREE and does carry across.
 
 When ending a work session, work is NOT complete until `git push` succeeds.
 
-1. **Check dimensional parity** — did this touch something with a 4D twin? If
-   the 4D half is missing, the work is not done: ship it, or disclose the gap in
-   the PR description and the closing summary with the reason and a shaped bead.
-   See **Dimensional Parity** at the top of this file.
+1. **Check dimensional parity** — did this touch a 4D twin? A missing 4D half
+   is unfinished: ship it, or disclose the gap (reason + shaped bead) in the
+   PR description and closing summary. A PR carrying unshipped 4D work
+   discloses it there too, with a shaped bead pre-push (see the top).
 2. **File issues for remaining work** — capture follow-ups in `bd`.
 3. **Run quality gates** (if code changed) — `npm test`, `npm run lint`, `npm run build`.
 4. **Update issue status** — close finished work, update in-progress items.
