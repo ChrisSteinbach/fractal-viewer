@@ -8,10 +8,12 @@ import type { Affine4 } from "./affine4";
 import {
   effectiveSymmetryOrder,
   prepareSchedule,
+  resolveChaosEntry,
   systemHasChaos,
   transformHasEmitter,
 } from "./chaos-game";
 import { runChaosGame4 } from "./chaos-game-4d";
+import type { ChaosGame4Result } from "./chaos-game-4d";
 import {
   condensationBoundingRadius4,
   condensationHasFutureDepth,
@@ -60,6 +62,8 @@ import {
   SURFACE_FOLD_SPHEREFOLD,
   SURFACE_CHAOS_WILDCARD,
   buildSurfaceChaosDE,
+  chaosComponentIds,
+  coverageProbeWindows,
   emitterOnlySurfaceBandRefusal,
   emitterOnlySurfaceScheduleRefusal,
   surfaceChaosAllows,
@@ -81,6 +85,7 @@ import {
 import type {
   HybridSchedule,
   SymmetryParams,
+  SymmetryPlane,
   Transform,
   Transform4,
   Variation,
@@ -1238,6 +1243,14 @@ export interface SurfaceDE4Map {
   baseIndex: number;
   /** Compact graph-directed state; absent on chi-free and scheduled B maps. */
   stateIndex?: number;
+  /** Per-component certified ball for the DESCENT's local frame, the 3D
+   * `SurfaceDEMap.stateBoundCenter`/`stateBoundRadius` twins (`Vec4`
+   * because this module's points are 4D). The centre is the component's
+   * fitted one projected onto the kaleidoscope generator's fixed subspace
+   * (see the build's projection note); present only when the selection
+   * graph has more than one component, absent keeps the origin ball. */
+  stateBoundCenter?: Vec4;
+  stateBoundRadius?: number;
   /** The slot's fold family (3D's fold fields one dimension
    * up), `SURFACE_FOLD_NONE` for a plain affine slot. A fold slot iterates
    * `w·V(Mp + t)`, so the descent expands its inverse into
@@ -1429,6 +1442,270 @@ type SurfaceNativeCarrierFrame4 = Pick<
   | "escapeRadius"
   | "maxDepth"
 >;
+
+/** The xyz/w/indices/count slice of {@link ChaosGame4Result} the bounds
+ * build and the native calibration read, plus the bounds-box center the
+ * radius band normalizes against; a merged coverage cloud carries no
+ * box/radius fields beyond that, and nothing downstream reads them. */
+interface SurfaceProbeCloud4 {
+  positions: Float32Array;
+  w: Float32Array;
+  transformIndices: Uint8Array;
+  count: number;
+  center: Vec4;
+}
+
+/** Concatenate 4D probe windows — {@link mergeChaosProbes}' twin, with the
+ * separate w lane and the recomputed bounds-box center. */
+function mergeProbeWindows4(
+  windows: readonly ChaosGame4Result[],
+): SurfaceProbeCloud4 {
+  let total = 0;
+  for (const window of windows) total += window.count;
+  const positions = new Float32Array(total * 3);
+  const w = new Float32Array(total);
+  const transformIndices = new Uint8Array(total);
+  let offset = 0;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  let minW = Infinity;
+  let maxW = -Infinity;
+  for (const window of windows) {
+    positions.set(window.positions.subarray(0, window.count * 3), offset * 3);
+    w.set(window.w.subarray(0, window.count), offset);
+    transformIndices.set(
+      window.transformIndices.subarray(0, window.count),
+      offset,
+    );
+    for (let i = 0; i < window.count; i++) {
+      const x = window.positions[i * 3];
+      const y = window.positions[i * 3 + 1];
+      const z = window.positions[i * 3 + 2];
+      const ww = window.w[i];
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      if (z < minZ) minZ = z;
+      if (z > maxZ) maxZ = z;
+      if (ww < minW) minW = ww;
+      if (ww > maxW) maxW = ww;
+    }
+    offset += window.count;
+  }
+  return {
+    positions,
+    w,
+    transformIndices,
+    count: total,
+    center: [
+      (minX + maxX) / 2,
+      (minY + maxY) / 2,
+      (minZ + maxZ) / 2,
+      (minW + maxW) / 2,
+    ],
+  };
+}
+
+/**
+ * The certified origin-centred invariant radius for a transform SUBSET in
+ * 4D — the 3D `invariantClosureRadius`'s twin about the anchored origin
+ * (symmetry rotations are isometries about it, so no sector loop). `indices`
+ * are GLOBAL transform indices into `transforms`/`lifted`; `sigmas` is the
+ * caller's full-list analysis.
+ */
+function invariantClosureRadius4(
+  transforms: readonly Transform[],
+  lifted: readonly Transform4[],
+  indices: readonly number[],
+  sigmas: readonly MapSigmas[],
+  emitters: readonly { center: Vec4; radius: number }[],
+  center: Vec4 = [0, 0, 0, 0],
+): number {
+  let radius = 0;
+  for (const emitter of emitters) {
+    radius = Math.max(
+      radius,
+      Math.hypot(
+        emitter.center[0] - center[0],
+        emitter.center[1] - center[1],
+        emitter.center[2] - center[2],
+        emitter.center[3] - center[3],
+      ) + emitter.radius,
+    );
+  }
+  for (const i of indices) {
+    const affine = composeAffine4(lifted[i]);
+    let image: Vec4 = [
+      affine.m[0] * center[0] +
+        affine.m[1] * center[1] +
+        affine.m[2] * center[2] +
+        affine.m[3] * center[3] +
+        affine.t[0],
+      affine.m[4] * center[0] +
+        affine.m[5] * center[1] +
+        affine.m[6] * center[2] +
+        affine.m[7] * center[3] +
+        affine.t[1],
+      affine.m[8] * center[0] +
+        affine.m[9] * center[1] +
+        affine.m[10] * center[2] +
+        affine.m[11] * center[3] +
+        affine.t[2],
+      affine.m[12] * center[0] +
+        affine.m[13] * center[1] +
+        affine.m[14] * center[2] +
+        affine.m[15] * center[3] +
+        affine.t[3],
+    ];
+    const fold = pureFoldVariation(transforms[i]);
+    const postLive =
+      lifted[i].post4 !== undefined && !isIdentityAffine4(lifted[i].post4);
+    let lipschitz = postLive
+      ? singularValues4(lifted[i].post4!.m).max * singularValues4(affine.m).max
+      : sigmas[i].max;
+    if (fold) {
+      image = applyPureFold4(fold, image[0], image[1], image[2], image[3]);
+      lipschitz *= foldLipschitz(fold);
+    }
+    if (postLive) {
+      const pm = lifted[i].post4!.m;
+      const pt = lifted[i].post4!.t;
+      image = [
+        pm[0] * image[0] +
+          pm[1] * image[1] +
+          pm[2] * image[2] +
+          pm[3] * image[3] +
+          pt[0],
+        pm[4] * image[0] +
+          pm[5] * image[1] +
+          pm[6] * image[2] +
+          pm[7] * image[3] +
+          pt[1],
+        pm[8] * image[0] +
+          pm[9] * image[1] +
+          pm[10] * image[2] +
+          pm[11] * image[3] +
+          pt[2],
+        pm[12] * image[0] +
+          pm[13] * image[1] +
+          pm[14] * image[2] +
+          pm[15] * image[3] +
+          pt[3],
+      ];
+    }
+    radius = Math.max(
+      radius,
+      Math.hypot(
+        image[0] - center[0],
+        image[1] - center[1],
+        image[2] - center[2],
+        image[3] - center[3],
+      ) /
+        (1 - lipschitz),
+    );
+  }
+  return radius * RADIUS_PAD + 1e-3;
+}
+
+/** Near-smallest enclosing ball of an interleaved-xyzw point cloud — the
+ * 3D `fitEnclosingBall` mirrored in four coordinates (same deterministic
+ * Ritter construction). A flat cloud keeps `w = 0` and the same distances
+ * as its 3D twin, so the flat 3D/4D alignment pin holds. */
+function fitEnclosingBall4(points: Float64Array): {
+  center: Vec4;
+  radius: number;
+} {
+  const n = points.length / 4;
+  if (n === 0) return { center: [0, 0, 0, 0], radius: 0 };
+  const farthestFrom = (x: number, y: number, z: number, w: number): number => {
+    let bestD = -1;
+    let bestI = 0;
+    for (let i = 0; i < n; i++) {
+      const dx = points[i * 4] - x;
+      const dy = points[i * 4 + 1] - y;
+      const dz = points[i * 4 + 2] - z;
+      const dw = points[i * 4 + 3] - w;
+      const d = dx * dx + dy * dy + dz * dz + dw * dw;
+      if (d > bestD) {
+        bestD = d;
+        bestI = i;
+      }
+    }
+    return bestI;
+  };
+  const a = farthestFrom(points[0], points[1], points[2], points[3]);
+  const b = farthestFrom(
+    points[a * 4],
+    points[a * 4 + 1],
+    points[a * 4 + 2],
+    points[a * 4 + 3],
+  );
+  let cx = (points[a * 4] + points[b * 4]) / 2;
+  let cy = (points[a * 4 + 1] + points[b * 4 + 1]) / 2;
+  let cz = (points[a * 4 + 2] + points[b * 4 + 2]) / 2;
+  let cw = (points[a * 4 + 3] + points[b * 4 + 3]) / 2;
+  let r =
+    Math.hypot(
+      points[a * 4] - points[b * 4],
+      points[a * 4 + 1] - points[b * 4 + 1],
+      points[a * 4 + 2] - points[b * 4 + 2],
+      points[a * 4 + 3] - points[b * 4 + 3],
+    ) / 2;
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 0; i < n; i++) {
+      const dx = points[i * 4] - cx;
+      const dy = points[i * 4 + 1] - cy;
+      const dz = points[i * 4 + 2] - cz;
+      const dw = points[i * 4 + 3] - cw;
+      const d = Math.hypot(dx, dy, dz, dw);
+      if (d > r) {
+        const grown = (r + d) / 2;
+        const t = (d - grown) / d;
+        cx += dx * t;
+        cy += dy * t;
+        cz += dz * t;
+        cw += dw * t;
+        r = grown;
+      }
+    }
+  }
+  return { center: [cx, cy, cz, cw], radius: r };
+}
+
+/**
+ * Project a fitted per-component centre onto the kaleidoscope generator's
+ * FIXED subspace — the 4D rules the build's origin-anchor note records:
+ * order 1 keeps the fit; a nonzero twist keeps only the origin (neither
+ * generator block fixes a direction); twist 0 zeroes the rotation plane's
+ * two in-plane coordinates and keeps the pair the rotation never touches.
+ */
+function projectCenter4(
+  center: Vec4,
+  order: number,
+  plane: SymmetryPlane,
+  twist: number,
+): Vec4 {
+  if (order <= 1) return center;
+  if (twist !== 0) return [0, 0, 0, 0];
+  const inPlane: Record<SymmetryPlane, [number, number]> = {
+    xy: [0, 1],
+    yz: [1, 2],
+    xz: [0, 2],
+    xw: [0, 3],
+    yw: [1, 3],
+    zw: [2, 3],
+  };
+  const [a, b] = inPlane[plane];
+  const out: Vec4 = [...center];
+  out[a] = 0;
+  out[b] = 0;
+  return out;
+}
 
 /**
  * Precompute the {@link SurfaceDE4} for a system: every active map lifted
@@ -1861,13 +2138,19 @@ export function buildSurfaceDE4(
   // naturally rather than through a special case; copying 3D's in-plane
   // zeroing instead would leave a twisted kaleidoscope a NON-invariant
   // centre — an unsound certificate, not merely a loose one.
-  const aProbe = runChaosGame4(
-    lifted,
-    PROBE_POINTS,
-    mulberry32(PROBE_SEED),
-    null,
-    symmetry,
+  // A graph-directed selection can leave a whole component unvisited in one
+  // PROBE_POINTS window (see `coverageProbeWindows`); the 4D ball is
+  // origin-anchored, so a missed block shows up as an under-read maxR that
+  // only the analytic closure covers — the coverage windows keep the probe
+  // on the plotted set exactly as 3D's fit does. Connected graphs and
+  // no-chaos systems keep the single historical window.
+  const probeWindows = coverageProbeWindows(transforms, (seed) =>
+    runChaosGame4(lifted, PROBE_POINTS, mulberry32(seed), null, symmetry),
   );
+  const aProbe =
+    probeWindows.length === 1
+      ? probeWindows[0]
+      : mergeProbeWindows4(probeWindows);
   let maxR = 0;
   for (let i = 0; i < aProbe.count; i++) {
     const x = aProbe.positions[i * 3];
@@ -1881,6 +2164,128 @@ export function buildSurfaceDE4(
     maxR * RADIUS_PAD + 1e-3,
     condensationInvariantRadius,
   );
+  // PER-COMPONENT LOCAL FRAMES: the 3D build's note one dimension up. A
+  // chain never leaves its component, so each map carries its component's
+  // own fitted ball (projected onto the generator's fixed subspace — see
+  // `projectCenter4`) and the descent measures that chain there. The
+  // origin ball stays the marcher's gate and the fallback.
+  const componentIds = chaosComponentIds(transforms);
+  const componentCount = componentIds
+    ? componentIds.reduce((max, id) => Math.max(max, id + 1), 0)
+    : 0;
+  if (componentCount > 1 && !preparedSchedule) {
+    const recursiveByComponent: number[][] = Array.from(
+      { length: componentCount },
+      () => [],
+    );
+    for (let i = 0; i < transforms.length; i++) {
+      if (!isActive(transforms[i]) || transformHasEmitter(transforms[i])) {
+        continue;
+      }
+      const c = componentIds![i];
+      if (c >= 0) recursiveByComponent[c].push(i);
+    }
+    const emitterCopies = new Map<number, { center: Vec4; radius: number }[]>();
+    for (const emitter of condensation?.emitters ?? []) {
+      const list = emitterCopies.get(emitter.baseIndex) ?? [];
+      list.push({ center: emitter.center, radius: emitter.radius });
+      emitterCopies.set(emitter.baseIndex, list);
+    }
+    const componentCenters: Vec4[] = [];
+    const componentRadii: number[] = [];
+    for (let c = 0; c < componentCount; c++) {
+      let count = 0;
+      for (let i = 0; i < aProbe.count; i++) {
+        if (componentIds![aProbe.transformIndices[i]] === c) count++;
+      }
+      const componentEmitters: { center: Vec4; radius: number }[] = [];
+      for (let e = 0; e < transforms.length; e++) {
+        if (!isActive(transforms[e]) || !transformHasEmitter(transforms[e])) {
+          continue;
+        }
+        const reachable = recursiveByComponent[c].some((from) => {
+          const row = transforms[from].chaos;
+          let supported = false;
+          for (const j of recursiveByComponent[c]) {
+            if (resolveChaosEntry(row?.[j]) > 0) supported = true;
+          }
+          return !supported || resolveChaosEntry(row?.[e]) > 0;
+        });
+        if (reachable) componentEmitters.push(...(emitterCopies.get(e) ?? []));
+      }
+      const closure = (center: Vec4): number =>
+        invariantClosureRadius4(
+          transforms,
+          lifted,
+          recursiveByComponent[c],
+          analysis.sigmas,
+          componentEmitters,
+          center,
+        );
+      if (count === 0) {
+        componentCenters.push([0, 0, 0, 0]);
+        componentRadii.push(
+          Math.max(
+            aBoundingRadius,
+            invariantClosureRadius4(
+              transforms,
+              lifted,
+              recursiveByComponent[c],
+              analysis.sigmas,
+              componentEmitters,
+            ),
+          ),
+        );
+        continue;
+      }
+      const pts = new Float64Array(count * 4);
+      let at = 0;
+      let maxR = 0;
+      for (let i = 0; i < aProbe.count; i++) {
+        if (componentIds![aProbe.transformIndices[i]] !== c) continue;
+        const x = aProbe.positions[i * 3];
+        const y = aProbe.positions[i * 3 + 1];
+        const z = aProbe.positions[i * 3 + 2];
+        const w = aProbe.w[i];
+        pts[at * 4] = x;
+        pts[at * 4 + 1] = y;
+        pts[at * 4 + 2] = z;
+        pts[at * 4 + 3] = w;
+        at++;
+        maxR = Math.max(maxR, Math.hypot(x, y, z, w));
+      }
+      const cFit = fitEnclosingBall4(pts);
+      const projected = projectCenter4(
+        cFit.center,
+        order,
+        symmetry.plane,
+        symmetry.twist ?? 0,
+      );
+      let fitRadius = 0;
+      for (let i = 0; i < count; i++) {
+        fitRadius = Math.max(
+          fitRadius,
+          Math.hypot(
+            pts[i * 4] - projected[0],
+            pts[i * 4 + 1] - projected[1],
+            pts[i * 4 + 2] - projected[2],
+            pts[i * 4 + 3] - projected[3],
+          ),
+        );
+      }
+      const originR = Math.max(maxR * RADIUS_PAD + 1e-3, closure([0, 0, 0, 0]));
+      const fitR = Math.max(fitRadius * RADIUS_PAD + 1e-3, closure(projected));
+      const useFit = fitR < originR;
+      componentCenters.push(useFit ? projected : [0, 0, 0, 0]);
+      componentRadii.push(useFit ? fitR : originR);
+    }
+    for (const map of maps) {
+      const c = componentIds![map.baseIndex];
+      if (c < 0) continue;
+      map.stateBoundCenter = componentCenters[c];
+      map.stateBoundRadius = componentRadii[c];
+    }
+  }
   let probe = aProbe;
   let boundingRadius = aBoundingRadius;
   let scheduleDE: SurfaceScheduleDE4 | undefined;
@@ -1959,12 +2364,17 @@ export function buildSurfaceDE4(
 
   // Native pattern calibration samples the RAW attractor in its production
   // carrier frame: origin-centred radius, no view rotor/slice, and no final
-  // lens. The existing 8192-point seeded probe is already paid for by the DE
-  // build; take exactly 256 evenly-strided entries (8192 / 256 = 32) rather
-  // than launching another orbit or letting camera coverage bias the span.
+  // lens. The seeded probe is already paid for by the DE build; take exactly
+  // 256 evenly-strided entries rather than launching another orbit or
+  // letting camera coverage bias the span. A coverage-merged cloud is a
+  // whole number of PROBE_POINTS windows, so the stride stays integral.
   const patternSamples: SurfaceNativeCarriers4[] = [];
-  const patternStride = PROBE_POINTS / SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT;
-  if (!Number.isInteger(patternStride) || probe.count !== PROBE_POINTS) {
+  const patternStride = probe.count / SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT;
+  if (
+    !Number.isInteger(patternStride) ||
+    patternStride < 1 ||
+    probe.count % PROBE_POINTS !== 0
+  ) {
     throw new Error(
       "surface-de-4d: native calibration requires the complete evenly-divisible raw probe",
     );
@@ -3016,6 +3426,16 @@ function descend4(
   const startR = segmentRadius(x, y, z, w, ext);
   const sphereBound = startR - R;
   const wide = de.beamWidth > 1;
+  // A chain's own component ball selects its escape / in-ball thresholds;
+  // with no per-state bounds (single component, or a scheduled level) the
+  // level's constants apply, bit for bit.
+  const stateBallRadius = (state: number): number =>
+    !segment &&
+    state >= 0 &&
+    de.maps[state] !== undefined &&
+    de.maps[state].stateBoundRadius !== undefined
+      ? de.maps[state].stateBoundRadius
+      : R;
   let best = Infinity;
 
   // Chain slot A starts at the (lensed) query; slot B idles until beam
@@ -3295,10 +3715,20 @@ function descend4(
               applyLinear4(im, sweepExt, imgExt);
             }
           }
-          const r = segmentRadius(ix, iy, iz, iw, imgExt);
-          const key = pScale * (r - R);
+          const mapBoundR = segment ? R : (map.stateBoundRadius ?? R);
+          const mapBoundC = segment ? undefined : map.stateBoundCenter;
+          const r =
+            mapBoundC === undefined
+              ? segmentRadius(ix, iy, iz, iw, imgExt)
+              : Math.hypot(
+                  ix - mapBoundC[0],
+                  iy - mapBoundC[1],
+                  iz - mapBoundC[2],
+                  iw - mapBoundC[3],
+                );
+          const key = pScale * (r - mapBoundR);
           const childScale = pScale * map.sigmaMin;
-          const cert = lastLevel ? Infinity : childScale * (r - R);
+          const cert = lastLevel ? Infinity : childScale * (r - mapBoundR);
           if (condensation) {
             const shapeTerm = scheduledCondensationTerm4(
               de,
@@ -3441,14 +3871,14 @@ function descend4(
           // their plain certificate; an in-sphere tuple carries no positive
           // certificate — on widths 3/4 it can only get here past FOUR
           // smaller keys, the (shrunken) residual drop the slots exist for.
-          if (eR > R && eCert < best) best = eCert;
+          if (eR > stateBallRadius(eState) && eCert < best) best = eCert;
           else if (
             eKey < Infinity &&
             futureCondensation &&
-            eR <= R &&
+            eR <= stateBallRadius(eState) &&
             depth + 1 < firstCondensationDepth
           ) {
-            const subtree = eScale * (eR - R);
+            const subtree = eScale * (eR - stateBallRadius(eState));
             if (subtree < best) best = subtree;
           }
         }
@@ -3465,7 +3895,10 @@ function descend4(
     v1Live = false;
     v2Live = false;
     if (c1Key < Infinity) {
-      if (c1R > escapeRadius) {
+      if (
+        c1R >
+        (childBound ? escapeRadius : ESCAPE_FACTOR * stateBallRadius(c1State))
+      ) {
         if (c1Cert < best) best = c1Cert;
       } else {
         aX = c1X;
@@ -3480,15 +3913,19 @@ function descend4(
       }
     }
     if (c2Key < Infinity) {
-      if (!wide || c2R > escapeRadius) {
-        if (c2R > R && c2Cert < best) best = c2Cert;
+      if (
+        !wide ||
+        c2R >
+          (childBound ? escapeRadius : ESCAPE_FACTOR * stateBallRadius(c2State))
+      ) {
+        if (c2R > stateBallRadius(c2State) && c2Cert < best) best = c2Cert;
         else if (
           !wide &&
           futureCondensation &&
-          c2R <= R &&
+          c2R <= stateBallRadius(c2State) &&
           depth + 1 < firstCondensationDepth
         ) {
-          const subtree = c2Scale * (c2R - R);
+          const subtree = c2Scale * (c2R - stateBallRadius(c2State));
           if (subtree < best) best = subtree;
         }
       } else {
@@ -3504,7 +3941,7 @@ function descend4(
       }
     }
     if (extra > 0 && c3Key < Infinity) {
-      if (c3R > R) {
+      if (c3R > stateBallRadius(c3State)) {
         if (c3Cert < best) best = c3Cert;
       } else {
         v1X = c3X;
@@ -3518,7 +3955,7 @@ function descend4(
       }
     }
     if (extra > 1 && c4Key < Infinity) {
-      if (c4R > R) {
+      if (c4R > stateBallRadius(c4State)) {
         if (c4Cert < best) best = c4Cert;
       } else {
         v2X = c4X;
@@ -3602,15 +4039,16 @@ function descend4(
       );
     }
   }
-  const terminalR = de.schedule
-    ? de.schedule.bounds[Math.min(maxDepth, de.schedule.depth)].radius
-    : R;
+  const terminalRadius = (state: number): number =>
+    de.schedule
+      ? de.schedule.bounds[Math.min(maxDepth, de.schedule.depth)].radius
+      : stateBallRadius(state);
   if (aLive && !bandEnded) {
-    const terminal = aScale * (aR - terminalR);
+    const terminal = aScale * (aR - terminalRadius(aState));
     if (terminal < best) best = terminal;
   }
   if (bLive && !bandEnded) {
-    const terminal = bScale * (bR - terminalR);
+    const terminal = bScale * (bR - terminalRadius(bState));
     if (terminal < best) best = terminal;
   }
   // Validity chains fold NO cap terminal — deliberately asymmetric with
@@ -3855,6 +4293,16 @@ function descend4Refined(
   const startR = segmentRadius(x, y, z, w, ext);
   const sphereBound = startR - R;
   const wide = de.beamWidth > 1;
+  // A chain's own component ball selects its escape / in-ball thresholds;
+  // with no per-state bounds (single component, or a scheduled level) the
+  // level's constants apply, bit for bit.
+  const stateBallRadius = (state: number): number =>
+    !segment &&
+    state >= 0 &&
+    de.maps[state] !== undefined &&
+    de.maps[state].stateBoundRadius !== undefined
+      ? de.maps[state].stateBoundRadius
+      : R;
   let best = Infinity;
 
   // Early-out threshold: the value below which the descent may stop and hand
@@ -3898,9 +4346,13 @@ function descend4Refined(
     const inB = de.schedule !== undefined && depth < de.schedule.depth;
     const levelMaps = inB ? de.schedule!.maps : de.maps;
     const sectorOrder = inB ? 1 : order;
+    const currentStateRadius =
+      !segment && currentState >= 0
+        ? de.maps[currentState]?.stateBoundRadius
+        : undefined;
     const currentR = de.schedule
       ? de.schedule.bounds[Math.min(depth, de.schedule.depth)].radius
-      : de.boundingRadius;
+      : (currentStateRadius ?? de.boundingRadius);
     const childR = de.schedule
       ? de.schedule.bounds[Math.min(depth + 1, de.schedule.depth)].radius
       : de.boundingRadius;
@@ -3965,8 +4417,19 @@ function descend4Refined(
             applyLinear4(imJ, certSweepExt, innerExt);
           }
         }
-        const rj = segmentRadius(jx, jy, jz, jw, innerExt);
-        const innerTerm = mapJ.sigmaMin * (rj - childR);
+        const imageBoundC = segment ? undefined : mapJ.stateBoundCenter;
+        const rj =
+          imageBoundC === undefined
+            ? segmentRadius(jx, jy, jz, jw, innerExt)
+            : Math.hypot(
+                jx - imageBoundC[0],
+                jy - imageBoundC[1],
+                jz - imageBoundC[2],
+                jw - imageBoundC[3],
+              );
+        const innerTerm =
+          mapJ.sigmaMin *
+          (rj - (segment ? childR : (mapJ.stateBoundRadius ?? childR)));
         if (innerTerm < inner) inner = innerTerm;
       }
     }
@@ -4250,10 +4713,20 @@ function descend4Refined(
               applyLinear4(im, sweepExt, imgExt);
             }
           }
-          const r = segmentRadius(ix, iy, iz, iw, imgExt);
-          const key = pScale * (r - R);
+          const mapBoundR = segment ? R : (map.stateBoundRadius ?? R);
+          const mapBoundC = segment ? undefined : map.stateBoundCenter;
+          const r =
+            mapBoundC === undefined
+              ? segmentRadius(ix, iy, iz, iw, imgExt)
+              : Math.hypot(
+                  ix - mapBoundC[0],
+                  iy - mapBoundC[1],
+                  iz - mapBoundC[2],
+                  iw - mapBoundC[3],
+                );
+          const key = pScale * (r - mapBoundR);
           const childScale = pScale * map.sigmaMin;
-          const cert = lastLevel ? Infinity : childScale * (r - R);
+          const cert = lastLevel ? Infinity : childScale * (r - mapBoundR);
           if (condensation) {
             const shapeTerm = scheduledCondensationTerm4(
               de,
@@ -4423,7 +4896,7 @@ function descend4Refined(
           // min); an in-sphere tuple carries no positive certificate — on
           // widths 3/4 it can only get here past FOUR smaller keys, the
           // (shrunken) residual drop the slots exist for.
-          if (eR > R && eCert < best) {
+          if (eR > stateBallRadius(eState) && eCert < best) {
             const rc = refinedCert(
               eX,
               eY,
@@ -4453,10 +4926,10 @@ function descend4Refined(
           } else if (
             eKey < Infinity &&
             futureCondensation &&
-            eR <= R &&
+            eR <= stateBallRadius(eState) &&
             depth + 1 < firstCondensationDepth
           ) {
-            const subtree = eScale * (eR - R);
+            const subtree = eScale * (eR - stateBallRadius(eState));
             if (subtree < best) best = subtree;
           }
         }
@@ -4474,7 +4947,10 @@ function descend4Refined(
     v1Live = false;
     v2Live = false;
     if (c1Key < Infinity) {
-      if (c1R > escapeRadius) {
+      if (
+        c1R >
+        (childBound ? escapeRadius : ESCAPE_FACTOR * stateBallRadius(c1State))
+      ) {
         if (c1Cert < best) best = c1Cert;
       } else {
         aX = c1X;
@@ -4490,7 +4966,7 @@ function descend4Refined(
     }
     if (c2Key < Infinity) {
       if (!wide) {
-        if (c2R > R && c2Cert < best) {
+        if (c2R > stateBallRadius(c2State) && c2Cert < best) {
           const rc = refinedCert(
             c2X,
             c2Y,
@@ -4505,13 +4981,16 @@ function descend4Refined(
           if (rc < best) best = rc;
         } else if (
           futureCondensation &&
-          c2R <= R &&
+          c2R <= stateBallRadius(c2State) &&
           depth + 1 < firstCondensationDepth
         ) {
-          const subtree = c2Scale * (c2R - R);
+          const subtree = c2Scale * (c2R - stateBallRadius(c2State));
           if (subtree < best) best = subtree;
         }
-      } else if (c2R > escapeRadius) {
+      } else if (
+        c2R >
+        (childBound ? escapeRadius : ESCAPE_FACTOR * stateBallRadius(c2State))
+      ) {
         if (c2Cert < best) best = c2Cert;
       } else {
         bX = c2X;
@@ -4526,7 +5005,7 @@ function descend4Refined(
       }
     }
     if (extra > 0 && c3Key < Infinity) {
-      if (c3R > R) {
+      if (c3R > stateBallRadius(c3State)) {
         if (c3Cert < best) {
           const rc = refinedCert(
             c3X,
@@ -4553,7 +5032,7 @@ function descend4Refined(
       }
     }
     if (extra > 1 && c4Key < Infinity) {
-      if (c4R > R) {
+      if (c4R > stateBallRadius(c4State)) {
         if (c4Cert < best) {
           const rc = refinedCert(
             c4X,
@@ -4662,15 +5141,16 @@ function descend4Refined(
       );
     }
   }
-  const terminalR = de.schedule
-    ? de.schedule.bounds[Math.min(maxDepth, de.schedule.depth)].radius
-    : R;
+  const terminalRadius = (state: number): number =>
+    de.schedule
+      ? de.schedule.bounds[Math.min(maxDepth, de.schedule.depth)].radius
+      : stateBallRadius(state);
   if (aLive && !bandEnded) {
-    const terminal = aScale * (aR - terminalR);
+    const terminal = aScale * (aR - terminalRadius(aState));
     if (terminal < best) best = terminal;
   }
   if (bLive && !bandEnded) {
-    const terminal = bScale * (bR - terminalR);
+    const terminal = bScale * (bR - terminalRadius(bState));
     if (terminal < best) best = terminal;
   }
   // Validity chains fold NO cap terminal — deliberately asymmetric with
@@ -4855,9 +5335,13 @@ function refinedCertValue4(
   const inB = de.schedule !== undefined && depth < de.schedule.depth;
   const levelMaps = inB ? de.schedule!.maps : de.maps;
   const sectorOrder = inB ? 1 : order;
+  const currentStateRadius =
+    !segment && currentState >= 0
+      ? de.maps[currentState]?.stateBoundRadius
+      : undefined;
   const currentR = de.schedule
     ? de.schedule.bounds[Math.min(depth, de.schedule.depth)].radius
-    : de.boundingRadius;
+    : (currentStateRadius ?? de.boundingRadius);
   const childR = de.schedule
     ? de.schedule.bounds[Math.min(depth + 1, de.schedule.depth)].radius
     : de.boundingRadius;
@@ -5199,8 +5683,19 @@ function refinedCertValue4(
           }
           branchSigma = mapJ.foldSigma * sfSigma;
         }
-        const rj = segmentRadius(jx, jy, jz, jw, CERT_IMG_EXT4);
-        let innerTerm = branchSigma * (rj - childR);
+        const imageBoundC = segment ? undefined : mapJ.stateBoundCenter;
+        const rj =
+          imageBoundC === undefined
+            ? segmentRadius(jx, jy, jz, jw, CERT_IMG_EXT4)
+            : Math.hypot(
+                jx - imageBoundC[0],
+                jy - imageBoundC[1],
+                jz - imageBoundC[2],
+                jw - imageBoundC[3],
+              );
+        let innerTerm =
+          branchSigma *
+          (rj - (segment ? childR : (mapJ.stateBoundRadius ?? childR)));
         if (branchRd > 0) {
           const regionTerm = regionAbsWJ * branchRd;
           if (regionTerm > innerTerm) innerTerm = regionTerm;
