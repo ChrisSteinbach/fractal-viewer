@@ -200,6 +200,13 @@ jobs:
       # log.
       - name: GL stack record (Firefox leg)
         run: |
+          npm run preview >/tmp/panel-preview-record.log 2>&1 &
+          PREVIEW_PID=$!
+          trap 'kill "$PREVIEW_PID" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 60); do
+            if curl -sk -o /dev/null https://localhost:4173/; then break; fi
+            sleep 1
+          done
           xvfb-run -a glxinfo -B | grep -E "OpenGL (renderer|version)" || true
           xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 MOZ_X11_EGL=1 \
             node scripts/webgl-under-xvfb.probe.mjs
