@@ -189,9 +189,7 @@
  * mid-storm — reported as an anomaly in the summary row, not folded into
  * the crash verdict.
  */
-import { firefox } from "/home/christians/src/fractal/node_modules/playwright-core/index.mjs";
-import os from "node:os";
-import path from "node:path";
+import { firefox } from "playwright-core";
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -222,10 +220,7 @@ if (TILING !== null && args.toggles === undefined) {
   throw new Error("--tiling qualification requires --toggles=N");
 }
 const EXPECTED_TILING = TILING === "a3" ? { group: "a3" } : null;
-const FIREFOX_BIN = path.join(
-  os.homedir(),
-  ".cache/ms-playwright/firefox-1532/firefox/firefox",
-);
+const FIREFOX_BIN = firefox.executablePath();
 const [vw, vh] = String(args.viewport ?? "1280x720")
   .split("x")
   .map(Number);
