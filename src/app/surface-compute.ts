@@ -7950,7 +7950,8 @@ export class SurfaceComputeRenderer {
                   `dir=[${Array.from(rec.slice(4, 7), (v) => v.toExponential(9)).join(",")}] ` +
                   `theta=${rec[3]} pass=${rec[7]} ` +
                   `path=[${Array.from(rec.slice(8, 16), (v) => v.toExponential(9)).join(",")}] ` +
-                  `anchor=[${Array.from(rec.slice(16, 40), (v) => v.toExponential(9)).join(",")}]`,
+                  `anchor=[${Array.from(rec.slice(16, 40), (v) => v.toExponential(9)).join(",")}] ` +
+                  `ladder=[${Array.from(rec.slice(40, 44), (v) => v.toFixed(3)).join(",")}]`,
               );
             }
           }

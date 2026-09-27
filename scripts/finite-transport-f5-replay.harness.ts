@@ -197,10 +197,37 @@ describe("inside-miss replay: the kernel's own failing paths", () => {
         const f64Kind = f64.kind;
         const f32Kind =
           f32.kind === 1 ? "boundary" : f32.kind === 2 ? "miss" : "refused";
+        // The kernel's own retry arm: the UNANCHORED re-query from the same
+        // origin with the same claim — what the work-list's miss-retry sees.
+        const u64 = transportFiniteGeneralBoundaryQueryCPU(
+          construction,
+          FINITE_SOLID_IDENTITY_POSE,
+          media,
+          true,
+          r.path.slice(0, 3) as Vec3,
+          r.path.slice(4, 7) as Vec3,
+          null,
+          claim,
+        );
+        const u32r = finiteSolidGeneralDdaF32(
+          3,
+          DEPTH,
+          wire,
+          rows,
+          0,
+          r.path.slice(0, 3) as Vec3,
+          r.path.slice(4, 7) as Vec3,
+          null,
+          claim,
+        );
+        const u32Kind =
+          u32r.kind === 1 ? "boundary" : u32r.kind === 2 ? "miss" : "refused";
         console.log(
           `ray=${r.ray} claim=${claim} interfaces=${interfaces} anchorPresent=${bitcast(r.anchor[12])} ` +
             `mask=${bitcast(r.anchor[14])} | f64=${f64Kind}${f64.kind === "refused" ? `:${f64.reason}` : ""} ` +
-            `f32=${f32Kind}${f32Kind === "refused" ? `:${f32.reason}` : ""}`,
+            `f32=${f32Kind}${f32Kind === "refused" ? `:${f32.reason}` : ""}` +
+            ` geometryMedium=${f64.kind === "refused" ? f64.toMedium : "-"}` +
+            ` | unanchored f64=${u64.kind}${u64.kind === "refused" ? `:${u64.reason}` : ""} f32=${u32Kind}`,
         );
         if (f64.kind === "miss" || f64.kind === "refused") f64Miss++;
         if (f32Kind === "miss" || f32Kind === "refused") f32Miss++;
