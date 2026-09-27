@@ -40,7 +40,10 @@ For each changed path, in order:
 An unresolved or ambiguous import, unknown package or alias, computed import, glob loader,
 unsupported import assignment, parse failure, missing root or unavailable git
 history selects full agreement. Symlink/submodule source, worker and
-generated-function loaders, and the vm executors are also uncertain. Runtime
+generated-function loaders, and the vm executors are also uncertain — except a
+`Worker`/`SharedWorker` whose first argument is the two-argument
+`new URL(spec, base)` form, which is the module-reference shape the URL branch
+resolves (a dynamic spec still throws through it). Runtime
 file reads and fetches are DATA, not module edges: they name no module this
 walker can resolve, and their output can only execute through one of the
 executors it refuses, so `readFile`/`readFileSync`/`fetch` create no edge and
@@ -509,6 +512,42 @@ above), so it sweeps — but now for a REASON, rather than because the selector
 cannot reason at all. The closure-only reader that motivated the change still
 sweeps as an agreement dependency when it itself changes: it is bench runtime
 code.
+
+### The worker idiom refused its own resolvable URL, 2026-09-13/27
+
+Every PR touching `src/app/main.ts` selected a FULL sweep with
+
+    analysis uncertainty: Error: unsupported runtime loader in src/app/main.ts
+
+because the walker's loader refusal ran BEFORE the visitor could descend into
+the URL node: `new Worker(new URL("./cloud-worker.ts", import.meta.url),
+{ type: "module" })` is exactly the bundler idiom the `new URL` branch above
+exists to resolve, but that branch only ever saw URLs standing alone. The
+Worker/SharedWorker/Function/`SourceTextModule` refusal is otherwise right —
+those loaders take CODE, not a specifier — so the fix narrows it, never
+widens the closure: a Worker whose first argument is the TWO-argument
+`new URL(spec, base)` form is let through to the URL branch, which adds the
+literal spec (and still throws for a dynamic one, `unknown import`); a string
+specifier (`new Worker("./x.ts")`), a variable, or a one-argument URL inside a
+Worker all stay refused, each pinned. The shipped entry point carries four of
+the idiom, `src/app/custom-mesh-importer.ts` one more, so this was not a
+hypothetical surface.
+
+Replayed over real commits after the fix (the first is the recorded forced
+sweep this subsection is named for):
+
+| Commit / range                       | Before                                                                                                                                            | After                                                                                           |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `51713a07` (only `src/app/main.ts`)  | full — the uncertainty above                                                                                                                      | independent, 0 shards                                                                           |
+| `e8f912a` (12 files incl. `main.ts`) | full — `new/deleted/renamed file` + `agreement dependency: flame-worker-core.ts`, then the throw cut the reason loop before its last changed file | full — the same two reasons plus `agreement dependency: src/fractal/flame.ts`, uncertainty GONE |
+
+The second row is the designed behavior, not a missed save: that commit
+genuinely touches the bench's runtime, so it sweeps — and the fix even
+improves the record, since the throw had been aborting the reasons loop
+mid-way, hiding files that had earned their own named reason. The sweep is
+now selected wholly by analysis; the uncertainty is no longer one of the
+reasons. Selection cost was an owner decision taken 2026-09-27, against the
+bead's drive-by warning.
 
 ### The selector was inert until 2026-09-10
 
