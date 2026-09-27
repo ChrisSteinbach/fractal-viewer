@@ -3677,7 +3677,12 @@ function scheduledCondensationHasFutureDepth(
  * last level the affine descent family folds no certificate, stops after
  * the level and skips the chains' ball terminals, in both dimensions and
  * every mirror (CPU, GLSL value and hit-info, WGSL affine/affine4). The
- * fold frontier's port is still owed (fr-kg89). Emitter-only systems (no
+ * fold frontier ports the same rule with its own term inventory: the
+ * candidate's ball certificate, the spherefold mid branch's shell bound,
+ * the evicted chain's drop floor and the depth-cap ball terminal are all
+ * gated, the loop ends with the level, and the terminal section keeps only
+ * the condensation terms (CPU descendFold/descendFold4, GLSL
+ * SURFACE_FOLDS value form, WGSL fold/fold4). Emitter-only systems (no
  * recursive maps) and unbounded bands never reach this state, which keeps
  * them value-identical.
  */
@@ -4922,6 +4927,8 @@ function descendFold(
   fcFloor[0] = 0;
   fcR[0] = startR;
   fcState[0] = SURFACE_CHAOS_WILDCARD;
+  // Set when the finite band's last level ends the loop (see lastLevel).
+  let bandEnded = false;
 
   for (let depth = 0; depth < maxDepth && chainCount > 0; depth++) {
     const inB = de.schedule !== undefined && depth < de.schedule.depth;
@@ -4956,6 +4963,17 @@ function descendFold(
       de,
       depth + 1,
     );
+    // THE BAND'S LAST LEVEL ({@link condensationLastLevel}): no descendant
+    // of this level's children can hold an enabled C0, and each child's own
+    // C0 is folded as it is generated below. Every other term this level
+    // could fold — the candidate's ball certificate, the mid branch's shell
+    // bound, an evicted chain's drop floor, the depth-cap ball terminal —
+    // speaks for the PLAIN attractor (ball and region certificates alike
+    // bound where pieces of EVERY level live), which drew a finite band's
+    // phantom attractor surfaces. They are gated, the frontier swap still
+    // runs, and the loop ends with this level; the terminals past it are
+    // skipped (bandEnded).
+    const lastLevel = condensationLastLevel(de, futureCondensation);
     let keptCount = 0;
     // Worst kept slot, maintained by a fixed-bound rescan whenever the
     // frontier is full (see the insertion comment below for why the
@@ -5227,16 +5245,22 @@ function descendFold(
                     // so fold the shell bound |w|·(fR − |u|) — ~pScale·|w|·fR,
                     // never a near-zero ghost term — and skip the branch
                     // (box expansion included). A settled fold, so the
-                    // standard exits apply.
-                    let shellCert = pScale * regionAbsW * (fr.fixedR - ru);
-                    if (pFloor > shellCert) shellCert = pFloor;
-                    if (shellCert < best) {
-                      best = shellCert;
-                      if (
-                        best <= sphereBound ||
-                        best * finalScale < bailBelow
-                      ) {
-                        return descentValue(best, sphereBound, finalScale);
+                    // standard exits apply. At the band's last level the
+                    // shell bound speaks for out-of-band content only (the
+                    // branch produces no candidate, and one it would is at
+                    // radius fR²/|u| — far outside every C0's ball), so the
+                    // fold is skipped with it.
+                    if (!lastLevel) {
+                      let shellCert = pScale * regionAbsW * (fr.fixedR - ru);
+                      if (pFloor > shellCert) shellCert = pFloor;
+                      if (shellCert < best) {
+                        best = shellCert;
+                        if (
+                          best <= sphereBound ||
+                          best * finalScale < bailBelow
+                        ) {
+                          return descentValue(best, sphereBound, finalScale);
+                        }
                       }
                     }
                     if (kind === SURFACE_FOLD_MANDELBOX) b += 26;
@@ -5384,7 +5408,11 @@ function descendFold(
             }
             let key = pScale * (r - R);
             if (candFloor > 0 && candFloor > key) key = candFloor;
-            let cert = childScale * (r - R);
+            // The candidate's ball certificate — the affine body's
+            // last-level rule: at the band's last level it would bound the
+            // plain attractor, so it folds nothing (the escape fold below
+            // and the out-of-sphere eviction fold become no-ops).
+            let cert = lastLevel ? Infinity : childScale * (r - R);
             if (candFloor > 0 && candFloor > cert) cert = candFloor;
             // Past the escape radius deeper refinement cannot improve the
             // min: fold the (floor-raised) certificate plain, exactly as
@@ -5518,7 +5546,13 @@ function descendFold(
                 if (best <= sphereBound || best * finalScale < bailBelow) {
                   return descentValue(best, sphereBound, finalScale);
                 }
-              } else if (evFloor > 0 && evFloor < best) {
+              } else if (!lastLevel && evFloor > 0 && evFloor < best) {
+                // The drop-fold rule — gated at the band's last level like
+                // every other non-C0 term: the floor is a valid bound for
+                // the subtree's pieces at ANY level, so near out-of-band
+                // content it reads small and fabricates the phantom the
+                // last-level rule removes. The band's own signal is already
+                // folded per candidate above.
                 best = evFloor;
                 if (best <= sphereBound || best * finalScale < bailBelow) {
                   return descentValue(best, sphereBound, finalScale);
@@ -5556,11 +5590,23 @@ function descendFold(
       }
       foldFrontierTap.level(depth, kept);
     }
+    // THE BAND ENDS HERE (the affine body's break): every level below this
+    // one holds out-of-band content only, so the kept frontier would never
+    // reach a term the band displays.
+    if (lastLevel) {
+      bandEnded = true;
+      break;
+    }
   }
 
   // Floor-raised KIFS terminals for every chain alive at the depth cap: a
   // floor-0 chain is a true preimage orbit (its negative terminal is the
   // hit signal), a strayed chain folds its certified positive floor.
+  // A band that ENDED the descent leaves nothing below its chains: their
+  // ball terminal would be the plain attractor's hit signal (the phantom
+  // the last-level rule removes), so it folds only at a real depth cap —
+  // the affine body's !bandEnded asymmetry, with the condensation terms
+  // kept (they are +Infinity outside the band, no-ops either way).
   const terminalR = de.schedule
     ? de.schedule.bounds[Math.min(maxDepth, de.schedule.depth)].radius
     : R;
@@ -5577,9 +5623,11 @@ function descendFold(
       );
       if (shapeTerm < best) best = shapeTerm;
     }
-    let terminal = fcScale[c] * (fcR[c] - terminalR);
-    if (fcFloor[c] > 0 && fcFloor[c] > terminal) terminal = fcFloor[c];
-    if (terminal < best) best = terminal;
+    if (!bandEnded) {
+      let terminal = fcScale[c] * (fcR[c] - terminalR);
+      if (fcFloor[c] > 0 && fcFloor[c] > terminal) terminal = fcFloor[c];
+      if (terminal < best) best = terminal;
+    }
   }
   return descentValue(best, sphereBound, finalScale);
 }
