@@ -13075,7 +13075,7 @@ ${descentPrologue}
   fcFloor[frontierIx(0u, li)] = 0.0;
   fcR[frontierIx(0u, li)] = startR;
 ${chaos ? "  fcState[frontierIx(0u, li)] = CHAOS_WILDCARD;\n" : ""}
-  for (var depth = 0u; depth < maxDepth; depth++) {
+${condensationShapes ? "  // Set when the finite band's last level ends the loop (the band's\n  // own no-phantom rule — see lastLevel below).\n  var bandEnded = false;\n" : ""}  for (var depth = 0u; depth < maxDepth; depth++) {
     if (chainCount == 0u) {
       break;
     }${
@@ -13095,7 +13095,17 @@ ${chaos ? "  fcState[frontierIx(0u, li)] = CHAOS_WILDCARD;\n" : ""}
     if (best <= sphereBound || best * params.finalSigmaMin < bailBelow) {
       return max(best, sphereBound) * params.finalSigmaMin;
     }
-    let futureCondensation = condensationHasFuture(depth + 1u);`
+    let futureCondensation = condensationHasFuture(depth + 1u);
+    // THE BAND'S LAST LEVEL (the affine core's rule): no descendant of
+    // this level's children can hold an enabled C0, and each child's own
+    // C0 folded as it was generated below. Every other term this level
+    // could fold — the candidate's ball certificate, the mid branch's
+    // shell bound, an evicted chain's drop floor, the depth-cap terminal
+    // — speaks for the PLAIN attractor (ball and region certificates
+    // alike bound where pieces of EVERY level live), which drew a finite
+    // band's phantom attractor surfaces. They are gated, the frontier
+    // swap still runs, and the loop ends with this level.
+    let lastLevel = params.mapCount > 0u && !futureCondensation;`
         : ""
     }
     var keptCount = 0u;
@@ -13202,11 +13212,19 @@ ${
                 } else {
                   if (ru < fr.midMinR) {
                     // f32 overflow guard: fold the unit-shell bound and
-                    // skip the branch + its box expansion.
+                    // skip the branch + its box expansion.${
+                      condensationShapes
+                        ? ` At the band's
+                    // last level the shell bound speaks for out-of-band
+                    // content only (the branch produces no candidate, and
+                    // one it would is at radius fR²/|u| — far outside
+                    // every C0's ball), so the fold is skipped with it.`
+                        : ""
+                    }
                     var shellCert =
                       pScale * absW * m.fold.w * (fr.fixedR - ru);
                     shellCert = max(shellCert, pFloor);
-                    if (shellCert < best) {
+                    if (${condensationShapes ? "!lastLevel && " : ""}shellCert < best) {
                       best = shellCert;
                       if (
                         best <= sphereBound ||
@@ -13302,7 +13320,15 @@ ${
             if (candFloor > 0.0 && candFloor > key) {
               key = candFloor;
             }
-            var cert = childScale * (r - R);
+            ${
+              condensationShapes
+                ? `            // The candidate's ball certificate — the affine core's
+            // last-level rule: at the band's last level it would bound the
+            // plain attractor, so it folds nothing (the escape fold below
+            // and the out-of-sphere eviction fold become no-ops).
+            var cert = select(childScale * (r - R), 1e30, lastLevel);`
+                : "var cert = childScale * (r - R);"
+            }
             if (candFloor > 0.0 && candFloor > cert) {
               cert = candFloor;
             }
@@ -13393,8 +13419,17 @@ ${chaos ? "              fnState[frontierIx(slot, li)] = childState;\n" : ""}
                 }
               }`
                   : ""
-              } else if (evFloor > 0.0 && evFloor < best) {
-                best = evFloor;
+              } else if (${
+                condensationShapes
+                  ? `!lastLevel && evFloor > 0.0 && evFloor < best) {
+                // The drop-fold rule — gated at the band's last level like
+                // every other non-C0 term: the floor is a valid bound for
+                // the subtree's pieces at ANY level, so near out-of-band
+                // content it reads small and fabricates the phantom the
+                // last-level rule removes.
+                best = evFloor;`
+                  : "evFloor > 0.0 && evFloor < best) {\n                best = evFloor;"
+              }
                 if (
                   best <= sphereBound ||
                   best * params.finalSigmaMin < bailBelow
@@ -13419,7 +13454,18 @@ ${chaos ? "              fnState[frontierIx(slot, li)] = childState;\n" : ""}
 ${chaos ? "      fcState[frontierIx(i2, li)] = fnState[frontierIx(i2, li)];\n" : ""}
     }
     chainCount = keptCount;
-  }
+${
+  condensationShapes
+    ? `    // THE BAND ENDS HERE (the affine core's break): every level below
+    // this one holds out-of-band content only, so the kept frontier would
+    // never reach a term the band displays.
+    if (lastLevel) {
+      bandEnded = true;
+      break;
+    }
+`
+    : ""
+}  }
   // Floor-raised KIFS terminals for every chain alive at the depth cap.
   for (var cc = 0u; cc < chainCount; cc++) {
 ${
@@ -13440,12 +13486,22 @@ ${chaos ? "        fcState[frontierIx(cc, li)],\n" : ""}
     );
 `
     : ""
-}    var terminal = fcScale[frontierIx(cc, li)] * (fcR[frontierIx(cc, li)] - R);
-    let tFloor = fcFloor[frontierIx(cc, li)];
+}${
+    condensationShapes
+      ? `
+    // A band that ENDED the descent leaves nothing below its chains: their
+    // ball terminal would be the plain attractor's hit signal (the phantom
+    // the last-level rule removes), so it folds only at a real depth cap —
+    // the affine core's !bandEnded asymmetry, with the condensation terms
+    // kept (they are +Infinity outside the band, no-ops either way).
+    if (!bandEnded) {\n      `
+      : "    "
+  }var terminal = fcScale[frontierIx(cc, li)] * (fcR[frontierIx(cc, li)] - R);
+    ${""}let tFloor = fcFloor[frontierIx(cc, li)];
     if (tFloor > 0.0 && tFloor > terminal) {
       terminal = tFloor;
     }
-    best = min(best, terminal);
+    best = min(best, terminal);${condensationShapes ? "\n    }" : ""}
   }
   return max(best, sphereBound) * params.finalSigmaMin;
 }`;
@@ -14762,7 +14818,7 @@ ${chaos ? "  fcState[0] = CHAOS_WILDCARD;\n" : ""}
   // NO cone-footprint depth cap in this core — the 4D oracle takes
   // none (packSurface4GpuParams throws on a nonzero footprint), so the
   // loop runs plain params.maxDepth.
-  for (var depth = 0u; depth < params.maxDepth; depth++) {
+${condensationShapes ? "  // Set when the finite band's last level ends the loop (the band's\n  // own no-phantom rule — see lastLevel below).\n  var bandEnded = false;\n" : ""}  for (var depth = 0u; depth < params.maxDepth; depth++) {
     if (chainCount == 0u) {
       break;
     }${
@@ -14774,7 +14830,17 @@ ${chaos ? "  fcState[0] = CHAOS_WILDCARD;\n" : ""}
     if (best <= sphereBound || best * params.final4SigmaMin < bailBelow) {
       return max(best, sphereBound) * params.final4SigmaMin;
     }
-    let futureCondensation = condensationHasFuture(depth + 1u);`
+    let futureCondensation = condensationHasFuture(depth + 1u);
+    // THE BAND'S LAST LEVEL (the affine core's rule, one dimension up of
+    // the 3D fold core's): no descendant of this level's children can hold
+    // an enabled C0, and each child's own C0 folded as it was generated
+    // below. Every other term this level could fold — the candidate's ball
+    // certificate, the mid branch's shell bound, an evicted chain's drop
+    // floor, the depth-cap terminal — speaks for the PLAIN attractor,
+    // which drew a finite band's phantom attractor surfaces. They are
+    // gated, the frontier swap still runs, and the loop ends with this
+    // level.
+    let lastLevel = params.mapCount > 0u && !futureCondensation;`
         : ""
     }
     var keptCount = 0u;
@@ -14942,11 +15008,19 @@ ${
                   if (ru < fr.midMinR) {
                     // f32 overflow guard: fold the unit-shell bound and
                     // skip the branch + its box expansion (81 wide up
-                    // here). A settled fold, so the standard exits apply.
+                    // here). A settled fold, so the standard exits apply.${
+                      condensationShapes
+                        ? ` At the band's
+                    // last level the shell bound speaks for out-of-band
+                    // content only (the branch produces no candidate, and
+                    // one it would is at radius fR²/|u| — far outside
+                    // every C0's ball), so the fold is skipped with it.`
+                        : ""
+                    }
                     var shellCert =
                       pScale * absW * m.fold.w * (fr.fixedR - ru);
                     shellCert = max(shellCert, pFloor);
-                    if (shellCert < best) {
+                    if (${condensationShapes ? "!lastLevel && " : ""}shellCert < best) {
                       best = shellCert;
                       if (
                         best <= sphereBound ||
@@ -15089,7 +15163,15 @@ ${
             if (candFloor > 0.0 && candFloor > key) {
               key = candFloor;
             }
-            var cert = childScale * (r - R);
+            ${
+              condensationShapes
+                ? `            // The candidate's ball certificate — the affine core's
+            // last-level rule: at the band's last level it would bound the
+            // plain attractor, so it folds nothing (the escape fold below
+            // and the out-of-sphere eviction fold become no-ops).
+            var cert = select(childScale * (r - R), 1e30, lastLevel);`
+                : "var cert = childScale * (r - R);"
+            }
             if (candFloor > 0.0 && candFloor > cert) {
               cert = candFloor;
             }
@@ -15182,8 +15264,14 @@ ${chaos ? "              fnState[slot] = childState;\n" : ""}
                 }
               }`
                   : ""
-              } else if (evFloor > 0.0 && evFloor < best) {
-                best = evFloor;
+              } else if (${
+                condensationShapes
+                  ? `!lastLevel && evFloor > 0.0 && evFloor < best) {
+                // The drop-fold rule — gated at the band's last level like
+                // every other non-C0 term (the 3D fold core's rule).
+                best = evFloor;`
+                  : "evFloor > 0.0 && evFloor < best) {\n                best = evFloor;"
+              }
                 if (
                   best <= sphereBound ||
                   best * params.final4SigmaMin < bailBelow
@@ -15218,7 +15306,18 @@ ${
 ${chaos ? "      fcState[i2] = fnState[i2];\n" : ""}
     }
     chainCount = keptCount;
-  }
+${
+  condensationShapes
+    ? `    // THE BAND ENDS HERE (the 3D fold core's break, one dimension up):
+    // every level below this one holds out-of-band content only, so the
+    // kept frontier would never reach a term the band displays.
+    if (lastLevel) {
+      bandEnded = true;
+      break;
+    }
+`
+    : ""
+}  }
   // Floor-raised KIFS terminals for every chain alive at the depth cap.
   for (var cc = 0u; cc < chainCount; cc++) {
 ${
@@ -15229,12 +15328,20 @@ ${
     );
 `
     : ""
-}    var terminal = fcScale[cc] * (fcR[cc] - R);
+}${
+    condensationShapes
+      ? `
+    // A band that ENDED the descent leaves nothing below its chains (the
+    // 3D fold core's rule, one dimension up): the ball terminal folds only
+    // at a real depth cap.
+    if (!bandEnded) {\n      `
+      : "    "
+  }var terminal = fcScale[cc] * (fcR[cc] - R);
     let tFloor = fcFloor[cc];
     if (tFloor > 0.0 && tFloor > terminal) {
       terminal = tFloor;
     }
-    best = min(best, terminal);
+    best = min(best, terminal);${condensationShapes ? "\n    }" : ""}
   }
   return max(best, sphereBound) * params.final4SigmaMin;
 }`;

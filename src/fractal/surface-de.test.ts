@@ -39,10 +39,163 @@ import { mulberry32 } from "./rng";
 import { SHAPE_MARCH_SAFETY } from "./shapes";
 import {
   BOX_FOLD_LIMIT,
+  foldVariationFn,
+  resolveFoldRadii,
   SPHERE_FOLD_FIXED_RADIUS,
   SPHERE_FOLD_MIN_RADIUS,
 } from "./variations";
+import { condensationTerm3 } from "./condensation-de";
 import type { SymmetryPlane, Transform, Vec3 } from "./types";
+
+/** Sample points on the band union, in the condensation placement order the
+ * descent inverts: the emitter's affine places the C0 shape (level 0), and
+ * each recursive map's forward word `w · boxfold(M·q + t)` carries it one
+ * level up — the exact inverse of the branch enumeration the descent walks.
+ * `minDepth`/`maxDepth` are the band the caller displays (capped at 2
+ * levels here, the fixtures' shape). Nearest-distance to these samples is
+ * an UPPER bound of the true band distance, the direction the no-miss pin
+ * needs. */
+function bandUnionSamples3(
+  transforms: Transform[],
+  minDepth: number,
+  maxDepth: number,
+  perMap: number,
+): Vec3[] {
+  const foldRng = mulberry32(0x50a9);
+  const emitterT = transforms.find((t) => t.emitter);
+  if (!emitterT) return [];
+  const em = composeAffine(emitterT);
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  const placed: Vec3[] = [];
+  for (let k = 0; k < perMap; k++) {
+    const y = 1 - (2 * (k + 0.5)) / perMap;
+    const rad = Math.sqrt(Math.max(0, 1 - y * y));
+    const theta = golden * k;
+    const s: Vec3 = [
+      0.35 * Math.cos(theta) * rad,
+      0.35 * y,
+      0.35 * Math.sin(theta) * rad,
+    ];
+    placed.push([
+      em.m[0] * s[0] + em.m[1] * s[1] + em.m[2] * s[2] + em.t[0],
+      em.m[3] * s[0] + em.m[4] * s[1] + em.m[5] * s[2] + em.t[1],
+      em.m[6] * s[0] + em.m[7] * s[1] + em.m[8] * s[2] + em.t[2],
+    ]);
+  }
+  const points: Vec3[] = [];
+  let current = placed;
+  for (let level = 0; level <= Math.min(maxDepth, 2); level++) {
+    if (level >= minDepth) points.push(...current);
+    if (level === Math.min(maxDepth, 2)) break;
+    const next: Vec3[] = [];
+    for (const t of transforms) {
+      if (t.emitter || !t.variations?.length) continue;
+      const affine = composeAffine(t);
+      const variation = t.variations[0];
+      const fold = foldVariationFn(
+        variation.type as "boxfold",
+        resolveFoldRadii(variation),
+      );
+      const weight = variation.weight;
+      for (const q0 of current) {
+        const q1: Vec3 = [
+          affine.m[0] * q0[0] +
+            affine.m[1] * q0[1] +
+            affine.m[2] * q0[2] +
+            affine.t[0],
+          affine.m[3] * q0[0] +
+            affine.m[4] * q0[1] +
+            affine.m[5] * q0[2] +
+            affine.t[1],
+          affine.m[6] * q0[0] +
+            affine.m[7] * q0[1] +
+            affine.m[8] * q0[2] +
+            affine.t[2],
+        ];
+        const v = fold(q1[0], q1[1], q1[2], foldRng);
+        next.push([weight * v[0], weight * v[1], weight * v[2]]);
+      }
+    }
+    current = next;
+  }
+  return points;
+}
+
+/** Nearest distance from `p` to a point set. */
+function nearestToPoint3(points: Vec3[], p: Vec3): number {
+  let best = Infinity;
+  for (const s of points) {
+    const d2 =
+      (s[0] - p[0]) * (s[0] - p[0]) +
+      (s[1] - p[1]) * (s[1] - p[1]) +
+      (s[2] - p[2]) * (s[2] - p[2]);
+    if (d2 < best) best = d2;
+  }
+  return Math.sqrt(best);
+}
+
+/** Brute-force LOWER bound of the distance to a finite condensation band's
+ * union: an exhaustive DFS over every (map, fold-branch) INVERSE path — no
+ * beam, no floors, no prunes, no last-level gating — folding ONLY the
+ * band's own C0 terms at every node whose depth the band enables (the same
+ * `condensationTerm3` data the descent folds, over the same emitter
+ * records). The inverse sequence is the descent's own: divide by the fold
+ * weight, decode the branch preimage, ONE base-affine inverse, then the
+ * emitter inverse inside the C0 term. The branch enumeration is a SUPERSET
+ * of the true preimage tree (invalid preimages included), so the result
+ * never exceeds the true band distance: the direction the no-phantom pin
+ * needs (brute > margin proves the band empty to that margin). Boxfold maps
+ * only: 27 preimage branches per level, the axis fold's isometry makes each
+ * branch's sigma the map's own `foldSigma`. */
+function bruteBandDistance3(de: SurfaceDE, p: Vec3): number {
+  const condensation = de.condensation!;
+  const band = condensation.depthBand;
+  let best = Infinity;
+  const walk = (q: Vec3, scale: number, depth: number): void => {
+    const term = condensationTerm3(
+      condensation,
+      depth,
+      scale,
+      q[0],
+      q[1],
+      q[2],
+    );
+    if (term < best) best = term;
+    if (depth >= band.maxDepth) return;
+    for (const map of de.maps) {
+      const wall2 = 2 * map.foldRadii.wall;
+      const ux = q[0] * map.foldInvW;
+      const uy = q[1] * map.foldInvW;
+      const uz = q[2] * map.foldInvW;
+      for (let sx = 0; sx < 3; sx++) {
+        for (let sy = 0; sy < 3; sy++) {
+          for (let sz = 0; sz < 3; sz++) {
+            const cx = sx === 0 ? ux : sx === 1 ? wall2 - ux : -wall2 - ux;
+            const cy = sy === 0 ? uy : sy === 1 ? wall2 - uy : -wall2 - uy;
+            const cz = sz === 0 ? uz : sz === 1 ? wall2 - uz : -wall2 - uz;
+            const img: Vec3 = [
+              map.invM[0] * cx +
+                map.invM[1] * cy +
+                map.invM[2] * cz +
+                map.invT[0],
+              map.invM[3] * cx +
+                map.invM[4] * cy +
+                map.invM[5] * cz +
+                map.invT[1],
+              map.invM[6] * cx +
+                map.invM[7] * cy +
+                map.invM[8] * cz +
+                map.invT[2],
+            ];
+            walk(img, scale * map.foldSigma, depth + 1);
+          }
+        }
+      }
+    }
+  };
+  walk(p, 1, 0);
+  return best;
+}
 
 /** Minimal contracting map for the eligibility-table tests below, merged
  * with each test's own overrides. */
@@ -4453,6 +4606,120 @@ describe("analyzeSurfaceSystem shape emitters", () => {
     expect(estimateDistanceRefined(pruned, [-1.5, 0, 0])).toBeLessThanOrEqual(
       0,
     );
+  });
+
+  it("stops the fold frontier at a finite band's last level: certified against the band union, no phantom past it", () => {
+    // The fold frontier's port of the affine last-level rule: with a finite
+    // band the descent must end at the last level whose children carry an
+    // enabled C0 — every term past it (ball certificates, the shell bound,
+    // drop floors, the depth-cap terminal) speaks for the PLAIN attractor,
+    // which read as phantom surface in the band's voids. Pins, both against
+    // independent oracles: the forward-sampled band union (an upper bound of
+    // the true distance — the display must never exceed it, no misses) and
+    // the exhaustive lower-bound walk (bruteBandDistance3 — where it clears
+    // a margin the band is provably empty, so the display must stay
+    // positive; the pre-fix descent read the plain attractor there).
+    const emitter = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.35 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const transforms: Transform[] = [
+      ...pureBoxfoldPair(),
+      map({
+        id: 7,
+        position: [0.9, -0.2, 0.1],
+        scale: [0.6, 0.6, 0.6],
+        emitter,
+      }),
+    ];
+    const symmetry = { order: 1, plane: "xz" as const };
+    const de = buildSurfaceDE(transforms, null, symmetry, {
+      condensationDepthBand: { minDepth: 1, maxDepth: 1 },
+    });
+    expect(de.maps).toHaveLength(2);
+    expect(de.condensation?.emitters).toHaveLength(1);
+    const samples = bandUnionSamples3(transforms, 1, 1, 900);
+    expect(samples.length).toBeGreaterThan(1000);
+
+    const rng = mulberry32(0xba11);
+    const probes: Vec3[] = [];
+    for (let i = 0; i < 40; i++) {
+      probes.push([
+        (rng() - 0.5) * 2.4,
+        (rng() - 0.5) * 2.4,
+        (rng() - 0.5) * 2.4,
+      ]);
+    }
+    // Jittered points near the union: the tightest no-miss probes.
+    for (let i = 0; i < 12; i++) {
+      const s = samples[Math.floor(rng() * samples.length)];
+      probes.push([
+        s[0] + (rng() - 0.5) * 0.04,
+        s[1] + (rng() - 0.5) * 0.04,
+        s[2] + (rng() - 0.5) * 0.04,
+      ]);
+    }
+    // Exact sample points, ON the placed surface: the hit signal's own
+    // probes (the surface reads at zero).
+    for (let i = 0; i < 6; i++) {
+      probes.push([...samples[Math.floor(rng() * samples.length)]]);
+    }
+    // Points on the PLAIN attractor's deep structure, far from the band's
+    // two level-1 pieces: the phantom's home. The pre-fix descent followed
+    // these pieces past the band's last level and folded their ball
+    // certificates — negative in every ball the descent entered — while the
+    // band displays nothing there.
+    let probesNearAttractor = 0;
+    const attractor = runChaosGame(
+      transforms.filter((t) => !t.emitter),
+      12000,
+      mulberry32(0xaffec7),
+    );
+    for (let i = 0; i < 400 && probesNearAttractor < 24; i++) {
+      const idx = Math.floor(rng() * attractor.count);
+      const p: Vec3 = [
+        attractor.positions[idx * 3],
+        attractor.positions[idx * 3 + 1],
+        attractor.positions[idx * 3 + 2],
+      ];
+      if (nearestToPoint3(samples, p) > 0.15) {
+        probes.push(p);
+        probesNearAttractor++;
+      }
+    }
+
+    let voidChecks = 0;
+    let hitChecks = 0;
+    for (const p of probes) {
+      const upper = nearestToPoint3(samples, p);
+      const lower = bruteBandDistance3(de, p);
+      // No miss: the display is a lower bound on the band union.
+      expect(estimateDistance(de, p)).toBeLessThanOrEqual(upper + 1e-9);
+      expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(upper + 1e-9);
+      if (lower > 0.08) {
+        // No phantom: away from the band the display must stay positive.
+        expect(estimateDistance(de, p)).toBeGreaterThan(0);
+        expect(estimateDistanceRefined(de, p)).toBeGreaterThan(0);
+        voidChecks++;
+      }
+      if (upper < 0.02) {
+        // The band's own hit signal survives the gate (exact surface probes
+        // read at zero; near-surface probes stay within their own offset).
+        expect(estimateDistance(de, p)).toBeLessThanOrEqual(
+          upper * 1.05 + 1e-6,
+        );
+        expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(
+          upper * 1.05 + 1e-6,
+        );
+        hitChecks++;
+      }
+    }
+    expect(voidChecks).toBeGreaterThanOrEqual(8);
+    expect(hitChecks).toBeGreaterThanOrEqual(1);
   });
 
   it("applies the inclusive band at root, depth 1, or every live depth", () => {

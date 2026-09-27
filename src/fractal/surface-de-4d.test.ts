@@ -58,8 +58,207 @@ import {
 } from "./presets";
 import { mulberry32 } from "./rng";
 import { SHAPE_MARCH_SAFETY } from "./shapes";
+import { condensationTerm4 } from "./condensation-de";
 import type { SymmetryParams, Transform, Transform4, Vec4 } from "./types";
 import { clamp } from "./vec";
+
+/** Gauss-Jordan inverse of a row-major 4x4 — the forward affine the sampler
+ * needs, derived from the DE map's own `invM` (the DE stores inverses). */
+function inverse4x4(m: number[]): number[] {
+  const a = m.map((_v, r) =>
+    Array.from({ length: 4 }, (_c, i) => m[r * 4 + i]).concat(
+      r === 0 ? 1 : 0,
+      r === 1 ? 1 : 0,
+      r === 2 ? 1 : 0,
+      r === 3 ? 1 : 0,
+    ),
+  );
+  for (let col = 0; col < 4; col++) {
+    let pivot = col;
+    for (let r = col + 1; r < 4; r++) {
+      if (Math.abs(a[r][col]) > Math.abs(a[pivot][col])) pivot = r;
+    }
+    [a[col], a[pivot]] = [a[pivot], a[col]];
+    const d = a[col][col];
+    for (let c = 0; c < 8; c++) a[col][c] /= d;
+    for (let r = 0; r < 4; r++) {
+      if (r === col) continue;
+      const f = a[r][col];
+      for (let c = 0; c < 8; c++) a[r][c] -= f * a[col][c];
+    }
+  }
+  const out = new Array<number>(16);
+  for (let r = 0; r < 4; r++)
+    for (let c = 0; c < 4; c++) out[r * 4 + c] = a[r][c + 4];
+  return out;
+}
+
+/** The forward affine of a DE map, from its stored inverse: M = invM⁻¹,
+ * t = −M·invT. */
+function forwardAffine4(map: { invM: number[]; invT: Vec4 }): {
+  m: number[];
+  t: Vec4;
+} {
+  const m = inverse4x4(map.invM);
+  const t: Vec4 = [0, 0, 0, 0];
+  for (let r = 0; r < 4; r++) {
+    t[r] = -(
+      m[r * 4] * map.invT[0] +
+      m[r * 4 + 1] * map.invT[1] +
+      m[r * 4 + 2] * map.invT[2] +
+      m[r * 4 + 3] * map.invT[3]
+    );
+  }
+  return { m, t };
+}
+
+/** Sample points on the band union, in the condensation placement order the
+ * descent inverts: the emitter's 4D affine places the flat C0 shape (level
+ * 0), and each recursive map's forward word `w · boxfold4(M·q + t)` carries
+ * it one level up (the 4D boxfold folds w like x/y/z). Nearest 4D distance
+ * to these samples is an UPPER bound of the true band distance. */
+function bandUnionSamples4(
+  de: SurfaceDE4,
+  minDepth: number,
+  maxDepth: number,
+  perMap: number,
+): Vec4[] {
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  const shapeAtW0: Vec4[] = [];
+  for (let k = 0; k < perMap; k++) {
+    const y = 1 - (2 * (k + 0.5)) / perMap;
+    const rad = Math.sqrt(Math.max(0, 1 - y * y));
+    const theta = golden * k;
+    shapeAtW0.push([
+      0.35 * Math.cos(theta) * rad,
+      0.35 * y,
+      0.35 * Math.sin(theta) * rad,
+      0,
+    ]);
+  }
+  const emitter = de.condensation!.emitters[0];
+  // The emitter's forward affine from its stored inverse (same dance as the
+  // maps'): M = inv(invM), t = −M·invT.
+  const emM = inverse4x4(emitter.invM);
+  const emT: Vec4 = [0, 0, 0, 0];
+  for (let r = 0; r < 4; r++) {
+    emT[r] = -(
+      emM[r * 4] * emitter.invT[0] +
+      emM[r * 4 + 1] * emitter.invT[1] +
+      emM[r * 4 + 2] * emitter.invT[2] +
+      emM[r * 4 + 3] * emitter.invT[3]
+    );
+  }
+  const apply = (m: number[], t: Vec4, p: Vec4): Vec4 => [
+    m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + m[3] * p[3] + t[0],
+    m[4] * p[0] + m[5] * p[1] + m[6] * p[2] + m[7] * p[3] + t[1],
+    m[8] * p[0] + m[9] * p[1] + m[10] * p[2] + m[11] * p[3] + t[2],
+    m[12] * p[0] + m[13] * p[1] + m[14] * p[2] + m[15] * p[3] + t[3],
+  ];
+  const points: Vec4[] = [];
+  let current = shapeAtW0.map((s) => apply(emM, emT, s));
+  const cap = Math.min(maxDepth, 2);
+  const fold = (v: number, wall: number): number =>
+    2 * clamp(v, -wall, wall) - v;
+  for (let level = 0; level <= cap; level++) {
+    if (level >= minDepth) points.push(...current);
+    if (level === cap) break;
+    const next: Vec4[] = [];
+    for (const map of de.maps) {
+      const fwd = forwardAffine4(map);
+      const wall = map.foldRadii.wall;
+      for (const q0 of current) {
+        const q1 = apply(fwd.m, fwd.t, q0);
+        const wgt = map.foldSigma / map.sigmaMin;
+        next.push([
+          wgt * fold(q1[0], wall),
+          wgt * fold(q1[1], wall),
+          wgt * fold(q1[2], wall),
+          wgt * fold(q1[3], wall),
+        ]);
+      }
+    }
+    current = next;
+  }
+  return points;
+}
+
+/** Nearest distance from `p` to a 4D point set. */
+function nearestToPoints4(points: Vec4[], p: Vec4): number {
+  let best = Infinity;
+  for (const s of points) {
+    const d2 =
+      (s[0] - p[0]) * (s[0] - p[0]) +
+      (s[1] - p[1]) * (s[1] - p[1]) +
+      (s[2] - p[2]) * (s[2] - p[2]) +
+      (s[3] - p[3]) * (s[3] - p[3]);
+    if (d2 < best) best = d2;
+  }
+  return Math.sqrt(best);
+}
+
+/** Brute-force LOWER bound of the distance to a finite condensation band's
+ * union, one dimension up ({@link surface-de.test.ts} `bruteBandDistance3`):
+ * an exhaustive DFS over every (map, fold-branch) INVERSE path — no beam,
+ * no floors, no prunes, no last-level gating — folding ONLY the band's own
+ * C0 terms at every node whose depth the band enables (the same
+ * `condensationTerm4` data the descent folds). The 4D boxfold's 81 exact
+ * preimage branches per level, each branch's sigma the map's own
+ * `foldSigma` (the axis fold is an isometry). The branch enumeration is a
+ * SUPERSET of the true preimage tree, so the result never exceeds the true
+ * band distance: the direction the no-phantom pin needs. */
+function bruteBandDistance4(de: SurfaceDE4, p: Vec4): number {
+  const condensation = de.condensation!;
+  const band = condensation.depthBand;
+  let best = Infinity;
+  const walk = (q: Vec4, scale: number, depth: number): void => {
+    const term = condensationTerm4(
+      condensation,
+      depth,
+      scale,
+      q[0],
+      q[1],
+      q[2],
+      q[3],
+    );
+    if (term < best) best = term;
+    if (depth >= band.maxDepth) return;
+    for (const map of de.maps) {
+      const wall2 = 2 * map.foldRadii.wall;
+      const u: Vec4 = [
+        q[0] * map.foldInvW,
+        q[1] * map.foldInvW,
+        q[2] * map.foldInvW,
+        q[3] * map.foldInvW,
+      ];
+      const per = (v: number, s: number): number =>
+        s === 0 ? v : s === 1 ? wall2 - v : -wall2 - v;
+      for (let sx = 0; sx < 3; sx++) {
+        for (let sy = 0; sy < 3; sy++) {
+          for (let sz = 0; sz < 3; sz++) {
+            for (let sw = 0; sw < 3; sw++) {
+              const cx = per(u[0], sx);
+              const cy = per(u[1], sy);
+              const cz = per(u[2], sz);
+              const cw = per(u[3], sw);
+              const im = map.invM;
+              const it = map.invT;
+              const img: Vec4 = [
+                im[0] * cx + im[1] * cy + im[2] * cz + im[3] * cw + it[0],
+                im[4] * cx + im[5] * cy + im[6] * cz + im[7] * cw + it[1],
+                im[8] * cx + im[9] * cy + im[10] * cz + im[11] * cw + it[2],
+                im[12] * cx + im[13] * cy + im[14] * cz + im[15] * cw + it[3],
+              ];
+              walk(img, scale * map.foldSigma, depth + 1);
+            }
+          }
+        }
+      }
+    }
+  };
+  walk(p, 1, 0);
+  return best;
+}
 
 /** Minimal contracting 4D-analysis map for the eligibility-table tests
  * below, merged with each test's own overrides — mirrors `surface-de.test.ts`'s
@@ -3368,6 +3567,137 @@ describe("estimateDistance4 / estimateDistance4Refined validity on a pure-boxfol
       expect(estimateDistance4Refined(de, p)).toBeGreaterThanOrEqual(0.01 * R);
     }
     expect(voidProbes).toBeGreaterThan(0);
+  });
+
+  it("stops the fold frontier at a finite band's last level: certified against the band union, no phantom past it", () => {
+    // The 4D fold frontier's port of the affine last-level rule, one
+    // dimension up of the 3D pin: with a finite band the descent must end
+    // at the last level whose children carry an enabled C0 — every term
+    // past it speaks for the plain attractor, which read as phantom surface
+    // in the band's voids. The forward-sampled band union (an upper bound
+    // of the true distance — the display must never exceed it) and the
+    // exhaustive lower-bound walk (bruteBandDistance4 — where it clears a
+    // margin the band is provably empty, so the display must stay positive)
+    // are the independent oracles, both dimensions sharing the contract.
+    const emitter = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.35 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const transforms: Transform[] = [
+      ...pureBoxfoldPair4(),
+      map4({
+        id: 7,
+        position: [0.9, -0.2, 0.1],
+        scale: [0.6, 0.6, 0.6],
+        w: { position: 0.2 },
+        emitter,
+      }),
+    ];
+    const de = buildSurfaceDE4(
+      transforms,
+      null,
+      { order: 1, plane: "xz" },
+      {
+        condensationDepthBand: { minDepth: 1, maxDepth: 1 },
+      },
+    );
+    expect(de.maps).toHaveLength(2);
+    expect(de.condensation?.emitters).toHaveLength(1);
+    const samples = bandUnionSamples4(de, 1, 1, 700);
+    expect(samples.length).toBeGreaterThan(1000);
+
+    const rng = mulberry32(0xba14);
+    const probes: Vec4[] = [];
+    for (let i = 0; i < 30; i++) {
+      probes.push([
+        (rng() - 0.5) * 2.4,
+        (rng() - 0.5) * 2.4,
+        (rng() - 0.5) * 2.4,
+        (rng() - 0.5) * 2.4,
+      ]);
+    }
+    // Jittered points near the union: the tightest no-miss probes.
+    for (let i = 0; i < 10; i++) {
+      const s = samples[Math.floor(rng() * samples.length)];
+      probes.push([
+        s[0] + (rng() - 0.5) * 0.04,
+        s[1] + (rng() - 0.5) * 0.04,
+        s[2] + (rng() - 0.5) * 0.04,
+        s[3] + (rng() - 0.5) * 0.04,
+      ]);
+    }
+    // Exact sample points, ON the placed surface: the hit signal's probes.
+    for (let i = 0; i < 5; i++) {
+      probes.push([...samples[Math.floor(rng() * samples.length)]] as Vec4);
+    }
+    // Points on the plain attractor's deep structure, far from the band's
+    // level-1 pieces: the phantom's home (the pre-fix descent followed
+    // these past the band's last level and read their ball certificates).
+    const attractor = runChaosGame4(
+      transforms.filter((t) => !t.emitter).map(toTransform4),
+      12000,
+      mulberry32(0xaffec7),
+    );
+    let nearAttractor = 0;
+    for (let i = 0; i < 400 && nearAttractor < 20; i++) {
+      const idx = Math.floor(rng() * attractor.count);
+      const p: Vec4 = [
+        attractor.positions[idx * 3],
+        attractor.positions[idx * 3 + 1],
+        attractor.positions[idx * 3 + 2],
+        attractor.w[idx],
+      ];
+      if (nearestToPoints4(samples, p) > 0.15) {
+        probes.push(p);
+        nearAttractor++;
+      }
+    }
+
+    let voidChecks = 0;
+    let hitChecks = 0;
+    for (const p of probes) {
+      const upper = nearestToPoints4(samples, p);
+      const lower = bruteBandDistance4(de, p);
+      // No miss: the display is a lower bound on the band union.
+      if (estimateDistance4(de, p) > upper + 1e-9) {
+        console.log(
+          "MISS4:",
+          p.map((v) => v.toFixed(4)).join(","),
+          "est:",
+          estimateDistance4(de, p).toFixed(4),
+          "ref:",
+          estimateDistance4Refined(de, p).toFixed(4),
+          "upper:",
+          upper.toFixed(4),
+          "lower:",
+          lower.toFixed(4),
+        );
+      }
+      expect(estimateDistance4(de, p)).toBeLessThanOrEqual(upper + 1e-9);
+      expect(estimateDistance4Refined(de, p)).toBeLessThanOrEqual(upper + 1e-9);
+      if (lower > 0.08) {
+        // No phantom: away from the band the display must stay positive.
+        expect(estimateDistance4(de, p)).toBeGreaterThan(0);
+        expect(estimateDistance4Refined(de, p)).toBeGreaterThan(0);
+        voidChecks++;
+      }
+      if (upper < 0.02) {
+        // The band's own hit signal survives the gate.
+        expect(estimateDistance4(de, p)).toBeLessThanOrEqual(
+          upper * 1.05 + 1e-6,
+        );
+        expect(estimateDistance4Refined(de, p)).toBeLessThanOrEqual(
+          upper * 1.05 + 1e-6,
+        );
+        hitChecks++;
+      }
+    }
+    expect(voidChecks).toBeGreaterThanOrEqual(6);
+    expect(hitChecks).toBeGreaterThanOrEqual(1);
   });
 
   it("never has the refined estimate fall below the base estimate", () => {

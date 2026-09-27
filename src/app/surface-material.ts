@@ -426,6 +426,9 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
 #if SURFACE_CHAOS
     int fnState[${width}];
 #endif
+#if SURFACE_CONDENSATION
+    bool bandEnded = false;
+#endif
     for (int depth = 0; depth < uMaxDepth; depth++) {
       if (chainCount == 0) {
         break;
@@ -453,6 +456,18 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
         return max(best, sphereBound) * uFinalSigmaMin;
       }
       bool futureCondensation = condensationFutureAfterChild(depth, uMapCount);
+      // THE BAND'S LAST LEVEL (the affine body's rule): no descendant of
+      // this level's children can hold an enabled C0, and each child's own
+      // C0 folded as it was generated below. Every other term this level
+      // could fold — the candidate's ball certificate, the mid branch's
+      // shell bound, an evicted chain's drop floor, the depth-cap terminal
+      // — speaks for the PLAIN attractor (ball and region certificates
+      // alike bound where pieces of EVERY level live), which drew a finite
+      // band's phantom attractor surfaces. They are gated, the frontier
+      // swap still runs, and the loop ends with this level.
+      bool lastLevel = uMapCount > 0 && !futureCondensation;
+#else
+      bool lastLevel = false;
 #endif
       int keptCount = 0;
       float fnWorstKey = -1e30;
@@ -573,7 +588,11 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
                     if (ru < fr.midMinR) {
                       // f32 overflow guard: fold the unit-shell bound
                       // (~pScale * |w|, never a near-zero ghost term) and
-                      // skip the branch + its box expansion.
+                      // skip the branch + its box expansion. At the band's
+                      // last level the shell bound speaks for out-of-band
+                      // content only (the branch produces no candidate, and
+                      // one it would is at radius fR²/|u| — far outside
+                      // every C0's ball), so the fold is skipped with it.
 #if SURFACE_POST
                       float shellCert =
                         pScale * absW * postSigmaMin * (fr.fixedR - ru);
@@ -581,13 +600,18 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
                       float shellCert = pScale * absW * (fr.fixedR - ru);
 #endif
                       shellCert = max(shellCert, pFloor);
-                      if (shellCert < best) {
-                        best = shellCert;
-                        if (
-                          best <= sphereBound ||
-                          best * uFinalSigmaMin < bailBelow
-                        ) {
-                          return max(best, sphereBound) * uFinalSigmaMin;
+#if SURFACE_CONDENSATION
+                      if (!lastLevel)
+#endif
+                      {
+                        if (shellCert < best) {
+                          best = shellCert;
+                          if (
+                            best <= sphereBound ||
+                            best * uFinalSigmaMin < bailBelow
+                          ) {
+                            return max(best, sphereBound) * uFinalSigmaMin;
+                          }
                         }
                       }
                       if (kind == 3) {
@@ -684,6 +708,15 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
               if (candFloor > 0.0 && candFloor > cert) {
                 cert = candFloor;
               }
+#if SURFACE_CONDENSATION
+              // The candidate's ball certificate — the affine body's
+              // last-level rule: at the band's last level it would bound
+              // the plain attractor, so it folds nothing (the escape fold
+              // below and the out-of-sphere eviction fold become no-ops).
+              if (lastLevel) {
+                cert = 1e30;
+              }
+#endif
               // Past the escape radius deeper refinement cannot improve
               // the min: fold the (floor-raised) certificate plain.
 #if SURFACE_SCHEDULE
@@ -791,7 +824,18 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
                     return max(best, sphereBound) * uFinalSigmaMin;
                   }
 #endif
-                } else if (evFloor > 0.0 && evFloor < best) {
+                } else if (
+#if SURFACE_CONDENSATION
+                  // The drop-fold rule — gated at the band's last level
+                  // like every other non-C0 term: the floor is a valid
+                  // bound for the subtree's pieces at ANY level, so near
+                  // out-of-band content it reads small and fabricates the
+                  // phantom the last-level rule removes.
+                  !lastLevel &&
+#endif
+                  evFloor > 0.0 &&
+                  evFloor < best
+                ) {
                   best = evFloor;
                   if (
                     best <= sphereBound ||
@@ -816,10 +860,24 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
 #endif
       }
       chainCount = keptCount;
+#if SURFACE_CONDENSATION
+      // THE BAND ENDS HERE (the affine body's break): every level below
+      // this one holds out-of-band content only, so the kept frontier
+      // would never reach a term the band displays.
+      if (lastLevel) {
+        bandEnded = true;
+        break;
+      }
+#endif
     }
     // Floor-raised KIFS terminals for every chain alive at the depth cap:
     // a floor-0 chain is a true preimage orbit (its negative terminal is
     // the hit signal), a strayed chain folds its certified positive floor.
+    // A band that ENDED the descent leaves nothing below its chains: their
+    // ball terminal would be the plain attractor's hit signal (the phantom
+    // the last-level rule removes), so it folds only at a real depth cap —
+    // the affine body's !bandEnded asymmetry, with the condensation terms
+    // kept (they are +Infinity outside the band, no-ops either way).
     for (int c = 0; c < chainCount; c++) {
 #if SURFACE_CONDENSATION
       condensationFold(
@@ -832,16 +890,20 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
         , best
       );
 #endif
-#if SURFACE_SCHEDULE
-      vec4 terminalBound = surfaceLevelBound(uMaxDepth);
-      float terminal = fcScale[c] * (fcR[c] - terminalBound.w);
-#else
-      float terminal = fcScale[c] * (fcR[c] - uBoundingRadius);
+#if SURFACE_CONDENSATION
+      if (!bandEnded)
 #endif
-      if (fcFloor[c] > 0.0 && fcFloor[c] > terminal) {
-        terminal = fcFloor[c];
+      {
+#if SURFACE_SCHEDULE
+        float terminal = fcScale[c] * (fcR[c] - surfaceLevelBound(uMaxDepth).w);
+#else
+        float terminal = fcScale[c] * (fcR[c] - uBoundingRadius);
+#endif
+        if (fcFloor[c] > 0.0 && fcFloor[c] > terminal) {
+          terminal = fcFloor[c];
+        }
+        best = min(best, terminal);
       }
-      best = min(best, terminal);
     }
     return max(best, sphereBound) * uFinalSigmaMin;
   }`;
