@@ -4969,6 +4969,13 @@ async function main(): Promise<void> {
         materials,
         lighting: state.surface.lighting !== undefined,
         opticsBackend: sessionOpticsBackend,
+        // The inside-miss replay dump: `?surfacetransportdump` asks the
+        // compute session's transport lane to log every failing trace's
+        // dumped path state through the frame trace. Diagnostics only —
+        // the instrument the inside-miss residue's replay harness reads.
+        transportDump: new URLSearchParams(window.location.search).has(
+          "surfacetransportdump",
+        ),
       },
     )
       .then((renderer) => {

@@ -95,6 +95,40 @@ describe("finite-solid GPU sources", () => {
     finiteTransportChunkPaths: FINITE_TRANSPORT_CHUNK_PATHS,
   };
 
+  it("emits the inside-miss dump only under its own flag, byte-identically off", () => {
+    const plain = surfaceDeKernelWgsl(baseOpts("finite", chunkOptions));
+    // Absent === false: the diagnostic gate's own byte-identity line.
+    expect(
+      surfaceDeKernelWgsl(
+        baseOpts("finite", { ...chunkOptions, transportDump: false }),
+      ),
+    ).toBe(plain);
+    const on = surfaceDeKernelWgsl(
+      baseOpts("finite", { ...chunkOptions, transportDump: true }),
+    );
+    expect(on).toContain(
+      "@group(0) @binding(17) var<storage, read_write> transportDebug: array<vec4f>;",
+    );
+    // The failing path's own state, one record per dispatch slot.
+    expect(on).toContain(
+      "transportDebug[dbgSlot * 12u + 0u] = vec4f(origin, theta);",
+    );
+    expect(on).toContain(
+      "transportDebug[dbgSlot * 12u + 11u] = vec4f(hit.anchorCells);",
+    );
+    // The trace's own signature gains the slot and the pass, and only the
+    // finite write site carries the dump.
+    expect(on).toContain("dbgSlot: u32,\n  dbgPass: u32,");
+    expect(on.match(/transportDebug\[/g)?.length).toBe(12);
+    // March and eval never read it: one flag serves both kernels and the
+    // dump must not leak into them.
+    for (const mode of ["march", "eval"] as const) {
+      expect(
+        surfaceDeKernelWgsl(baseOpts("finite", { mode, transportDump: true })),
+      ).not.toContain("transportDebug");
+    }
+  });
+
   it("retains the original uncached query bytes and all traversal guards", () => {
     const legacyHashes = {
       3: "ee1559f5bd1a126b90d497c85a5a4aeb747ca99b1a3ec3d3080ef196390ec951",

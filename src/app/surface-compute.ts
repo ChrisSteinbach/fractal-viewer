@@ -201,6 +201,7 @@ import {
   SURFACE_GPU_SHADE_OPTICS_BYTES,
   SURFACE_GPU_SHADE_PATTERN_BYTES,
   SURFACE_GPU_TRANSPORT_COMPLETE,
+  SURFACE_GPU_TRANSPORT_FAILURE_INSIDE_MISS,
   SURFACE_GPU_TRANSPORT_INVALID,
   SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS,
   SURFACE_GPU_TRANSPORT_PENDING,
@@ -208,6 +209,7 @@ import {
   SURFACE_GPU_TRANSPORT_SKIPPED,
   SURFACE_GPU_TRANSPORT_UNRESOLVED,
   SURFACE_GPU_TILING_BYTES,
+  SURFACE_GPU_TRANSPORT_DEBUG_RECORD_BYTES,
   surfaceComputeSeedWgsl,
   surfaceDeKernelWgsl,
 } from "../fractal/surface-de-gpu";
@@ -3085,6 +3087,11 @@ export interface SurfaceComputeRendererInit {
    * SwiftShader-class string tell — see render-backend.ts): the UI's cue to
    * warn rather than let a CPU-rasterized settle pass as the GPU. */
   software: boolean;
+  /** The inside-miss replay dump's session gate (the WGSL option's doc):
+   * true compiles binding 17 into the shade module, allocates its
+   * per-frame staging pair, and the replay lane reads failing slots'
+   * records beside the status readback. */
+  transportDump?: boolean;
 }
 
 /**
@@ -3174,6 +3181,11 @@ interface FrameBuffers extends FrameBindGroups {
   /** One reusable finite continuation batch, never a full-image stack. */
   transportWork?: GPUBuffer;
   stagingTransportRunning?: GPUBuffer;
+  /** The inside-miss replay dump (transportDump gate only): one 12-vec4
+   * record per DISPATCH SLOT, written at the INSIDE-MISS site, read back
+   * beside the pass's status staging. */
+  transportDebug?: GPUBuffer;
+  stagingTransportDebug?: GPUBuffer;
 }
 
 export class SurfaceComputeRenderer {
@@ -3276,6 +3288,12 @@ export class SurfaceComputeRenderer {
       /** Diagnostic finite DDA equivalence control. False retains the
        * uncached query in both primary and transport kernels. */
       finiteCacheCrossings?: boolean;
+      /** DIAGNOSTIC: the finite backends' inside-miss replay dump (the
+       * WGSL option's doc). Compiles binding 17, allocates the dump
+       * staging pair, and the replay lane logs every failing slot's
+       * record through the session trace. Diagnostics only, off unless a
+       * caller or URL asks; absent/false is byte-identical everywhere. */
+      transportDump?: boolean;
     } = {},
   ): Promise<SurfaceComputeRenderer> {
     if (!SurfaceComputeRenderer.supported()) {
@@ -3354,6 +3372,7 @@ export class SurfaceComputeRenderer {
           surfaceComputeSiTransportChunkPin ??
           undefined,
         surfaceComputeSiExactNormalPin,
+        opts.transportDump ?? false,
       );
       return renderer;
     } catch (e) {
@@ -3380,6 +3399,7 @@ export class SurfaceComputeRenderer {
     finiteCacheCrossings?: boolean,
     sphereInversionTransportChunkPaths?: number,
     sphereInversionExactNormal = false,
+    transportDump = false,
   ): Promise<SurfaceComputeRenderer> {
     // The error-scope pair (out-of-memory outside, validation inside):
     // WebGPU's createBuffer never throws on allocation failure — it
@@ -3411,6 +3431,9 @@ export class SurfaceComputeRenderer {
         : 0;
     const siAdaptiveSchedule =
       siChunkPaths > 0 && sphereInversionTransportChunkPaths === undefined;
+    // The inside-miss replay dump: finite optics sessions only (the WGSL
+    // gate re-checks the backend), shade mode only.
+    const transportDumpOn = transportDump && materials?.optics === true;
 
     // TWO pipelines (the measured v2 split — see the module doc): the
     // march kernel is the bench's proven register-light shape with only
@@ -3592,6 +3615,9 @@ export class SurfaceComputeRenderer {
           ...(mode === "shade" && siChunkPaths > 0
             ? { sphereInversionTransportChunkPaths: siChunkPaths }
             : {}),
+          ...(mode === "shade" && transportDumpOn
+            ? { transportDump: true }
+            : {}),
           // THE SESSION-SHAPED ESTIMATOR: the sphere-inversion cores size
           // their per-evaluation private arrays to this session's frozen
           // construction, and read a small table from workgroup memory
@@ -3765,6 +3791,7 @@ export class SurfaceComputeRenderer {
               // its table. The tenth storage buffer, within the adapter
               // ceiling requested for optics sessions.
               ...(siChunkPaths > 0 ? [bufferEntry(16, "storage")] : []),
+              ...(transportDumpOn ? [bufferEntry(17, "storage")] : []),
             ]
           : []),
         ...(targetHasMesh ? [meshTextureLayoutEntry] : []),
@@ -4251,6 +4278,7 @@ export class SurfaceComputeRenderer {
       marchLayout,
       shadePipeline,
       shadeLayout,
+      transportDump: transportDumpOn,
       marchPipelineNoSlab,
       shadePipelineNoSlab,
       transportPipeline,
@@ -4473,6 +4501,8 @@ export class SurfaceComputeRenderer {
   readonly adapterLabel: string | undefined;
   /** See {@link SurfaceComputeRendererInit.software}. */
   readonly software: boolean;
+  /** The inside-miss replay dump's gate (init.transportDump). */
+  private readonly transportDump: boolean;
 
   /** Public over a NAMED init object rather than private over sixteen
    * positional GPU resources — see {@link SurfaceComputeRendererInit} for
@@ -4492,6 +4522,7 @@ export class SurfaceComputeRenderer {
     this.transportPipelineNoSlab = init.transportPipelineNoSlab;
     this.opticsMapsBuf = init.opticsMapsBuf;
     this.optics = init.transportPipeline !== null;
+    this.transportDump = init.transportDump === true;
     const finiteChunk = this.optics && isFiniteSolidTarget(init.target);
     const siChunk = this.optics && isSphereInversionTarget(init.target);
     this.transportChunkPaths = finiteChunk
@@ -5064,6 +5095,8 @@ export class SurfaceComputeRenderer {
     let stagingTransportStatus: GPUBuffer | undefined;
     let transportWork: GPUBuffer | undefined;
     let stagingTransportRunning: GPUBuffer | undefined;
+    let transportDebug: GPUBuffer | undefined;
+    let stagingTransportDebug: GPUBuffer | undefined;
     if (this.optics) {
       transportState = device.createBuffer({
         size: arenaRays * SURFACE_COMPUTE_TRANSPORT_RECORD_BYTES,
@@ -5109,6 +5142,24 @@ export class SurfaceComputeRenderer {
           usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
         });
       }
+      if (this.transportDump) {
+        // Bounded by the widest transport dispatch, not the frame's rays:
+        // the records are per DISPATCH SLOT (the readback maps slots back
+        // through the pending list), so a whole-frame buffer would cost
+        // 192 B per pixel for a lane that fills a few thousand slots.
+        transportDebug = device.createBuffer({
+          size:
+            SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH *
+            SURFACE_GPU_TRANSPORT_DEBUG_RECORD_BYTES,
+          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+        });
+        stagingTransportDebug = device.createBuffer({
+          size:
+            SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH *
+            SURFACE_GPU_TRANSPORT_DEBUG_RECORD_BYTES,
+          usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+        });
+      }
     }
     const frame: FrameBufferSet = {
       rays,
@@ -5127,6 +5178,8 @@ export class SurfaceComputeRenderer {
       stagingTransportStatus,
       transportWork,
       stagingTransportRunning,
+      transportDebug,
+      stagingTransportDebug,
     };
     this.frame = { ...frame, ...this.frameBindGroups(frame) };
     return this.frame;
@@ -5195,6 +5248,9 @@ export class SurfaceComputeRenderer {
       transportState,
       transportStatus,
       transportWork,
+      // The dump's device buffer, read as `frame.transportDebug` in the
+      // entries below — the destructure keeps the optics gate's shape.
+      transportDebug: transportDebugBuf,
     } = frame;
     const colorStride = this.lighting ? 16 : 4;
     // The finite cores have no maps, so their continuation reuses binding
@@ -5264,6 +5320,14 @@ export class SurfaceComputeRenderer {
               { binding: 15, resource: { buffer: transportStatus } },
               ...(siWork
                 ? [{ binding: 16, resource: { buffer: siWork } }]
+                : []),
+              ...(transportDebugBuf
+                ? [
+                    {
+                      binding: 17,
+                      resource: { buffer: transportDebugBuf },
+                    },
+                  ]
                 : []),
             ]
           : []),
@@ -6112,6 +6176,9 @@ export class SurfaceComputeRenderer {
         dstOffset: number;
         /** Finite-only continuation counter, copied beside the statuses. */
         running?: { src: GPUBuffer; dst: GPUBuffer };
+        /** The inside-miss dump's per-slot records, copied beside the
+         * statuses (`dstOffset` in record bytes). */
+        debug?: { src: GPUBuffer; dst: GPUBuffer; dstOffset: number };
       },
     ): { t0: number; tsSlot: number } => {
       const encoder = device.createCommandEncoder();
@@ -6166,6 +6233,14 @@ export class SurfaceComputeRenderer {
             copyAfter.running.dst,
             0,
             4,
+          );
+        if (copyAfter.debug)
+          encoder.copyBufferToBuffer(
+            copyAfter.debug.src,
+            0,
+            copyAfter.debug.dst,
+            copyAfter.debug.dstOffset,
+            count * SURFACE_GPU_TRANSPORT_DEBUG_RECORD_BYTES,
           );
       }
       const t0 = performance.now();
@@ -7756,6 +7831,21 @@ export class SurfaceComputeRenderer {
                 ...(work && runningReadback
                   ? { running: { src: work, dst: runningReadback } }
                   : {}),
+                ...(this.transportDump &&
+                buffers.transportDebug &&
+                buffers.stagingTransportDebug
+                  ? {
+                      debug: {
+                        src: buffers.transportDebug,
+                        dst: buffers.stagingTransportDebug,
+                        // CHUNK-LOCAL: one batch's staging, drained before
+                        // the next batch overwrites it — the readback maps
+                        // the batch's own statuses to decide which slots
+                        // actually failed.
+                        dstOffset: 0,
+                      },
+                    }
+                  : {}),
               },
             );
             const previousRunning = running;
@@ -7819,6 +7909,51 @@ export class SurfaceComputeRenderer {
             );
             chunk++;
           } while (running > 0);
+          if (this.transportDump && buffers.stagingTransportDebug) {
+            // THE DUMP'S READ: the last chunk's per-slot records, matched
+            // against this batch's own final statuses (the records are
+            // written only at the INSIDE-MISS site, but the device buffer
+            // is not zeroed between dispatches, so the status word is the
+            // claim check). Per batch, before the next batch overwrites:
+            // the staging is one batch wide.
+            const dbgWords = new Float32Array(
+              await this.drainStaging(
+                buffers.stagingTransportDebug,
+                slice.length * SURFACE_GPU_TRANSPORT_DEBUG_RECORD_BYTES,
+              ),
+            );
+            const batchStatus = new Uint32Array(
+              await this.drainStaging(
+                transportBuffers.stagingStatus,
+                slice.length * 4,
+                offset * 4,
+              ),
+            );
+            if (token !== this.frameToken || this.isLost || this.destroyed) {
+              return null;
+            }
+            for (let i = 0; i < slice.length; i++) {
+              const packed = batchStatus[i];
+              if (
+                (packed & 0xff) !== SURFACE_GPU_TRANSPORT_UNRESOLVED ||
+                ((packed >>> 8) & 0xff) !==
+                  SURFACE_GPU_TRANSPORT_FAILURE_INSIDE_MISS
+              )
+                continue;
+              const rec = dbgWords.subarray(
+                i * (SURFACE_GPU_TRANSPORT_DEBUG_RECORD_BYTES / 4),
+                (i + 1) * (SURFACE_GPU_TRANSPORT_DEBUG_RECORD_BYTES / 4),
+              );
+              tr(
+                `transport f5 ray=${pending[offset + i]} ` +
+                  `primary=[${Array.from(rec.slice(0, 3), (v) => v.toExponential(9)).join(",")}] ` +
+                  `dir=[${Array.from(rec.slice(4, 7), (v) => v.toExponential(9)).join(",")}] ` +
+                  `theta=${rec[3]} pass=${rec[7]} ` +
+                  `path=[${Array.from(rec.slice(8, 16), (v) => v.toExponential(9)).join(",")}] ` +
+                  `anchor=[${Array.from(rec.slice(16, 40), (v) => v.toExponential(9)).join(",")}]`,
+              );
+            }
+          }
           offset += batch;
         }
         // One readback per PASS (not per batch): every batch's copy

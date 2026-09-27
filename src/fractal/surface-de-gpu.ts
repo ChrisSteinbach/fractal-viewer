@@ -1726,6 +1726,12 @@ export const SURFACE_GPU_TRANSPORT_FAILURE_STACK = 3;
 export const SURFACE_GPU_TRANSPORT_FAILURE_TRAVERSAL = 4;
 export const SURFACE_GPU_TRANSPORT_FAILURE_INSIDE_MISS = 5;
 
+/** The transportDump record's bytes: 12 vec4f per dispatch slot — the
+ * primary origin/dir + theta/pass, the failing path's full state (origin,
+ * dir, claim, interfaces, intrinsic anchor, flags), the walk's miss answer
+ * (kind/reason/t + the 5.0 magic), and the anchor the query reported. */
+export const SURFACE_GPU_TRANSPORT_DEBUG_RECORD_BYTES = 12 * 16;
+
 /** Boundary-query refusal reasons riding the record's third word (the
  * oracle's refusal vocabulary, enumerated). STATE_MISMATCH belongs to the
  * closed-solid backend: the signed field's membership contradicts the
@@ -2047,6 +2053,16 @@ export interface SurfaceGpuKernelOptions {
    * the bench legs' form, which the CPU fixture mirrors (the fixture has
    * no shade entry to reproduce). Production leaves it absent. */
   finiteOpaqueControl?: boolean;
+  /** DIAGNOSTIC: on the finite backends, dump every unresolved trace's
+   * failing-path state — the primary origin/dir, theta/pass, the failing
+   * path's full {@link TransportPath} (origin, dir, claim, anchor), and
+   * the walk's own answer — to storage binding 17 as 12 vec4f per ray,
+   * written at the INSIDE-MISS site and read by the host per failed slot.
+   * The gate's inside-miss residue's replay instrument: the app's exact
+   * failing rays, as the kernel's own f32 saw them, for the fixture twin
+   * to replay. Shade mode + optics only; absent/false reproduces today's
+   * source BYTE FOR BYTE and allocates nothing. */
+  transportDump?: boolean;
   /** The optical transport's boundary backend. `"estimator"` — absent's
    * meaning, byte-identical — marches the composed PUBLIC estimator: the
    * query the renderer-envelope leg measured, sound from OUTSIDE only
@@ -6287,7 +6303,14 @@ fn hash2(p: vec2f) -> f32 {
 // the host's replay lists are ray ids): the exit status this pass left,
 // or SKIPPED for a classic slot. 4 B per hit ray replaces any readback of
 // the 32 B records, exactly the march's own statusOut discipline.
-@group(0) @binding(15) var<storage, read_write> transportStatusOut: array<u32>;`
+@group(0) @binding(15) var<storage, read_write> transportStatusOut: array<u32>;${
+                  (opts.transportDump ?? false)
+                    ? `
+// The inside-miss replay dump, ONE 12-vec4 record per dispatch slot,
+// written only where a trace fails INSIDE-MISS (transportDump's doc).
+@group(0) @binding(17) var<storage, read_write> transportDebug: array<vec4f>;`
+                    : ""
+                }`
               : ""
           }`;
 
@@ -9460,6 +9483,11 @@ ${surfacePatternShadeSourceWgsl()}`
   // glass-code-1 form).
   const finiteMedia =
     finiteQuery && finiteGeneral !== null && finiteGeneral.media !== undefined;
+  // The inside-miss replay dump (opts.transportDump): shade mode + the
+  // finite query only. Everything it touches — binding 17, the trace
+  // signature's extra parameter, the write site — is emitted only here,
+  // so every other session's source is byte for byte today's.
+  const transportDump = finiteQuery && (opts.transportDump ?? false);
   // The closed-solid field's emission, per dimension. In 3D it is the
   // condensation term at the root (the signed certified bound the primary
   // march reads). In 4D the term's hypot form is a distance to the shape
@@ -10399,7 +10427,7 @@ fn transportTrace(
   absorb: vec3f,
   bg: vec3f,
   li: u32,
-  distortion: f32,${transportChunk ? "\n  workSlot: u32," : ""}
+  distortion: f32,${transportChunk ? "\n  workSlot: u32," : ""}${transportDump ? "\n  dbgSlot: u32,\n  dbgPass: u32," : ""}
 ) -> TransportTrace {
   var out: TransportTrace;
   out.radiance = vec3f(0.0);
@@ -10707,7 +10735,32 @@ ${
       if (${finiteMedia ? "path.inside != 0u" : "path.inside == 1u"}${finiteQuery ? "" : " && path.interfaces != 1u"}) {
         // An inside miss is unresolved, never a background hit — a path
         // that entered through a real crossing cannot miss a closed
-        // solid, so this is an anomaly the frame discloses.
+        // solid, so this is an anomaly the frame discloses.${
+          transportDump
+            ? `
+        // THE REPLAY DUMP: the failing path's own state as this kernel's
+        // f32 holds it, plus the primary ray and the walk's miss, one
+        // record per dispatch slot at binding 17 (transportDump's doc).
+        transportDebug[dbgSlot * 12u + 0u] = vec4f(origin, theta);
+        transportDebug[dbgSlot * 12u + 1u] = vec4f(dir, f32(dbgPass));
+        transportDebug[dbgSlot * 12u + 2u] = vec4f(path.origin, bitcast<f32>(path.inside));
+        transportDebug[dbgSlot * 12u + 3u] = vec4f(path.dir, bitcast<f32>(path.interfaces));
+        transportDebug[dbgSlot * 12u + 4u] = path.finiteIntrinsic;
+        transportDebug[dbgSlot * 12u + 5u] = vec4f(path.finitePlanes);
+        transportDebug[dbgSlot * 12u + 6u] = vec4f(path.finiteCells);
+        transportDebug[dbgSlot * 12u + 7u] = vec4f(
+          bitcast<f32>(path.anchorPresent),
+          bitcast<f32>(path.exitPresent),
+          bitcast<f32>(path.finiteMask),
+          eps,
+        );
+        transportDebug[dbgSlot * 12u + 8u] = vec4f(
+          bitcast<f32>(hit.kind), bitcast<f32>(hit.reason), hit.t, 5.0);
+        transportDebug[dbgSlot * 12u + 9u] = hit.anchorIntrinsic;
+        transportDebug[dbgSlot * 12u + 10u] = vec4f(hit.anchorPlanes);
+        transportDebug[dbgSlot * 12u + 11u] = vec4f(hit.anchorCells);`
+            : ""
+        }
         residual = residual + path.bound;
         out.status = TRANSPORT_STATUS_UNRESOLVED;
         out.failure = TRANSPORT_FAILURE_INSIDE_MISS;
@@ -11182,10 +11235,10 @@ fn transportRays(
     traced.reason = (packed >> 16u) & 255u;
     finiteWork.slots[slotI].pad.x = 0u;
   } else {
-    traced = transportTrace(pos, rd, theta, ior, radius, absorb, bg, li, distortion, slotI);
+    traced = transportTrace(pos, rd, theta, ior, radius, absorb, bg, li, distortion, slotI${transportDump ? ", slotI, replayPass" : ""});
   }`
       : `
-  let traced = transportTrace(${finiteQuery ? "ro" : "pos"}, rd, theta, ior, radius, absorb, bg, li, distortion${transportChunk ? ", slotI" : ""});`
+  let traced = transportTrace(${finiteQuery ? "ro" : "pos"}, rd, theta, ior, radius, absorb, bg, li, distortion${transportChunk ? ", slotI" : ""}${transportDump ? ", slotI, replayPass" : ""});`
   }${
     transportChunk
       ? `
