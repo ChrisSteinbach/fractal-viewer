@@ -739,7 +739,7 @@ try {
     const hash = await page.evaluate(() => location.hash);
     activeLeg = record;
     await page.goto(
-      `${args.url.replace(/\/+$/, "")}/?surfacestate&surfacetrace&surfacetransportdump${hash}`,
+      `${args.url.replace(/\/+$/, "")}/?surfacestate&surfacetrace${hash}`,
     );
     await page.waitForFunction(
       () => typeof window.__surfaceState === "function",
