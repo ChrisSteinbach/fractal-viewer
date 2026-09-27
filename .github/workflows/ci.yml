@@ -67,8 +67,11 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    # See lint's identical comment above — same measured margin.
-    timeout-minutes: 10
+    # The measured suite is ~9.9min (590s) under coverage, and the
+    # dev-dependencies bump crossed the previous 10min ceiling — the job
+    # was killed mid-coverage-report, twice, on dependabot PRs only.
+    # 20 keeps the same measured 2x margin the lint/build comment prescribes.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
