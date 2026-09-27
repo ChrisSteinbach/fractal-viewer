@@ -136,6 +136,21 @@ const COVER_DELTA = 16;
 /** The mask must agree with the engine's own census to this absolute share,
  * or the IoU is measuring something else. */
 const MASK_CENSUS_TOLERANCE = 0.02;
+/** The gl leg's backdrop-premise bound. The per-row channel-delta mask
+ * classifies a pixel covered when it departs from its row's first-column
+ * sample — a premise only a frame with true backdrop admits. Past this
+ * census-covered fraction (the two engines' own ray counts agree the frame
+ * is nearly all geometry — measured: inversionVault reads 95.89% on both
+ * engines) almost every row's edge sample sits ON the subject, so the
+ * mask's absolute covered fraction no longer measures coverage: subject
+ * pixels matching the local geometry read as backdrop (the vault's mask
+ * read 90.32% against the censuses' 95.89%, a 5.6% gap over the 2%
+ * tolerance, while the two engines agreed at IoU 0.9997). The rule waives
+ * the mask-vs-census check BY NAME for such frames and gates the censuses
+ * against each other plus the mask IoU instead; below the bound the
+ * mask-vs-census check stays exactly as it was (the shipped presets at
+ * ~22% and ~40% coverage still calibrate the mask). */
+const BACKDROP_PREMISE_MAX_COVERED = 0.9;
 /** The WebGL arm against compute (the GLSL arm's recorded bar). */
 const GL_MIN_IOU = 0.99;
 const BLANK_TOAST = /rendered almost nothing/i;
@@ -698,17 +713,61 @@ async function main() {
               : null;
             const censusB = r.census ? r.census.covered / r.census.rays : null;
             Object.assign(r, cov);
+            // THE BACKDROP PREMISE: the per-row channel-delta mask reads the
+            // vertical backdrop ramp off each row's first column, so a
+            // pixel counts as covered when it departs from that row's edge
+            // sample. The premise only a frame with true backdrop can
+            // admit: past BACKDROP_PREMISE_MAX covered fraction (both
+            // engines' own ray censuses agree the frame is nearly all
+            // geometry) the mask's absolute fraction is no longer a
+            // coverage measurement — an interior camera whose frame is
+            // ~96% subject leaves every row's edge sample ON the subject,
+            // and subject pixels matching the local geometry color read as
+            // backdrop (measured: the vault's mask read 90.32% against both
+            // engines' 95.89%). The rule waives the mask-vs-census check BY
+            // NAME, gates the two engines' censuses against each other
+            // instead, and keeps the IoU (the masks still measure the two
+            // engines' silhouette agreement against each other); the mask
+            // numbers stay in the record as informational.
+            const backdropPremise =
+              (censusA ?? 1) <= BACKDROP_PREMISE_MAX &&
+              (censusB ?? 1) <= BACKDROP_PREMISE_MAX;
+            if (!backdropPremise)
+              r.backdropPremiseWaived =
+                `census coverage ${(100 * (censusA ?? NaN)).toFixed(2)}% compute /` +
+                ` ${(100 * (censusB ?? NaN)).toFixed(2)}% webgl exceeds` +
+                ` ${(100 * BACKDROP_PREMISE_MAX).toFixed(0)}% — the per-row backdrop mask cannot calibrate a nearly fully covered frame;` +
+                ` the engines' censuses and the IoU carry the check`;
             log(
               `gl ${key}: settled ${secs(r.settleMs)} on ${r.backend?.label}, IoU ${cov.iou?.toFixed(4)}` +
                 ` (covered ${(100 * cov.coveredA).toFixed(2)}% compute / ${(100 * cov.coveredB).toFixed(2)}% webgl),` +
                 ` mean diff on covered ${cov.meanDiffCovered?.toFixed(3)}/255,` +
-                ` census covered ${(100 * (censusA ?? NaN)).toFixed(2)}% compute / ${(100 * (censusB ?? NaN)).toFixed(2)}% webgl`,
+                ` census covered ${(100 * (censusA ?? NaN)).toFixed(2)}% compute / ${(100 * (censusB ?? NaN)).toFixed(2)}% webgl` +
+                (backdropPremise
+                  ? ""
+                  : ` [backdrop premise waived: ${r.backdropPremiseWaived}]`),
             );
             r.censusCoveredCompute = censusA;
             r.censusCoveredWebgl = censusB;
-            if (
-              censusA === null ||
-              censusB === null ||
+            if (censusA === null || censusB === null)
+              fail(
+                `gl ${key}: a settled census is missing — nothing to agree on`,
+              );
+            else if (!backdropPremise) {
+              // The named high-coverage rule: census-vs-census agreement
+              // plus the mask IoU; the mask's own covered fractions are
+              // informational at this coverage.
+              if (Math.abs(censusA - censusB) > MASK_CENSUS_TOLERANCE)
+                fail(
+                  `gl ${key}: the engines' censuses disagree (${censusA} vs ${censusB}) — the backdrop mask cannot calibrate a nearly fully covered frame`,
+                );
+              else if (!cov.backdropOk)
+                fail(
+                  `gl ${key}: backdrop premise failed (edge rows ${cov.edgeRowsBad}) — IoU unmeasured`,
+                );
+              else if (!(cov.iou >= GL_MIN_IOU))
+                fail(`gl ${key}: coverage IoU ${cov.iou} < ${GL_MIN_IOU}`);
+            } else if (
               Math.abs(cov.coveredA - censusA) > MASK_CENSUS_TOLERANCE ||
               Math.abs(cov.coveredB - censusB) > MASK_CENSUS_TOLERANCE
             )
