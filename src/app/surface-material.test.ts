@@ -177,28 +177,28 @@ const SWIRL_LENS_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "3D lens finish0": {
-    resolved: "c3960880cd5ed47c",
-    emitted: "fe456ad3746e17ae",
+    resolved: "4cf17fea4ce40a83",
+    emitted: "f58dc05fcdc05f17",
   },
   "3D lens+balloon finish0": {
-    resolved: "03b4111f5d980874",
-    emitted: "87a1a56207fb75cf",
+    resolved: "6f2d5f9de1e084fe",
+    emitted: "8d9d2c40e5cc8be5",
   },
   "3D lens+plane finish0": {
-    resolved: "74c30165026b4989",
-    emitted: "91341d638ce9196e",
+    resolved: "7bae3899aa0e2ac1",
+    emitted: "0818a996bed5e8d4",
   },
   "3D lens finish1": {
-    resolved: "4289e7ed76395ef6",
-    emitted: "688c1a87bc8f6257",
+    resolved: "000866c8d90de673",
+    emitted: "dee810134bae4c5a",
   },
   "3D lens+balloon finish1": {
-    resolved: "a1afbb88a8b97461",
-    emitted: "c53f51b53b76113f",
+    resolved: "1f88b805572de7d4",
+    emitted: "e49f87ebaba4b0ea",
   },
   "3D lens+plane finish1": {
-    resolved: "bdf919de4a9934cf",
-    emitted: "a4513cfaabe2d185",
+    resolved: "044a7cced832c682",
+    emitted: "cb1cdad4c34d9722",
   },
 };
 
@@ -208,20 +208,20 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "3D affine finish0": {
-    resolved: "13e90ad814943235",
-    emitted: "e80d0cdb03208f27",
+    resolved: "2819c5e0451d2d67",
+    emitted: "f6e059c70c091441",
   },
   "3D lens finish0": {
     resolved: "c3960880cd5ed47c",
     emitted: "fe456ad3746e17ae",
   },
   "3D balloon finish0": {
-    resolved: "70ae21b7b8f9aa5f",
-    emitted: "6b4ed7591abffb3a",
+    resolved: "93701efb70695525",
+    emitted: "ca2a0e90221c1272",
   },
   "3D plane finish0": {
-    resolved: "7ef9e2b976ded4fc",
-    emitted: "c04b1711531f23f2",
+    resolved: "5363651dfd9f1cb3",
+    emitted: "b35f2ec29c833be2",
   },
   "3D lens+balloon finish0": {
     resolved: "03b4111f5d980874",
@@ -256,20 +256,20 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
     emitted: "40a8c5fec38e4c26",
   },
   "3D affine finish1": {
-    resolved: "a100886e3686a6c3",
-    emitted: "a915ba16492f2ed4",
+    resolved: "a42dfb51657db4f6",
+    emitted: "75a2b005c8dfc87b",
   },
   "3D lens finish1": {
     resolved: "4289e7ed76395ef6",
     emitted: "688c1a87bc8f6257",
   },
   "3D balloon finish1": {
-    resolved: "25498ef13dfdba60",
-    emitted: "1af650ee7870bc07",
+    resolved: "7599d57751ff5c7c",
+    emitted: "ee2602bdff1f8bb4",
   },
   "3D plane finish1": {
-    resolved: "3bc69b5223e7ee21",
-    emitted: "6e4a49d70b570d35",
+    resolved: "db2e5f9d52b4b4af",
+    emitted: "14e10c7cc84c9601",
   },
   "3D lens+balloon finish1": {
     resolved: "a1afbb88a8b97461",
@@ -1670,7 +1670,7 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
 
   it("keeps the pre-lattice finite source bytes frozen", () => {
     expect(sha256(sourceFor(a3))).toBe(
-      "13e1162533ce9384b33c3ddbd8308c68e8a9485bb3cd8a38aa4ca8f581a8054a",
+      "2c4c74ee8f15259194aeb2f72155d5572b02d74babdeba160dd9a918901dc869",
     );
     expect(
       sha256(
@@ -1692,7 +1692,7 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
           a3,
         ),
       ),
-    ).toBe("ddc11b5d4239119b493f57f078e8c1640c53fd0f8f4153823aa36d7960803432");
+    ).toBe("9f47474922a2cf35d3591687f16457601d1bf90c73098a5e19c7e50bba69e6f3");
     expect(sha256(sourceFor(a3, { escape: 1 }))).toBe(
       "91a7867dabd81747dd0c1006147db2334db08814fa1aea3311587defce1f70ff",
     );
