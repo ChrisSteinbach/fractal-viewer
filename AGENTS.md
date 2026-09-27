@@ -978,19 +978,21 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `docs/cinematic-surface-lighting.md`.
   - `finite-solid.ts` — the FRACTAL GLASS oracle: the displayed optical
     solid IS the level-N cell set. The optional `finiteSolid`
-    block routes to compute-only cores; primary rays and transport share the
-    exact walk — the grid's ternary DDA for `{shape, level}`, and `{level}`
+    block routes to compute-only cores; primary and transport share the
+    walk — the grid's ternary DDA for `{shape, level}`, `{level}`
     alone (0..4) as the document's OWN maps' word tree (any contracting
-    affine; root: an invariant hull simplex, else the invariant box; the
-    walk stops at the first medium change (fused front to back); the
-    prune rides level boxes; the 128-leaf cap refuses, disclosed — in
-    the traces); the hybrid DE shades. PER-MAP MEDIA: Glass maps'
-    subtrees are glass cells; beside them other maps render as the TRUE
+    affine; root: an invariant hull simplex, else the invariant box; stops
+    at the first medium change (fused); the
+    prune rides level boxes; the 128-leaf cap refuses, disclosed);
+    the hybrid DE shades. PER-MAP MEDIA: Glass maps'
+    subtrees are glass cells; others render as the TRUE
     ATTRACTOR (the composite kernel, <=24 maps), else opaque cells; opaque
-    owns overlaps. Anchors snap to the clip's planes (general: facet
-    mask, own leaf on-plane); a split child's stale medium re-anchors
-    once. Gates pin every AA sample, copied pose and export identity; the
-    word tree's reference is an independent union.
+    owns overlaps; each glass medium's INDEX is authored
+    (`optics.ior`, [1.01,3]; absent = the default byte-identically;
+    out-of-band REFUSES). Anchors snap to the clip's planes; a split
+    child's stale medium re-anchors once. Gates pin every AA sample,
+    copied pose, export identity; the word tree's reference is an
+    independent union.
     Evidence: `docs/surface-dielectric-transport.md`.
   - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its
