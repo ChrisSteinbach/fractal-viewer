@@ -53,6 +53,7 @@ import {
   FINITE_SOLID_GENERAL_MAX_MAPS,
   FINITE_SOLID_HALF_EXTENT,
   FINITE_SOLID_MAX_LEVEL,
+  FINITE_SOLID_MEDIUM_OPAQUE_MAP,
 } from "./finite-solid";
 import {
   FINITE_TRANSPORT_BUFFER_HEADER_BYTES,
@@ -10712,7 +10713,9 @@ ${
     }
     if (opaque.kind == 1u && (hit.kind == 2u || opaque.t < hit.t)) {
       var opaqueEnergy = path.energy;
-      if (path.inside != 0u) {
+      // The same opaque-claim guard here: an adopted OPAQUE claim is the
+      // attractor's own region, never a glass medium to integrate.
+      if (path.inside != 0u && path.inside != ${FINITE_SOLID_MEDIUM_OPAQUE_MAP}u) {
         let segAbsorb = transportMediumAbsorb(path.inside);
         let segRadius = transportMediumRadius(path.inside);
         opaqueEnergy = vec3f(
@@ -10842,9 +10845,13 @@ ${
       finiteMedia
         ? `
       // The incident medium's own absorption and Beer radius (the per-map
-      // media: a map's optical scale is its own).
-      let segAbsorb = transportMediumAbsorb(path.inside);
-      let segRadius = transportMediumRadius(path.inside);`
+      // media: a map's optical scale is its own). The adopted OPAQUE claim
+      // (a corner retry that adopted the geometry's own region code) is
+      // not a glass medium: no Beer read, or the segment's optics lookup
+      // is out of bounds (Dawn clamps, an implementation-dependent read).
+      let beerInside = select(path.inside, 0u, path.inside == ${FINITE_SOLID_MEDIUM_OPAQUE_MAP}u);
+      let segAbsorb = transportMediumAbsorb(beerInside);
+      let segRadius = transportMediumRadius(beerInside);`
         : ""
     }
       energy = vec3f(
