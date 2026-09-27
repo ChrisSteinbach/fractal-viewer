@@ -1676,7 +1676,20 @@ export function finiteSolidGeneralTransportSource(
   ): string =>
     `let facets = finCellFacets(${forwardVar}, ${inverseVar});
 if (facets.ok) {
-  let clip = finClipSimplex(facets, q, qd, select(0u, finAnchorMask, all(${word} == finAnchorWord)));
+  let onPlane = select(0u, finAnchorMask, all(${word} == finAnchorWord));
+  var clip = finClipSimplex(facets, q, qd, onPlane);
+  // THE ANCHOR'S AUTHORITY COVERS ITS OWN CLIP (the oracle's clamp,
+  // mirrored) — when the claim is the anchor leaf's own side (the seed):
+  // at a corner the snap can leave the point a hair outside an unmasked
+  // facet, degenerating the interval — the leaf the anchor asserts the
+  // path is inside vanishes from the walk. The seeded anchor leaf's
+  // interval is clamped to contain t = 0 and never rejected; the
+  // refracted child's own leaf keeps the raw clip.
+  if (onPlane != 0u && finSeeded) {
+    clip.enter = min(clip.enter, 0.0);
+    clip.exit = max(clip.exit, 0.0);
+    clip.ok = true;
+  }
   if (clip.ok) {
     if (finProduced >= ${leafCap}u) {
       finOut = finRefusal(1u);
@@ -1684,7 +1697,12 @@ if (facets.ok) {
       return;
     }
     finProduced = finProduced + 1u;
-    finPushPending(clip.enter, 1u, ${word}, clip.enterMask);
+    // The seeded anchor leaf is ALREADY-ENTERED (the pre-seed): its enter
+    // endpoint is the past — the incident crossing the transport
+    // processed — so only its exit is pushed (the oracle's rule).
+    if (onPlane == 0u || !finSeeded) {
+      finPushPending(clip.enter, 1u, ${word}, clip.enterMask);
+    }
     finPushPending(clip.exit, 0u, ${word}, clip.exitMask);
     finDrain(q, qd, dir, claim, anchored);
     if (finAbort) {
@@ -1863,10 +1881,13 @@ struct FinClip {
 // off t = 0 and the restart would misread its starting side).
 fn finClipSimplex(f: FinFacets, q: vec4f, qd: vec4f, onPlane: u32) -> FinClip {
   // (Facet-generic: a simplex's dim + 1 facets or a box's 2·dim.)
+  // result.enter/exit carry the RAW interval even when ok stays false —
+  // the anchor leaf's own clamp (pushLeaf's site) needs the numbers the
+  // ok check would discard; 0/0 mirrors the oracle's raw init.
   var result: FinClip;
   result.ok = false;
-  result.enter = -1.0e30;
-  result.exit = 1.0e30;
+  result.enter = 0.0;
+  result.exit = 0.0;
   result.enterMask = 0u;
   result.exitMask = 0u;
   var enter = -1.0e30;
@@ -1899,14 +1920,14 @@ fn finClipSimplex(f: FinFacets, q: vec4f, qd: vec4f, onPlane: u32) -> FinClip {
       }
     }
   }
-  if (!(exit > enter)) {
-    return result;
-  }
-  result.ok = true;
   result.enter = enter;
   result.exit = exit;
   result.enterMask = enterMask;
   result.exitMask = exitMask;
+  if (!(exit > enter)) {
+    return result;
+  }
+  result.ok = true;
   return result;
 }
 
@@ -1948,6 +1969,9 @@ var<private> finVisits = 0u;
 // fresh query) — the enumeration's exact-zero residuals.
 var<private> finAnchorWord = vec4i(-1);
 var<private> finAnchorMask = 0u;
+// The seeded-anchor flag: the claim matches the anchor leaf's own medium
+// (the same-side child) — the walk's pre-seed rule's gate.
+var<private> finSeeded = false;
 
 fn finPackWord(word: vec4i) -> u32 {
   // The word as ONE mixed-radix index (first map most significant): at
@@ -2295,12 +2319,17 @@ fn finCloseGroup(
   let t = finGroupT;
   let tie = finTieOf(t);
   if (!finStarted && t <= tie) {
-    finHaveStart = true;
-    finStartMedium = finMedium;
-    finStartBranch = owner.y;
-    finStartAtGroup = abs(t) <= tie;
-    finStartLo = finGroupLo;
-    finStartHi = finTotal;
+    if (!finSeeded) {
+      finHaveStart = true;
+      finStartMedium = finMedium;
+      finStartBranch = owner.y;
+      finStartAtGroup = abs(t) <= tie;
+      finStartLo = finGroupLo;
+      finStartHi = finTotal;
+    }
+    // Seeded anchored queries: the start is the anchor leaf's own
+    // medium, set at the reset — a start-eligible group never
+    // overwrites it, and the past is consumed silently.
     return;
   }
   finStarted = true;
@@ -2348,7 +2377,16 @@ fn finDrain(q: vec4f, qd: vec4f, dir: vec3f, claim: u32, anchored: bool) {
     for (var i = 0u; i < finPendingCount; i++) {
       nextT = min(nextT, finRecordT(finPending[i]));
     }
-    if (min(nextT, frontier) > finGroupT + tie) {
+    // THE CLOSE TEST IS THE DIFFERENCE FORM (the inside-miss residue's
+    // kernel bug, the replay walk-trace's finding): the sum form cancels
+    // in f32 — an endpoint 3 ULPs past the group's t is beyond the tie
+    // (the absorb loop rejects it) while the sum rounds back to groupT,
+    // so the strict comparison never fires and the group never closes —
+    // the walk starves, emits no event, and the trace misses. The
+    // difference the absorb loop already compares is the honest test:
+    // close when the next endpoint sits at or beyond the tie.
+    let next = min(nextT, frontier);
+    if (next >= FIN_FAR || next - finGroupT > tie) {
       finCloseGroup(q, qd, dir, claim, anchored);
       finGroupOpen = 0u;
       continue;
@@ -2446,13 +2484,74 @@ fn transportFiniteBoundary(
   finProduced = 0u;
   finGroupOpen = 0u;
   finAbort = false;
-  finStarted = false;
-  finHaveStart = false;
-  finMedium = 0u;
+  // THE ANCHORED WALK PRE-SEEDS ITS OWN LEAF — WHEN THE CLAIM IS ITS SIDE
+  // (the oracle's walk-level fix, mirrored): the anchor's masked facets
+  // put the leaf's own ENTER at t = 0 exactly — the incident crossing the
+  // transport already bent at — so its interior is zero-width in the tie
+  // and its exit is swallowed. A path claiming the anchor leaf's own
+  // medium is ALREADY-ENTERED: seed its branch's coverage, start the
+  // medium there, mark started, and drop its own ENTER endpoint — the
+  // EXIT is the first event. THE SEED'S SIDE TEST: the medium codes
+  // cannot tell the two children of a same-code boundary apart — the
+  // incident direction does. The REFRACTED child claims the FAR side: no
+  // seed, the derived start read stands, and both endpoints push.
+  var seedEntering = true;
+  if (anchorPresent == 1u) {
+    var fwd = finIdentity();
+    var inv = finIdentity();
+    for (var slot = 0; slot < 4; slot++) {
+      let a = anchorCellsIn[slot];
+      if (a < 0) {
+        break;
+      }
+      fwd = finCompose(fwd, u32(a));
+      inv = finChildInverse(inv, u32(a));
+    }
+    let ownFacets = finCellFacets(fwd, inv);
+    // THE SEED'S SIDE TEST: the child that still owns the leaf has the
+    // far wall ahead (the unmasked clip's exit > 0); the crossed child
+    // has the leaf behind. A TIR-reflected child's direction may point
+    // back out through its entry facets, so the incident direction
+    // cannot tell.
+    if (ownFacets.ok) {
+      var enter = -1.0e30;
+      var exit = 1.0e30;
+      for (var k = 0; k < ${facetCount}; k++) {
+        let denom = finDot(ownFacets.n[k], qd);
+        let s = finDot(ownFacets.n[k], q) - ownFacets.c[k];
+        if (denom == 0.0) {
+          if (s > 0.0) {
+            seedEntering = false;
+          }
+          continue;
+        }
+        let t = -s / denom;
+        if (denom > 0.0) {
+          exit = min(exit, t);
+        } else {
+          enter = max(enter, t);
+        }
+      }
+      seedEntering = exit > enter && exit > 0.0;
+    } else {
+      seedEntering = false;
+    }
+  }
+  finSeeded = anchorPresent == 1u &&
+    FIN_MEDIA[anchorCellsIn[0]] == claim &&
+    seedEntering;
+  // finStarted stays false: the start-eligible groups (t <= tie) are
+  // still consumed SILENTLY — the past — and events begin past the tie.
+  finHaveStart = finSeeded;
+  finStartMedium = select(0u, FIN_MEDIA[anchorCellsIn[0]], finSeeded);
+  finMedium = finStartMedium;
   finStartBranch = -1;
   finVisits = 0u;
   for (var a = 0; a < i32(FIN_MAP_COUNT); a++) {
     finBranchCov[a] = 0;
+  }
+  if (finSeeded) {
+    finBranchCov[anchorCellsIn[0]] = 1;
   }
   for (var d = 0; d < ${Math.max(level, 1)}; d++) {
     finNextKey[d] = FIN_FAR;
@@ -3024,6 +3123,16 @@ interface GeneralEndpointF32 {
  * and `w0` the slice; 3D passes null (the identity pose, the lift exact).
  * `anchor` null is the non-anchored world-origin call.
  */
+/** The replay harness's walk trace hook: set to receive the f32 walk's
+ * group/leaf sequence (the inside-miss replay's instrument). Null in
+ * production. */
+export let finiteSolidDdaF32Trace: ((line: string) => void) | null = null;
+export function setFiniteSolidDdaF32Trace(
+  hook: ((line: string) => void) | null,
+): void {
+  finiteSolidDdaF32Trace = hook;
+}
+
 export function finiteSolidGeneralDdaF32(
   dim: 3 | 4,
   level: number,
@@ -3451,8 +3560,66 @@ export function finiteSolidGeneralDdaF32(
   const coverage = new Array<number>(mapCount).fill(0);
   let medium = 0;
   let started = false;
-  let haveStart = false;
-  let startMedium = 0;
+  // THE ANCHORED WALK PRE-SEEDS ITS OWN LEAF — WHEN THE CLAIM IS ITS SIDE
+  // (the oracle's walk-level fix, mirrored): the anchor's masked facets
+  // put the leaf's own ENTER at t = 0 exactly — the incident crossing the
+  // transport already bent at — so its interior is zero-width in the tie
+  // and its exit is swallowed. A path claiming the anchor leaf's own
+  // medium is ALREADY-ENTERED: seed its branch's coverage, start the
+  // medium there, mark started, and drop its own ENTER endpoint — the
+  // EXIT is the first event. The REFRACTED child claims the FAR side: no
+  // seed, the derived start read stands, and both endpoints push.
+  const anchorStartMedium = anchor
+    ? g.media
+      ? (g.media[anchor.cellIndices[0] ?? 0] ?? 0)
+      : 1
+    : 0;
+  // THE SEED'S SIDE TEST (the oracle's rule, mirrored): the medium codes
+  // cannot tell the two children of a same-code boundary apart — the
+  // leaf's own geometry does: the child that still owns the leaf has the
+  // far wall AHEAD (the unmasked clip's exit > 0 — a TIR-reflected
+  // child's direction may point back out through its entry facets, so
+  // the incident direction cannot tell); the child that crossed to the
+  // far side has the leaf entirely behind.
+  const anchorSeesClaim =
+    anchor !== null &&
+    anchorStartMedium === claim &&
+    (() => {
+      const word = anchor.cellIndices.filter((w) => w >= 0);
+      let fwd = identity();
+      let inv = identity();
+      for (const a of word) {
+        fwd = compose(fwd, a);
+        inv = childInverse(inv, a);
+      }
+      const ownFacets = facetsFor(fwd, inv);
+      if (!ownFacets) return false;
+      let enter = f(-1e30);
+      let exit = f(1e30);
+      for (let k = 0; k < facetCount; k++) {
+        const denom = dot4(ownFacets.n[k], qd);
+        const s = f(dot4(ownFacets.n[k], q) - ownFacets.c[k]);
+        if (denom === 0) {
+          if (s > 0) return false;
+          continue;
+        }
+        const t = f(-s / denom);
+        if (denom > 0) {
+          exit = Math.min(exit, t);
+        } else {
+          enter = Math.max(enter, t);
+        }
+      }
+      return exit > enter && exit > 0;
+    })();
+  if (anchorSeesClaim) {
+    coverage[Math.max(anchor.cellIndices[0] ?? 0, 0)] = 1;
+    medium = anchorStartMedium;
+    // started stays false: the start-eligible groups (t <= tie) are still
+    // consumed SILENTLY — the past — and events begin past the tie.
+  }
+  let haveStart = anchorSeesClaim;
+  let startMedium = anchorSeesClaim ? anchorStartMedium : 0;
   let startBranch = -1;
   let startAtGroup = false;
   let startLo = 0;
@@ -3482,6 +3649,13 @@ export function finiteSolidGeneralDdaF32(
     let value = finFar;
     for (let d = 0; d < level; d++) {
       if (nextKey[d] < value) value = nextKey[d];
+    }
+    return value;
+  };
+  const nextTof = (): number => {
+    let value = finFar;
+    for (const endpoint of pending) {
+      if (endpoint.t < value) value = endpoint.t;
     }
     return value;
   };
@@ -3533,13 +3707,20 @@ export function finiteSolidGeneralDdaF32(
     medium = owner.medium;
     const t = groupT;
     const tie = tieOf(t);
+    finiteSolidDdaF32Trace?.(
+      `group t=${t.toExponential(6)} cov=[${coverage.join(",")}] before=${before} after=${medium} started=${started}`,
+    );
     if (!started && t <= tie) {
-      haveStart = true;
-      startMedium = medium;
-      startBranch = owner.branch;
-      startAtGroup = Math.abs(t) <= tie;
-      startLo = groupLo;
-      startHi = hi;
+      if (!anchorSeesClaim) {
+        haveStart = true;
+        startMedium = medium;
+        startBranch = owner.branch;
+        startAtGroup = Math.abs(t) <= tie;
+        startLo = groupLo;
+        startHi = hi;
+      }
+      // Seeded anchored queries: the start is the anchor leaf's own
+      // medium, set above — a start-eligible group never overwrites it.
       return;
     }
     started = true;
@@ -3550,6 +3731,9 @@ export function finiteSolidGeneralDdaF32(
     for (;;) {
       if (aborted) return;
       const frontier = frontierMin();
+      finiteSolidDdaF32Trace?.(
+        `drain open=${groupOpen ? 1 : 0} frontier=${frontier === finFar ? "FAR" : frontier.toExponential(4)} pending=${pending.length}${pending.length > 0 ? ` minT=${pending[pendingMin()].t.toExponential(4)}` : ""}${groupOpen ? ` groupT=${groupT.toExponential(4)} tie=${tieOf(groupT).toExponential(4)} nextT=${nextTof() === finFar ? "FAR" : nextTof().toExponential(4)}` : ""}`,
+      );
       if (!groupOpen) {
         const i = pendingMin();
         if (i < 0) return;
@@ -3564,6 +3748,9 @@ export function finiteSolidGeneralDdaF32(
       const tie = tieOf(groupT);
       for (;;) {
         const i = pendingMin();
+        finiteSolidDdaF32Trace?.(
+          `absorb i=${i}${i >= 0 ? ` t=${pending[i].t.toExponential(6)} dt=${f(pending[i].t - groupT).toExponential(6)} tie=${tie.toExponential(6)}` : ""}`,
+        );
         if (i < 0 || f(pending[i].t - groupT) > tie) break;
         consumed.push(pending[i]);
         pendingRemove(i);
@@ -3572,7 +3759,16 @@ export function finiteSolidGeneralDdaF32(
       for (const endpoint of pending) {
         if (endpoint.t < nextT) nextT = endpoint.t;
       }
-      if (Math.min(nextT, frontier) > f(groupT + tie)) {
+      // THE CLOSE TEST IS THE DIFFERENCE FORM (the inside-miss residue's
+      // kernel bug, the replay walk-trace's finding): `nextT > groupT +
+      // tie` cancels in f32 — an endpoint 3 ULPs past the group's t is
+      // beyond the tie (the absorb loop rejects it) while the SUM rounds
+      // back to groupT, so the strict `>` never fires and the group never
+      // closes — the walk starves, emits no event, and the trace misses.
+      // The difference the absorb loop already compares is the honest
+      // test: close when the next endpoint sits at or beyond the tie.
+      const next = Math.min(nextT, frontier);
+      if (next === finFar || f(next - groupT) > tie) {
         closeGroup();
         groupOpen = false;
         continue;
@@ -3586,11 +3782,21 @@ export function finiteSolidGeneralDdaF32(
     const facets = facetsFor(m, inv);
     if (!facets) return;
     // The anchor's own leaf reads its masked residuals as exact zeros
-    // (enumerateGeneralLeaves's rule, finClipSimplex's `onPlane`).
+    // (enumerateGeneralLeaves's rule, finClipSimplex's `onPlane`), and —
+    // when the claim is its own side (the seed) — its authority covers
+    // its own clip: at a corner the snap can leave the point a hair
+    // outside an unmasked facet, degenerating the interval — the leaf
+    // the anchor asserts the path is inside vanishes from the walk (the
+    // oracle's clamp, mirrored). The seeded anchor leaf's interval is
+    // clamped to contain t = 0 and never rejected; the refracted child's
+    // own leaf keeps the raw clip.
     const forced =
       anchor && word.every((w, slot) => w === anchor.cellIndices[slot])
         ? anchor.planeMask
         : 0;
+    const isOwnLeaf =
+      anchorSeesClaim &&
+      word.every((w, slot) => w === anchor.cellIndices[slot]);
     let enter = f(-1e30);
     let exit = f(1e30);
     let enterMask = 0;
@@ -3600,7 +3806,7 @@ export function finiteSolidGeneralDdaF32(
       const s =
         (forced & (1 << k)) !== 0 ? 0 : f(dot4(facets.n[k], q) - facets.c[k]);
       if (denom === 0) {
-        if (s > 0) return;
+        if (s > 0 && !isOwnLeaf) return;
         continue;
       }
       const t = f(-s / denom);
@@ -3618,7 +3824,11 @@ export function finiteSolidGeneralDdaF32(
         enterMask |= 1 << k;
       }
     }
-    if (!(exit > enter)) return;
+    if (isOwnLeaf) {
+      enter = f(Math.min(enter, 0));
+      exit = f(Math.max(exit, 0));
+    }
+    if (!(exit > enter) && !isOwnLeaf) return;
     if (produced >= leafCap) {
       aborted = refused(1);
       return;
@@ -3626,7 +3836,12 @@ export function finiteSolidGeneralDdaF32(
     produced++;
     const slots: [number, number, number, number] = [-1, -1, -1, -1];
     for (let slot = 0; slot < word.length; slot++) slots[slot] = word[slot];
-    pending.push({ t: enter, delta: 1, word: [...slots], facets: enterMask });
+    // The seeded anchor leaf is ALREADY-ENTERED (the pre-seed above): its
+    // enter endpoint is the past — the incident crossing the transport
+    // processed — so only its exit is pushed (the oracle's rule).
+    if (!isOwnLeaf) {
+      pending.push({ t: enter, delta: 1, word: [...slots], facets: enterMask });
+    }
     pending.push({ t: exit, delta: 0, word: [...slots], facets: exitMask });
     drain();
   };
