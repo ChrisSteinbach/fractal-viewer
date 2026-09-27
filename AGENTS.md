@@ -2068,8 +2068,7 @@ alongside source as `*.test.ts`. DOM tests opt into jsdom with a
 ## Issue Tracking
 
 This project uses **beads** (`bd`) for issue tracking — never markdown TODO
-files and never a harness's in-session task list, which dies with the session,
-invisible to the next agent.
+files and never a harness's in-session task list, which dies with the session.
 
 ```bash
 bd list               # View all issues
@@ -2080,16 +2079,17 @@ bd update <id> --claim  # Claim work atomically
 bd close <id>         # Complete work
 ```
 
-Use `--json` for programmatic calls. Link discovered work with
+Use `--json` for programmatic calls; link discovered work with
 `--deps discovered-from:<parent-id>`; do not create a second tracker.
-Tracker state syncs via the bd dolt remote — `bd dolt pull` on a fresh clone,
-`bd dolt push` after writes; the `.beads` jsonl mirrors are git-ignored and
-never committed.
+Tracker state syncs via the bd dolt remote (`bd dolt pull`/`bd dolt push`);
+the `.beads` jsonl mirrors are git-ignored.
+A bead's notes must STAND ALONE: never cite /tmp or session scratch —
+digest it in or link a durable home.
 
 **THE CODEBASE MUST NOT CITE THE TRACKER.** A bead id is not a stable
-foreign key: the tracker has been corrupted before and may be replaced
-outright; either event turns every `see fr-xxxx` into a pointer at
-nothing. So ids are never written into `src/`, `docs/`, `scripts/`, the
+foreign key: the tracker has been corrupted before and may be replaced;
+either event turns every `see fr-xxxx` into a pointer at nothing. So ids
+are never written into `src/`, `docs/`, `scripts/`, the
 build and workflow files, or the agent instruction files — nor may the
 tracker be the CARRIER of a claim ("the bead expected", "per the
 bead's ask", "the epic's figures"), which dangles as badly while
@@ -2101,7 +2101,7 @@ contract", "the kernel-confirmed i915 preemption hang"). Writing ABOUT the
 practice is fine — "filing a 4D-lift bead and closing the epic" names the
 standing failure mode two sections up — but citing an item's contents is
 not. The ONE exception is OPEN work: a comment may
-name the id of an unfinished item it waits on; deleting that reference is
+name the id it waits on; deleting that reference is
 part of closing it. Commit messages may cite freely — git history is
 immutable and never loaded into a session's context. A sweep removed
 ~7,500 ids and ~130 citations, so
