@@ -1763,9 +1763,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `surfaceFragmentResolvedFor(escape, lens, balloon, plane, bulb).length`
     against `SURFACE_GLSL_STRIP_BYTES`, and `surfaceFragmentFor(...).length`
     against the cliff. The finish arm flips ONE strip status
-    (escape+balloon, benign) and moves the pairing to watch to 4D PLAIN +
-    FINISH — the first crossing that would cost a SHIPPED 4D session its
-    commentary.
+    (escape+balloon, benign); the 2026-09-27 refinedCert-head restore
+    crossed 4D PLAIN too — every arm strips, the benign event the watch
+    predicted.
     Orbit-trap color blends descent choices TOP-DOWN (depth-0 copy
     dominates, flam3's convention); the per-level decay is the
     Color speed slider (default 0.5 = that original fixed behavior), and

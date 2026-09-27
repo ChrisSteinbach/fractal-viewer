@@ -2946,7 +2946,12 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   // linkProgram stall, empty info log, context lost). The affine variant
   // below keeps the refined discipline unchanged.
 #else
-#if SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS
+  // The head is UNCONDITIONAL because the body and the descent's refined
+  // fold sites are: gating the head on the condensation/schedule/chaos
+  // arms (2026-09-26, unifying refinedCert's signature) left the
+  // plain-affine build a bare body and dangling brace under the driver's
+  // SURFACE_FOLDS=0, and every affine GLSL session bounced at entry —
+  // the plain build's own head must always reach the driver.
   float refinedCert(
     vec3 img,
     float r,
@@ -2954,7 +2959,6 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
     int depth,
     int currentState
   ) {
-#endif
 #if SURFACE_CONDENSATION
 #if SURFACE_CHAOS
     float inner = condensationTerm(img, 1.0, depth, currentState).x;
@@ -4159,9 +4163,12 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
             float eScale = childScale;
             float eR = r;
             float eCert = cert;
-#if SURFACE_CHAOS
+            // eState is UNCONDITIONAL: the plain build's state-bound sites
+            // read it through the chaos-guarded helpers, which fall back to
+            // the union ball whenever the index is not a real state
+            // (2026-09-26 regression, layer two — an undeclared eState in
+            // every non-chaos build).
             int eState = childState;
-#endif
             if (key < c1Key) {
               eKey = c2Key;
               eQ = c2Q;
@@ -5095,9 +5102,12 @@ ${foldValueFormGlsl(shadeDeWidth)}
             float eScale = childScale;
             float eR = r;
             float eCert = cert;
-#if SURFACE_CHAOS
+            // eState is UNCONDITIONAL: the plain build's state-bound sites
+            // read it through the chaos-guarded helpers, which fall back to
+            // the union ball whenever the index is not a real state
+            // (2026-09-26 regression, layer two — an undeclared eState in
+            // every non-chaos build).
             int eState = childState;
-#endif
             if (key < c1Key) {
               eKey = c2Key;
               eQ = c2Q;
@@ -9252,10 +9262,6 @@ export function surfaceFragmentResolvedFor(
     // fails to link — the stripped-control compile failure the fixture
     // re-mint flushed out.
     SURFACE_OPTICS_CLOSED_SOLID: optics !== 0 ? opticsBackend : 0,
-    "SURFACE_CONDENSATION || SURFACE_SCHEDULE":
-      condensation !== null || schedule !== 0 ? 1 : 0,
-    "SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS":
-      condensation !== null || schedule !== 0 || chaos !== 0 ? 1 : 0,
   });
   let baked = resolved;
   // The trap arm's two BAKED splices: the per-spec shape SDF
