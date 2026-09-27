@@ -208,9 +208,17 @@ describe("the materials field", () => {
     expect(reasons([{}, { finish: { gloss: 1 } }])).toEqual([
       'unknown material 1 finish field "gloss" (not readable by this version)',
     ]);
-    expect(reasons([{ optics: { model: "dielectric", ior: 1.5 } }])).toEqual([
-      'unknown material 0 optics field "ior" (not readable by this version)',
+    expect(reasons([{ optics: { model: "dielectric", tint: 0.5 } }])).toEqual([
+      'unknown material 0 optics field "tint" (not readable by this version)',
     ]);
+  });
+
+  it("admits the authored glass index as a finite optics leaf", () => {
+    // The per-map media's index joined the optics vocabulary; a block
+    // carrying it reads under the strict field set instead of refusing.
+    expect(reasons([{ optics: { model: "dielectric", ior: 1.7 } }])).toEqual(
+      [],
+    );
   });
 
   it("refuses an unknown optical model and non-finite leaves rather than dropping them", () => {

@@ -50,6 +50,17 @@
  *   Legs 6-8 are MIXED blocks, so each asserts the COMPOSITE route
  *   (`finiteComposite` on the probe): the opaque maps render as the true
  *   attractor under the glass cells (finite-composite-route.ts).
+ *   9. The authored glass index (fr-jd5c.24), 3D and 4D: Glass on the
+ *      listed maps with the index maps' Glass index row dragged to 1.7
+ *      from the panel, then back to 1.45 (the field's removal rule, which
+ *      merges the two media). The bent settle reads the two distinct
+ *      media codes on the probe and completes in every antialias sample;
+ *      the straight settle reads the merged code; the two documents'
+ *      exports differ — the authored index reaches the transport. The 4D
+ *      leg wheel-zooms in before the hashes are read: the pentatope's
+ *      settled auto-fit leaves the hull ~1.5% of the frame, below the
+ *      covered bar, and a selected map's wheel resizes its guide box, so
+ *      the leg deselects first (the camera card, row 0).
  *
  * A behavior gate: no timing rows, no screenshots, no appearance claims.
  * Exit 1 is a verdict failure; a browser/display failure says so (exit 2).
@@ -70,6 +81,30 @@ for (const arg of process.argv.slice(2)) {
   const m = /^--([^=]+)=(.*)$/.exec(arg);
   if (m) args[m[1]] = m[2];
 }
+
+// `--only=name[,name]` runs a subset of the legs (the sphere-inversion
+// family gate's filter, same shape). Unknown names fail the run.
+const LEG_NAMES = [
+  "general-block-authored-from-panel",
+  "general-session-enters-compute",
+  "depth-rewrite-restarts-and-settles",
+  "owner-glass-authored-and-exported",
+  "shaped-preset-reads-read-only",
+  "rotating-boot-document-glass",
+  "pentatope-4d-glass",
+  "menger-corners-glass",
+  "glass-index-default-3d",
+  "glass-index-pentatope-4d",
+];
+const wanted = args.only ? new Set(args.only.split(",").filter(Boolean)) : null;
+if (wanted) {
+  for (const name of wanted) {
+    if (!LEG_NAMES.includes(name)) {
+      throw new Error(`unknown --only name ${name}`);
+    }
+  }
+}
+const want = (name) => !wanted || wanted.has(name);
 
 const log = (s) => console.log(`[glass-solid-panel.verify] ${s}`);
 
@@ -216,7 +251,10 @@ try {
     if (bytes.length < 24 || bytes.readUInt32BE(12) !== 0x49484452) return null;
     return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
   };
-  const enterSurface = async (legRecord) => {
+  // `timeoutMs` guards the settled-first-frame wait; the depth-3
+  // documents' 8-sample settle can outrun the 180 s the shipped legs fit
+  // in, so the longer legs pass their own.
+  const enterSurface = async (legRecord, timeoutMs = 180_000) => {
     for (let i = 0; i < 60; i++) {
       const pressed = await page.evaluate(() => {
         const btn = document.getElementById("modeSurfaceBtn");
@@ -232,7 +270,7 @@ try {
         s.engine === "compute" &&
         s.firstFrame === true &&
         s.settled === true,
-      180_000,
+      timeoutMs,
       "the compute session's settled first frame",
     );
     if (legRecord.consoleErrors.length > 0) {
@@ -244,94 +282,101 @@ try {
   // Load the Sierpinski tetrahedron preset first (the owner's example
   // document, the hull root), wait out the replace-load morph, then check
   // the box. (The rotating boot document routes too — legs 6 and 7.)
-  const generalLeg = leg("general-block-authored-from-panel");
-  await boot();
-  await page.evaluate(() => {
-    const sel = document.getElementById("presetSelect");
-    sel.value = "sierpinski";
-    sel.dispatchEvent(new Event("change", { bubbles: true }));
-  });
-  await page.waitForTimeout(8000);
-  // The section ships closed (the native exclusive-open accordion): open it
-  // first, the same trusted gesture the owner makes.
-  await page.click("#glassSolidSection > summary");
-  await page.click("#glassSolidEnabledCheckbox");
-  await page.waitForTimeout(300);
-  const checkbox = await page.evaluate(() => ({
-    checked: document.getElementById("glassSolidEnabledCheckbox").checked,
-    depthHidden: document
-      .getElementById("glassSolidDepthRow")
-      .classList.contains("hidden"),
-    depth: document.getElementById("glassSolidDepthSelect").value,
-    note: document.getElementById("surfaceNote").textContent,
-    sectionNote: document.getElementById("glassSolidNote").textContent,
-  }));
-  if (!checkbox.checked) fail("the checkbox did not latch checked");
-  if (checkbox.depthHidden) fail("the depth row stayed hidden with a block");
-  if (checkbox.depth !== "1") {
-    fail(`the depth select read ${checkbox.depth}, expected 1`);
-  }
-  if (!checkbox.note.includes("Word-tree render")) {
-    fail(
-      `the eligibility note did not name the word-tree route: "${checkbox.note}"`,
-    );
-  }
-  if (!checkbox.sectionNote.includes("contract")) {
-    fail(
-      `the section note did not name the admission limits: "${checkbox.sectionNote}"`,
-    );
-  }
-  const authored = await decodeHash();
-  if (
-    authored === null ||
-    JSON.stringify(authored.finiteSolid) !== '{"level":1}'
-  ) {
-    fail(
-      `the document carries ${JSON.stringify(authored?.finiteSolid)}, expected {level:1}`,
-    );
+  if (want("general-block-authored-from-panel")) {
+    const generalLeg = leg("general-block-authored-from-panel");
+    await boot();
+    await page.evaluate(() => {
+      const sel = document.getElementById("presetSelect");
+      sel.value = "sierpinski";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await page.waitForTimeout(8000);
+    // The section ships closed (the native exclusive-open accordion): open it
+    // first, the same trusted gesture the owner makes.
+    await page.click("#glassSolidSection > summary");
+    await page.click("#glassSolidEnabledCheckbox");
+    await page.waitForTimeout(300);
+    const checkbox = await page.evaluate(() => ({
+      checked: document.getElementById("glassSolidEnabledCheckbox").checked,
+      depthHidden: document
+        .getElementById("glassSolidDepthRow")
+        .classList.contains("hidden"),
+      depth: document.getElementById("glassSolidDepthSelect").value,
+      note: document.getElementById("surfaceNote").textContent,
+      sectionNote: document.getElementById("glassSolidNote").textContent,
+    }));
+    if (!checkbox.checked) fail("the checkbox did not latch checked");
+    if (checkbox.depthHidden) fail("the depth row stayed hidden with a block");
+    if (checkbox.depth !== "1") {
+      fail(`the depth select read ${checkbox.depth}, expected 1`);
+    }
+    if (!checkbox.note.includes("Word-tree render")) {
+      fail(
+        `the eligibility note did not name the word-tree route: "${checkbox.note}"`,
+      );
+    }
+    if (!checkbox.sectionNote.includes("contract")) {
+      fail(
+        `the section note did not name the admission limits: "${checkbox.sectionNote}"`,
+      );
+    }
+    const authored = await decodeHash();
+    if (
+      authored === null ||
+      JSON.stringify(authored.finiteSolid) !== '{"level":1}'
+    ) {
+      fail(
+        `the document carries ${JSON.stringify(authored?.finiteSolid)}, expected {level:1}`,
+      );
+    }
   }
 
   // ——— Leg 2: enter Surface on the general route ———
-  const enterLeg = leg("general-session-enters-compute");
-  await enterSurface(enterLeg);
-  const entered = await probe();
-  if (entered.opticsBackend !== "estimator") {
-    fail(
-      `optics backend read ${entered.opticsBackend}, expected estimator (no Glass authored)`,
-    );
-  }
-  if (!entered.census || entered.census.traced === 0) {
-    fail(`no settled ray census: ${JSON.stringify(entered.census)}`);
+  if (want("general-session-enters-compute")) {
+    const enterLeg = leg("general-session-enters-compute");
+    await enterSurface(enterLeg);
+    const entered = await probe();
+    if (entered.opticsBackend !== "estimator") {
+      fail(
+        `optics backend read ${entered.opticsBackend}, expected estimator (no Glass authored)`,
+      );
+    }
+    if (!entered.census || entered.census.traced === 0) {
+      fail(`no settled ray census: ${JSON.stringify(entered.census)}`);
+    }
   }
 
   // ——— Leg 3: the depth rewrite restarts and re-settles ———
-  const depthLeg = leg("depth-rewrite-restarts-and-settles");
-  await page.selectOption("#glassSolidDepthSelect", "2");
-  await page.waitForTimeout(500);
-  const depthState = await page.evaluate(() => ({
-    note: document.getElementById("glassSolidDepthNote").textContent,
-    hash: null,
-  }));
-  if (!depthState.note.includes("16")) {
-    fail(
-      `the depth note did not name the 16-cell construction: "${depthState.note}"`,
+  if (want("depth-rewrite-restarts-and-settles")) {
+    const depthLeg = leg("depth-rewrite-restarts-and-settles");
+    await page.selectOption("#glassSolidDepthSelect", "2");
+    await page.waitForTimeout(500);
+    const depthState = await page.evaluate(() => ({
+      note: document.getElementById("glassSolidDepthNote").textContent,
+      hash: null,
+    }));
+    if (!depthState.note.includes("16")) {
+      fail(
+        `the depth note did not name the 16-cell construction: "${depthState.note}"`,
+      );
+    }
+    if (depthState.note.includes("refuse")) {
+      fail(
+        `the 4-map depth-2 note wrongly discloses the cap: "${depthState.note}"`,
+      );
+    }
+    await waitSurface(
+      (s) =>
+        s.mode === "surface" && s.engine === "compute" && s.settled === true,
+      180_000,
+      "the depth-2 session's re-settle",
     );
-  }
-  if (depthState.note.includes("refuse")) {
-    fail(
-      `the 4-map depth-2 note wrongly discloses the cap: "${depthState.note}"`,
-    );
-  }
-  await waitSurface(
-    (s) => s.mode === "surface" && s.engine === "compute" && s.settled === true,
-    180_000,
-    "the depth-2 session's re-settle",
-  );
-  const depthDoc = await decodeHash();
-  if (JSON.stringify(depthDoc?.finiteSolid) !== '{"level":2}') {
-    fail(
-      `the document carries ${JSON.stringify(depthDoc?.finiteSolid)}, expected {level:2}`,
-    );
+    const depthDoc = await decodeHash();
+    if (JSON.stringify(depthDoc?.finiteSolid) !== '{"level":2}') {
+      fail(
+        `the document carries ${JSON.stringify(depthDoc?.finiteSolid)}, expected {level:2}`,
+      );
+    }
   }
 
   // ——— Leg 4: the owner-authored Glass flow, through export identity ———
@@ -341,238 +386,253 @@ try {
   // `#v1=` hash so the settled session is deterministic, Surface with the
   // word tree's own optical backend LIVE, complete transport in every
   // antialias sample, and two exports byte for byte.
-  const glassLeg = leg("owner-glass-authored-and-exported");
-  glassLeg.trace = [];
-  await boot();
-  await page.evaluate(() => {
-    const sel = document.getElementById("presetSelect");
-    sel.value = "sierpinski";
-    sel.dispatchEvent(new Event("change", { bubbles: true }));
-  });
-  await page.waitForTimeout(8000);
-  await page.click("#glassSolidSection > summary");
-  await page.click("#glassSolidEnabledCheckbox");
-  await page.waitForTimeout(300);
-  // The Finish group lives under the transforms section (the exclusive
-  // accordion closes the Glass solid section — its block is already in the
-  // document). The head map is the finite cores' ONE material slot
-  // (firstChoice 0), so Glass lands on the list's first numbered transform.
-  await page.click("#transformsSection > summary");
-  await page.waitForTimeout(300);
-  await page.evaluate(() => {
-    const buttons = document.getElementById("transformList").children;
-    buttons[1].click();
-  });
-  await page.waitForTimeout(300);
-  await page.evaluate(() => {
-    const details = [
-      ...document.querySelectorAll("#transformEditor > details"),
-    ].find((d) => d.querySelector("summary")?.textContent?.trim() === "Finish");
-    if (details && !details.open) details.querySelector("summary")?.click();
-  });
-  await page.waitForTimeout(200);
-  await page.evaluate(() => {
-    const bundle = document.querySelector("#transformEditor .finish-bundle");
-    bundle.value = "glass";
-    bundle.dispatchEvent(new Event("change", { bubbles: true }));
-  });
-  await page.waitForTimeout(500);
-  const authoredGlass = await decodeHash();
-  if (JSON.stringify(authoredGlass?.finiteSolid) !== '{"level":1}') {
-    fail(
-      `the authored document carries ${JSON.stringify(authoredGlass?.finiteSolid)}, expected {level:1}`,
-    );
-  }
-  const glassMaps = (authoredGlass?.transforms ?? []).filter(
-    (t) => t.optics?.model === "dielectric",
-  );
-  if (
-    glassMaps.length !== 1 ||
-    authoredGlass?.transforms?.[0]?.optics?.model !== "dielectric"
-  ) {
-    fail(
-      `expected Glass on the head map only, got ${glassMaps.length} dielectric map(s)`,
-    );
-  }
-  // Reboot on the authored hash — the finite-glass recipe: the settled
-  // session must reproduce the authored document deterministically. The
-  // trace listener attaches from boot; the shipped legs keep their own
-  // scoping untouched.
-  const glassHash = await page.evaluate(() => location.hash);
-  activeLeg = glassLeg;
-  await page.goto(
-    `${args.url.replace(/\/+$/, "")}/?surfacestate&surfacetrace${glassHash}`,
-  );
-  await page.waitForFunction(
-    () => typeof window.__surfaceState === "function",
-    undefined,
-    { timeout: 60_000 },
-  );
-  await enterSurface(glassLeg);
-  // The settle latch can fire before the trailing antialias passes finish;
-  // the trace feed is the ground truth for completion: wait for the final
-  // token's full sample set, each frame complete and untruncated.
-  const expectedSamples = await page.evaluate(() => {
-    const label = document.getElementById("surfaceAntialiasLabel")?.textContent;
-    return Number(/^(\d+) samples\/pixel$/.exec(label ?? "")?.[1]);
-  });
-  if (!Number.isInteger(expectedSamples) || expectedSamples < 1) {
-    fail(`the antialias label did not read a sample count: ${expectedSamples}`);
-  }
-  const glassDeadline = Date.now() + 240_000;
-  for (;;) {
-    const frames = traceFrames(glassLeg.trace);
-    const last = frames.at(-1);
-    let complete = false;
-    if (last && Number.isInteger(last.token)) {
-      const final = frames.filter((frame) => frame.token === last.token);
-      complete =
-        final.length === expectedSamples &&
-        final.every((frame) => frame.completed);
-    }
-    if (complete) break;
-    if (Date.now() > glassDeadline) {
-      throw new Error(
-        "timed out waiting for the owner-glass session's complete antialias settle",
-      );
-    }
-    await page.waitForTimeout(500);
-  }
-  const glassState = await probe();
-  if (glassState.opticsBackend !== "finiteSolid") {
-    fail(
-      `optics backend read ${glassState.opticsBackend}, expected finiteSolid (Glass authored on the head map)`,
-    );
-  }
-  const census = glassState.census;
-  if (!census || census.rays === 0) {
-    fail(`no settled ray census: ${JSON.stringify(glassState.census)}`);
-  } else {
-    // A drew-nothing bar, not a quality line: the simplicial depth-1
-    // gasket is four corner TETRAHEDRA (a tetrahedron fills about a sixth
-    // of its box), measured 8.1% of the auto-fit frame where the retired
-    // box tree's four corner boxes cleared 20%.
-    const covered = census.covered / census.rays;
-    if (covered < 0.05) {
-      fail(
-        `covered fraction ${(covered * 100).toFixed(1)}% below the 5% bar — the session routed but did not draw the solid`,
-      );
-    }
-  }
-  glassLeg.frames = traceFrames(glassLeg.trace);
-  for (const message of completionFailures(
-    glassLeg.frames,
-    expectedSamples,
-    census?.rays,
-  )) {
-    fail(`owner-glass: ${message}`);
-  }
-  const tallies = glassLeg.frames
-    .filter((frame) => frame.token === glassLeg.frames.at(-1)?.token)
-    .map((frame) => frame.tallies[0]);
-  for (const frame of glassLeg.frames.filter(
-    (frame) => frame.token === glassLeg.frames.at(-1)?.token,
-  )) {
-    if (Object.keys(frame.failureClasses).length > 0) {
-      log(
-        `[owner-glass] sample ${frame.sample} failure classes: ` +
-          JSON.stringify(frame.failureClasses),
-      );
-    }
-  }
-  log(
-    `[owner-glass] samples=${expectedSamples} rays=${census?.rays} transport=` +
-      JSON.stringify(tallies.at(-1) ?? null),
-  );
-  // Export identity: two Save-PNG runs of the same settled session must be
-  // byte for byte (the app's own export determinism, pinned for the general
-  // word tree at the export seam the unit tests cannot reach).
-  await page.click("#captureSection > summary");
-  await page.selectOption("#exportScale", "1");
-  const exports = [];
-  for (const run of [1, 2]) {
-    const promise = page.waitForEvent("download", { timeout: 120_000 });
-    await page.click("#savePngBtn");
-    const download = await promise;
-    const bytes = readFileSync(await download.path());
-    exports.push({
-      run,
-      bytes: bytes.length,
-      dimensions: pngDimensions(bytes),
-      sha256: sha256(bytes),
+  if (want("owner-glass-authored-and-exported")) {
+    const glassLeg = leg("owner-glass-authored-and-exported");
+    glassLeg.trace = [];
+    await boot();
+    await page.evaluate(() => {
+      const sel = document.getElementById("presetSelect");
+      sel.value = "sierpinski";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
     });
-  }
-  activeLeg = null;
-  if (exports[0].sha256 !== exports[1].sha256) {
-    fail(
-      `the two exports differ (${exports[0].bytes} vs ${exports[1].bytes} bytes)` +
-        " — the general session's export is not reproducible",
+    await page.waitForTimeout(8000);
+    await page.click("#glassSolidSection > summary");
+    await page.click("#glassSolidEnabledCheckbox");
+    await page.waitForTimeout(300);
+    // The Finish group lives under the transforms section (the exclusive
+    // accordion closes the Glass solid section — its block is already in the
+    // document). The head map is the finite cores' ONE material slot
+    // (firstChoice 0), so Glass lands on the list's first numbered transform.
+    await page.click("#transformsSection > summary");
+    await page.waitForTimeout(300);
+    await page.evaluate(() => {
+      const buttons = document.getElementById("transformList").children;
+      buttons[1].click();
+    });
+    await page.waitForTimeout(300);
+    await page.evaluate(() => {
+      const details = [
+        ...document.querySelectorAll("#transformEditor > details"),
+      ].find(
+        (d) => d.querySelector("summary")?.textContent?.trim() === "Finish",
+      );
+      if (details && !details.open) details.querySelector("summary")?.click();
+    });
+    await page.waitForTimeout(200);
+    await page.evaluate(() => {
+      const bundle = document.querySelector("#transformEditor .finish-bundle");
+      bundle.value = "glass";
+      bundle.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await page.waitForTimeout(500);
+    const authoredGlass = await decodeHash();
+    if (JSON.stringify(authoredGlass?.finiteSolid) !== '{"level":1}') {
+      fail(
+        `the authored document carries ${JSON.stringify(authoredGlass?.finiteSolid)}, expected {level:1}`,
+      );
+    }
+    const glassMaps = (authoredGlass?.transforms ?? []).filter(
+      (t) => t.optics?.model === "dielectric",
+    );
+    if (
+      glassMaps.length !== 1 ||
+      authoredGlass?.transforms?.[0]?.optics?.model !== "dielectric"
+    ) {
+      fail(
+        `expected Glass on the head map only, got ${glassMaps.length} dielectric map(s)`,
+      );
+    }
+    // Reboot on the authored hash — the finite-glass recipe: the settled
+    // session must reproduce the authored document deterministically. The
+    // trace listener attaches from boot; the shipped legs keep their own
+    // scoping untouched.
+    const glassHash = await page.evaluate(() => location.hash);
+    activeLeg = glassLeg;
+    await page.goto(
+      `${args.url.replace(/\/+$/, "")}/?surfacestate&surfacetrace${glassHash}`,
+    );
+    await page.waitForFunction(
+      () => typeof window.__surfaceState === "function",
+      undefined,
+      { timeout: 60_000 },
+    );
+    await enterSurface(glassLeg);
+    // The settle latch can fire before the trailing antialias passes finish;
+    // the trace feed is the ground truth for completion: wait for the final
+    // token's full sample set, each frame complete and untruncated.
+    const expectedSamples = await page.evaluate(() => {
+      const label = document.getElementById(
+        "surfaceAntialiasLabel",
+      )?.textContent;
+      return Number(/^(\d+) samples\/pixel$/.exec(label ?? "")?.[1]);
+    });
+    if (!Number.isInteger(expectedSamples) || expectedSamples < 1) {
+      fail(
+        `the antialias label did not read a sample count: ${expectedSamples}`,
+      );
+    }
+    const glassDeadline = Date.now() + 240_000;
+    for (;;) {
+      const frames = traceFrames(glassLeg.trace);
+      const last = frames.at(-1);
+      let complete = false;
+      if (last && Number.isInteger(last.token)) {
+        const final = frames.filter((frame) => frame.token === last.token);
+        complete =
+          final.length === expectedSamples &&
+          final.every((frame) => frame.completed);
+      }
+      if (complete) break;
+      if (Date.now() > glassDeadline) {
+        throw new Error(
+          "timed out waiting for the owner-glass session's complete antialias settle",
+        );
+      }
+      await page.waitForTimeout(500);
+    }
+    const glassState = await probe();
+    if (glassState.opticsBackend !== "finiteSolid") {
+      fail(
+        `optics backend read ${glassState.opticsBackend}, expected finiteSolid (Glass authored on the head map)`,
+      );
+    }
+    const census = glassState.census;
+    if (!census || census.rays === 0) {
+      fail(`no settled ray census: ${JSON.stringify(glassState.census)}`);
+    } else {
+      // A drew-nothing bar, not a quality line: the simplicial depth-1
+      // gasket is four corner TETRAHEDRA (a tetrahedron fills about a sixth
+      // of its box), measured 8.1% of the auto-fit frame where the retired
+      // box tree's four corner boxes cleared 20%.
+      const covered = census.covered / census.rays;
+      if (covered < 0.05) {
+        fail(
+          `covered fraction ${(covered * 100).toFixed(1)}% below the 5% bar — the session routed but did not draw the solid`,
+        );
+      }
+    }
+    glassLeg.frames = traceFrames(glassLeg.trace);
+    for (const message of completionFailures(
+      glassLeg.frames,
+      expectedSamples,
+      census?.rays,
+    )) {
+      fail(`owner-glass: ${message}`);
+    }
+    const tallies = glassLeg.frames
+      .filter((frame) => frame.token === glassLeg.frames.at(-1)?.token)
+      .map((frame) => frame.tallies[0]);
+    for (const frame of glassLeg.frames.filter(
+      (frame) => frame.token === glassLeg.frames.at(-1)?.token,
+    )) {
+      if (Object.keys(frame.failureClasses).length > 0) {
+        log(
+          `[owner-glass] sample ${frame.sample} failure classes: ` +
+            JSON.stringify(frame.failureClasses),
+        );
+      }
+    }
+    log(
+      `[owner-glass] samples=${expectedSamples} rays=${census?.rays} transport=` +
+        JSON.stringify(tallies.at(-1) ?? null),
+    );
+    // Export identity: two Save-PNG runs of the same settled session must be
+    // byte for byte (the app's own export determinism, pinned for the general
+    // word tree at the export seam the unit tests cannot reach).
+    await page.click("#captureSection > summary");
+    await page.selectOption("#exportScale", "1");
+    const exports = [];
+    for (const run of [1, 2]) {
+      const promise = page.waitForEvent("download", { timeout: 120_000 });
+      await page.click("#savePngBtn");
+      const download = await promise;
+      const bytes = readFileSync(await download.path());
+      exports.push({
+        run,
+        bytes: bytes.length,
+        dimensions: pngDimensions(bytes),
+        sha256: sha256(bytes),
+      });
+    }
+    activeLeg = null;
+    if (exports[0].sha256 !== exports[1].sha256) {
+      fail(
+        `the two exports differ (${exports[0].bytes} vs ${exports[1].bytes} bytes)` +
+          " — the general session's export is not reproducible",
+      );
+    }
+    if (
+      !exports[0].dimensions ||
+      JSON.stringify(exports[0].dimensions) !==
+        JSON.stringify(exports[1].dimensions)
+    ) {
+      fail(
+        `the export dimensions read ${JSON.stringify(exports[0].dimensions)}`,
+      );
+    }
+    mkdirSync("scripts/out", { recursive: true });
+    writeFileSync(
+      "scripts/out/glass-media-owner-glass.trace.txt",
+      [`hash ${glassHash}`, ...glassLeg.trace].join("\n"),
+    );
+    log(
+      `[owner-glass] export identity: ${exports[0].bytes} bytes ` +
+        `${exports[0].dimensions?.width}x${exports[0].dimensions?.height} ` +
+        `sha ${exports[0].sha256.slice(0, 12)}…`,
     );
   }
-  if (
-    !exports[0].dimensions ||
-    JSON.stringify(exports[0].dimensions) !==
-      JSON.stringify(exports[1].dimensions)
-  ) {
-    fail(`the export dimensions read ${JSON.stringify(exports[0].dimensions)}`);
-  }
-  mkdirSync("scripts/out", { recursive: true });
-  writeFileSync(
-    "scripts/out/glass-media-owner-glass.trace.txt",
-    [`hash ${glassHash}`, ...glassLeg.trace].join("\n"),
-  );
-  log(
-    `[owner-glass] export identity: ${exports[0].bytes} bytes ` +
-      `${exports[0].dimensions?.width}x${exports[0].dimensions?.height} ` +
-      `sha ${exports[0].sha256.slice(0, 12)}…`,
-  );
 
   // ——— Leg 5: the shaped block reads read-only and still serves optics ———
-  const shapedLeg = leg("shaped-preset-reads-read-only");
-  await page.goto(`${args.url}/?surfacestate`);
-  await page.waitForFunction(
-    () => {
-      const el = document.getElementById("pointCount");
-      return !!el && Number((el.textContent || "").replace(/[^\d]/g, "")) > 0;
-    },
-    undefined,
-    { timeout: 60_000, polling: 100 },
-  );
-  await page.evaluate(() => {
-    const sel = document.getElementById("presetSelect");
-    sel.value = "glassMenger";
-    sel.dispatchEvent(new Event("change", { bubbles: true }));
-  });
-  // The preset lands via a replace-load morph; wait it out.
-  await page.waitForTimeout(8000);
-  const shaped = await page.evaluate(() => ({
-    checked: document.getElementById("glassSolidEnabledCheckbox").checked,
-    disabled: document.getElementById("glassSolidEnabledCheckbox").disabled,
-    depth: document.getElementById("glassSolidDepthSelect").value,
-    depthDisabled: document.getElementById("glassSolidDepthSelect").disabled,
-    note: document.getElementById("glassSolidNote").textContent,
-    eligibility: document.getElementById("surfaceNote").textContent,
-  }));
-  if (!shaped.checked) fail("the shaped block did not read checked");
-  if (!shaped.disabled) fail("the checkbox stayed editable on a shaped block");
-  if (!shaped.depthDisabled)
-    fail("the depth select stayed editable on a shaped block");
-  if (shaped.depth !== "2")
-    fail(`the depth select read ${shaped.depth}, expected 2`);
-  if (!shaped.note.includes("read-only")) {
-    fail(`the shaped note did not name the read-only state: "${shaped.note}"`);
-  }
-  if (!shaped.eligibility.includes("Menger")) {
-    fail(
-      `the eligibility note did not name the Menger route: "${shaped.eligibility}"`,
+  if (want("shaped-preset-reads-read-only")) {
+    const shapedLeg = leg("shaped-preset-reads-read-only");
+    await page.goto(`${args.url}/?surfacestate`);
+    await page.waitForFunction(
+      () => {
+        const el = document.getElementById("pointCount");
+        return !!el && Number((el.textContent || "").replace(/[^\d]/g, "")) > 0;
+      },
+      undefined,
+      { timeout: 60_000, polling: 100 },
     );
-  }
-  await enterSurface(shapedLeg);
-  const shapedState = await probe();
-  if (shapedState.opticsBackend !== "finiteSolid") {
-    fail(
-      `optics backend read ${shapedState.opticsBackend}, expected finiteSolid (the preset's Glass)`,
-    );
+    await page.evaluate(() => {
+      const sel = document.getElementById("presetSelect");
+      sel.value = "glassMenger";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    // The preset lands via a replace-load morph; wait it out.
+    await page.waitForTimeout(8000);
+    const shaped = await page.evaluate(() => ({
+      checked: document.getElementById("glassSolidEnabledCheckbox").checked,
+      disabled: document.getElementById("glassSolidEnabledCheckbox").disabled,
+      depth: document.getElementById("glassSolidDepthSelect").value,
+      depthDisabled: document.getElementById("glassSolidDepthSelect").disabled,
+      note: document.getElementById("glassSolidNote").textContent,
+      eligibility: document.getElementById("surfaceNote").textContent,
+    }));
+    if (!shaped.checked) fail("the shaped block did not read checked");
+    if (!shaped.disabled)
+      fail("the checkbox stayed editable on a shaped block");
+    if (!shaped.depthDisabled)
+      fail("the depth select stayed editable on a shaped block");
+    if (shaped.depth !== "2")
+      fail(`the depth select read ${shaped.depth}, expected 2`);
+    if (!shaped.note.includes("read-only")) {
+      fail(
+        `the shaped note did not name the read-only state: "${shaped.note}"`,
+      );
+    }
+    if (!shaped.eligibility.includes("Menger")) {
+      fail(
+        `the eligibility note did not name the Menger route: "${shaped.eligibility}"`,
+      );
+    }
+    await enterSurface(shapedLeg);
+    const shapedState = await probe();
+    if (shapedState.opticsBackend !== "finiteSolid") {
+      fail(
+        `optics backend read ${shapedState.opticsBackend}, expected finiteSolid (the preset's Glass)`,
+      );
+    }
   }
 
   // ——— Legs 6 and 7: Glass on documents the box tree refused ———
@@ -801,18 +861,365 @@ try {
   };
   // The boot system is the "default" preset ("Twisted Tetrahedron"); load
   // it explicitly — a boot restores the previous leg's saved scene.
-  await simplicialGlassLeg(
-    "rotating-boot-document-glass",
-    "default",
-    3,
-    64,
-    [0, 2],
-  );
-  await simplicialGlassLeg("pentatope-4d-glass", "pentatope", 2, 25, [0]);
+  if (want("rotating-boot-document-glass")) {
+    await simplicialGlassLeg(
+      "rotating-boot-document-glass",
+      "default",
+      3,
+      64,
+      [0, 2],
+    );
+  }
+  if (want("pentatope-4d-glass")) {
+    await simplicialGlassLeg("pentatope-4d-glass", "pentatope", 2, 25, [0]);
+  }
   // The owner's own document: the Menger maps with Glass on maps 1 and 20
   // (two opposite corners) at depth 2 — under the composite the other 18
   // maps render as the sponge itself, seen through the glass corners.
-  await simplicialGlassLeg("menger-corners-glass", "menger", 2, 400, [0, 19]);
+  if (want("menger-corners-glass")) {
+    await simplicialGlassLeg("menger-corners-glass", "menger", 2, 400, [0, 19]);
+  }
+
+  // ——— Leg 9: the authored glass index bends a glass-glass crossing ———
+  // fr-jd5c.24's gate, both dimensions. Glass on the listed maps with the
+  // index maps' Glass index row dragged to 1.7 FROM THE PANEL (the Finish
+  // group's optics row — the whole authoring chain), then the SAME maps
+  // dragged back to 1.45, the field's own classic value whose removal
+  // MERGES the two materials into one medium. The bent document's settle
+  // must read the two distinct media codes on the probe, complete in every
+  // antialias sample, and export byte-identically twice; the straight
+  // document must read the merged code and the two documents' exports must
+  // DIFFER — the authored index reaches the transport, and the interface
+  // between the two media bends where the merged one passes straight.
+  const glassIndexLeg = async (
+    name,
+    preset,
+    depth,
+    cells,
+    glassMaps,
+    indexMaps,
+    expectedBentCodes,
+    expectedStraightCodes,
+    zoomNotches = 0,
+  ) => {
+    const record = leg(name);
+    record.trace = [];
+    await boot();
+    await page.evaluate((value) => {
+      const sel = document.getElementById("presetSelect");
+      sel.value = value;
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    }, preset);
+    await page.waitForTimeout(8000);
+    // Optional wheel-in: the settled auto-fit frames the attractor's full
+    // dust extent, which can leave the SOLID under two percent of the
+    // frame (the pentatope's hull sits at 1.5% of its settled fit) — the
+    // covered bar would then judge a session that drew its subject as if
+    // it had drawn nothing. Each notch is the shipped wheel dolly's 0.9;
+    // nothing is selected at this point, so the wheel dollies the camera.
+    // The zoomed pose itself rides the NEXT debounced save, so the
+    // authoring edits below are what carry it into both hashes.
+    if (zoomNotches > 0) {
+      const canvas = await page.$("canvas");
+      if (!canvas) throw new Error(`main canvas is missing`);
+      const box = await canvas.boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      for (let i = 0; i < zoomNotches; i++) {
+        await page.mouse.wheel(0, -100);
+        await page.waitForTimeout(60);
+      }
+      // The wheel burst commits once after its quiet period; wait past it
+      // and any pose tween before the authoring starts.
+      await page.waitForTimeout(2500);
+    }
+    await page.click("#glassSolidSection > summary");
+    await page.click("#glassSolidEnabledCheckbox");
+    await page.waitForTimeout(300);
+    await page.selectOption("#glassSolidDepthSelect", String(depth));
+    await page.waitForTimeout(300);
+    await page.click("#transformsSection > summary");
+    await page.waitForTimeout(300);
+    // Glass on each listed map (list row = map index + 1; row 0 is the
+    // camera card), the index drag on each listed index map through the
+    // Finish group's Glass index range — the bundle pick materializes the
+    // optics spine and wakes the rows (a scripted write succeeds on a
+    // disabled input, so the enabled checks are what make this a gate).
+    for (const mapIndex of glassMaps) {
+      await page.evaluate((row) => {
+        document.getElementById("transformList").children[row].click();
+      }, mapIndex + 1);
+      await page.waitForTimeout(300);
+      await page.evaluate(() => {
+        const details = [
+          ...document.querySelectorAll("#transformEditor > details"),
+        ].find(
+          (d) => d.querySelector("summary")?.textContent?.trim() === "Finish",
+        );
+        if (details && !details.open) details.querySelector("summary")?.click();
+      });
+      await page.waitForTimeout(200);
+      const pickable = await page.evaluate(() => {
+        const bundle = document.querySelector(
+          "#transformEditor .finish-bundle",
+        );
+        if (!bundle || bundle.disabled) return false;
+        bundle.value = "glass";
+        bundle.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      });
+      if (!pickable) {
+        fail(
+          `${name}: map ${mapIndex + 1}'s Finish bundle is disabled at the Glass pick`,
+        );
+      }
+      await page.waitForTimeout(400);
+      if (indexMaps.includes(mapIndex)) {
+        const dragged = await page.evaluate(() => {
+          const slider = [
+            ...document.querySelectorAll(
+              "#transformEditor .optics-row input[type=range]",
+            ),
+          ].find((s) => s.getAttribute("aria-label") === "Optics Glass index");
+          if (!slider || slider.disabled) return false;
+          slider.value = "1.7";
+          slider.dispatchEvent(new Event("input", { bubbles: true }));
+          return true;
+        });
+        if (!dragged) {
+          fail(
+            `${name}: map ${mapIndex + 1}'s Glass index row is disabled at the drag`,
+          );
+        }
+        await page.waitForTimeout(400);
+      }
+    }
+    const hashA = await page.evaluate(() => location.hash);
+    const docA = await decodeHash();
+    const opticsOf = (doc, i) => doc?.transforms?.[i]?.optics;
+    for (const mapIndex of glassMaps) {
+      const optics = opticsOf(docA, mapIndex);
+      if (optics?.model !== "dielectric") {
+        fail(
+          `${name}: map ${mapIndex + 1} decoded ${JSON.stringify(optics)}, expected the dielectric selector`,
+        );
+      }
+      if (indexMaps.includes(mapIndex) && optics?.ior !== 1.7) {
+        fail(
+          `${name}: map ${mapIndex + 1} decoded ior ${JSON.stringify(optics?.ior)}, expected 1.7`,
+        );
+      }
+    }
+    // Drag every authored index back to the classic 1.45 — the field's own
+    // removal rule — so the two materials merge into ONE medium.
+    for (const mapIndex of indexMaps) {
+      await page.evaluate((row) => {
+        document.getElementById("transformList").children[row].click();
+      }, mapIndex + 1);
+      await page.waitForTimeout(300);
+      await page.evaluate(() => {
+        const details = [
+          ...document.querySelectorAll("#transformEditor > details"),
+        ].find(
+          (d) => d.querySelector("summary")?.textContent?.trim() === "Finish",
+        );
+        if (details && !details.open) details.querySelector("summary")?.click();
+      });
+      await page.waitForTimeout(200);
+      await page.evaluate(() => {
+        const slider = [
+          ...document.querySelectorAll(
+            "#transformEditor .optics-row input[type=range]",
+          ),
+        ].find((s) => s.getAttribute("aria-label") === "Optics Glass index");
+        slider.value = "1.45";
+        slider.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await page.waitForTimeout(400);
+    }
+    const hashB = await page.evaluate(() => location.hash);
+    const docB = await decodeHash();
+    for (const mapIndex of glassMaps) {
+      const optics = opticsOf(docB, mapIndex);
+      if (optics?.model !== "dielectric" || "ior" in (optics ?? {})) {
+        fail(
+          `${name}: the straight document's map ${mapIndex + 1} decoded ${JSON.stringify(optics)}, expected the bare dielectric selector`,
+        );
+      }
+    }
+
+    // Settle on the authored hash, read the live media codes off the probe,
+    // and export twice. Returns the last export's sha. The phase's own
+    // search token (`leg=<tag>`) is what forces a FULL reload: a goto that
+    // differs only in the fragment is a same-document navigation, and the
+    // app — which reads the hash at boot only — would keep running the
+    // previous phase's session (the shipped legs re-boot first, which is
+    // why they never hit this).
+    const settleAndExport = async (hash, expectedCodes, tag) => {
+      record.trace = [];
+      activeLeg = record;
+      await page.goto(
+        `${args.url.replace(/\/+$/, "")}/?surfacestate&surfacetrace&leg=${encodeURIComponent(tag)}${hash}`,
+      );
+      await page.waitForFunction(
+        () => typeof window.__surfaceState === "function",
+        undefined,
+        { timeout: 60_000 },
+      );
+      // The reloaded page must carry THIS phase's document: a same-document
+      // navigation (or a stale debounced save) would boot the previous
+      // phase's session and every assertion below would judge the wrong
+      // scene.
+      const bootedHash = await page.evaluate(() => location.hash);
+      if (bootedHash !== hash) {
+        throw new Error(
+          `${tag}: booted on ${bootedHash.slice(0, 48)}…, expected this phase's ${hash.slice(0, 48)}…`,
+        );
+      }
+      await enterSurface(record, 600_000);
+      const samples = await page.evaluate(() => {
+        const label = document.getElementById(
+          "surfaceAntialiasLabel",
+        )?.textContent;
+        return Number(/^(\d+) samples\/pixel$/.exec(label ?? "")?.[1]);
+      });
+      const deadline = Date.now() + 300_000;
+      for (;;) {
+        const frames = traceFrames(record.trace);
+        const last = frames.at(-1);
+        if (last && Number.isInteger(last.token)) {
+          const final = frames.filter((f) => f.token === last.token);
+          if (final.length === samples && final.every((f) => f.completed)) {
+            break;
+          }
+        }
+        if (Date.now() > deadline) {
+          const state = await probe();
+          throw new Error(
+            `timed out waiting for ${tag}'s complete settle; samples=${samples} ` +
+              `probe=${JSON.stringify(state)} lastFrames=${JSON.stringify(frames.slice(-3))}`,
+          );
+        }
+        await page.waitForTimeout(500);
+      }
+      activeLeg = null;
+      const state = await probe();
+      if (state.opticsBackend !== "finiteSolid") {
+        fail(
+          `${tag}: optics backend read ${state.opticsBackend}, expected finiteSolid`,
+        );
+      }
+      if (state.finiteComposite !== true) {
+        fail(
+          `${tag}: the session did not take the composite route (finiteComposite=${state.finiteComposite})`,
+        );
+      }
+      if (JSON.stringify(state.mediaCodes) !== JSON.stringify(expectedCodes)) {
+        fail(
+          `${tag}: media codes read ${JSON.stringify(state.mediaCodes)}, expected ${JSON.stringify(expectedCodes)}`,
+        );
+      }
+      const census = state.census;
+      const covered = census?.rays ? census.covered / census.rays : 0;
+      if (covered < 0.05) {
+        fail(
+          `${tag}: covered fraction ${(covered * 100).toFixed(1)}% — the session routed but did not draw the solid`,
+        );
+      }
+      record.frames = traceFrames(record.trace);
+      // The failure classes before the export (the export's download can
+      // be the thing that times out): the per-class counts name the
+      // unresolved work's shape even when the run's verdict is already
+      // written.
+      const lastToken0 = record.frames.at(-1)?.token;
+      for (const frame of record.frames.filter((f) => f.token === lastToken0)) {
+        if (Object.keys(frame.failureClasses).length > 0) {
+          log(
+            `[${tag}] sample ${frame.sample} failure classes: ` +
+              JSON.stringify(frame.failureClasses),
+          );
+        }
+      }
+      for (const message of completionFailures(
+        record.frames,
+        samples,
+        census?.rays,
+      )) {
+        fail(`${tag}: ${message}`);
+      }
+      await page.click("#captureSection > summary");
+      await page.selectOption("#exportScale", "1");
+      // The export re-traces at export scale; a settle near the envelope
+      // can push the download past the shipped legs' 180 s.
+      const promise = page.waitForEvent("download", { timeout: 600_000 });
+      await page.click("#savePngBtn");
+      const download = await promise;
+      const bytes = readFileSync(await download.path());
+      mkdirSync("scripts/out", { recursive: true });
+      writeFileSync(`scripts/out/glass-index-${tag}.png`, bytes);
+      writeFileSync(
+        `scripts/out/glass-index-${tag}.trace.txt`,
+        [`hash ${hash}`, ...record.trace].join("\n"),
+      );
+      const sha = sha256(bytes);
+      log(
+        `[${tag}] media=${JSON.stringify(state.mediaCodes)} rays=${census?.rays} export ${bytes.length} bytes sha ${sha.slice(0, 12)}…`,
+      );
+      return sha;
+    };
+    const shaBent = await settleAndExport(
+      hashA,
+      expectedBentCodes,
+      `${name}-bent`,
+    );
+    const shaStraight = await settleAndExport(
+      hashB,
+      expectedStraightCodes,
+      `${name}-straight`,
+    );
+    if (shaBent === shaStraight) {
+      fail(
+        `${name}: the bent and straight documents exported identical images — the authored index did not reach the transport`,
+      );
+    }
+    log(
+      `[${name}] bent sha ${shaBent.slice(0, 12)}… != straight sha ${shaStraight.slice(0, 12)}… — the crossing bent`,
+    );
+  };
+  // 3D: the boot document (three of four maps rotate; the box tree refused
+  // it) at depth 2 — glass on maps 1-3, index 1.7 on maps 2 and 3 (the
+  // bench's measured two-glass shape [1,2,2,0]; the CPU fixture's own
+  // probes cross 1<->2 interfaces at this depth). Depth 2 rather than the
+  // boot leg's 3: the depth-3 word tree currently leaves a 1-3 ray
+  // inside-miss residue per settle sample (fr-jpjl, filed off this gate's
+  // own leg 6), which would fail the strict completion for a defect that
+  // is not this leg's subject.
+  if (want("glass-index-default-3d")) {
+    await glassIndexLeg(
+      "glass-index-default-3d",
+      "default",
+      2,
+      16,
+      [0, 1, 2],
+      [1, 2],
+      [1, 2, 2, 0],
+      [1, 1, 1, 0],
+    );
+  }
+  // 4D: the pentatope at depth 2 — glass on maps 1 and 2, index 1.7 on map
+  // 2 (codes [1,2,0,0,0]); the native posed slice, same shared resolver.
+  if (want("glass-index-pentatope-4d")) {
+    await glassIndexLeg(
+      "glass-index-pentatope-4d",
+      "pentatope",
+      2,
+      25,
+      [0, 1],
+      [1],
+      [1, 2, 0, 0, 0],
+      [1, 1, 0, 0, 0],
+      6,
+    );
+  }
 } catch (err) {
   checkingFailed = true;
   report.checkingFailure = err instanceof Error ? err.message : String(err);
