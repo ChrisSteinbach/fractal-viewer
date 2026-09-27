@@ -1576,16 +1576,22 @@ untouched, byte for byte.
   start medium, which the corner class's one-query-deeper retry adopts.
   Every media emission is gated on the wire carrying a media table, so
   every other kernel's text is byte-identical (the digest pins hold).
-- **Disclosed limits.** (1) Per-map optics has NO authorable index — only
-  model, scale and distortion — so two glass maps can differ in Beer
-  scale (a different medium, a silent-by-index interface with its own
-  absorption) but not yet in index; the kernel and the bench exercise
-  unequal indices, the authoring does not reach them. (2) An opaque
-  terminal seen through glass is not fogged (its radiance already rides
-  the glass path's attenuation), and under the cinematic lighting rig it
-  keeps the classic entry's lighting. (3) Glass subtrees cast the display
-  DE's shadows onto opaque ones (the shade entry's shadow march reads the
-  union's display field).
+- **Disclosed limits.** (1) The per-map glass INDEX is authored now
+  (`optics.ior`, the resolver's [1.01, 3] band, absent meaning the
+  qualified `DIELECTRIC_IOR` byte-identically; an out-of-band finite
+  value REFUSES the whole optics block to the classic state rather than
+  clamping — a clamp could silently merge two authored media and erase
+  the bend the author asked for): two glass maps at different indices are
+  two media, and their shared boundary refracts with both indices; the
+  panel's Glass index row authors it, the per-map media codes key the
+  resolved lanes (equal-index maps merge into one silent medium), and the
+  app gate's fr-jd5c.24 leg witnesses the bend in both dimensions. The
+  per-channel ABSORPTION is still the qualified constant — authoring it
+  remains open. (2) An opaque terminal seen through glass is not fogged
+  (its radiance already rides the glass path's attenuation), and under
+  the cinematic lighting rig it keeps the classic entry's lighting.
+  (3) Glass subtrees cast the display DE's shadows onto opaque ones (the
+  shade entry's shadow march reads the union's display field).
 - **A defect the host fixed on the way.** The finite target's params
   packed the SHAPED grid's radius (1.3) for a general session; the shade
   entry's AO/shadow scales and the shadow march's exit read it, so a

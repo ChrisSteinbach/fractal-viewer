@@ -1013,9 +1013,14 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
     **Translucent** document keeps its original thin-shell meaning — its
     `Transmit` slider fades toward the backdrop and never shows rear geometry;
     only the Glass bundle (or a scene that already carries the model, such as
-    the **Glass transmission** starters) opts in. Two rows sit under the six
+    the **Glass transmission** starters) opts in. Three rows sit under the six
     finish sliders, dormant until the transform authors the model:
-    **Distortion** (`0–0.25`, `0` = straight transmission byte-identically;
+    **Glass index** (`1.01–3`, the interior index of refraction; the
+    qualified default `1.45` is the classic value whose drag removes the
+    field — the DIFFERENCE of two glass maps' indices is what makes their
+    shared boundary a bending interface, so two maps at one index merge into
+    one medium that passes rays through silently), **Distortion** (`0–0.25`,
+    `0` = straight transmission byte-identically;
     the restrained virtual-slab offset that bends the view seen THROUGH the
     glass — the frosted cue — at about `0.08`) and **Optical scale** (a
     logarithmic `0.01–100` slider whose centre is exactly `1`, the qualified
