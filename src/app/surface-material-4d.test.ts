@@ -58,12 +58,12 @@ const BALLOON_PALETTE_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "4D balloon finish0": {
-    resolved: "aba8832def9fc872",
-    emitted: "0d23ec9c7f261087",
+    resolved: "1064b1c7f55dac1b",
+    emitted: "ed60e94146157569",
   },
   "4D balloon finish1": {
-    resolved: "73ffde2749c5800f",
-    emitted: "03ed8ae6ce24f137",
+    resolved: "d370a9703f339864",
+    emitted: "e446b3b56a95da29",
   },
 };
 
@@ -73,28 +73,28 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "4D base finish0": {
-    resolved: "1faa5443d7485caa" /* optics lane pair appended to the block */,
-    emitted: "1faa5443d7485caa" /* optics lane pair appended to the block */,
+    resolved: "03f1ff298d0b36c7" /* optics lane pair appended to the block */,
+    emitted: "b3cc730fc3ae3d6c" /* optics lane pair appended to the block */,
   },
   "4D balloon finish0": {
-    resolved: "aba8832def9fc872",
-    emitted: "0d23ec9c7f261087",
+    resolved: "1064b1c7f55dac1b",
+    emitted: "ed60e94146157569",
   },
   "4D plane finish0": {
-    resolved: "e5d93a55c42a7f02",
-    emitted: "368d3043c330bb61",
+    resolved: "261c1512a4311fe6",
+    emitted: "125f86560b255b40",
   },
   "4D base finish1": {
-    resolved: "d2be72fc4d28af5f",
-    emitted: "ebf0adc4beb672a7",
+    resolved: "3c55e558cb76e2c7",
+    emitted: "188ce6c2fb90e8c5",
   },
   "4D balloon finish1": {
-    resolved: "73ffde2749c5800f",
-    emitted: "03ed8ae6ce24f137",
+    resolved: "d370a9703f339864",
+    emitted: "e446b3b56a95da29",
   },
   "4D plane finish1": {
-    resolved: "b7fdf1b1f4d92b7b",
-    emitted: "71f12f0a7b7105b3",
+    resolved: "0433888b6a16ac6f",
+    emitted: "5199542cb5996735",
   },
 };
 
@@ -977,19 +977,20 @@ describe("the 4D tracer's variant arms", () => {
   // plane 70527 B (68.9KB) / 18215 B (17.8KB). The assertions below pin
   // the CONTRACT (under threshold, arms present or absent) rather than
   // those figures, which any shader edit moves.
-  it("resolves the shipped source verbatim when both arms are off", () => {
+  it("boots the material on the stripped plain token stream once both arms are off", () => {
     const glsl = surface4FragmentFor();
     expect(glsl).toBe(createSurfaceMaterial4().fragmentShader);
-    // Un-stripped: indentation and block comments survive, which is the
-    // observable half of "a plain 4D session hands the driver the bytes it
-    // always did".
-    expect(glsl).toContain("\n  precision highp float;");
-    // RESOLVED length, not emitted: emitted stays byte-identical to
-    // resolved only below the threshold, so an emitted-length assertion
-    // would keep passing even after this arm crossed it and got stripped
-    // to a third. Today's figure: 62765 B, 2771 B under the threshold —
-    // the tightest margin of any shipped unstripped arm.
-    expect(surface4FragmentResolvedFor().length).toBeLessThan(
+    // The 2026-09-27 refinedCert/eState restore spent the plain arm's last
+    // unstripped margin (65981 B resolved), so the plain session now ships
+    // the STRIPPED token stream like every other arm — the documented
+    // benign crossing: identical tokens, no driver-visible commentary.
+    expect(glsl).not.toContain("//");
+    expect(glsl).toContain("precision highp float;");
+    // RESOLVED length, not emitted: the emitted stream stays a third of
+    // the resolved source whatever the threshold does, so an
+    // emitted-length assertion would keep passing long after a crossing.
+    // Today's figure: 65981 B resolved, 445 B over the threshold.
+    expect(surface4FragmentResolvedFor().length).toBeGreaterThan(
       SURFACE_GLSL_STRIP_BYTES,
     );
     for (const token of [
@@ -1298,10 +1299,10 @@ describe("compile-gated finite tiling in the 4D GLSL tracer", () => {
 
   it("keeps the pre-lattice finite source bytes frozen", () => {
     expect(sha256(sourceFor(f4))).toBe(
-      "c928c41d0a2ed1070c5e56615add56e6b9b34977c33794925a6e6410fb178ad4" /* optics lane pair appended to the block */,
+      "40f776880bfcfd77ce5743846195b70112b6c3e3442c7de53711cefba89765c3" /* optics lane pair appended to the block */,
     );
     expect(sha256(surface4FragmentFor(0, 0, 0, 0, null, 0, 0, f4))).toBe(
-      "23271f014db5a77aa2df5ed990fd7a50f8e8e32a6f9b3b15241dcb1680eddc30" /* optics lane pair appended to the block */,
+      "2cb4bd6db093e308afaf4e102a848b9e4cb64f8a99bf48bd4e62237a3f94d04f" /* optics lane pair appended to the block */,
     );
   });
 
@@ -2183,24 +2184,21 @@ describe("the 4D tracer's finish arm", () => {
     expect(() => surface4FragmentFor(1, 1, 1)).toThrow(RangeError);
   });
 
-  it("keeps the plain 4D arm's unstripped margin honest after the optics lane pair's arrival", () => {
-    // The optics lane pair's UNCONDITIONAL block member costs every 4D
-    // program ~1.9KB raw, which pushed the plain+finish arm (63878 B,
-    // once this file's tightest unstripped material pairing) over the
-    // strip threshold — it now strips, like every scene arm. The
-    // tightest UNstripped pairing is the bare off arm: 64686 B resolved,
-    // 850 B under, and the only row whose driver bytes a comment-only
-    // edit can reach.
+  it("records every 4D arm stripped after the refinedCert/eState restore", () => {
+    // The optics lane pair's UNCONDITIONAL block member pushed plain+finish
+    // (66614 B) over the strip threshold; the 2026-09-27 refinedCert head
+    // and unconditional-eState restore then spent the bare off arm's last
+    // margin (65981 B resolved, 445 B over) — so EVERY 4D arm now strips,
+    // the documented benign event: the emitted program is the identical
+    // token stream, far under the ~80KB Mesa crash cliff.
     expect(surface4FragmentResolvedFor(0, 0, 1).length).toBeGreaterThan(
       SURFACE_GLSL_STRIP_BYTES,
     );
     expect(surface4FragmentFor(0, 0, 1)).not.toContain("//");
-    expect(surface4FragmentResolvedFor(0, 0, 0).length).toBeLessThan(
+    expect(surface4FragmentResolvedFor(0, 0, 0).length).toBeGreaterThan(
       SURFACE_GLSL_STRIP_BYTES,
     );
-    expect(surface4FragmentFor(0, 0, 0)).toContain(
-      "\n  precision highp float;",
-    );
+    expect(surface4FragmentFor(0, 0, 0)).not.toContain("//");
     expect(surface4FragmentResolvedFor(1, 0, 1).length).toBeGreaterThan(
       SURFACE_GLSL_STRIP_BYTES,
     );
@@ -2400,6 +2398,50 @@ describe("the 4D tracer's finish arm", () => {
   });
 });
 
+describe("the refinedCert4 head's resolved integrity", () => {
+  // The 3D twin's 2026-09-26 head-gating regression one dimension up:
+  // gating refinedCert4's head on the condensation/schedule/chaos arms
+  // while its body and the descent's refined fold sites stayed
+  // unconditional left every plain 4D resolved build a bare body and
+  // dangling brace — the resolved source failed to compile ('vec4 sImg
+  // = img' undeclared) and every affine4 GLSL session bounced at entry,
+  // silently.
+  const arms: [string, () => string][] = [
+    ["plain", () => surface4FragmentResolvedFor()],
+    ["balloon", () => surface4FragmentResolvedFor(1)],
+    ["ground plane", () => surface4FragmentResolvedFor(0, 1)],
+    [
+      "condensation",
+      () => surface4FragmentResolvedFor(0, 0, 0, 0, [COND4_SPHERE]),
+    ],
+    ["schedule", () => surface4FragmentResolvedFor(0, 0, 0, 0, null, 1)],
+    ["chaos", () => surface4FragmentResolvedFor(0, 0, 0, 0, null, 0, 1)],
+  ];
+  it("emits the head ahead of the body in every arm that carries the region", () => {
+    for (const [name, source] of arms) {
+      const src = source();
+      const head = src.indexOf("float refinedCert4(");
+      const body = src.indexOf("vec4 sImg = img;");
+      expect(body, `${name} carries the body`).toBeGreaterThanOrEqual(0);
+      expect(head, `${name} carries the head`).toBeGreaterThanOrEqual(0);
+      expect(head, `${name} head precedes body`).toBeLessThan(body);
+    }
+  });
+  it("leaves no compound arm guard for the driver to misread", () => {
+    // Comments may name the arms; an unresolved '#if' DIRECTIVE may not —
+    // it reaches the driver, where the undefined macros evaluate FALSE
+    // even for the builds the arm belongs to.
+    const resolved = surface4FragmentResolvedFor();
+    for (const arm of [
+      "SURFACE_CONDENSATION",
+      "SURFACE_SCHEDULE",
+      "SURFACE_CHAOS",
+    ]) {
+      expect(resolved).not.toMatch(new RegExp(`^#if ${arm}`, "m"));
+    }
+  });
+});
+
 describe("the 4D tracer's pattern arm", () => {
   const calibration = {
     ringsLow: 0.1,
@@ -2569,20 +2611,21 @@ describe("the 4D tracer's pattern arm", () => {
   });
 
   it("crosses the plain arm over the strip threshold with the pattern on — benignly: the emitted program is the stripped token stream", () => {
-    // Measured at landing: 74312 B resolved with pattern on (62765 B off),
-    // so the plain 4D arm's commentary stops reaching a driver log exactly
-    // when a 4D document authors a pattern. Crossing is the documented
-    // contract: the emitted program is the identical token stream at a
-    // fraction of the size, and the stripped programs sit far under the
-    // ~80KB Mesa crash cliff.
+    // Measured: 77617 B resolved with pattern on (65981 B off — the
+    // 2026-09-27 refinedCert/eState restore crossed the bare arm too, so
+    // pattern-on crossing is no longer a boundary, merely a row).
+    // Crossing is the documented contract: the emitted program is the
+    // identical token stream at a fraction of the size, and the stripped
+    // programs sit far under the ~80KB Mesa crash cliff.
     expect(surface4FragmentResolvedFor(0, 0, 0, 1).length).toBeGreaterThan(
       SURFACE_GLSL_STRIP_BYTES,
     );
     const emitted = surface4FragmentFor(0, 0, 0, 1);
     expect(emitted).not.toContain("//");
     expect(emitted.length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES / 2);
-    // Off, the plain arm stays unstripped — the pre-pattern record.
-    expect(surface4FragmentResolvedFor(0, 0, 0, 0).length).toBeLessThan(
+    // Off, the plain arm strips too — every 4D arm does now (the
+    // refinedCert/eState restore spent the last unstripped margin).
+    expect(surface4FragmentResolvedFor(0, 0, 0, 0).length).toBeGreaterThan(
       SURFACE_GLSL_STRIP_BYTES,
     );
     // And no pattern-enabled variant approaches the Mesa cliff.

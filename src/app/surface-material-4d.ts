@@ -720,7 +720,8 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * passed, because a free function sees no caller scope; it is the same
    * dynamically-uniform test the descent bodies hoist, so both
    * branches cost nothing across a draw. */
-#if SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS
+  // Head UNCONDITIONAL: the body and every descent call site are (2026-09-26
+  // regression; the 3D twin's refinedCert comment carries the record).
   float refinedCert4(
     vec4 img,
     vec4 imgExt,
@@ -729,7 +730,6 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     int depth,
     int currentState
   ) {
-#endif
     bool segment = uSliceHalfW > 0.0;
 #if SURFACE_CONDENSATION
 #if SURFACE_CHAOS
@@ -1165,9 +1165,10 @@ uniform float uBalloonPaletteEnabled;
             float eScale = childScale;
             float eR = r;
             float eCert = cert;
-#if SURFACE_CHAOS
+            // eState UNCONDITIONAL (the 3D twin's 2026-09-27 layer-two
+            // fix): the plain build reads it through the chaos-guarded
+            // helpers, which fall back to the union ball.
             int eState = childState;
-#endif
             if (key < c1Key) {
               eKey = c2Key;
               eQ = c2Q;
@@ -1837,9 +1838,10 @@ uniform float uBalloonPaletteEnabled;
             float eScale = childScale;
             float eR = r;
             float eCert = cert;
-#if SURFACE_CHAOS
+            // eState UNCONDITIONAL (the 3D twin's 2026-09-27 layer-two
+            // fix): the plain build reads it through the chaos-guarded
+            // helpers, which fall back to the union ball.
             int eState = childState;
-#endif
             if (key < c1Key) {
               eKey = c2Key;
               eQ = c2Q;

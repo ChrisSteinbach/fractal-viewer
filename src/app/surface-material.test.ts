@@ -136,36 +136,36 @@ const BALLOON_PALETTE_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "3D balloon finish0": {
-    resolved: "70ae21b7b8f9aa5f",
-    emitted: "6b4ed7591abffb3a",
+    resolved: "b6d4a1795457bba7",
+    emitted: "8a3ca649ed45d7c2",
   },
   "3D balloon finish1": {
-    resolved: "25498ef13dfdba60",
-    emitted: "1af650ee7870bc07",
+    resolved: "0a9d192b1b6d07a9",
+    emitted: "9fe2b3cadb57aa32",
   },
   "3D lens+balloon finish0": {
-    resolved: "03b4111f5d980874",
-    emitted: "87a1a56207fb75cf",
+    resolved: "9ef08e144a326dc6",
+    emitted: "e6302065ea497beb",
   },
   "3D lens+balloon finish1": {
-    resolved: "a1afbb88a8b97461",
-    emitted: "c53f51b53b76113f",
+    resolved: "4d64ecd2075ebd09",
+    emitted: "fd44f5a17c42aeb3",
   },
   "3D escape+balloon finish0": {
-    resolved: "9c30049fc8515b60",
-    emitted: "58d721115127d974",
+    resolved: "0782d8e0eeb244b4",
+    emitted: "438cd917df2e0117",
   },
   "3D escape+balloon finish1": {
-    resolved: "b2fde1cc151ae4d5",
-    emitted: "b98b784d9fafaf73",
+    resolved: "6c29761b44c1a0fb",
+    emitted: "b7a5b2ae2e534314",
   },
   "3D bulb+balloon finish0": {
-    resolved: "7a8394e699b0a9b5",
-    emitted: "7a8394e699b0a9b5",
+    resolved: "c24a193a838a914c",
+    emitted: "c24a193a838a914c",
   },
   "3D bulb+balloon finish1": {
-    resolved: "829091730b88f503",
-    emitted: "829091730b88f503",
+    resolved: "3b887af98f33271d",
+    emitted: "3b887af98f33271d",
   },
 };
 
@@ -177,28 +177,28 @@ const SWIRL_LENS_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "3D lens finish0": {
-    resolved: "4cf17fea4ce40a83",
-    emitted: "f58dc05fcdc05f17",
+    resolved: "2fd3ebc9b4c036ab",
+    emitted: "b8b80b22b2b010aa",
   },
   "3D lens+balloon finish0": {
-    resolved: "6f2d5f9de1e084fe",
-    emitted: "8d9d2c40e5cc8be5",
+    resolved: "9ef08e144a326dc6",
+    emitted: "e6302065ea497beb",
   },
   "3D lens+plane finish0": {
-    resolved: "7bae3899aa0e2ac1",
-    emitted: "0818a996bed5e8d4",
+    resolved: "9a3c28197bcfb07b",
+    emitted: "1c65d10713495ab7",
   },
   "3D lens finish1": {
-    resolved: "000866c8d90de673",
-    emitted: "dee810134bae4c5a",
+    resolved: "70b96eb5be15d05b",
+    emitted: "d754e88870d23a6f",
   },
   "3D lens+balloon finish1": {
-    resolved: "1f88b805572de7d4",
-    emitted: "e49f87ebaba4b0ea",
+    resolved: "4d64ecd2075ebd09",
+    emitted: "fd44f5a17c42aeb3",
   },
   "3D lens+plane finish1": {
-    resolved: "044a7cced832c682",
-    emitted: "cb1cdad4c34d9722",
+    resolved: "8b033a6f7e2bc528",
+    emitted: "9dfff5fed89b0f1d",
   },
 };
 
@@ -208,100 +208,100 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "3D affine finish0": {
-    resolved: "2819c5e0451d2d67",
-    emitted: "f6e059c70c091441",
+    resolved: "6da3fdf416df1520",
+    emitted: "91d566a8234dee47",
   },
   "3D lens finish0": {
-    resolved: "c3960880cd5ed47c",
-    emitted: "fe456ad3746e17ae",
+    resolved: "2fd3ebc9b4c036ab",
+    emitted: "b8b80b22b2b010aa",
   },
   "3D balloon finish0": {
-    resolved: "93701efb70695525",
-    emitted: "ca2a0e90221c1272",
+    resolved: "b6d4a1795457bba7",
+    emitted: "8a3ca649ed45d7c2",
   },
   "3D plane finish0": {
-    resolved: "5363651dfd9f1cb3",
-    emitted: "b35f2ec29c833be2",
+    resolved: "52ba6ba840c759c6",
+    emitted: "4ede30dc81198664",
   },
   "3D lens+balloon finish0": {
-    resolved: "03b4111f5d980874",
-    emitted: "87a1a56207fb75cf",
+    resolved: "9ef08e144a326dc6",
+    emitted: "e6302065ea497beb",
   },
   "3D lens+plane finish0": {
-    resolved: "74c30165026b4989",
-    emitted: "91341d638ce9196e",
+    resolved: "9a3c28197bcfb07b",
+    emitted: "1c65d10713495ab7",
   },
   "3D escape finish0": {
-    resolved: "45b732e37233ffbb",
-    emitted: "45b732e37233ffbb",
+    resolved: "3a1614f818ee2ceb",
+    emitted: "3a1614f818ee2ceb",
   },
   "3D escape+balloon finish0": {
-    resolved: "9c30049fc8515b60",
-    emitted: "58d721115127d974",
+    resolved: "0782d8e0eeb244b4",
+    emitted: "438cd917df2e0117",
   },
   "3D escape+plane finish0": {
-    resolved: "b5ad6fbe4595fd37",
-    emitted: "b561d279dc8505a8",
+    resolved: "5cdbabf7ad2ffd82",
+    emitted: "9468c56d49d0280b",
   },
   "3D bulb finish0": {
-    resolved: "52c03c36902ed756",
-    emitted: "52c03c36902ed756",
+    resolved: "04c0733e93674a47",
+    emitted: "04c0733e93674a47",
   },
   "3D bulb+balloon finish0": {
-    resolved: "7a8394e699b0a9b5",
-    emitted: "7a8394e699b0a9b5",
+    resolved: "c24a193a838a914c",
+    emitted: "c24a193a838a914c",
   },
   "3D bulb+plane finish0": {
-    resolved: "c6a4713443fd783b",
-    emitted: "40a8c5fec38e4c26",
+    resolved: "cf36cbd96c32d42d",
+    emitted: "eb151df9f1dee18a",
   },
   "3D affine finish1": {
-    resolved: "a42dfb51657db4f6",
-    emitted: "75a2b005c8dfc87b",
+    resolved: "85b08d82f306f553",
+    emitted: "0678ded3a8ff419b",
   },
   "3D lens finish1": {
-    resolved: "4289e7ed76395ef6",
-    emitted: "688c1a87bc8f6257",
+    resolved: "70b96eb5be15d05b",
+    emitted: "d754e88870d23a6f",
   },
   "3D balloon finish1": {
-    resolved: "7599d57751ff5c7c",
-    emitted: "ee2602bdff1f8bb4",
+    resolved: "0a9d192b1b6d07a9",
+    emitted: "9fe2b3cadb57aa32",
   },
   "3D plane finish1": {
-    resolved: "db2e5f9d52b4b4af",
-    emitted: "14e10c7cc84c9601",
+    resolved: "da2a6ef096fdcf3f",
+    emitted: "71aa043bc0cf3f17",
   },
   "3D lens+balloon finish1": {
-    resolved: "a1afbb88a8b97461",
-    emitted: "c53f51b53b76113f",
+    resolved: "4d64ecd2075ebd09",
+    emitted: "fd44f5a17c42aeb3",
   },
   "3D lens+plane finish1": {
-    resolved: "bdf919de4a9934cf",
-    emitted: "a4513cfaabe2d185",
+    resolved: "8b033a6f7e2bc528",
+    emitted: "9dfff5fed89b0f1d",
   },
   "3D escape finish1": {
-    resolved: "3cbff0834e4e07b8",
-    emitted: "3cbff0834e4e07b8",
+    resolved: "1167aa5270fc0b4b",
+    emitted: "1167aa5270fc0b4b",
   },
   "3D escape+balloon finish1": {
-    resolved: "b2fde1cc151ae4d5",
-    emitted: "b98b784d9fafaf73",
+    resolved: "6c29761b44c1a0fb",
+    emitted: "b7a5b2ae2e534314",
   },
   "3D escape+plane finish1": {
-    resolved: "ca0bc1f642fa74b3",
-    emitted: "c975d39f02e7e0b6",
+    resolved: "8b061cef149af3fc",
+    emitted: "5236a48f808a0f3b",
   },
   "3D bulb finish1": {
-    resolved: "4874ab75db831eec",
-    emitted: "4874ab75db831eec",
+    resolved: "cbda974981f5b6c0",
+    emitted: "cbda974981f5b6c0",
   },
   "3D bulb+balloon finish1": {
-    resolved: "829091730b88f503",
-    emitted: "829091730b88f503",
+    resolved: "3b887af98f33271d",
+    emitted: "3b887af98f33271d",
   },
   "3D bulb+plane finish1": {
-    resolved: "b7e8dac27c68dd8b",
-    emitted: "124b2f903b559393",
+    resolved: "f03446ae14bcc693",
+    emitted: "6788e0be529e5ba3",
   },
 };
 
@@ -1670,7 +1670,7 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
 
   it("keeps the pre-lattice finite source bytes frozen", () => {
     expect(sha256(sourceFor(a3))).toBe(
-      "2c4c74ee8f15259194aeb2f72155d5572b02d74babdeba160dd9a918901dc869",
+      "b0cb680fe64d8435b365a9d893d4b3f69a59b1f44966e26d53bfd6f8ce746f20",
     );
     expect(
       sha256(
@@ -1692,9 +1692,9 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
           a3,
         ),
       ),
-    ).toBe("9f47474922a2cf35d3591687f16457601d1bf90c73098a5e19c7e50bba69e6f3");
+    ).toBe("267e1091ffe0f790052b4858e46ef0cc19f91578f48d486bbe6f428e0aab0a23");
     expect(sha256(sourceFor(a3, { escape: 1 }))).toBe(
-      "91a7867dabd81747dd0c1006147db2334db08814fa1aea3311587defce1f70ff",
+      "899383ab5521f7cb591c2e70cf1d4ce0b80f1d5f415ba64c2f9dcb05e591df6d",
     );
   });
 
@@ -3995,12 +3995,12 @@ describe("SURFACE_SPHERE_INVERSION variant", () => {
         1,
       );
     // Plain: under the threshold, so it reaches the driver unstripped.
-    expect(resolved(0, 0, 0).length).toBe(42030);
-    expect(emitted(0, 0, 0).length).toBe(42030);
+    expect(resolved(0, 0, 0).length).toBe(42561);
+    expect(emitted(0, 0, 0).length).toBe(42561);
     expect(resolved(0, 0, 0).length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
     // Plane + finish + lighting crosses the threshold and strips.
-    expect(resolved(1, 1, 1).length).toBe(60341);
-    expect(emitted(1, 1, 1).length).toBe(23992);
+    expect(resolved(1, 1, 1).length).toBe(60872);
+    expect(emitted(1, 1, 1).length).toBe(24080);
     expect(emitted(1, 1, 1).length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
   });
 
@@ -5241,6 +5241,118 @@ describe("SURFACE_OPTICS variant (the dielectric transport lane)", () => {
   });
 });
 
+describe("the refinedCert head's resolved integrity", () => {
+  // The 2026-09-26 regression: refinedCert's head was JS-resolved to the
+  // condensation/schedule/chaos arms only, leaving every other descent-
+  // carrying build a bare body and dangling brace under the driver's
+  // SURFACE_FOLDS=0 — the resolved source failed to compile ('vec3 sImg
+  // = img' undeclared) and every affine GLSL session bounced at entry,
+  // silently. The body and the descent's refined fold sites are
+  // unconditional, so the head must be too, in every arm that carries
+  // the region.
+  const arms: [string, () => string][] = [
+    ["plain", () => surfaceFragmentResolvedFor(0, 0)],
+    ["fold lens", () => surfaceFragmentResolvedFor(0, 1)],
+    ["balloon", () => surfaceFragmentResolvedFor(0, 0, 1)],
+    ["ground plane", () => surfaceFragmentResolvedFor(0, 0, 0, 1)],
+    ["escape", () => surfaceFragmentResolvedFor(1, 0)],
+    ["bulb", () => surfaceFragmentResolvedFor(0, 0, 0, 0, 1)],
+    [
+      "condensation",
+      () =>
+        surfaceFragmentResolvedFor(0, 0, 0, 0, 0, 0, 0, undefined, null, [
+          COND_SPHERE,
+        ]),
+    ],
+    [
+      "schedule",
+      () =>
+        surfaceFragmentResolvedFor(
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          undefined,
+          null,
+          null,
+          false,
+          0,
+          1,
+        ),
+    ],
+    [
+      "chaos",
+      () =>
+        surfaceFragmentResolvedFor(
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          undefined,
+          null,
+          null,
+          false,
+          0,
+          0,
+          1,
+        ),
+    ],
+    [
+      "sphere inversion",
+      () =>
+        surfaceFragmentResolvedFor(
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          undefined,
+          null,
+          null,
+          false,
+          0,
+          0,
+          0,
+          null,
+          0,
+          0,
+          1,
+        ),
+    ],
+  ];
+  it("emits the head ahead of the body in every arm that carries the region", () => {
+    for (const [name, source] of arms) {
+      const src = source();
+      const head = src.indexOf("float refinedCert(");
+      const body = src.indexOf("vec3 sImg = img;");
+      expect(body, `${name} carries the body`).toBeGreaterThanOrEqual(0);
+      expect(head, `${name} carries the head`).toBeGreaterThanOrEqual(0);
+      expect(head, `${name} head precedes body`).toBeLessThan(body);
+    }
+  });
+  it("leaves no compound arm guard for the driver to misread", () => {
+    // Comments may name the arms; an unresolved '#if' DIRECTIVE may not —
+    // it reaches the driver, where the undefined macros evaluate FALSE
+    // even for the builds the arm belongs to.
+    const resolved = surfaceFragmentResolvedFor(0, 0);
+    for (const arm of [
+      "SURFACE_CONDENSATION",
+      "SURFACE_SCHEDULE",
+      "SURFACE_CHAOS",
+    ]) {
+      expect(resolved).not.toMatch(new RegExp(`^#if ${arm}`, "m"));
+    }
+  });
+});
+
 describe("SURFACE_PATTERN variant", () => {
   /** Every legal variant pairing — the same twelve the finish arm sweeps,
    * with the pattern flag appended. */
@@ -5625,7 +5737,7 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
     const cases = [
       {
         source: surfaceFragmentResolvedFor(1, 0),
-        hash: "45b732e37233ffbb6721d51f24dedc0899b3f382b6b8686429c025631f167445",
+        hash: "3a1614f818ee2ceb190e3ecc395cd2d13b3cfd90c4f1847a8726051faedf29dd",
       },
       {
         source: surfaceFragmentResolvedFor(
@@ -5639,7 +5751,7 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
           undefined,
           PEACE_SIGN_SHAPE,
         ),
-        hash: "190f6afc755cd183496c158e1d4e623d1dc9d868aa83f28aad2bc8244f033465",
+        hash: "3816520af965dc7a72997e9466237db97eabbda879a8393ffe625dd5fe0b0c18",
       },
       {
         source: surfaceFragmentResolvedFor(
@@ -5653,7 +5765,7 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
           undefined,
           PEACE_SIGN_SHAPE,
         ),
-        hash: "cee674e070f67878d91aa1016432a42d9718508e52544cf484daef1920acf2fd",
+        hash: "4bbf1530ed1f991340b38475b45dc07258eba5577f642aee9fb5c8cebca15d45",
       },
     ];
     for (const { source, hash } of cases) {

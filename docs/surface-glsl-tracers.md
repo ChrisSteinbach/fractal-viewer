@@ -1169,6 +1169,42 @@ as the lane-live observable. A near-black frame is the estimator
 backend's disclosed vacuous state on IFS geometry, not a glass render;
 the full rows live in the transport contract's GLSL-twins section.
 
+### The 2026-09-27 refinedCert head restore (a silent-entry regression, found and fixed)
+
+Unifying `refinedCert`'s signature on 2026-09-26 (the per-component descent
+balls) deleted the plain head's `#else` arm while gating the head on
+`SURFACE_CONDENSATION || SURFACE_SCHEDULE || SURFACE_CHAOS` — a compound the
+JS-side resolver evaluates FALSE outside those arms — so every resolved
+build that carries the region but not those arms shipped a bare body and a
+dangling brace under the driver's `SURFACE_FOLDS=0`: `vec3 sImg = img;`
+undeclared at top level, program link failure, and the entry handler's
+"Surface tracer failed to compile; returning to explorer" bounce with no
+note and no toast. That is EVERY affine GLSL shape — plain, lens, balloon,
+plane, escape, bulb, sphere-inversion 3D and ALL of the 4D tracer's arms —
+and the shipped GLSL-side gates missed it because their sessions carry one
+of the three arms (the head emitted) or replace the descent wholesale in
+arms the gates drive through compute only. The break shipped two layers:
+the headless body, and the same commit's per-candidate state balls, whose
+`stateBoundRadius(eState)` sites read a chaos-guarded declaration — layer
+two failed every non-chaos build independently. The fix is the head and
+`eState` UNCONDITIONAL in both twins (the state helpers already fall back
+to the union ball for a non-state index, so the plain build reads exactly
+what it read before the per-component work), the resolver's two compound
+keys retired with the guard text, and the pairing unit tests now assert
+head-before-body in every descent-carrying arm. Re-measured (Iris Xe
+hardware, `scripts/surface-post.verify.mjs`): pre-fix, all three
+`SURFACE_FOLDS=0` rows bounce at entry (`shader=false`); post-fix, 4/4 PASS
+including `inverse-affine`, `inverse-affine-lens` and `forward-escape`, the
+escape arm's settle being that row's first app-gated GLSL run since the
+resolvers landed. The bytes: every descent-carrying arm gains ~531 B
+resolved (3D escape 57343→57874, bulb 40855→41386); the 4D base arm
+65221→65981 — CROSSING the 64KB strip threshold, the documented benign
+event the 4D section's watch predicted, so no 4D arm is unstripped any
+more and every shipped driver program is the stripped token stream, all
+far under the 82.2KB Mesa cliff (4D pattern 27134 B emitted is the worst
+4D pairing). The frozen source hashes and the size pins advance in
+`surface-pattern-baseline.ts` and the two material test files.
+
 ## The probe-width verdict
 
 The three shading taps (normal/shadow/AO) ride the value form, which fold
