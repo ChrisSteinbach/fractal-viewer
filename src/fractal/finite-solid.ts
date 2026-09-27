@@ -264,6 +264,11 @@ export interface FiniteSolidGeneralQueryOptions extends FiniteSolidNextBoundaryO
    * composite trace's glass half: opaque content is the attractor there,
    * marched by its own estimator (`finite-solid-composite.ts`). */
   glassOnly?: boolean;
+  /** The caller's PRE-SNAP side test (the anchor-leaf seed): the child
+   * that still owns the anchor leaf has its far wall ahead of where the
+   * transport says it is. Internal — NextBoundaryInternal computes it and
+   * passes it down; the option exists so the walk fn reads one answer. */
+  anchorSeed?: boolean;
 }
 
 /** The first-level keep predicate a glass-only walk reads (null = every
@@ -2527,6 +2532,14 @@ function clipGeneralCell(
   q: Vec4,
   qd: Vec4,
   onPlaneMask = 0,
+  /** Filled even when the interval degenerates (exit <= enter): the
+   * anchor-leaf clamp needs the raw numbers the ok check would discard. */
+  raw?: {
+    enter: number;
+    exit: number;
+    enterMask: number;
+    exitMask: number;
+  },
 ): GeneralClip | null {
   let enter = -Infinity;
   let exit = Infinity;
@@ -2568,6 +2581,12 @@ function clipGeneralCell(
   // the sentinel absorbs nothing but itself.
   if (enter === -Infinity) enter = -1e30;
   if (exit === Infinity) exit = 1e30;
+  if (raw) {
+    raw.enter = enter;
+    raw.exit = exit;
+    raw.enterMask = enterMask;
+    raw.exitMask = exitMask;
+  }
   if (!(exit > enter) || !Number.isFinite(enter) || !Number.isFinite(exit)) {
     return null;
   }
@@ -2657,7 +2676,40 @@ function finiteSolidGeneralFrontToBackWalk(
   const clipFrame = (frame: GeneralFrame): GeneralClip | null => {
     const facets = cellFacets(c, frame);
     if (!facets) return null;
-    return clipGeneralCell(facets, dimension, q, qd, onPlaneMask(word));
+    const isOwnLeaf =
+      anchorSeesClaim &&
+      anchor !== undefined &&
+      word.length === anchor.cellIndices.length &&
+      word.every((w, slot) => w === anchor.cellIndices[slot]);
+    const raw: {
+      enter: number;
+      exit: number;
+      enterMask: number;
+      exitMask: number;
+    } = { enter: 0, exit: 0, enterMask: 0, exitMask: 0 };
+    const clip = clipGeneralCell(
+      facets,
+      dimension,
+      q,
+      qd,
+      onPlaneMask(word),
+      isOwnLeaf ? raw : undefined,
+    );
+    if (!isOwnLeaf) return clip;
+    // THE ANCHOR'S AUTHORITY COVERS ITS OWN CLIP (the inside-miss
+    // residue's walk-level diagnosis): at a corner the snap can leave
+    // the point a hair outside an UNMASKED facet, whose crossing then
+    // orders against the masked facets and degenerates the interval —
+    // the leaf the anchor asserts the path is inside vanishes from the
+    // walk, and the start read and the exit event go with it. The anchor
+    // is authoritative for its own leaf: clamp the interval to contain
+    // t = 0, which exact arithmetic gives.
+    return {
+      enter: Math.min(raw.enter, 0),
+      exit: Math.max(raw.exit, 0),
+      enterMask: clip?.enterMask ?? raw.enterMask,
+      exitMask: clip?.exitMask ?? raw.exitMask,
+    };
   };
   // The child node's clip input: the ray transformed by the composed
   // inverse — the node prune's own arithmetic, now also the sort key.
@@ -2689,8 +2741,46 @@ function finiteSolidGeneralFrontToBackWalk(
   const coverage = new Array<number>(c.mapCount).fill(0);
   let medium: number = FINITE_SOLID_MEDIUM_AIR;
   let started = false;
-  let haveStart = false;
-  let startMedium = FINITE_SOLID_MEDIUM_AIR;
+  // THE ANCHORED WALK PRE-SEEDS ITS OWN LEAF — WHEN THE CLAIM IS ITS SIDE
+  // (the inside-miss residue's walk-level diagnosis, sharpened): the
+  // anchor's masked facets put the leaf's own ENTER crossing at t = 0
+  // exactly — the incident crossing the transport already bent at — so
+  // the leaf's interior is zero-width in the walk's tie, its exit is
+  // swallowed into the start read, and the walk refuses (or in the
+  // kernel's rounding, misses) what is really the leaf's own exit event.
+  // A path claiming the anchor leaf's own medium is ALREADY-ENTERED: its
+  // branch's coverage is seeded (+1), the medium starts there, and its
+  // own ENTER endpoint is dropped — the EXIT is the first event, at the
+  // clamp's rounding-independent t. The REFRACTED child claims the FAR
+  // side of the shared wall: for it the anchor leaf is behind, the seed
+  // and the clamp do not apply, and the derived start read stands (the
+  // chains' pinned semantics). Unanchored queries keep the derived read
+  // (the display march's anticipation at tMin).
+  const anchorStartMedium = anchor
+    ? media
+      ? (media[anchor.cellIndices[0] ?? 0] ?? FINITE_SOLID_MEDIUM_AIR)
+      : 1
+    : FINITE_SOLID_MEDIUM_AIR;
+  // THE SEED'S SIDE TEST was computed by the caller on the PRE-SNAP
+  // point (anchorSeed): the child that still owns the anchor leaf has the
+  // leaf's far wall AHEAD of where the transport says it is; the child
+  // that crossed to the far side has the leaf behind. Combined with the
+  // code match this is the whole seed rule.
+  const anchorSeesClaim =
+    options.anchorSeed === true && anchorStartMedium === claimed;
+  if (anchorSeesClaim && anchor !== undefined) {
+    coverage[anchor.cellIndices[0] ?? 0] = 1;
+    medium = anchorStartMedium;
+    // started stays false: the start-eligible groups (t <= tie of the
+    // anchor's own position) are still consumed SILENTLY — the past,
+    // including every behind-origin phantom a corner's clamped
+    // neighbours produce — and the events begin at the first group past
+    // the tie. Setting started here would fire those behind events.
+  }
+  let haveStart = anchorSeesClaim;
+  let startMedium = anchorSeesClaim
+    ? anchorStartMedium
+    : FINITE_SOLID_MEDIUM_AIR;
   let startBefore = FINITE_SOLID_MEDIUM_AIR;
   let startBranch = -1;
   let startAtGroup = false;
@@ -2778,13 +2868,17 @@ function finiteSolidGeneralFrontToBackWalk(
     medium = owner.medium;
     const t = groupT;
     if (!started && t <= tMin + generalTieAbs(t)) {
-      haveStart = true;
-      startMedium = medium;
-      startBefore = before;
-      startBranch = owner.branch;
-      startAtGroup = Math.abs(t - tMin) <= generalTieAbs(t);
-      startLo = groupLo;
-      startHi = hi;
+      if (!anchorSeesClaim) {
+        haveStart = true;
+        startMedium = medium;
+        startBefore = before;
+        startBranch = owner.branch;
+        startAtGroup = Math.abs(t - tMin) <= generalTieAbs(t);
+        startLo = groupLo;
+        startHi = hi;
+      }
+      // Seeded anchored queries: the start is the anchor leaf's own
+      // medium, set above — a start-eligible group never overwrites it.
       return;
     }
     started = true;
@@ -2848,7 +2942,13 @@ function finiteSolidGeneralFrontToBackWalk(
       for (const endpoint of pending) {
         if (endpoint.t < nextT) nextT = endpoint.t;
       }
-      if (Math.min(nextT, frontier) > groupT + generalTieAbs(groupT)) {
+      // The close test is the DIFFERENCE form (the twin's and the WGSL's
+      // f32 close test's own fix, one definition): close when the next
+      // endpoint sits at or beyond the tie — the sum form reads the same
+      // in f64 but cancels in f32, where the group can then never close
+      // and the walk starves (the inside-miss residue's kernel bug).
+      const next = Math.min(nextT, frontier);
+      if (next === Infinity || next - groupT > generalTieAbs(groupT)) {
         closeGroup();
         groupLo = -1;
         continue;
@@ -2874,7 +2974,17 @@ function finiteSolidGeneralFrontToBackWalk(
       enterMask: childClip.enterMask,
       exitMask: childClip.exitMask,
     };
-    pending.push({ t: leaf.enter, delta: 1, leaf, mask: leaf.enterMask });
+    // The anchor's own leaf is ALREADY-ENTERED (the pre-seed above): its
+    // enter endpoint is the past — the incident crossing the transport
+    // processed — so only its exit is pushed. Every other leaf pushes
+    // both endpoints.
+    const isOwnLeaf =
+      anchorSeesClaim &&
+      anchor !== undefined &&
+      leaf.word.every((w, slot) => w === anchor.cellIndices[slot]);
+    if (!isOwnLeaf) {
+      pending.push({ t: leaf.enter, delta: 1, leaf, mask: leaf.enterMask });
+    }
     pending.push({ t: leaf.exit, delta: -1, leaf, mask: leaf.exitMask });
     drain();
   };
@@ -2987,6 +3097,31 @@ function generalTieAbs(t: number): number {
  * clipped against the intrinsic ray (the same clip arithmetic and the
  * same prefix compose association as the production walk, no pruning —
  * the harness's sweeps pin the pruned walk against it). */
+/** The per-leaf diagnostic read behind {@link enumerateAllSimplicialLeaves}:
+ * every level-N glass word's own clipped interval, word attached — the
+ * inside-miss replay's walk-level instrument (which leaf contains the
+ * failing anchor, and where its own interval starts and ends). */
+export function finiteSolidGeneralLeafIntervals(
+  c: FiniteSolidGeneralConstruction,
+  pose: FiniteSolidPose,
+  origin: Vec3,
+  dir: Vec3,
+  media?: FiniteSolidGeneralMedia,
+): Array<{ word: number[]; enter: number; exit: number }> {
+  void pose;
+  const q = [origin[0], origin[1], origin[2], 0] as Vec4;
+  const qd = [dir[0], dir[1], dir[2], 0] as Vec4;
+  const keep =
+    media === undefined
+      ? null
+      : (branch: number) => media[branch] !== FINITE_SOLID_MEDIUM_OPAQUE_MAP;
+  return enumerateAllSimplicialLeaves(c, q, qd, keep).map((leaf) => ({
+    word: leaf.word,
+    enter: leaf.enter,
+    exit: leaf.exit,
+  }));
+}
+
 function enumerateAllSimplicialLeaves(
   c: FiniteSolidGeneralConstruction,
   q: Vec4,
@@ -3436,6 +3571,26 @@ function finiteSolidGeneralNextBoundaryInternal(
   const anchor = options.anchor;
   const tMin = options.tMin ?? 0;
   const dimension = c.dimension;
+  // THE SEED'S SIDE TEST runs on the PRE-SNAP point (the snap can push a
+  // corner's far-wall crossing across zero): the child that still owns
+  // the anchor leaf has the leaf's far wall AHEAD of where the transport
+  // says it is; the child that crossed to the far side has the leaf
+  // behind. A TIR-reflected child's direction may point back out through
+  // its entry facets, so the incident direction cannot tell.
+  const anchorSeed =
+    anchor !== undefined &&
+    (() => {
+      const frames = generalLeafFrames(
+        c,
+        anchor.cellIndices.filter((w) => w >= 0),
+      );
+      const facets = cellFacets(c, frames);
+      if (!facets) return false;
+      const q0 = finiteSolidIntrinsicPoint(pose, origin);
+      const qd0 = finiteSolidIntrinsicDirection(pose, direction);
+      const clip = clipGeneralCell(facets, dimension, q0, qd0);
+      return clip !== null && clip.exit > 0;
+    })();
   let q: Vec4;
   if (anchor) {
     // The anchor's word is authoritative for its own faces: snap the
@@ -3500,7 +3655,7 @@ function finiteSolidGeneralNextBoundaryInternal(
     q,
     qd,
     direction,
-    options,
+    { ...options, anchorSeed },
     tMin,
     claimed,
   );
