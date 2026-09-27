@@ -35,10 +35,14 @@ const inert = (file: string): boolean =>
  * takes — require beyond the literal-import case, import.meta.glob/resolve,
  * direct eval, new Function, Worker, the vm executors — never proves safety
  * and is refused: its specifier names a dependency this walker cannot
- * resolve. readFile/readFileSync/fetch return DATA; they name no module,
- * cannot put one in this graph, and their output can only run through a
- * refused executor, so a file read inside the closure is an ordinary call.
- * (Measured record: the readFile uncertainty, docs/gpu-agreement-ci.md.) */
+ * resolve. The one exemption is a Worker/SharedWorker whose first argument is
+ * the two-argument `new URL(spec, base)` form, which is exactly the
+ * module-reference shape the URL branch below resolves (a dynamic spec still
+ * throws through that branch). readFile/readFileSync/fetch return DATA; they
+ * name no module, cannot put one in this graph, and their output can only
+ * run through a refused executor, so a file read inside the closure is an
+ * ordinary call. (Measured record: the readFile uncertainty,
+ * docs/gpu-agreement-ci.md.) */
 export function imports(file: string, source: string): string[] {
   const parsed = ts.createSourceFile(
     file,
@@ -118,7 +122,25 @@ export function imports(file: string, source: string): string[] {
       ) ||
         /(?:^|\.)SourceTextModule$/.test(node.expression.getText(parsed)))
     ) {
-      throw new Error(`unsupported runtime loader in ${file}`);
+      // The bundler idiom `new Worker(new URL("./x.ts", import.meta.url),
+      // { type: "module" })` IS a literal module reference: the URL branch
+      // above resolves its spec (or throws for a dynamic one), so throwing
+      // here — before the visitor can descend into the URL node — refused a
+      // resolvable edge. Every file carrying the idiom (src/app/main.ts,
+      // src/app/custom-mesh-importer.ts) then fell the WHOLE selection back
+      // to "analysis uncertainty" whenever the diff touched it: a full sweep
+      // forced by the refused form, not by analysis. Exempt ONLY the
+      // two-argument URL form and let the visitor descend; anything else —
+      // a string specifier, a variable, a one-argument URL — stays a
+      // refused loader it cannot resolve to a file in this tree.
+      const first = node.arguments?.[0];
+      if (!(
+        first !== undefined &&
+        ts.isNewExpression(first) &&
+        first.expression.getText(parsed) === "URL" &&
+        (first.arguments?.length ?? 0) > 1
+      ))
+        throw new Error(`unsupported runtime loader in ${file}`);
     }
     ts.forEachChild(node, visit);
   };

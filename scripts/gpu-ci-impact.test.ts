@@ -85,6 +85,48 @@ describe("GPU impact policy", () => {
     expect(dependencyClosure(graph, roots)).toContain("src/texture.json");
     expect(dependencyClosure(graph, roots)).toContain("src/wire.ts");
   });
+  it("resolves the bundler Worker idiom's URL argument as the module it loads", () => {
+    // The idiom every app entry carries: `new Worker(new URL("./x.ts",
+    // import.meta.url), { type: "module" })`. The Worker branch used to
+    // throw before the visitor could descend into the URL node, so a
+    // resolvable literal module edge was refused and the whole selection
+    // fell back to "analysis uncertainty" whenever the diff touched any
+    // file carrying one.
+    const graph = tree({
+      "src/gpu.ts":
+        'const worker = new Worker(new URL("./wire.ts", import.meta.url), { type: "module" });',
+    });
+    expect(imports("src/gpu.ts", graph.read("src/gpu.ts"))).toEqual([
+      "./wire.ts",
+    ]);
+    expect(dependencyClosure(graph, roots)).toContain("src/wire.ts");
+  });
+  it("keeps an independent edit to a file carrying the Worker idiom independent", () => {
+    const worker =
+      'const worker = new Worker(new URL("./wire.ts", import.meta.url), { type: "module" });';
+    expect(
+      selectImpact(
+        tree({ "src/panel.ts": worker }),
+        tree({ "src/panel.ts": `${worker} void (0);` }),
+        ["src/panel.ts"],
+        roots,
+      ).full,
+    ).toBe(false);
+  });
+  it("analyses the real main.ts's worker idiom instead of refusing the file", () => {
+    // Pinned against the shipped entry point the way the scenario-roster
+    // test is pinned against the shipped roster: the selector must never
+    // again be one refused idiom away from a forced full sweep on the file
+    // most PRs touch. Each spec resolves to a real worker module.
+    const source = readFileSync(
+      new URL("../src/app/main.ts", import.meta.url),
+      "utf8",
+    );
+    const specs = imports("src/app/main.ts", source);
+    for (const worker of ["cloud-worker", "flame-worker", "voxel-worker"]) {
+      expect(specs).toContain(`./${worker}.ts`);
+    }
+  });
   it("does not read a one-argument runtime URL as a module reference", () => {
     // The branch above exists for the bundler idiom `new URL(spec,
     // import.meta.url)`. A ONE-argument `new URL(x)` is an absolute runtime
@@ -234,6 +276,8 @@ describe("GPU impact policy", () => {
     "vm.compileFunction(source)",
     "new vm.SourceTextModule(source)",
     'new Worker("./wire.ts")',
+    "new Worker(new URL(`./${n}.ts`, import.meta.url))",
+    'new Worker(new URL("./wire.ts"))',
     'new Function("return import(path)")',
     'import "./missing"',
     'import "unregistered-package"',
