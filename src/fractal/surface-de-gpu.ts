@@ -1733,6 +1733,18 @@ export const SURFACE_GPU_TRANSPORT_FAILURE_INSIDE_MISS = 5;
  * (kind/reason/t + the 5.0 magic), and the anchor the query reported. */
 export const SURFACE_GPU_TRANSPORT_DEBUG_RECORD_BYTES = 12 * 16;
 
+/** The chain dump's ring cap per dispatch slot
+ * (opts.transportChainDump): past it the trace keeps walking but stops
+ * recording — a cycled chain reports its first events, which is the
+ * divergence's window (the cycle's period is a handful of events; 64
+ * covers entry plus two periods, and keeps the bench's padded dispatch
+ * buffer under ~1 MB). */
+export const SURFACE_GPU_TRANSPORT_CHAIN_CAP = 64;
+/** The chain record's vec4f count per event: the query state (origin,
+ * dir, claim, the full anchor, interfaces, bound), the answer's
+ * kind/reason/t/normal + media transition, and the anchor out. */
+export const SURFACE_GPU_TRANSPORT_CHAIN_RECORD_VECS = 12;
+
 /** Boundary-query refusal reasons riding the record's third word (the
  * oracle's refusal vocabulary, enumerated). STATE_MISMATCH belongs to the
  * closed-solid backend: the signed field's membership contradicts the
@@ -2064,6 +2076,18 @@ export interface SurfaceGpuKernelOptions {
    * to replay. Shade mode + optics only; absent/false reproduces today's
    * source BYTE FOR BYTE and allocates nothing. */
   transportDump?: boolean;
+  /** DIAGNOSTIC: on the finite backends, record every chained boundary
+   * query a transportTrace makes — the query state (origin, dir, claim,
+   * the full anchor), the path's interfaces/bound, and the walk's answer
+   * (kind/reason/t/normal, the media transition, the anchor out) — 12
+   * vec4f per event, per dispatch slot, to storage binding 18, capped at
+   * {@link SURFACE_GPU_TRANSPORT_CHAIN_CAP} events. The bench's replay
+   * instrument for a chain whose own states neither mirror can reproduce:
+   * the twin's chain replay agrees query by query while the kernel's own
+   * chain cycles (measured, finiteGeneralSierpinski3). Shade mode + the
+   * finite query only; absent/false reproduces today's source BYTE FOR
+   * BYTE and allocates nothing. */
+  transportChainDump?: boolean;
   /** The optical transport's boundary backend. `"estimator"` — absent's
    * meaning, byte-identical — marches the composed PUBLIC estimator: the
    * query the renderer-envelope leg measured, sound from OUTSIDE only
@@ -6311,6 +6335,13 @@ fn hash2(p: vec2f) -> f32 {
 // written only where a trace fails INSIDE-MISS (transportDump's doc).
 @group(0) @binding(17) var<storage, read_write> transportDebug: array<vec4f>;`
                     : ""
+                }${
+                  (opts.transportChainDump ?? false)
+                    ? `
+// The chain dump (the bench's replay instrument, transportChainDump's
+// doc): 12 vec4f per chained boundary query, per dispatch slot.
+@group(0) @binding(18) var<storage, read_write> transportChain: array<vec4f>;`
+                    : ""
                 }`
               : ""
           }`;
@@ -9489,6 +9520,15 @@ ${surfacePatternShadeSourceWgsl()}`
   // signature's extra parameter, the write site — is emitted only here,
   // so every other session's source is byte for byte today's.
   const transportDump = finiteQuery && (opts.transportDump ?? false);
+  // The bench's chain-dump instrument (opts.transportChainDump): every
+  // chained boundary query a transportTrace makes, 12 vec4f per event per
+  // dispatch slot at binding 18 — the kernel's OWN chain (its states fed
+  // through its own f32 fork), which neither the twin's chain replay nor
+  // the f32-mimicking fork replay can reproduce (both resolve where the
+  // kernel cycles; measured on finiteGeneralSierpinski3). Same emission
+  // discipline as transportDump: absent, every other session's source is
+  // byte for byte today's.
+  const transportChainDump = finiteQuery && (opts.transportChainDump ?? false);
   // The closed-solid field's emission, per dimension. In 3D it is the
   // condensation term at the root (the signed certified bound the primary
   // march reads). In 4D the term's hypot form is a distance to the shape
@@ -10428,7 +10468,7 @@ fn transportTrace(
   absorb: vec3f,
   bg: vec3f,
   li: u32,
-  distortion: f32,${transportChunk ? "\n  workSlot: u32," : ""}${transportDump ? "\n  dbgSlot: u32,\n  dbgPass: u32," : ""}
+  distortion: f32,${transportChunk ? "\n  workSlot: u32," : ""}${transportDump ? "\n  dbgSlot: u32,\n  dbgPass: u32," : transportChainDump ? "\n  dbgSlot: u32," : ""}
 ) -> TransportTrace {
   var out: TransportTrace;
   out.radiance = vec3f(0.0);
@@ -10440,7 +10480,12 @@ fn transportTrace(
   var sp = 0u;
   var processed = 0u;
   var radiance = vec3f(0.0);
-  var residual = 0.0;
+  var residual = 0.0;${
+    transportChainDump
+      ? `
+  var chainCursor = 0u;`
+      : ""
+  }
   let eps = TRANSPORT_CROSSING_EPS_REL * radius;${
     transportChunk
       ? `
@@ -10686,6 +10731,66 @@ ${
       hit = retry;
     }
   }`
+        : ""
+    }${
+      transportChainDump
+        ? `
+    // THE CHAIN DUMP (the bench's replay instrument): the query state as
+    // this trace holds it and the answer it got back, 12 vec4f per event
+    // at transportChain[dbgSlot * CAP * 12 + cursor * 12 + k], capped —
+    // past the cap the walk continues but stops recording (a cycled chain
+    // reports its first CAP events, the divergence's window).
+    if (chainCursor < ${SURFACE_GPU_TRANSPORT_CHAIN_CAP}u) {
+      let chainBase = (dbgSlot * ${SURFACE_GPU_TRANSPORT_CHAIN_CAP}u + chainCursor) * ${SURFACE_GPU_TRANSPORT_CHAIN_RECORD_VECS}u;
+      transportChain[chainBase + 0u] = vec4f(path.origin, f32(path.inside));
+      transportChain[chainBase + 1u] = vec4f(path.dir, f32(path.anchorPresent));
+      transportChain[chainBase + 2u] = path.finiteIntrinsic;
+      transportChain[chainBase + 3u] = vec4f(
+        bitcast<f32>(path.finiteMask),
+        f32(path.finitePlanes.x),
+        f32(path.finitePlanes.y),
+        f32(path.finitePlanes.z),
+      );
+      transportChain[chainBase + 4u] = vec4f(
+        f32(path.finitePlanes.w),
+        f32(path.finiteCells.x),
+        f32(path.finiteCells.y),
+        f32(path.finiteCells.z),
+      );
+      transportChain[chainBase + 5u] = vec4f(
+        f32(path.finiteCells.w),
+        f32(path.interfaces),
+        path.bound,
+        0.0,
+      );
+      transportChain[chainBase + 6u] = vec4f(
+        f32(hit.kind),
+        f32(hit.reason),
+        hit.t,
+        ${finiteGeneral ? "f32(hit.fromMedium)" : "0.0"},
+      );
+      transportChain[chainBase + 7u] = vec4f(hit.normal, ${finiteGeneral ? "f32(hit.toMedium)" : "0.0"});
+      transportChain[chainBase + 8u] = vec4f(
+        ${finiteGeneral ? "f32(hit.toBranch)" : "0.0"},
+        f32(hit.anchorCells.w),
+        0.0,
+        0.0,
+      );
+      transportChain[chainBase + 9u] = hit.anchorIntrinsic;
+      transportChain[chainBase + 10u] = vec4f(
+        bitcast<f32>(hit.anchorMask),
+        f32(hit.anchorPlanes.x),
+        f32(hit.anchorPlanes.y),
+        f32(hit.anchorPlanes.z),
+      );
+      transportChain[chainBase + 11u] = vec4f(
+        f32(hit.anchorPlanes.w),
+        f32(hit.anchorCells.x),
+        f32(hit.anchorCells.y),
+        f32(hit.anchorCells.w),
+      );
+      chainCursor = chainCursor + 1u;
+    }`
         : ""
     }
     if (hit.kind == 3u) {
@@ -11242,10 +11347,10 @@ fn transportRays(
     traced.reason = (packed >> 16u) & 255u;
     finiteWork.slots[slotI].pad.x = 0u;
   } else {
-    traced = transportTrace(pos, rd, theta, ior, radius, absorb, bg, li, distortion, slotI${transportDump ? ", slotI, replayPass" : ""});
+    traced = transportTrace(pos, rd, theta, ior, radius, absorb, bg, li, distortion, slotI${transportDump || transportChainDump ? ", slotI" : ""}${transportDump ? ", replayPass" : ""});
   }`
       : `
-  let traced = transportTrace(${finiteQuery ? "ro" : "pos"}, rd, theta, ior, radius, absorb, bg, li, distortion${transportChunk ? ", slotI" : ""}${transportDump ? ", slotI, replayPass" : ""});`
+  let traced = transportTrace(${finiteQuery ? "ro" : "pos"}, rd, theta, ior, radius, absorb, bg, li, distortion${transportChunk ? ", slotI" : ""}${transportDump || transportChainDump ? ", slotI" : ""}${transportDump ? ", replayPass" : ""});`
   }${
     transportChunk
       ? `
