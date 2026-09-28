@@ -2326,6 +2326,46 @@ fn finCloseGroup(
       finStartAtGroup = abs(t) <= tie;
       finStartLo = finGroupLo;
       finStartHi = finTotal;
+    } else {
+      // THE SEEDED WALK'S OWN-LEAF EXIT IS THE FIRST EVENT (the seed's
+      // contract) — never part of the consumable past. The zero-width
+      // anchored states (the replay's 13 dumped failing rays: the anchor
+      // leaf's interior degenerates inside the tie window) put that exit
+      // INSIDE the start-eligible test, where the silent consumption
+      // applied its coverage, moved the medium off the seed's, swallowed
+      // the flip, and reported a miss that passed its own claim check —
+      // the gate's remaining residue. When this window holds the anchor
+      // leaf's own exit and the owner moved off the seed's medium, the
+      // flip fires HERE, at the group's own t; the transport splits at
+      // it and the chain re-anchors one wall forward.
+      var ownExit = false;
+      var i2 = finGroupLo;
+      while (i2 < finTotal) {
+        if (
+          all(finEndpointWord(i2) == finAnchorWord) &&
+          (finE[i2].y & 1u) == 0u
+        ) {
+          ownExit = true;
+          break;
+        }
+        i2 = i2 + 1u;
+      }
+      if (ownExit && u32(owner.x) != finStartMedium) {
+        finResolveFlip(
+          q,
+          qd,
+          dir,
+          claim,
+          anchored,
+          t,
+          before,
+          u32(owner.x),
+          owner.y,
+          finGroupLo,
+          finTotal,
+        );
+        return;
+      }
     }
     // Seeded anchored queries: the start is the anchor leaf's own
     // medium, set at the reset — a start-eligible group never
@@ -2518,7 +2558,18 @@ fn transportFiniteBoundary(
       var exit = 1.0e30;
       for (var k = 0; k < ${facetCount}; k++) {
         let denom = finDot(ownFacets.n[k], qd);
-        let s = finDot(ownFacets.n[k], q) - ownFacets.c[k];
+        // THE MASKED FACETS' RESIDUALS READ AS EXACT ZEROS (the anchor's
+        // authority — the oracle's and the twin's rule, mirrored): the
+        // masked facets name the crossing the transport already bent at,
+        // and their residual against the carried intrinsic point is the
+        // snap's own rounding — the test's exit test would flip on its
+        // sign. Forced, the crossed child's exit is minus zero and the
+        // entered child's is its far wall; both exact.
+        let s = select(
+          0.0,
+          finDot(ownFacets.n[k], q) - ownFacets.c[k],
+          (anchorMask & (1u << u32(k))) == 0u,
+        );
         if (denom == 0.0) {
           if (s > 0.0) {
             seedEntering = false;
@@ -2540,6 +2591,19 @@ fn transportFiniteBoundary(
   finSeeded = anchorPresent == 1u &&
     FIN_MEDIA[anchorCellsIn[0]] == claim &&
     seedEntering;
+  // finStarted RESETS here, and must: the flag is module-scope WGSL
+  // state, and the transport's trace chains dozens of boundary queries
+  // per shader invocation — a previous walk's true flag makes THIS
+  // query fire its behind-origin groups (the start-eligible past stops
+  // being consumed silently) and every anchored continuation from the
+  // second query on walks backwards (measured: the trace's event 1
+  // emitted a boundary at t = -0.308 where the twin misses, the
+  // kernel-chain dump's finding). The oracle and the f32 twin are fresh
+  // per call by construction; this line is the WGSL mirror's own reset,
+  // and the comment below is its contract: at the start of a query the
+  // flag is false — start-eligible groups are the past, consumed
+  // silently, and events begin past the tie.
+  finStarted = false;
   // finStarted stays false: the start-eligible groups (t <= tie) are
   // still consumed SILENTLY — the past — and events begin past the tie.
   finHaveStart = finSeeded;
@@ -3145,6 +3209,12 @@ export function finiteSolidGeneralDdaF32(
   /** The claimed medium: a medium code, or the single-material form's
    * inside flag (true = glass code 1). */
   inside: boolean | number,
+  /** The CONTRACTION realization (the f32 twin's own bracket note): the
+   * WGSL's `a*b + c` fuses to one rounding on a real driver, and the
+   * general walk's shared-wall ties sit inside the divergence — the
+   * bench runs both realizations and excludes a query they disagree on
+   * (the twin cannot bracket a contract-dependent kernel). */
+  emulateFma = false,
 ): FiniteSolidDdaF32Result {
   const claim = typeof inside === "number" ? inside : inside ? 1 : 0;
   validateGeneralWire(dim, g, level);
@@ -3228,8 +3298,31 @@ export function finiteSolidGeneralDdaF32(
 
   // The algebra (finDot / finApply / finRowTimes / finCompose /
   // finChildInverse), left-associated in the oracle's term order.
+  // THE CONTRACTION REALIZATION (emulateFma): the WGSL's `a*b + c`
+  // contracts to one fused op on a real driver — a SINGLE rounding where
+  // the twin's fround-every-op double-rounds — and on the general walk's
+  // shared walls the two realizations straddle the tie (measured on the
+  // general Menger's level-2 sub-cube wall: the uncontracted pair differ
+  // by 2.46e-7 against the 2.384e-7 tie window, so the twin's group
+  // closes and fires a phantom flip whose answer is 0.0951 where the
+  // contracted kernel, the f64 oracle and the display's own point-medium
+  // rule all answer 0.5339). The fused form — each dot's products summed
+  // in the oracle's association with ONE rounding per fused group — is
+  // the driver realization this emulation stands for; the bench runs the
+  // twin BOTH ways and excludes a query whose two realizations disagree
+  // (the twin cannot bracket a contract-dependent kernel — the same
+  // pre-hoc exclusion the escape legs' classifier treatment uses).
+  // Emulation note: Math.fround(a*b + c) computes the sum in f64 and
+  // rounds once — exact for these magnitudes' products, so the fused
+  // groups are the true FMA result; the un-fused adds between groups
+  // stay plain frounds.
   const dot4 = (a: readonly number[], b: readonly number[]): number =>
-    f(f(f(f(a[0] * b[0]) + f(a[1] * b[1])) + f(a[2] * b[2])) + f(a[3] * b[3]));
+    emulateFma
+      ? f(f(f(f(a[0] * b[0] + a[1] * b[1]) + a[2] * b[2]) + a[3] * b[3]))
+      : f(
+          f(f(f(a[0] * b[0]) + f(a[1] * b[1])) + f(a[2] * b[2])) +
+            f(a[3] * b[3]),
+        );
   const add4 = (a: readonly number[], b: readonly number[]): F32Vec4 => [
     f(a[0] + b[0]),
     f(a[1] + b[1]),
@@ -3255,13 +3348,44 @@ export function finiteSolidGeneralDdaF32(
     dot4(m.r[3], v),
   ];
   const rowTimes = (row: readonly number[], m: F32Aff): F32Vec4 =>
-    add4(
-      add4(
-        add4(scale4(row[0], m.r[0]), scale4(row[1], m.r[1])),
-        scale4(row[2], m.r[2]),
-      ),
-      scale4(row[3], m.r[3]),
-    );
+    emulateFma
+      ? [
+          f(
+            f(
+              f(row[0] * m.r[0][0] + row[1] * m.r[1][0]) +
+                row[2] * m.r[2][0] +
+                row[3] * m.r[3][0],
+            ),
+          ),
+          f(
+            f(
+              f(row[0] * m.r[0][1] + row[1] * m.r[1][1]) +
+                row[2] * m.r[2][1] +
+                row[3] * m.r[3][1],
+            ),
+          ),
+          f(
+            f(
+              f(row[0] * m.r[0][2] + row[1] * m.r[1][2]) +
+                row[2] * m.r[2][2] +
+                row[3] * m.r[3][2],
+            ),
+          ),
+          f(
+            f(
+              f(row[0] * m.r[0][3] + row[1] * m.r[1][3]) +
+                row[2] * m.r[2][3] +
+                row[3] * m.r[3][3],
+            ),
+          ),
+        ]
+      : add4(
+          add4(
+            add4(scale4(row[0], m.r[0]), scale4(row[1], m.r[1])),
+            scale4(row[2], m.r[2]),
+          ),
+          scale4(row[3], m.r[3]),
+        );
   const identity = (): F32Aff => ({
     r: [
       [1, 0, 0, 0],
@@ -3348,7 +3472,12 @@ export function finiteSolidGeneralDdaF32(
       const e2 = sub4(cell[idx[2]], a);
       let normal = cross(e1, e2, dim === 4 ? sub4(cell[idx[3]], a) : null);
       const magnitude = f(Math.sqrt(dot4(normal, normal)));
-      if (!(magnitude > 0) || !(magnitude <= 3.402823466e38)) return null;
+      if (!(magnitude > 0) || !(magnitude <= 3.402823466e38)) {
+        finiteSolidDdaF32Trace?.(
+          `facetsOf k=${String(k)} magnitude=${magnitude.toExponential(9)} (null)`,
+        );
+        return null;
+      }
       normal = [
         f(normal[0] / magnitude),
         f(normal[1] / magnitude),
@@ -3360,6 +3489,9 @@ export function finiteSolidGeneralDdaF32(
         if (side > 0) {
           normal = [-normal[0], -normal[1], -normal[2], -normal[3]];
         } else {
+          finiteSolidDdaF32Trace?.(
+            `facetsOf k=${String(k)} side=0 (null) a=${a.map((v) => v.toExponential(9)).join(",")} cellk=${cell[k].map((v) => v.toExponential(9)).join(",")}`,
+          );
           return null;
         }
       }
@@ -3448,11 +3580,30 @@ export function finiteSolidGeneralDdaF32(
     if (!facets) return null;
     const envelope = f(snapRel * Math.max(1, cellRadius(cell), scale));
     let p = pIn;
+    // The correction's fused form (the WGSL's `p + correction * n` — one
+    // rounding per component on a contracting driver, two on the twin's
+    // scale-then-add) rides the same emulateFma switch.
+    const move = (
+      base: F32Vec4,
+      amount: number,
+      n: readonly number[],
+      sign: number,
+    ): F32Vec4 =>
+      emulateFma
+        ? [
+            f(f(sign * amount * n[0] + base[0])),
+            f(f(sign * amount * n[1] + base[1])),
+            f(f(sign * amount * n[2] + base[2])),
+            f(f(sign * amount * n[3] + base[3])),
+          ]
+        : sign > 0
+          ? add4(base, scale4(amount, n))
+          : sub4(base, scale4(amount, n));
     for (let k = 0; k < facetCount; k++) {
       if ((mask & (1 << k)) === 0) continue;
       const correction = f(facets.c[k] - dot4(facets.n[k], p));
       if (Math.abs(correction) > envelope) return null;
-      p = add4(p, scale4(correction, facets.n[k]));
+      p = move(p, correction, facets.n[k], 1);
     }
     for (let pass = 0; pass <= facetCount; pass++) {
       let worst = -1;
@@ -3467,7 +3618,7 @@ export function finiteSolidGeneralDdaF32(
       }
       if (worst < 0) break;
       if (worstS > envelope) return null;
-      p = sub4(p, scale4(worstS, facets.n[worst]));
+      p = move(p, worstS, facets.n[worst], -1);
     }
     return p;
   };
@@ -3506,6 +3657,9 @@ export function finiteSolidGeneralDdaF32(
       magnitude(anchorPoint),
     );
     if (!snapped) return refused(2);
+    finiteSolidDdaF32Trace?.(
+      `snap q=[${snapped.map((v) => v.toExponential(17)).join(",")}] (intrinsic [${anchorPoint.map((v) => v.toExponential(17)).join(",")}])`,
+    );
     q = snapped;
   } else if (poseRows) {
     const pv = [f(origin[0]), f(origin[1]), f(origin[2]), f(w0)];
@@ -3593,17 +3747,30 @@ export function finiteSolidGeneralDdaF32(
         inv = childInverse(inv, a);
       }
       const ownFacets = facetsFor(fwd, inv);
-      if (!ownFacets) return false;
+      if (!ownFacets) {
+        finiteSolidDdaF32Trace?.("side facets NULL");
+        return false;
+      }
       let enter = f(-1e30);
       let exit = f(1e30);
       for (let k = 0; k < facetCount; k++) {
         const denom = dot4(ownFacets.n[k], qd);
-        const s = f(dot4(ownFacets.n[k], q) - ownFacets.c[k]);
+        // THE MASKED FACETS' RESIDUALS READ AS EXACT ZEROS (the anchor's
+        // authority — the oracle's rule, mirrored): their residual
+        // against the carried intrinsic point is the snap's own
+        // rounding, and the test's `exit > 0` would flip on its sign.
+        const s =
+          (anchor.planeMask & (1 << k)) !== 0
+            ? 0
+            : f(dot4(ownFacets.n[k], q) - ownFacets.c[k]);
         if (denom === 0) {
           if (s > 0) return false;
           continue;
         }
         const t = f(-s / denom);
+        finiteSolidDdaF32Trace?.(
+          `side k=${String(k)} denom=${denom.toExponential(6)} s=${s.toExponential(6)} t=${t.toExponential(6)}`,
+        );
         if (denom > 0) {
           exit = Math.min(exit, t);
         } else {
@@ -3718,6 +3885,30 @@ export function finiteSolidGeneralDdaF32(
         startAtGroup = Math.abs(t) <= tie;
         startLo = groupLo;
         startHi = hi;
+      } else {
+        // THE SEEDED WALK'S OWN-LEAF EXIT IS THE FIRST EVENT (the seed's
+        // contract) — never part of the consumable past: the zero-width
+        // anchored states put that exit inside the start-eligible test,
+        // where the silent consumption swallowed its flip and reported a
+        // miss that passed the walk's own claim check (the WGSL's rule,
+        // mirrored). When this window holds the anchor leaf's own exit
+        // and the owner moved off the seed's medium, the flip fires here.
+        let ownExit = false;
+        for (let i = groupLo; i < consumed.length; i++) {
+          if (
+            consumed[i].word.every(
+              (w, slot) => w === (anchor?.cellIndices[slot] ?? -1),
+            ) &&
+            consumed[i].delta !== 1
+          ) {
+            ownExit = true;
+            break;
+          }
+        }
+        if (ownExit && owner.medium !== startMedium) {
+          resolveFlip(t, before, owner.medium, owner.branch, groupLo, hi);
+          return;
+        }
       }
       // Seeded anchored queries: the start is the anchor leaf's own
       // medium, set above — a start-eligible group never overwrites it.
@@ -3779,8 +3970,12 @@ export function finiteSolidGeneralDdaF32(
   // The leaf visit (pushLeaf): clip the cell, cap the PRODUCED leaves,
   // push the endpoint pair and drain.
   const pushLeaf = (m: F32Aff, inv: F32Aff, word: number[]): void => {
+    finiteSolidDdaF32Trace?.(`leaf [${word.join(",")}]`);
     const facets = facetsFor(m, inv);
-    if (!facets) return;
+    if (!facets) {
+      finiteSolidDdaF32Trace?.(`drop-facets [${word.join(",")}]`);
+      return;
+    }
     // The anchor's own leaf reads its masked residuals as exact zeros
     // (enumerateGeneralLeaves's rule, finClipSimplex's `onPlane`), and —
     // when the claim is its own side (the seed) — its authority covers
@@ -3806,7 +4001,12 @@ export function finiteSolidGeneralDdaF32(
       const s =
         (forced & (1 << k)) !== 0 ? 0 : f(dot4(facets.n[k], q) - facets.c[k]);
       if (denom === 0) {
-        if (s > 0 && !isOwnLeaf) return;
+        if (s > 0 && !isOwnLeaf) {
+          finiteSolidDdaF32Trace?.(
+            `drop-parallel [${word.join(",")}] facet=${String(k)} s=${s.toExponential(6)}`,
+          );
+          return;
+        }
         continue;
       }
       const t = f(-s / denom);
@@ -3828,7 +4028,12 @@ export function finiteSolidGeneralDdaF32(
       enter = f(Math.min(enter, 0));
       exit = f(Math.max(exit, 0));
     }
-    if (!(exit > enter) && !isOwnLeaf) return;
+    if (!(exit > enter) && !isOwnLeaf) {
+      finiteSolidDdaF32Trace?.(
+        `drop [${word.join(",")}] enter=${enter.toExponential(6)} exit=${exit.toExponential(6)}`,
+      );
+      return;
+    }
     if (produced >= leafCap) {
       aborted = refused(1);
       return;
@@ -3843,6 +4048,9 @@ export function finiteSolidGeneralDdaF32(
       pending.push({ t: enter, delta: 1, word: [...slots], facets: enterMask });
     }
     pending.push({ t: exit, delta: 0, word: [...slots], facets: exitMask });
+    finiteSolidDdaF32Trace?.(
+      `push [${word.join(",")}] enter=${enter.toExponential(6)} exit=${exit.toExponential(6)} em=0b${enterMask.toString(2)} xm=0b${exitMask.toString(2)}${isOwnLeaf ? " OWN" : ""}`,
+    );
     drain();
   };
   // The fused nests (finEnumerate): per level, every child's level-box
@@ -3868,6 +4076,15 @@ export function finiteSolidGeneralDdaF32(
       while (slot > 0 && keys[order[slot - 1]] > keys[a]) slot--;
       order.splice(slot, 0, a);
     }
+    finiteSolidDdaF32Trace?.(
+      `keys d=${depth} word=[${word.join(",")}] ` +
+        order
+          .map(
+            (a) =>
+              `${a}:${keys[a] === finFar ? "FAR" : keys[a].toExponential(6)}`,
+          )
+          .join(" "),
+    );
     for (let i = 0; i < order.length; i++) {
       const a = order[i];
       nextKey[depth] = i + 1 < order.length ? keys[order[i + 1]] : finFar;
