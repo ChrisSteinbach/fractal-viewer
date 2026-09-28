@@ -5962,6 +5962,47 @@ describe("Ui finish editor", () => {
         "This scene keeps the classic finish: glass resolves inside a Glass solid (Scene / Look) and on emitter-only scenes.",
       );
     });
+
+    it("names the authored Glass's vacuous state at the pick on a non-resolving scene", () => {
+      // The panel-ia dormant-beside-reason rule, AT the pick: a Glass bundle
+      // pick on a general IFS materializes the model, and the note beside the
+      // rows must say that THIS map's glass renders classic here — not only
+      // the scene-level sentence about where glass resolves.
+      const handlers = noopHandlers();
+      const ui = new Ui(document);
+      ui.bind(handlers);
+      ui.renderTransformEditor(plain, 0, 1);
+      expect(opticsNote().textContent).toBe(
+        "This scene keeps the classic finish: glass resolves inside a Glass solid (Scene / Look) and on emitter-only scenes.",
+      );
+
+      pickBundle("glass");
+      expect(lastGeometry(handlers).optics).toEqual({ model: "dielectric" });
+      expect(opticsNote().textContent).toBe(
+        "Glass is authored but this scene renders it classic: transmission needs a Glass solid (Scene / Look) or emitter-only scene.",
+      );
+
+      // Every resolving outlook outranks the authored state: the note
+      // describes the boundary the document sits on, not the pick.
+      ui.setSurfaceEligibility("eligible", null, "finiteSolid", null, {
+        resolves: "finite-cells",
+      });
+      expect(opticsNote().textContent).toBe(
+        "This scene's glass resolves: the finite-cell transport walks the construction's cells exactly.",
+      );
+
+      // Dropping the model (any non-glass bundle clears it) returns the note
+      // to the plain classic sentence — after the document's own outlook
+      // reverts, which the refresh rides.
+      pickBundle("matte");
+      expect(lastGeometry(handlers).optics).toBeUndefined();
+      ui.setSurfaceEligibility("eligible", null, "ifs", null, {
+        resolves: false,
+      });
+      expect(opticsNote().textContent).toBe(
+        "This scene keeps the classic finish: glass resolves inside a Glass solid (Scene / Look) and on emitter-only scenes.",
+      );
+    });
   });
 });
 
@@ -7478,6 +7519,47 @@ describe("Ui render mode switch", () => {
     expect(modeBtn("surface").disabled).toBe(false);
     expect(modeBtn("surface").title).toBe(normalTitle);
     expect(note.textContent).toBe("");
+  });
+
+  it("keeps the ineligible refusal persistent across a render-mode round-trip, not only as a toast", () => {
+    // The refused-entry bounce's trace: the transient toast names the reason
+    // once, and the PERSISTENT note — re-derived from the same document on
+    // every refresh, whatever render mode the app returns to — must still
+    // carry the refusal after the mode has left and come back. The owner's
+    // 'the edit is silently ignored' reading is what this pin exists to
+    // keep impossible: a bounce always leaves its reason on the row.
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.updateLabels(initialState(true));
+    ui.updateLabels({ ...initialState(true), renderMode: "surface" });
+    const note = document.getElementById("surfaceNote") as HTMLElement;
+
+    ui.setSurfaceEligibility(
+      "ineligible",
+      "Finite-solid scene refused: map 1 carries variations; the cell decomposition is pure affine",
+    );
+    expect(note.textContent).toContain("map 1 carries variations");
+
+    // The bounce's own path: exit to points, then refresh in the returned
+    // mode (deactivate → refreshUi → refreshSurfaceEligibility), then a
+    // Surface re-entry attempt. The refusal rides every refresh because it
+    // is document-derived, not session-derived.
+    ui.updateLabels(initialState(true));
+    ui.setSurfaceEligibility(
+      "ineligible",
+      "Finite-solid scene refused: map 1 carries variations; the cell decomposition is pure affine",
+    );
+    expect(note.textContent).toBe(
+      "Surface render unavailable: Finite-solid scene refused: map 1 carries variations; the cell decomposition is pure affine",
+    );
+    expect(modeBtn("surface").disabled).toBe(true);
+
+    // And the toast — the transient channel — still names it for touch.
+    modeBtn("surface").dispatchEvent(
+      new Event("pointerdown", { bubbles: true }),
+    );
+    const toast = document.getElementById("toast") as HTMLElement;
+    expect(toast.textContent).toContain("map 1 carries variations");
   });
 
   it.each([
