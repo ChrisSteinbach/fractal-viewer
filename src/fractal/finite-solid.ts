@@ -2876,6 +2876,56 @@ function finiteSolidGeneralFrontToBackWalk(
         startAtGroup = Math.abs(t - tMin) <= generalTieAbs(t);
         startLo = groupLo;
         startHi = hi;
+      } else {
+        // THE SEEDED WALK'S OWN-LEAF EXIT IS THE FIRST EVENT (the seed's
+        // contract) — never part of the consumable past: the zero-width
+        // anchored states put that exit inside the start-eligible test,
+        // where the silent consumption swallowed its flip and reported a
+        // miss that passed the walk's own claim check (the WGSL's rule,
+        // mirrored). When this window holds the anchor leaf's own exit
+        // and the owner moved off the seed's medium, the flip fires here.
+        let ownExit = false;
+        for (let i = groupLo; i < consumed.length; i++) {
+          if (
+            consumed[i].leaf.word.every(
+              (w, slot) => w === (anchor?.cellIndices[slot] ?? -1),
+            ) &&
+            consumed[i].delta !== 1
+          ) {
+            ownExit = true;
+            break;
+          }
+        }
+        if (ownExit && owner.medium !== startMedium) {
+          const event = simplicialBoundaryEvent(
+            c,
+            pose,
+            q,
+            qd,
+            direction,
+            {
+              t,
+              before,
+              after: owner.medium,
+              afterBranch: owner.branch,
+              faces: consumed
+                .slice(groupLo, hi)
+                .map((e) => ({ leaf: e.leaf, mask: e.mask })),
+            },
+            t,
+            visits,
+          );
+          if (
+            event.kind === "boundary" &&
+            t === tMin &&
+            sameFace(options.previousFace, event.face)
+          ) {
+            aborted = { kind: "refused", reason: "state-mismatch", visits };
+            return;
+          }
+          aborted = event;
+          return;
+        }
       }
       // Seeded anchored queries: the start is the anchor leaf's own
       // medium, set above — a start-eligible group never overwrites it.
@@ -3588,7 +3638,24 @@ function finiteSolidGeneralNextBoundaryInternal(
       if (!facets) return false;
       const q0 = finiteSolidIntrinsicPoint(pose, origin);
       const qd0 = finiteSolidIntrinsicDirection(pose, direction);
-      const clip = clipGeneralCell(facets, dimension, q0, qd0);
+      // THE MASKED FACETS' RESIDUALS READ AS EXACT ZEROS (the anchor's
+      // authority, the same rule the walk's own-leaf clip carries): the
+      // masked facets name the crossing the transport already bent at —
+      // their residual against the carried intrinsic point is the snap's
+      // own rounding (~1e-16 post-snap, ~1e-9 raw), and the test's
+      // `exit > 0` would flip on its sign (measured on the general
+      // two-glass leg: the kernel's side test read the wall enter-side
+      // and seeded; the twin's read it exit-side at −1e-16 and refused
+      // state-mismatch where the geometry is the entered child). Forced,
+      // the crossed child's exit is −0 and the entered child's is its
+      // far wall — both exact, no coin flip.
+      const clip = clipGeneralCell(
+        facets,
+        dimension,
+        q0,
+        qd0,
+        anchor.planeMask,
+      );
       return clip !== null && clip.exit > 0;
     })();
   let q: Vec4;
