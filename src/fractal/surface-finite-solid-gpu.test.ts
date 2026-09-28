@@ -1792,6 +1792,20 @@ describe("general finite-solid GPU sources", () => {
       // The grid arithmetic is absent.
       expect(src).not.toContain("finiteGridPlane");
       expect(src).not.toContain("fn finiteOccupied(");
+      // THE WALK-LEVEL CHAINING BUG'S PIN: the start-eligible
+      // consumption flag is module-scope WGSL state, and the transport's
+      // trace chains dozens of boundary queries per shader invocation —
+      // the reset block must clear it before the walk, or a previous
+      // walk's true flag fires this query's behind-origin groups (the
+      // start-eligible past stops being consumed silently, and every
+      // anchored continuation from the second query on walks
+      // backwards). The oracle and the f32 twin are fresh per call by
+      // construction; this line is the WGSL mirror's own reset.
+      const resetBlock = src.slice(
+        src.indexOf("finSeeded = anchorPresent == 1u &&"),
+        src.indexOf("finEnumerate(q, qd, dir, claim, anchorPresent == 1u);"),
+      );
+      expect(resetBlock).toContain("finStarted = false;");
     }
   });
 
