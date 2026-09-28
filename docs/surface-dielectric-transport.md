@@ -1258,6 +1258,60 @@ same `core: "finite"` / `"finite4"` pair under
   `finiteSolidGeneralNextBoundary`/`FromAnchor` on the hand-exact spine
   ray, its anchored continuation, honest exits, the contradicting-claim
   refusal, and the twin-vs-grid-twin cross-construction check).
+- **The walk-level residue arc (2026-09-27/28, the inside-miss residue's
+  fix record)**: three walk-level defects found and fixed, each one
+  definition across the oracle, the f32 twin and the WGSL. (1) THE
+  CHAINED-STATE LEAK: the WGSL walk's start-eligible flag is module-scope
+  state and the transport's trace chains dozens of boundary queries per
+  shader invocation; the reset block cleared everything around it but not
+  the flag itself, so every query after the first fired its behind-origin
+  groups (the start-eligible past stopped being consumed silently) and
+  every anchored continuation walked backwards — the kernel-chain dump's
+  witness: the trace's event 1 emitted a boundary at t = −0.308 where the
+  twin misses, the WGSL's own chain cycling through 64 events where the
+  twin's chain is 77 queries. One reset line in the general walk's reset
+  block (the oracle and the twin are fresh per call by construction; the
+  reset is the WGSL mirror's own). (2) THE SEED'S MASKED RESIDUALS: the
+  side test reads its masked facets' residuals as exact zeros (the
+  anchor's authority — the snap's own rounding, not geometry); before it,
+  the general two-glass leg's anchored arms answered kind-vs-r3 across
+  engines (the kernel read the masked wall enter-side and seeded; the
+  twin's read it at −1e-16 and refused state-mismatch where the geometry
+  is the entered child). (3) THE OWN-EXIT EXEMPTION: the SEEDED walk's
+  own-leaf exit is the first event (the seed's contract) — the zero-width
+  anchored states (every dumped failing ray's own-leaf interval
+  degenerates inside the tie window, enter/exit ~±1e-7) put that exit
+  INSIDE the start-eligible test, where the silent consumption applied
+  its coverage, moved the medium off the seed's, swallowed the flip, and
+  reported a miss that passed the walk's own claim check; the window
+  holding the anchor leaf's own exit with the owner off the seed's medium
+  now fires the flip at the group's own t, and the transport splits and
+  re-anchors one wall forward. THE INSTRUMENTS this arc landed: the
+  kernel-side chain dump (`opts.transportChainDump`, absent = byte-
+  identical source — every chained query's state + answer, 12 vec4f per
+  event per dispatch slot at binding 18, capped at 64), the bench's walk
+  dump (mode-1's consumed endpoints + the walk's own answer, self-
+  identified by kind/reason), the finite chain-replay arm (the twin's own
+  mid-trace chain, replayed query by query, the media lanes
+  fromMedium/toMedium/toBranch now packed and compared), the WGSL-chain
+  replay (the kernel's own chain driven step by step with the host's fork
+  arithmetic, f64 and f32-mimic modes — the instrument that showed the
+  kernel's own chain cycling where both mirrors resolve), and the
+  ORACLE-BRACKET EXCLUSION (the finite twin's answer must agree with the
+  f64 oracle; else the probe is excluded and counted, disclosed — the
+  general Menger's shared-wall class: the twin's two clip formulations of
+  the same wall differ by 2.46e-7 against the 2.384e-7 tie and its answer
+  bifurcates to 0.0951 while the oracle, the kernel and the display's
+  point-medium rule all answer 0.5339). En route: the bench comparison's
+  media-claim fix (the comparison fed the twin `query.inside === 1`
+  where media-leg records carry medium codes — the arms compared
+  claim-air against claim-glass-B). THE MEASURED RESIDUE: the
+  boot-document gate leg went from deterministic (5/8 samples, 1–3 rays
+  each, f5/r0) to standalone `verdict=pass, unresolved=0` on all 8
+  samples — flaky 0–1 rays/sample in longer runs (the replay ladder's
+  depth differs run to run, passes 3 vs 4): the remaining class sits on
+  the ladder's acceptance knife edges, the next arc's target. The bench's
+  finite transport legs: every leg green as of this record.
 
 ## The general word tree's routing and panel (landed 2026-09-21; the box tree, superseded)
 
