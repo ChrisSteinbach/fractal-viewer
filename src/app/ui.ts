@@ -850,12 +850,19 @@ function cloneSurfaceOptics(
 }
 
 /** The optics restriction note's copy, keyed on the document's transmission
- * outlook (surface-optics-backend.ts's document mirror). Each sentence is
- * scene-directed — which side of the boundary THIS document sits on — and
- * the classic state still names the resolving families and the Glass door,
- * so the boundary is visible before authoring rather than after entry. All
- * four sit inside the note word budget. */
-function opticsOutlookNoteText(outlook: SurfaceOpticsOutlook): string {
+ * outlook (surface-optics-backend.ts's document mirror) and — on the classic
+ * side of the boundary — whether THIS transform authors the optical model.
+ * Each sentence is scene-directed — which side of the boundary THIS document
+ * sits on — and the classic state still names the resolving families and the
+ * Glass door, so the boundary is visible before authoring rather than after
+ * entry. An authored model on a non-resolving scene reads the vacuous state
+ * AT the pick (the panel-ia dormant-beside-reason rule): the note names that
+ * this map's Glass renders classic here, not only where glass resolves. All
+ * five sit inside the note word budget. */
+function opticsOutlookNoteText(
+  outlook: SurfaceOpticsOutlook,
+  opticsAuthored = false,
+): string {
   if (outlook.resolves === "finite-cells") {
     return "This scene's glass resolves: the finite-cell transport walks the construction's cells exactly.";
   }
@@ -863,6 +870,9 @@ function opticsOutlookNoteText(outlook: SurfaceOpticsOutlook): string {
     return outlook.sliceCoupled
       ? "This emitter scene's glass resolves at the saved slice pose; scrubbing the slice away leaves it unresolved."
       : "This emitter scene's glass resolves on the closed-solid transport at the next Surface entry.";
+  }
+  if (opticsAuthored) {
+    return "Glass is authored but this scene renders it classic: transmission needs a Glass solid (Scene / Look) or emitter-only scene.";
   }
   return "This scene keeps the classic finish: glass resolves inside a Glass solid (Scene / Look) and on emitter-only scenes.";
 }
@@ -10346,11 +10356,17 @@ export class Ui {
     // which side of the transmission boundary THIS document sits on, from
     // surfaceOpticsOutlook's document mirror, so a user authoring Glass on
     // an arbitrary system reads the boundary before entering Surface, not
-    // after. applyMaterialDisclosure keeps it current on every refresh.
+    // after. KEYED TO THE PICK as well: an authored model on a non-resolving
+    // scene reads the vacuous state directly, not only the scene-level
+    // classic sentence. applyMaterialDisclosure keeps it current on every
+    // refresh.
     const opticsNote = this.doc.createElement("p");
     opticsNote.className = "flame-note-info";
     opticsNote.id = "transformOpticsNote";
-    opticsNote.textContent = opticsOutlookNoteText(this.surfaceOpticsOutlook);
+    opticsNote.textContent = opticsOutlookNoteText(
+      this.surfaceOpticsOutlook,
+      optics !== undefined,
+    );
     group.appendChild(opticsNote);
 
     this.syncFinishBundleSelect(bundle, finish, optics);
@@ -10487,8 +10503,16 @@ export class Ui {
       group.classList.toggle("material-inert", refused);
       // The scene-directed transmission boundary, current as of the last
       // eligibility refresh (setSurfaceEligibility re-runs this on every
-      // document edit, so the note cannot go stale behind a document).
-      opticsNote.textContent = opticsOutlookNoteText(this.surfaceOpticsOutlook);
+      // document edit, so the note cannot go stale behind a document) — and
+      // keyed to the WORKING COPY's optics, so the moment the Glass bundle
+      // materializes the model the note names this map's vacuous state on a
+      // non-resolving scene (the same edit already re-runs this through
+      // syncFinishControls; the reading stays one refresh behind a document
+      // edit at worst, exactly as before).
+      opticsNote.textContent = opticsOutlookNoteText(
+        this.surfaceOpticsOutlook,
+        editor.geometry.optics !== undefined,
+      );
     }
     if (editor.patternControls) {
       const { group, family, axis, scale, strength, note } =
