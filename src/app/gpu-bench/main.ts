@@ -254,6 +254,8 @@ import {
   SURFACE_GPU_RAY_MISS,
   SURFACE_GPU_RAY_PLANE,
   SURFACE_GPU_SHADE_BYTES,
+  SURFACE_GPU_TRANSPORT_CHAIN_CAP,
+  SURFACE_GPU_TRANSPORT_CHAIN_RECORD_VECS,
   SURFACE_GPU_TRANSPORT_COMPLETE,
   SURFACE_GPU_TRANSPORT_INVALID,
   SURFACE_GPU_TRANSPORT_PENDING,
@@ -290,8 +292,13 @@ import {
   DIELECTRIC_ANCHOR_ENVELOPE_REL,
   DIELECTRIC_CROSSING_EPS_REL,
   DIELECTRIC_DISTORTION_NORMAL_REL,
+  DIELECTRIC_ENVIRONMENT_BOUND,
   DIELECTRIC_IOR,
   DIELECTRIC_INITIAL_BRANCH_THETA,
+  dielectricBeerThroughput,
+  dielectricBranchBound,
+  dielectricFresnel,
+  dielectricRefract,
 } from "../../fractal/surface-dielectric";
 import {
   FINITE_SOLID_HALF_EXTENT,
@@ -318,6 +325,7 @@ import {
 import {
   transportBoundaryQueryCPU,
   transportShadowVisibilityCPU,
+  transportFiniteGeneralBoundaryQueryCPU,
   transportSolidBoundaryQueryCPU,
   transportTerminalDisplacementCPU,
   transportOpticalNormal,
@@ -7704,6 +7712,13 @@ async function acquireSurfaceDevice(
 function surfaceTransportControlWgsl(
   backend: SurfaceTransportLegBackend,
   fieldProbe = backend === "sphereInversion",
+  /** The GENERAL word-tree walk's FiniteBoundary carries the media
+   * transition lanes; the grid DDA's struct does not, so its mode-1
+   * result leaves the spare lanes zero. */
+  general = false,
+  /** The chainDump emission adds a dbgSlot parameter to transportTrace;
+   * the control's mode-0 call passes its own dispatch lane. */
+  chainDump = false,
 ): string {
   // The sphere-inversion glass backend rides the closed-solid query's
   // signature (the caller-carried medium) and its shadow/terminal helpers,
@@ -7787,7 +7802,25 @@ ${
     r.c = hit.anchorIntrinsic;
     r.d = vec4f(f32(hit.anchorMask), f32(hit.anchorPlanes.x), f32(hit.anchorPlanes.y), f32(hit.anchorPlanes.z));
     r.e = vec4f(f32(hit.anchorPlanes.w), f32(hit.anchorCells.x), f32(hit.anchorCells.y), f32(hit.anchorCells.z));
-    r.f = vec4f(f32(hit.anchorCells.w), 0.0, 0.0, 0.0);`
+    r.f = vec4f(f32(hit.anchorCells.w), ${general ? "f32(hit.fromMedium), f32(hit.toMedium), f32(hit.toBranch)" : "0.0, 0.0, 0.0"});${
+      general && chainDump
+        ? `
+    // THE WALK DUMP (the mode-1 diagnostic, the chainDump leg): the
+    // boundary walk's consumed endpoints — the enumeration the twin's
+    // trace prints on its own side. Two packed endpoints per lane,
+    // (bits(t), packed) bitcast; record 0 carries the totals.
+    {
+      let w = (gid.x * ${SURFACE_GPU_TRANSPORT_CHAIN_CAP}u) * ${SURFACE_GPU_TRANSPORT_CHAIN_RECORD_VECS}u;
+      transportChain[w + 0u] = vec4f(f32(finTotal), f32(finPendingCount), finGroupT, select(0.0, 1.0, finStarted));
+      for (var e = 0u; e < 10u; e++) {
+        let x = select(0u, finE[e].x, e < finTotal);
+        let y = select(0u, finE[e].y, e < finTotal);
+        transportChain[w + 1u + e * 2u] = vec4f(bitcast<f32>(x), bitcast<f32>(y), 0.0, 0.0);
+      }
+      transportChain[w + 21u] = vec4f(f32(finOut.kind), f32(finOut.reason), f32(finOut.toMedium), select(0.0, 1.0, finStarted));
+    }`
+        : ""
+    }`
     : `    let hit = transportNextBoundary(q.origin, q.dir, q.anchorPresent, q.anchorPoint, ${
         solid ? "q.inside, q.eps, li" : "q.eps, li"
       });
@@ -7848,7 +7881,7 @@ ${
   } else {
     // The control probes anchor at the fixture's TRUE boundary, so the
     // trace's primary anchor skip is zero (the CPU twin's default).
-    let traced = transportTrace(q.origin, q.dir, q.theta, q.ior, q.radius, q.absorb, vec3f(0.25, 0.35, 0.45), li, q.distortion);
+    let traced = transportTrace(q.origin, q.dir, q.theta, q.ior, q.radius, q.absorb, vec3f(0.25, 0.35, 0.45), li, q.distortion${chainDump ? ", gid.x" : ""});
     r.a = vec4f(f32(traced.status), f32(traced.failure), f32(traced.reason), traced.residual);
     r.b = vec4f(traced.radiance, 0.0);
     r.c = vec4f(0.0);
@@ -8504,6 +8537,29 @@ interface SurfaceTransportLegSpec {
    * built where the construction and pose live (the leg's own push), so
    * the runner never needs either. Absent on every other backend. */
   finiteQuery?: TransportFiniteQueryFn;
+  /** The CONTRACTION realization of the finite twin (the same closure
+   * with the fused dot/row-times): the WGSL's `a*b + c` fuses to one
+   * rounding on a real driver, and the general walk's shared-wall ties
+   * sit inside the divergence — measured on the general Menger (the
+   * uncontracted pair differ 2.46e-7 against the 2.384e-7 tie, the
+   * contracted pair exactly 0), where the twin's phantom flip answers
+   * 0.0951 while the contracted kernel, the f64 oracle and the display's
+   * own point-medium rule all answer 0.5339. The ensembles run BOTH
+   * realizations and exclude a query they disagree on — the twin cannot
+   * bracket a contract-dependent kernel (the escape legs' pre-hoc
+   * exclusion shape). Absent on every other backend. */
+  finiteQueryFma?: TransportFiniteQueryFn;
+  /** The ORACLE REALIZATION of the finite twin (the f64 walk): the
+   * exclusion probe's second bracket end — the twin's fixed f32
+   * realization against the truth. A query whose twin diverges from the
+   * oracle beyond the pin tolerances cannot be certified by the twin:
+   * the kernel's own f32 realization (any driver's) may realize either
+   * side of the wire's own tie-straddling slivers (measured: the general
+   * Menger's shared wall, where the twin's two clip formulations differ
+   * by 2.46e-7 against the 2.384e-7 tie and its answer bifurcates to
+   * 0.0951 while the oracle, the kernel and the display's point-medium
+   * rule all answer 0.5339). Absent on every other backend. */
+  finiteQueryOracle?: TransportFiniteQueryFn;
   /** The general finite legs' per-map MEDIA: the fixture's per-code
    * materials and control opaque terminal (the trace twin's 10th
    * argument), with `opticsSlots` the per-slot materials the kernel reads
@@ -8654,6 +8710,13 @@ function surfaceTransportTraceProbeStable(
   /** The per-map media (general finite legs), threaded into every trace
    * of the ensemble. */
   media?: TransportFixtureMedia,
+  /** The CONTRACTION realization of the finite twin: its FULL trace must
+   * agree with the base's (status, residual 5e-3, radiance 3e-3) — a
+   * trace whose two twin realizations bifurcate cannot bracket any
+   * kernel realization (the leg field's doc). */
+  finiteQueryFma?: TransportFiniteQueryFn,
+  /** The ORACLE realization (the f64 walk): the bracket's second end. */
+  finiteQueryOracle?: TransportFiniteQueryFn,
 ): boolean {
   const material = {
     ior: DIELECTRIC_IOR,
@@ -8696,6 +8759,47 @@ function surfaceTransportTraceProbeStable(
       return false;
     }
   }
+  if (
+    finiteQueryFma &&
+    !agrees(
+      transportTraceCPU(
+        fixture,
+        origin,
+        dir,
+        DIELECTRIC_INITIAL_BRANCH_THETA,
+        material,
+        SURFACE_TRANSPORT_CONTROL_BG_LINEAR,
+        caps,
+        query,
+        finiteQueryFma,
+        media,
+      ),
+    )
+  ) {
+    return false;
+  }
+  // THE ORACLE BRACKET (the trace): the twin's trace against the f64
+  // walk's — a trace whose twin diverges from the truth cannot be
+  // certified by the twin.
+  if (
+    finiteQueryOracle &&
+    !agrees(
+      transportTraceCPU(
+        fixture,
+        origin,
+        dir,
+        DIELECTRIC_INITIAL_BRANCH_THETA,
+        material,
+        SURFACE_TRANSPORT_CONTROL_BG_LINEAR,
+        caps,
+        query,
+        finiteQueryOracle,
+        media,
+      ),
+    )
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -8720,6 +8824,19 @@ function surfaceTransportBoundaryProbeStable(
   /** The signed backends' query, wrapped to the ensemble's (origin) shape
    * over the record's anchor and medium claim; absent, the estimator. */
   signedQuery?: (origin: Vec3) => TransportBoundaryResult,
+  /** The CONTRACTION realization of the finite twin: the ensemble runs it
+   * ONCE on the un-nudged query and requires the base's answer — the
+   * driver-fused `a*b+c` and the twin's fround-every-op realization
+   * straddle the general walk's shared-wall ties (the leg field's doc),
+   * and a query whose two twin realizations disagree cannot bracket any
+   * kernel realization. The ULP nudges above are vacuous for the anchored
+   * finite arms (an anchored query ignores its origin), so this probe is
+   * what actually screens them. */
+  finiteQueryFma?: (origin: Vec3, dir: Vec3) => TransportFiniteBoundaryResult,
+  /** The ORACLE realization (the f64 walk): the bracket's second end —
+   * the twin's answer must agree with the truth, or the query is
+   * excluded (the leg field's doc). */
+  oracleQuery?: (origin: Vec3, dir: Vec3) => TransportFiniteBoundaryResult,
 ): boolean {
   const twin = (o: Vec3): TransportBoundaryResult =>
     finiteQuery
@@ -8744,6 +8861,16 @@ function surfaceTransportBoundaryProbeStable(
     if (!agrees(twin(q))) {
       return false;
     }
+  }
+  if (finiteQueryFma && !agrees(finiteQueryFma(origin, dir))) {
+    return false;
+  }
+  // THE ORACLE BRACKET: the twin's fixed f32 realization against the
+  // f64 truth — a query whose twin diverges from the oracle cannot be
+  // certified by the twin (any kernel realization may realize either
+  // side of the wire's tie-straddling slivers).
+  if (oracleQuery && !agrees(oracleQuery(origin, dir))) {
+    return false;
   }
   return true;
 }
@@ -9437,6 +9564,7 @@ async function runSurfaceTransportAgreementLegs(
         opticsBackend: "finiteSolid",
         finiteSolid: { level },
         transportMaxPaths: SURFACE_TRANSPORT_LEG_MAX_PATHS,
+        transportChainDump: true,
       },
       packParams: (n) =>
         fourD
@@ -9606,6 +9734,7 @@ async function runSurfaceTransportAgreementLegs(
         opticsBackend: "finiteSolid",
         finiteSolid: { level, general: wire },
         transportMaxPaths: SURFACE_TRANSPORT_LEG_MAX_PATHS,
+        transportChainDump: true,
         ...(mediaSpec ? { finiteOpaqueControl: true } : {}),
       },
       ...(media && opticsSlots ? { media, opticsSlots } : {}),
@@ -9654,6 +9783,50 @@ async function runSurfaceTransportAgreementLegs(
           toMedium: r.toMedium,
           toBranch: r.toBranch,
         };
+      },
+      finiteQueryFma: (origin, dir, anchor, inside) => {
+        // The CONTRACTION realization of the same twin (the leg field's
+        // doc): the driver-fused form of the dot/row-times.
+        const r = finiteSolidGeneralDdaF32(
+          fourD ? 4 : 3,
+          level,
+          wire,
+          [
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1],
+          ],
+          0,
+          origin,
+          dir,
+          anchor,
+          inside,
+          true,
+        );
+        return {
+          kind: r.kind === 1 ? "boundary" : r.kind === 2 ? "miss" : "refused",
+          reason: r.reason,
+          t: r.t,
+          normal: r.normal,
+          anchor: r.anchor,
+          fromMedium: r.fromMedium,
+          toMedium: r.toMedium,
+          toBranch: r.toBranch,
+        };
+      },
+      finiteQueryOracle: (origin, dir, anchor, inside) => {
+        // The ORACLE realization (the leg field's doc): the f64 walk.
+        return transportFiniteGeneralBoundaryQueryCPU(
+          construction,
+          pose,
+          mediaSpec ? mediaSpec.codes : undefined,
+          false,
+          origin,
+          dir,
+          anchor,
+          inside,
+        );
       },
       fixture: {
         estimate: (p) =>
@@ -10072,11 +10245,22 @@ async function runSurfaceTransportAgreementLegs(
     const { pipeline, compileMs } = await buildSurfacePipeline(
       device,
       "auto",
-      `${surfaceDeKernelWgsl(leg.options)}\n${surfaceTransportControlWgsl(leg.backend, leg.backend === "sphereInversion" || !!leg.fieldContains)}`,
+      `${surfaceDeKernelWgsl(leg.options)}\n${surfaceTransportControlWgsl(leg.backend, leg.backend === "sphereInversion" || !!leg.fieldContains, leg.backend === "finiteSolid" && !!leg.options.finiteSolid?.general, leg.options.transportChainDump === true)}`,
       "controlTransport",
       `surface-de transport ${leg.core}`,
     );
     const visR = leg.fixture.visibleRadius;
+    // The forward legs' flip accounting: a probe the ULP ensemble says is
+    // chaos-unstable is EXCLUDED from the hard gate and counted here —
+    // the escape legs' pre-hoc ensemble with exclusions disclosed per
+    // row. Past the cap the fixture certifies nothing and the leg fails.
+    // Hoisted above the probe list (the finite chain-replay arm shares it).
+    const legCap =
+      leg.options.transportMaxPaths ?? SURFACE_TRANSPORT_LEG_MAX_PATHS;
+    const legCaps = {
+      maxProcessedPaths: legCap,
+      maxInterfaces: legCap,
+    };
     let probes = surfaceTransportProbes(leg.fixture);
 
     if (probes.length === 0) {
@@ -10228,6 +10412,10 @@ async function runSurfaceTransportAgreementLegs(
     };
     const boundaryQueries: ControlQueryRec[] = [];
     const traceQueries: ControlQueryRec[] = [];
+    // The finite chain-replay arm's recorded twin chains, parallel to
+    // `probes` (empty for the other backends): the WGSL-chain replay
+    // walks them step by step against the kernel's own chain.
+    const twinChains: ControlQueryRec[][] = [];
     // Per-probe boundary-query counts, parallel to `probes`: the
     // estimator/closed-solid legs always push two (the comparison walks
     // pairs), the finite legs push ONE unanchored query plus — when the
@@ -10237,6 +10425,7 @@ async function runSurfaceTransportAgreementLegs(
     const boundaryCounts: number[] = [];
     for (const probe of probes) {
       const boundaryStart = boundaryQueries.length;
+      twinChains.push([]);
       if (finite) {
         // The finite legs' DDA probes. (a) is the UNANCHORED inside
         // query from the display hit along the camera ray — the finite
@@ -10336,6 +10525,90 @@ async function runSurfaceTransportAgreementLegs(
             ...anchorFields,
           });
         }
+        // THE FINITE CHAIN-REPLAY ARM: the twin's own mid-trace chain for
+        // this probe, replayed query by query (the signed backends' arm's
+        // shape, one backend over). A finite trace chains dozens of DDA
+        // queries — this leg's probe 0 alone makes 77 — so a trace-level
+        // disagreement names nothing; the first chain query whose answers
+        // differ names the divergence exactly. Capped per probe so a long
+        // trace cannot swamp the dispatch.
+        const chain: ControlQueryRec[] = [];
+        transportTraceCPU(
+          leg.fixture,
+          [
+            Math.fround(probe.hitPos[0] - 2 * visR * probe.dir[0]),
+            Math.fround(probe.hitPos[1] - 2 * visR * probe.dir[1]),
+            Math.fround(probe.hitPos[2] - 2 * visR * probe.dir[2]),
+          ],
+          probe.dir,
+          DIELECTRIC_INITIAL_BRANCH_THETA,
+          {
+            ior: DIELECTRIC_IOR,
+            absorption: DIELECTRIC_ABSORPTION,
+            radius: visR,
+          },
+          SURFACE_TRANSPORT_CONTROL_BG_LINEAR,
+          legCaps,
+          undefined,
+          (origin, dir, anchor, inside) => {
+            if (chain.length < SURFACE_TRANSPORT_CHAIN_REPLAY_CAP) {
+              chain.push({
+                origin: [...origin] as Vec3,
+                dir: [...dir] as Vec3,
+                anchorPoint: [0, 0, 0],
+                eps: 0,
+                ior: DIELECTRIC_IOR,
+                radius: visR,
+                absorb: DIELECTRIC_ABSORPTION,
+                theta: DIELECTRIC_INITIAL_BRANCH_THETA,
+                anchorPresent: anchor ? 1 : 0,
+                mode: 1,
+                inside: typeof inside === "number" ? inside : inside ? 1 : 0,
+                ballC: [0, 0, 0],
+                ballR: visR,
+                visR,
+                distortion: 0,
+                ...(anchor
+                  ? {
+                      finiteIntrinsic: [...anchor.intrinsicPoint] as Vec4,
+                      finiteMask: anchor.planeMask,
+                      finitePlanes: [
+                        anchor.planeIndices[0],
+                        anchor.planeIndices[1],
+                        anchor.planeIndices[2],
+                        anchor.planeIndices[3],
+                      ] as [number, number, number, number],
+                      finiteCells: [
+                        anchor.cellIndices[0],
+                        anchor.cellIndices[1],
+                        anchor.cellIndices[2],
+                        anchor.cellIndices[3],
+                      ] as [number, number, number, number],
+                    }
+                  : {
+                      finiteIntrinsic: [0, 0, 0, 0] as Vec4,
+                      finiteMask: 0,
+                      finitePlanes: [-1, -1, -1, -1] as [
+                        number,
+                        number,
+                        number,
+                        number,
+                      ],
+                      finiteCells: [-1, -1, -1, -1] as [
+                        number,
+                        number,
+                        number,
+                        number,
+                      ],
+                    }),
+              });
+            }
+            return finiteQuery!(origin, dir, anchor, inside);
+          },
+          leg.media,
+        );
+        boundaryQueries.push(...chain);
+        twinChains[twinChains.length - 1] = chain;
       } else if (surfaceTransportSignedBackend(leg.backend)) {
         // The closed-solid legs' arms pin the INSIDE traversal (the
         // backend's whole point) beside the outside one: the anchored
@@ -10867,7 +11140,18 @@ async function runSurfaceTransportAgreementLegs(
     // query buffer: one ControlResult per padded query lane.
     const runControl = async (
       list: ControlQueryRec[],
+      /** The params buffer the dispatch binds. The leg's own buffer is
+       * destroyed by the dispatch block's finally BEFORE the WGSL-chain
+       * replay runs, so the replay packs its own — a destroyed buffer
+       * makes every dispatch a validation error whose result lane reads
+       * back zero (measured: the replay's first query answered kind 0). */
+      paramsBuf: GPUBuffer = params,
+      /** The chain-dump buffer (the chainDump leg's binding 18), read
+       * back with the results when present. */
+      chainBufIn: GPUBuffer | null = null,
+      chainOut: { value: Float32Array | null } = { value: null },
     ): Promise<Float32Array> => {
+      let chainBuf = chainBufIn;
       const queryData = packQueries(list);
       const queriesBuf = await createSurfaceBuffer(
         device,
@@ -10888,17 +11172,54 @@ async function runSurfaceTransportAgreementLegs(
         queryData.byteLength,
         GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
       );
+      let chainStaging: GPUBuffer | null = null;
+      // The chainDump leg's every dispatch must bind storage 18 (the
+      // auto layout declares it); a caller that supplies no chain buffer
+      // gets a throwaway zeroed one — the main dispatches never read it.
+      let ownChainBuf: GPUBuffer | null = null;
+      const chainSlots =
+        Math.ceil(list.length / SURFACE_TRANSPORT_WG) * SURFACE_TRANSPORT_WG;
+      const chainBytes =
+        chainSlots *
+        SURFACE_GPU_TRANSPORT_CHAIN_CAP *
+        SURFACE_GPU_TRANSPORT_CHAIN_RECORD_VECS *
+        16;
+      if (chainBuf) {
+        chainStaging = await createSurfaceBuffer(
+          device,
+          `surface-de transport chain staging ${leg.core}`,
+          chainBytes,
+          GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+        );
+      } else if (leg.options.transportChainDump === true) {
+        ownChainBuf = await createSurfaceBuffer(
+          device,
+          `surface-de transport chain ${leg.core}`,
+          chainBytes,
+          GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+        );
+        chainBuf = ownChainBuf;
+        chainStaging = await createSurfaceBuffer(
+          device,
+          `surface-de transport chain staging ${leg.core}`,
+          chainBytes,
+          GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+        );
+      }
       const bindGroup = device.createBindGroup({
         label: `surface-de transport bind group ${leg.core}`,
         layout: pipeline.getBindGroupLayout(0),
         entries: [
-          { binding: 0, resource: { buffer: params } },
+          { binding: 0, resource: { buffer: paramsBuf } },
           ...(maps ? [{ binding: 1, resource: { buffer: maps } }] : []),
           ...(legOpticsMaps
             ? [{ binding: 13, resource: { buffer: legOpticsMaps } }]
             : []),
           { binding: 16, resource: { buffer: queriesBuf } },
           { binding: 17, resource: { buffer: resultsBuf } },
+          ...(chainBuf
+            ? [{ binding: 18, resource: { buffer: chainBuf } }]
+            : []),
         ],
       });
       try {
@@ -10917,20 +11238,45 @@ async function runSurfaceTransportAgreementLegs(
           0,
           queryData.byteLength,
         );
+        if (chainBuf && chainStaging !== null) {
+          const chainBytes =
+            Math.ceil(list.length / SURFACE_TRANSPORT_WG) *
+            SURFACE_TRANSPORT_WG *
+            SURFACE_GPU_TRANSPORT_CHAIN_CAP *
+            SURFACE_GPU_TRANSPORT_CHAIN_RECORD_VECS *
+            16;
+          encoder.copyBufferToBuffer(chainBuf, 0, chainStaging, 0, chainBytes);
+        }
         device.queue.submit([encoder.finish()]);
         await device.queue.onSubmittedWorkDone();
         await staging.mapAsync(GPUMapMode.READ);
         const out = new Float32Array(staging.getMappedRange().slice(0));
         staging.unmap();
+        if (chainBuf && chainStaging) {
+          await chainStaging.mapAsync(GPUMapMode.READ);
+          chainOut.value = new Float32Array(
+            chainStaging.getMappedRange().slice(0),
+          );
+          chainStaging.unmap();
+        }
         return out;
       } finally {
         queriesBuf.destroy();
         resultsBuf.destroy();
         staging.destroy();
+        chainStaging?.destroy();
+        ownChainBuf?.destroy();
       }
     };
     let boundaryOut: Float32Array;
+    let boundaryChainOut: Float32Array | null = null;
     let traceOut: Float32Array;
+    // A holder, not a bare let: the assignment happens inside the
+    // forEach callback, which TS's control flow does not see — a bare
+    // let narrows to null and the post-loop read collapses to never.
+    const deferredReplay: { value: { pi: number; message: string } | null } = {
+      value: null,
+    };
     let shadowOut: Float32Array | null = null;
     let terminalOut: Float32Array | null = null;
     // The sphere-inversion legs' FIELD probes (mode 4): member points of
@@ -11000,7 +11346,14 @@ async function runSurfaceTransportAgreementLegs(
     }
     let fieldOut: Float32Array | null = null;
     try {
-      boundaryOut = await runControl(boundaryQueries);
+      const boundaryChain: { value: Float32Array | null } = { value: null };
+      boundaryOut = await runControl(
+        boundaryQueries,
+        params,
+        undefined,
+        boundaryChain,
+      );
+      boundaryChainOut = boundaryChain.value;
       note(`transport: ${leg.core} boundary dispatch ok`);
       traceOut = await runControl(traceQueries);
       note(`transport: ${leg.core} trace dispatch ok`);
@@ -11025,16 +11378,6 @@ async function runSurfaceTransportAgreementLegs(
     let maxRadianceDelta = 0;
     let maxResidualDelta = 0;
     let maxNormalDelta = 0;
-    // The forward legs' flip accounting: a probe the ULP ensemble says is
-    // chaos-unstable is EXCLUDED from the hard gate and counted here —
-    // the escape legs' pre-hoc ensemble with exclusions disclosed per
-    // row. Past the cap the fixture certifies nothing and the leg fails.
-    const legCap =
-      leg.options.transportMaxPaths ?? SURFACE_TRANSPORT_LEG_MAX_PATHS;
-    const legCaps = {
-      maxProcessedPaths: legCap,
-      maxInterfaces: legCap,
-    };
     const forward = SURFACE_TRANSPORT_FORWARD_CORES.has(leg.core);
     // The finite DDA joins the forward cores in the ULP ensemble: the
     // descent estimators are CONTINUOUS (a ulp nudge moves the estimate a
@@ -11054,6 +11397,371 @@ async function runSurfaceTransportAgreementLegs(
     const fail = (probe: number, kind: string, detail: string): never => {
       throw new Error(
         `transport ${leg.core} (${leg.systemName}) probe ${probe} ${kind}: ${detail}`,
+      );
+    };
+    // THE WGSL-CHAIN REPLAY (the finite legs' divergence instrument, run
+    // when a trace's status disagrees): the twin's trace loop with the
+    // boundary query swapped for a WGSL mode-1 round-trip — the kernel's
+    // OWN chain (its own anchors fed forward), the host's fork arithmetic
+    // (the twin's shared TS helpers), each step compared against the
+    // twin's recorded chain at the same step AND against the twin's
+    // answer on the WGSL's own state. The isolated boundary arms replay
+    // the TWIN's chain, where every query agreed; the kernel's own chain
+    // is what diverges, and this names the step where it leaves the twin.
+    const replayFiniteWgslChain = async (
+      pi: number,
+      baseMessage: string,
+      paramsBuf: GPUBuffer,
+      /** The fork arithmetic's rounding: the kernel's trace forks in WGSL
+       * f32, the twin's in TS f64. The f32-mimicking run rounds every
+       * fork site — when IT reproduces the kernel's blowup the
+       * divergence is the fork arithmetic, and the per-site bisection
+       * starts there. */
+      f32fork: boolean,
+    ): Promise<never> => {
+      const twinChain = twinChains[pi] ?? [];
+      if (leg.media) {
+        throw new Error(
+          `transport ${leg.core} (${leg.systemName}) probe ${String(pi)} ${baseMessage} — the WGSL-chain replay is not yet built for media legs`,
+        );
+      }
+      const theta = DIELECTRIC_INITIAL_BRANCH_THETA;
+      const eps = DIELECTRIC_CROSSING_EPS_REL * visR;
+      const bgLinear = SURFACE_TRANSPORT_CONTROL_BG_LINEAR;
+      const replayChain: {
+        origin: Vec3;
+        dir: Vec3;
+        inside: boolean;
+        anchor: FiniteSolidAnchor | null;
+        kind: number;
+        reason: number;
+        t: number;
+        normal: Vec3;
+        toMedium: number;
+      }[] = [];
+      let divergedAt = -1;
+      interface ReplayPath {
+        origin: Vec3;
+        dir: Vec3;
+        energy: Vec3;
+        inside: boolean;
+        interfaces: number;
+        bound: number;
+        anchor: FiniteSolidAnchor | null;
+      }
+      const stack: ReplayPath[] = [];
+      let radiance: Vec3 = [0, 0, 0];
+      let residual = 0;
+      let processed = 0;
+      let status: "pending" | "complete" | "residual" | "unresolved" =
+        "pending";
+      let failure = 0;
+      const push = (child: ReplayPath): boolean => {
+        if (child.bound <= theta) {
+          residual += child.bound;
+          return true;
+        }
+        if (stack.length >= 24) {
+          residual += child.bound;
+          return false;
+        }
+        stack.push(child);
+        return true;
+      };
+      stack.push({
+        origin: [...traceQueries[pi].origin] as Vec3,
+        dir: [...traceQueries[pi].dir] as Vec3,
+        energy: [1, 1, 1],
+        inside: false,
+        interfaces: 0,
+        bound: dielectricBranchBound([1, 1, 1], DIELECTRIC_ENVIRONMENT_BOUND),
+        anchor: null,
+      });
+      while (stack.length > 0) {
+        const path = stack.pop() as ReplayPath;
+        if (path.bound <= theta) {
+          residual += path.bound;
+          continue;
+        }
+        if (processed >= legCap) {
+          residual += path.bound;
+          status = "unresolved";
+          failure = 1;
+          break;
+        }
+        if (path.interfaces >= legCap) {
+          residual += path.bound;
+          status = "unresolved";
+          failure = 2;
+          break;
+        }
+        processed++;
+        const anchorFields = path.anchor
+          ? {
+              finiteIntrinsic: [...path.anchor.intrinsicPoint] as Vec4,
+              finiteMask: path.anchor.planeMask,
+              finitePlanes: [
+                path.anchor.planeIndices[0],
+                path.anchor.planeIndices[1],
+                path.anchor.planeIndices[2],
+                path.anchor.planeIndices[3],
+              ] as [number, number, number, number],
+              finiteCells: [
+                path.anchor.cellIndices[0],
+                path.anchor.cellIndices[1],
+                path.anchor.cellIndices[2],
+                path.anchor.cellIndices[3],
+              ] as [number, number, number, number],
+            }
+          : {
+              finiteIntrinsic: [0, 0, 0, 0] as Vec4,
+              finiteMask: 0,
+              finitePlanes: [-1, -1, -1, -1] as [
+                number,
+                number,
+                number,
+                number,
+              ],
+              finiteCells: [-1, -1, -1, -1] as [number, number, number, number],
+            };
+        const out = await runControl(
+          [
+            {
+              origin: [...path.origin] as Vec3,
+              dir: [...path.dir] as Vec3,
+              anchorPoint: [0, 0, 0],
+              eps: 0,
+              ior: DIELECTRIC_IOR,
+              radius: visR,
+              absorb: DIELECTRIC_ABSORPTION,
+              theta,
+              anchorPresent: path.anchor ? 1 : 0,
+              mode: 1,
+              inside: path.inside ? 1 : 0,
+              ballC: [0, 0, 0],
+              ballR: visR,
+              visR,
+              distortion: 0,
+              ...anchorFields,
+            },
+          ],
+          paramsBuf,
+        );
+        const kind = out[0];
+        const gpuReason = out[1];
+        const hitT = out[2];
+        const normal: Vec3 = [out[4], out[5], out[6]];
+        const toMedium = out[22];
+        const hitAnchor: FiniteSolidAnchor | null =
+          kind === 1
+            ? {
+                intrinsicPoint: [out[8], out[9], out[10], out[11]] as Vec4,
+                planeMask: out[12],
+                planeIndices: [out[13], out[14], out[15], out[16]] as [
+                  number,
+                  number,
+                  number,
+                  number,
+                ],
+                cellIndices: [out[17], out[18], out[19], out[20]] as [
+                  number,
+                  number,
+                  number,
+                  number,
+                ],
+              }
+            : null;
+        const hit: TransportFiniteBoundaryResult =
+          kind === 1
+            ? {
+                kind: "boundary",
+                reason: gpuReason,
+                t: hitT,
+                normal,
+                anchor: hitAnchor,
+                fromMedium: out[21],
+                toMedium,
+                toBranch: out[23],
+              }
+            : kind === 2
+              ? {
+                  kind: "miss",
+                  reason: gpuReason,
+                  t: hitT,
+                  normal,
+                  anchor: null,
+                }
+              : {
+                  kind: "refused",
+                  reason: gpuReason,
+                  t: hitT,
+                  normal,
+                  anchor: null,
+                };
+        replayChain.push({
+          origin: [...path.origin] as Vec3,
+          dir: [...path.dir] as Vec3,
+          inside: path.inside,
+          anchor: path.anchor,
+          kind,
+          reason: gpuReason,
+          t: hitT,
+          normal,
+          toMedium,
+        });
+        // The twin's own answer on the WGSL's state (the isolated query
+        // disagreement), and the twin chain's state at the same step (the
+        // feed-forward divergence).
+        const twinOnSame = finiteQuery!(
+          [...path.origin] as Vec3,
+          [...path.dir] as Vec3,
+          path.anchor,
+          path.inside,
+        );
+        const twinStep = twinChain[replayChain.length - 1];
+        const anchorEq = (
+          a: FiniteSolidAnchor | null,
+          b: FiniteSolidAnchor | null,
+        ): boolean =>
+          a === b ||
+          (a !== null &&
+            b !== null &&
+            a.planeMask === b.planeMask &&
+            a.planeIndices.every((v, i) => v === b.planeIndices[i]) &&
+            a.cellIndices.every((v, i) => v === b.cellIndices[i]));
+        const twinOnSameKind = TRANSPORT_BOUNDARY_KIND_CODES[twinOnSame.kind];
+        const sameAnswer =
+          twinOnSameKind === kind &&
+          twinOnSame.reason === gpuReason &&
+          Math.abs(twinOnSame.t - hitT) <= 4 * eps &&
+          twinOnSame.normal.every((v, i) => Math.abs(v - normal[i]) <= 1e-4) &&
+          anchorEq(twinOnSame.anchor ?? null, hit.anchor ?? null);
+        const sameStep =
+          twinStep !== undefined &&
+          twinStep.inside === (path.inside ? 1 : 0) &&
+          anchorEq(
+            twinStep.anchorPresent === 1 ? finiteAnchorOf(twinStep) : null,
+            path.anchor,
+          ) &&
+          twinStep.dir.every((v, i) => Math.abs(v - path.dir[i]) <= 1e-5);
+        note(
+          `  replay[${String(replayChain.length - 1)}] proc=${String(processed)} kind=${String(kind)} r=${String(gpuReason)} t=${hitT.toExponential(4)} toM=${String(toMedium)} claim=${path.inside ? 1 : 0} anch=${path.anchor ? `${String(path.anchor.planeMask)}:[${path.anchor.cellIndices.join(",")}]` : "null"} | twinSame=${sameAnswer ? "agree" : "DIVERGE"} twinStep=${sameStep ? "same" : "LEFT-TWIN"}`,
+        );
+        if (!sameAnswer && divergedAt < 0) {
+          divergedAt = replayChain.length - 1;
+        }
+        if (hit.kind === "refused") {
+          residual += path.bound;
+          status = "unresolved";
+          failure = 4;
+          break;
+        }
+        if (hit.kind === "miss") {
+          if (path.inside) {
+            residual += path.bound;
+            status = "unresolved";
+            failure = 5;
+            break;
+          }
+          radiance = [
+            radiance[0] + bgLinear[0] * path.energy[0],
+            radiance[1] + bgLinear[1] * path.energy[1],
+            radiance[2] + bgLinear[2] * path.energy[2],
+          ];
+          continue;
+        }
+        const n = hit.normal;
+        // The fork arithmetic's rounding site (f32fork mimics the kernel's
+        // WGSL f32 fork; f64 is the twin's own arithmetic).
+        const fr = (x: number): number => (f32fork ? Math.fround(x) : x);
+        const dot = fr(
+          fr(fr(path.dir[0] * n[0]) + fr(path.dir[1] * n[1])) +
+            fr(path.dir[2] * n[2]),
+        );
+        const childOrigin: Vec3 = [
+          fr(fr(path.origin[0]) + fr(fr(hitT) * fr(path.dir[0]))),
+          fr(fr(path.origin[1]) + fr(fr(hitT) * fr(path.dir[1]))),
+          fr(fr(path.origin[2]) + fr(fr(hitT) * fr(path.dir[2]))),
+        ];
+        const incidentInGlass = path.inside;
+        const beer = (axis: number): number =>
+          fr(dielectricBeerThroughput(DIELECTRIC_ABSORPTION[axis], hitT, visR));
+        const energy: Vec3 = incidentInGlass
+          ? [
+              fr(path.energy[0] * beer(0)),
+              fr(path.energy[1] * beer(1)),
+              fr(path.energy[2] * beer(2)),
+            ]
+          : [...path.energy];
+        const fromIor = incidentInGlass ? DIELECTRIC_IOR : 1;
+        const toIor = incidentInGlass ? 1 : DIELECTRIC_IOR;
+        const bend64 = dielectricRefract(path.dir, n, fromIor, toIor);
+        const bend = {
+          tir: bend64.tir,
+          direction: bend64.direction.map(fr) as Vec3,
+        };
+        const makeChild = (
+          childEnergy: Vec3,
+          direction: Vec3,
+          inside: boolean,
+        ): ReplayPath => ({
+          origin: childOrigin,
+          dir: direction,
+          energy: childEnergy,
+          inside,
+          interfaces: path.interfaces + 1,
+          bound: fr(
+            dielectricBranchBound(childEnergy, DIELECTRIC_ENVIRONMENT_BOUND),
+          ),
+          anchor: hit.anchor ?? null,
+        });
+        if (bend.tir) {
+          push(makeChild(energy, bend.direction, incidentInGlass));
+          continue;
+        }
+        const f = fr(dielectricFresnel(fr(Math.abs(dot)), fromIor, toIor));
+        const transmitted = makeChild(
+          [
+            fr(energy[0] * fr(1 - f)),
+            fr(energy[1] * fr(1 - f)),
+            fr(energy[2] * fr(1 - f)),
+          ],
+          bend.direction,
+          !incidentInGlass,
+        );
+        const reflected = makeChild(
+          [fr(energy[0] * f), fr(energy[1] * f), fr(energy[2] * f)],
+          [
+            fr(fr(path.dir[0]) - fr(fr(fr(2 * dot)) * fr(n[0]))),
+            fr(fr(path.dir[1]) - fr(fr(fr(2 * dot)) * fr(n[1]))),
+            fr(fr(path.dir[2]) - fr(fr(fr(2 * dot)) * fr(n[2]))),
+          ],
+          incidentInGlass,
+        );
+        const first =
+          reflected.bound >= transmitted.bound ? reflected : transmitted;
+        const second = first === reflected ? transmitted : reflected;
+        if (!push(first)) {
+          status = "unresolved";
+          failure = 3;
+          break;
+        }
+        if (!push(second)) {
+          status = "unresolved";
+          failure = 3;
+          break;
+        }
+      }
+      if (status === "pending" && stack.length === 0) {
+        status = residual > 0 ? "residual" : "complete";
+      }
+      const diverged = divergedAt >= 0;
+      throw new Error(
+        `transport ${leg.core} (${leg.systemName}) probe ${String(pi)} ${baseMessage} — the WGSL-chain replay [${f32fork ? "f32-mimic" : "f64"} fork] ` +
+          `(${String(replayChain.length)} queries, replay status ${status} failure ${String(failure)} residual ${residual.toExponential(4)} radiance ${radiance.map((v) => v.toFixed(4)).join(",")}) ` +
+          (diverged
+            ? `FIRST DIVERGES from the twin on the WGSL's own state at chain step ${String(divergedAt)}`
+            : "agrees with the twin on every own-chain query"),
       );
     };
     probes.forEach((probe, pi) => {
@@ -11092,12 +11800,18 @@ async function runSurfaceTransportAgreementLegs(
         } else if (leg.backend === "finiteSolid") {
           // The DDA twin consumes the record's OWN anchor (the anchored
           // probes pack what the unanchored twin handed back — f64
-          // exact); the anchor out is compared below.
+          // exact); the anchor out is compared below. THE CLAIM: under
+          // per-map media the record's `inside` IS the medium code and
+          // rides verbatim — the flag form (`=== 1`) would query the
+          // twin with air where the record claims glass B (measured on
+          // the two-glass leg's anchored arms: the kernel answered the
+          // code-claimed walk's event while the twin refused the
+          // air-claimed one).
           const finiteHit = finiteQuery!(
             query.origin,
             query.dir,
             finiteAnchorOf(query),
-            query.inside === 1,
+            leg.media ? query.inside : query.inside === 1,
           );
           cpuHit = finiteHit;
           cpuAnchor = finiteHit.anchor;
@@ -11142,7 +11856,12 @@ async function runSurfaceTransportAgreementLegs(
             query.eps,
             finite
               ? (o: Vec3, d: Vec3) =>
-                  finiteQuery!(o, d, finiteAnchorOf(query), query.inside === 1)
+                  finiteQuery!(
+                    o,
+                    d,
+                    finiteAnchorOf(query),
+                    leg.media ? query.inside : query.inside === 1,
+                  )
               : undefined,
             surfaceTransportSignedBackend(leg.backend)
               ? (o: Vec3) =>
@@ -11154,6 +11873,24 @@ async function runSurfaceTransportAgreementLegs(
                     query.anchorPoint,
                     query.inside === 1,
                     query.eps,
+                  )
+              : undefined,
+            finite && leg.finiteQueryFma
+              ? (o: Vec3, d: Vec3) =>
+                  leg.finiteQueryFma!(
+                    o,
+                    d,
+                    finiteAnchorOf(query),
+                    leg.media ? query.inside : query.inside === 1,
+                  )
+              : undefined,
+            finite && leg.finiteQueryOracle
+              ? (o: Vec3, d: Vec3) =>
+                  leg.finiteQueryOracle!(
+                    o,
+                    d,
+                    finiteAnchorOf(query),
+                    leg.media ? query.inside : query.inside === 1,
                   )
               : undefined,
           );
@@ -11185,6 +11922,65 @@ async function runSurfaceTransportAgreementLegs(
             );
           }
         }
+        // The failing query's own state and (the chainDump legs') the
+        // kernel walk's consumed endpoints, shared by the kind/reason/t
+        // fails so the offline replay can rebuild any of them exactly.
+        let diagState = "";
+        if (finite) {
+          diagState =
+            ` o=${query.origin.map((v) => v.toPrecision(9)).join(",")}` +
+            ` d=${query.dir.map((v) => v.toPrecision(9)).join(",")}` +
+            ` claim=${String(query.inside)}` +
+            (query.anchorPresent === 1 && query.finiteIntrinsic
+              ? ` anch(intr=${query.finiteIntrinsic.map((v) => v.toPrecision(9)).join(",")},mask=0b${query.finiteMask!.toString(2)},cells=[${query.finiteCells!.join(",")}],planes=[${query.finitePlanes!.join(",")}])`
+              : " anch=none") +
+            ` gpuanch(intr=${[8, 9, 10, 11].map((i) => boundaryOut[base + i].toPrecision(9)).join(",")},mask=0b${(boundaryOut[base + 12] >>> 0).toString(2)},cells=[${[17, 18, 19, 20, 21].map((i) => String(boundaryOut[base + i])).join(",")}])`;
+          if (boundaryChainOut) {
+            const u32 = new Uint32Array(boundaryChainOut.buffer);
+            const slot = boundaryBase + b;
+            // The slot's region is CAP records of VECS vec4f; the float
+            // base multiplies by 4.
+            const slotBase =
+              slot *
+              SURFACE_GPU_TRANSPORT_CHAIN_CAP *
+              SURFACE_GPU_TRANSPORT_CHAIN_RECORD_VECS *
+              4;
+            const total = Math.round(boundaryChainOut[slotBase]);
+            const parts: string[] = [
+              `total=${String(total)}`,
+              `groupT=${boundaryChainOut[slotBase + 2].toExponential(9)}`,
+              `walkKind=${String(Math.round(boundaryChainOut[slotBase + 21 * 4]))}`,
+              `walkReason=${String(Math.round(boundaryChainOut[slotBase + 21 * 4 + 1]))}`,
+              `walkToM=${String(Math.round(boundaryChainOut[slotBase + 21 * 4 + 2]))}`,
+              `started=${String(Math.round(boundaryChainOut[slotBase + 21 * 4 + 3]))}`,
+            ];
+            for (let e = 0; e < Math.min(10, total); e++) {
+              const tBits = u32[slotBase + (1 + e * 2) * 4];
+              const packed = u32[slotBase + (1 + e * 2) * 4 + 1];
+              const t = new Float32Array(new Uint32Array([tBits]).buffer)[0];
+              const delta = packed & 1;
+              const facets = (packed >>> 24) & 255;
+              let index = (packed >>> 1) & 0x7fffff;
+              // finRecordWord's mixed radix: the LOW digits fill the HIGH
+              // slots (slot level-1 first).
+              const slots: number[] = [];
+              for (let w2 = 0; w2 < 4; w2++) {
+                slots.push(index % 20);
+                index = Math.floor(index / 20);
+              }
+              const word = [slots[1], slots[0], -1, -1] as [
+                number,
+                number,
+                number,
+                number,
+              ];
+              parts.push(
+                `[${word.join(",")}]${delta === 1 ? "+" : "-"} t=${t.toExponential(9)} f=0b${facets.toString(2)}`,
+              );
+            }
+            diagState += ` walk(${parts.join(" ")})`;
+          }
+        }
         // Both arms pin the GPU/CPU AGREEMENT (kind, reason, t, normal).
         // The camera-marched probes' unanchored arm does usually report a
         // boundary (it starts 1% of the radius past a real hit and
@@ -11208,7 +12004,9 @@ async function runSurfaceTransportAgreementLegs(
           fail(
             pi,
             armName,
-            `kind — gpu ${String(gpuKind)} vs cpu "${cpuHit.kind}"`,
+            `kind — gpu ${String(gpuKind)} vs cpu "${cpuHit.kind}"` +
+              (cpuHit.kind === "refused" ? ` r${String(cpuHit.reason)}` : "") +
+              diagState,
           );
         }
 
@@ -11219,6 +12017,43 @@ async function runSurfaceTransportAgreementLegs(
             armName,
             `reason — gpu ${String(gpuReason)} vs cpu ${String(cpuHit.reason)}`,
           );
+        }
+        // THE MEDIUM LANES (finite legs): fromMedium/toMedium/toBranch ride
+        // the mode-1 result's spare lanes (f.y/f.z/f.w) and are compared
+        // like kind — the trace's next query CLAIMS toMedium, so a medium
+        // divergence re-routes the chain where kind/t/normal/anchor can
+        // all agree. The chain-replay arm makes this the divergence site
+        // it was built to name.
+        if (
+          leg.backend === "finiteSolid" &&
+          !!leg.options.finiteSolid?.general &&
+          cpuHit.kind === "boundary"
+        ) {
+          const finiteCpu = cpuHit as TransportFiniteBoundaryResult;
+          const gpuFrom = boundaryOut[base + 21];
+          const gpuTo = boundaryOut[base + 22];
+          const gpuBranch = boundaryOut[base + 23];
+          if (gpuFrom !== (finiteCpu.fromMedium ?? 0)) {
+            fail(
+              pi,
+              armName,
+              `fromMedium — gpu ${String(gpuFrom)} vs cpu ${String(finiteCpu.fromMedium ?? 0)}`,
+            );
+          }
+          if (gpuTo !== (finiteCpu.toMedium ?? 0)) {
+            fail(
+              pi,
+              armName,
+              `toMedium — gpu ${String(gpuTo)} vs cpu ${String(finiteCpu.toMedium ?? 0)}`,
+            );
+          }
+          if (gpuBranch !== (finiteCpu.toBranch ?? -1)) {
+            fail(
+              pi,
+              armName,
+              `toBranch — gpu ${String(gpuBranch)} vs cpu ${String(finiteCpu.toBranch ?? -1)}`,
+            );
+          }
         }
         // The anchored query must clear its own anchor — the estimator
         // and closed-solid backends' pin: their anchored march carries
@@ -11304,7 +12139,7 @@ async function runSurfaceTransportAgreementLegs(
             pi,
             armName,
             `t — gpu ${String(gpuT)} vs cpu ${String(cpuHit.t)} ` +
-              `(delta ${String(tDelta)} > ${String(tTol)})`,
+              `(delta ${String(tDelta)} > ${String(tTol)})${diagState}`,
           );
         }
         // A sphere-inversion boundary's normal is pinned as a FUNCTION: the
@@ -11480,6 +12315,8 @@ async function runSurfaceTransportAgreementLegs(
           finiteQuery,
           solidQuery,
           leg.media,
+          leg.finiteQueryFma,
+          leg.finiteQueryOracle,
         );
       if (!traceStable) flipped++;
       const traceBase = pi * resultFloats;
@@ -11505,17 +12342,25 @@ async function runSurfaceTransportAgreementLegs(
         traceStable &&
         gpuStatus !== TRANSPORT_TRACE_STATUS_CODES[cpuTrace.status]
       ) {
-        fail(
-          pi,
-          "trace",
+        const message =
           `status — gpu ${String(gpuStatus)} vs cpu "${cpuTrace.status}" ` +
-            `(gpu residual ${String(traceOut[traceBase + 3])} radiance ` +
-            `${gpuRadiance.map((v) => v.toFixed(4)).join(",")} lanes ` +
-            `${String(traceOut[traceBase + 1])}/${String(traceOut[traceBase + 2])}; ` +
-            `cpu residual ${cpuTrace.residual.toFixed(4)} radiance ` +
-            `${cpuTrace.radiance.map((v) => v.toFixed(4)).join(",")} failure ` +
-            `${String(cpuTrace.failure)} reason ${String(cpuTrace.reason)})`,
-        );
+          `(gpu residual ${String(traceOut[traceBase + 3])} radiance ` +
+          `${gpuRadiance.map((v) => v.toFixed(4)).join(",")} lanes ` +
+          `${String(traceOut[traceBase + 1])}/${String(traceOut[traceBase + 2])}; ` +
+          `cpu residual ${cpuTrace.residual.toFixed(4)} radiance ` +
+          `${cpuTrace.radiance.map((v) => v.toFixed(4)).join(",")} failure ` +
+          `${String(cpuTrace.failure)} reason ${String(cpuTrace.reason)})`;
+        if (finiteTrace) {
+          // THE WGSL-CHAIN REPLAY's trigger: defer the failure until the
+          // replay has walked the kernel's own chain (below the forEach),
+          // so the divergence site rides the failure message.
+          deferredReplay.value = { pi, message };
+          return;
+        }
+        fail(pi, "trace", message);
+      }
+      if (deferredReplay.value !== null) {
+        return;
       }
       if (finiteTrace && traceStable) {
         stableFiniteTraces++;
@@ -11561,6 +12406,148 @@ async function runSurfaceTransportAgreementLegs(
         }
       }
     });
+    if (deferredReplay.value !== null && leg.backend === "finiteSolid") {
+      // The leg's params buffer was destroyed by the dispatch block's
+      // finally; the replay packs its own (runControl's paramsBuf note),
+      // at the leg's own count so the packed wire is identical.
+      const replayParamsData = leg.packParams(
+        Math.max(
+          boundaryQueries.length,
+          traceQueries.length,
+          shadowQueries.length,
+          terminalQueries.length,
+        ),
+      );
+      const replayParams = await createSurfaceBuffer(
+        device,
+        `surface-de transport replay params ${leg.core}`,
+        replayParamsData.byteLength,
+        GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      );
+      device.queue.writeBuffer(replayParams, 0, replayParamsData);
+      try {
+        // THE KERNEL-CHAIN DUMP: re-trace the failing probe alone with
+        // the chain-dump binding live, then walk the kernel's OWN chain —
+        // each event's query state against the twin's answer on the same
+        // state. The first disagreement names the query the two engines
+        // answer differently; a chain that agrees with the twin
+        // everywhere while the kernel's mode-0 trace failed means the
+        // divergence is the trace loop's own bookkeeping, not the query.
+        const chainOutHolder: { value: Float32Array | null } = {
+          value: null,
+        };
+        const chainBuf = await createSurfaceBuffer(
+          device,
+          `surface-de transport chain ${leg.core}`,
+          SURFACE_TRANSPORT_WG *
+            SURFACE_GPU_TRANSPORT_CHAIN_CAP *
+            SURFACE_GPU_TRANSPORT_CHAIN_RECORD_VECS *
+            16,
+          GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+        );
+        try {
+          await runControl(
+            [traceQueries[deferredReplay.value.pi]],
+            replayParams,
+            chainBuf,
+            chainOutHolder,
+          );
+        } finally {
+          chainBuf.destroy();
+        }
+        const chain = chainOutHolder.value;
+        if (chain) {
+          const cap = SURFACE_GPU_TRANSPORT_CHAIN_CAP;
+          const vecs = SURFACE_GPU_TRANSPORT_CHAIN_RECORD_VECS;
+          let events = 0;
+          let firstTwinDivergence = -1;
+          for (let e = 0; e < cap; e++) {
+            const base = e * vecs * 4;
+            const rec = chain.slice(base, base + vecs * 4);
+            if (rec.every((v) => v === 0)) break;
+            events++;
+            const origin: Vec3 = [rec[0], rec[1], rec[2]];
+            const claim = rec[3] === 0 ? "air" : "glass";
+            const dir: Vec3 = [rec[4], rec[5], rec[6]];
+            const anchored = rec[7] !== 0;
+            const interfaces = rec[21];
+            const kind = Math.round(rec[24]);
+            const reason = Math.round(rec[25]);
+            const hitT = rec[26];
+            // The QUERY's own anchor (lanes 2-4), not the answer's — the
+            // twin must be asked the state the kernel asked.
+            const qAnchor = anchored
+              ? {
+                  intrinsicPoint: [rec[8], rec[9], rec[10], rec[11]] as Vec4,
+                  planeMask: Math.round(rec[12]) >>> 0,
+                  planeIndices: [
+                    Math.round(rec[13]),
+                    Math.round(rec[14]),
+                    Math.round(rec[15]),
+                    Math.round(rec[16]),
+                  ] as [number, number, number, number],
+                  cellIndices: [
+                    Math.round(rec[17]),
+                    Math.round(rec[18]),
+                    Math.round(rec[19]),
+                    Math.round(rec[20]),
+                  ] as [number, number, number, number],
+                }
+              : null;
+            const twinHit = finiteQuery!(
+              origin,
+              dir,
+              qAnchor,
+              claim === "glass",
+            );
+            const twinKind =
+              twinHit.kind === "boundary" ? 1 : twinHit.kind === "miss" ? 2 : 3;
+            const agrees =
+              twinKind === kind &&
+              twinHit.reason === reason &&
+              Math.abs(twinHit.t - hitT) <=
+                4 * DIELECTRIC_CROSSING_EPS_REL * visR &&
+              twinHit.normal.every((v, i) => Math.abs(v - rec[28 + i]) <= 1e-4);
+            if (!agrees && firstTwinDivergence < 0) firstTwinDivergence = e;
+            const fmtV = (xs: readonly number[]): string =>
+              `[${xs.map((v) => (Math.abs(v) < 1e5 ? v.toFixed(6) : v.toExponential(3))).join(",")}]`;
+            note(
+              `  kernel-chain[${String(e)}] o=${fmtV(origin)} d=${fmtV(dir)} claim=${claim} qanch=${anchored ? `mask=0b${Math.round(rec[12]).toString(2)} cells=${fmtV([rec[17], rec[18], rec[19], rec[20]].map(Math.round))} intr=${fmtV([rec[8], rec[9], rec[10], rec[11]])}` : "none"} ifs=${String(interfaces)} kind=${String(kind)} r=${String(reason)} t=${hitT.toExponential(4)} n=${fmtV([rec[28], rec[29], rec[30]])} toM=${String(rec[31])} aansh=${kind === 1 ? `mask=0b${Math.round(rec[40]).toString(2)} cells=${fmtV([rec[45], rec[46], rec[47], rec[33]].map(Math.round))} intr=${fmtV([rec[36], rec[37], rec[38], rec[39]])}` : "none"} | twin=${agrees ? "agree" : `DIVERGE(kind ${twinKind} t ${twinHit.t.toExponential(4)} r ${String(twinHit.reason)})`}`,
+            );
+          }
+          note(
+            `  kernel-chain: ${String(events)} recorded events (cap ${String(cap)}), first twin divergence at event ${String(firstTwinDivergence)}`,
+          );
+        }
+        // The f64-fork replay first (the twin's own arithmetic), then the
+        // f32-mimicking one — when the f32 run reproduces the kernel's
+        // blowup the divergence is the fork arithmetic itself.
+        try {
+          await replayFiniteWgslChain(
+            deferredReplay.value.pi,
+            deferredReplay.value.message,
+            replayParams,
+            false,
+          );
+        } catch (f64Error) {
+          try {
+            await replayFiniteWgslChain(
+              deferredReplay.value.pi,
+              deferredReplay.value.message,
+              replayParams,
+              true,
+            );
+          } catch (f32Error) {
+            throw new Error(
+              `${(f32Error as Error).message}\n  (the f64-fork replay had said: ${(f64Error as Error).message})`,
+              { cause: f32Error },
+            );
+          }
+        }
+      } finally {
+        replayParams.destroy();
+      }
+    }
     if (leg.backend === "finiteSolid") {
       if (stableFiniteTraces === 0 || resolvedFiniteTraces === 0) {
         fail(
@@ -11583,8 +12570,10 @@ async function runSurfaceTransportAgreementLegs(
     if (discreteQuery && flipped > 0) {
       notes.push(
         `transport ${leg.core}: ${String(flipped)} probe(s) excluded as ` +
-          "chaos flips (the ULP ensemble; the escape legs' classifier " +
-          "treatment) — disclosed, not absorbed",
+          "chaos/contraction/oracle-bracket flips (the ULP ensemble, the " +
+          "finite twin's fused-realization probe and its f64-oracle " +
+          "bracket — the escape legs' classifier treatment) — disclosed, " +
+          "not absorbed",
       );
     }
     // --- the SHADOW probes (mode 2, closed-solid legs): the floor
