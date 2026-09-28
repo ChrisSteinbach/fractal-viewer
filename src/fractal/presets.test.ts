@@ -18,6 +18,7 @@ import {
   ESCAPE_LINK_MANDELBOX,
   ESCAPE_LINK_QSQUARE,
 } from "./escape-de";
+import { deHasFolds4 } from "./surface-de-4d";
 import {
   analyzeEscapeSystem4,
   buildEscapeDE4,
@@ -37,6 +38,12 @@ import {
   hybridChainCube,
   hybridChainQuaternion,
   hybridChainShells,
+  hopfBloom,
+  hyperkifs,
+  brickRosette,
+  turnedShells,
+  juliaStrata,
+  pentatopePinwheel,
   fernSpongeIsolated,
   fernSpongeLeak,
   gearworks,
@@ -65,6 +72,7 @@ import {
   PRESET_PALETTES,
   PRESET_RENDER_HINTS,
   PRESET_SCAFFOLDS,
+  PRESET_SCHEDULES,
   PRESET_SPHERE_INVERSIONS,
   PRESET_SYMMETRIES,
   PRESET_TILINGS,
@@ -778,6 +786,11 @@ describe("PRESET_FINALS", () => {
       "fourFinishes",
       "juliaPinwheel",
       "juliaSnowflake",
+      // The 4D pinwheel is juliaSnowflake's construction one dimension
+      // up: the pentatope's attractor plus the julian lens it was
+      // composed around, with the lens's own xw tilt making the fold
+      // itself four-dimensional.
+      "pentatopePinwheel",
       "swirlPentatope",
       "swirlTetrahedron",
     ]);
@@ -976,7 +989,12 @@ describe("PRESET_SYMMETRIES", () => {
   // off on every load with no entry, so a preset added here silently
   // replicates itself for everyone who loads it. One composition earns that.
   it("carries a kaleidoscope only for the composition that IS one", () => {
-    expect(Object.keys(PRESET_SYMMETRIES)).toEqual(["foldChainFlower"]);
+    expect(Object.keys(PRESET_SYMMETRIES).sort()).toEqual([
+      // The escape-time mode's own flower: the query-space wedge fold is
+      // the object, not decoration (see PRESET_SYMMETRIES' doc).
+      "brickRosette",
+      "foldChainFlower",
+    ]);
   });
 
   // The table's own scoping claim, and the half that would break a render
@@ -1422,6 +1440,7 @@ describe("PRESET_SCAFFOLDS", () => {
     expect(Object.keys(PRESET_SCAFFOLDS).sort()).toEqual([
       "duoprism",
       "pentatope",
+      "pentatopePinwheel",
       "sixteenCell",
       "tesseract",
       "twentyFourCell",
@@ -1995,5 +2014,265 @@ describe("starFoundry (Tier-3 mesh condensation preset)", () => {
     // 1.4 of 5.4 total weight, the same balanced share as Gearworks.
     expect(emitted / numPoints).toBeGreaterThan(0.2);
     expect(emitted / numPoints).toBeLessThan(0.33);
+  });
+});
+
+describe("the 4D flame presets", () => {
+  // The 4D flame path (CPU `flame-4d.ts` + WGSL `flame-gpu-4d.ts`) shipped
+  // with no preset reaching it — every flame-hinted preset is flat — so the
+  // gate these three owe is the non-flatness one: a `w` block that silently
+  // dropped would leave each of them a legal flat system that renders
+  // something else entirely (the Hopf rings' second circle degenerates to a
+  // line segment; the strata's four sheets collapse onto one).
+
+  it("hopfBloom seeds ten maps on two orthogonal great circles, split into two color families", () => {
+    const transforms = hopfBloom();
+    expect(transforms).toHaveLength(10);
+    for (const [i, t] of transforms.entries()) {
+      // Every map is a plain contraction toward its vertex (flake4's
+      // fixed-point convention), plus one variation blend.
+      const expected = i < 5 ? 0.08 : 0.62;
+      expect(t.colorIndex).toBe(expected);
+      expect(t.variations).toEqual([
+        { type: "swirl", weight: 0.55 },
+        { type: "linear", weight: 0.35 },
+      ]);
+      expect(t.scale).toEqual([0.4, 0.4, 0.4]);
+    }
+    // Ring A on the xy circle, ring B on the zw one: the first five maps'
+    // fixed points carry |zw| = 0, the last five carry |xy| = 0. Individual
+    // ring-B maps can still carry w = 0 (the zw circle crosses the
+    // hyperplane at two vertices), so the plane memberships are asserted,
+    // not the w coordinate.
+    const lifted = transforms.map(toTransform4);
+    for (const [i, t] of lifted.entries()) {
+      const isRingA = i < 5;
+      const xy = Math.hypot(t.position[0], t.position[1]);
+      const zw = Math.hypot(t.position[2], t.position[3]);
+      expect(isRingA ? zw < 1e-9 : xy < 1e-9).toBe(true);
+      expect(isRingA ? xy > 0.5 : zw > 0.5).toBe(true);
+    }
+    // The blend's contraction bound: scale · Σ|weights| < 1 — the same
+    // weighted-sum rule swirlFlame's render depends on, one dimension up.
+    expect(0.4 * (0.55 + 0.35)).toBeLessThan(1);
+  });
+
+  it("juliaStrata stacks four exact IIM branches at four depths of w", () => {
+    const transforms = juliaStrata();
+    expect(transforms).toHaveLength(4);
+    // juliaIim's exact recipe per map: one full-weight `julia` over a
+    // pre-affine translation that cancels the constant — read the
+    // constants off the first sheet the same way juliaIsland's test does
+    // rather than restating literals — plus the sheet's w depth, which is
+    // the 4D content.
+    expect(transforms[0].position.slice(0, 2)).toEqual(
+      juliaSet()[0].position.slice(0, 2),
+    );
+    for (const [i, t] of transforms.entries()) {
+      expect(t.variations).toEqual([{ type: "julia", weight: 1 }]);
+      expect(t.scale).toEqual([0.75, 0.75, 0.4]);
+      expect(t.position[2]).toBe(0);
+      expect(t.w?.position).toBe([-0.9, -0.3, 0.3, 0.9][i]);
+      expect(t.colorIndex).toBe([0.05, 0.35, 0.65, 0.95][i]);
+      expect(t.colorSpeed).toBe(0.9);
+    }
+    // Four DIFFERENT constants — the whole point of the stack.
+    const constants = transforms.map((m) => [-m.position[0], -m.position[1]]);
+    expect(new Set(constants.map(String)).size).toBe(4);
+  });
+
+  it("pentatopePinwheel is the pentatope's attractor plus a 4D julian lens", () => {
+    expect(pentatopePinwheel()).toEqual(pentatope());
+    const lens = PRESET_FINALS.pentatopePinwheel!();
+    expect(lens.variations).toEqual([
+      { type: "julian", weight: 1, julianPower: 3, julianDist: 1 },
+    ]);
+    expect(lens.scale).toEqual([0.8, 0.8, 0.8]);
+    // The lens itself extends into 4D — an xw tilt is what makes the
+    // folded object a 4D attractor of a 4D map rather than a flat decal.
+    expect(lens.w).toEqual({ rotation: { xw: 0.25 } });
+  });
+
+  it("all three are genuinely non-flat, contractive systems that converge", () => {
+    for (const build of [hopfBloom, juliaStrata, pentatopePinwheel]) {
+      const transforms = build();
+      expect(
+        systemPartsAreNonFlat(transforms, null, { order: 1, plane: "xz" }),
+      ).toBe(true);
+      const res = runChaosGame4(
+        transforms.map(toTransform4),
+        20000,
+        mulberry32(7),
+      );
+      const b = res.bounds;
+      for (const [lo, hi] of [
+        [b.minX, b.maxX],
+        [b.minY, b.maxY],
+        [b.minZ, b.maxZ],
+        [b.minW, b.maxW],
+      ]) {
+        expect(Number.isFinite(lo)).toBe(true);
+        expect(Number.isFinite(hi)).toBe(true);
+        expect(Math.max(Math.abs(lo), Math.abs(hi))).toBeLessThan(10);
+      }
+      // The w axis is open for every one of them — a pinned w extent would
+      // mean the preset's 4D content collapsed (the strata's xy/z sheets
+      // stay exactly planar by design, so only w is asserted open).
+      expect(b.maxW - b.minW).toBeGreaterThan(0.01);
+    }
+  });
+
+  it("hints all three as flame showcases, palettes ride the flame table", () => {
+    for (const name of [
+      "hopfBloom",
+      "juliaStrata",
+      "pentatopePinwheel",
+    ] as const) {
+      expect(PRESET_RENDER_HINTS[name]).toBe("flame");
+      expect(PRESET_PALETTES[name]).toBeDefined();
+    }
+    expect(PRESET_PALETTES.hopfBloom).toBe("sunset");
+    expect(PRESET_PALETTES.juliaStrata).toBe("dusk");
+    expect(PRESET_PALETTES.pentatopePinwheel).toBe("aurora");
+  });
+
+  it("carries authored views with 4D poses, and the pinwheel the pentatope scaffold", () => {
+    for (const name of [
+      "hopfBloom",
+      "juliaStrata",
+      "pentatopePinwheel",
+    ] as const) {
+      const view = PRESET_VIEWS[name];
+      expect(view, name).toBeDefined();
+      expect(view!.fourD, name).toBeDefined();
+      expect(view!.fourD!.rotation.length, name).toBeGreaterThan(0);
+    }
+    expect(PRESET_SCAFFOLDS.pentatopePinwheel).toBe(PRESET_SCAFFOLDS.pentatope);
+    // The other tables stay clean: no schedule, trap or tiling.
+    for (const name of [
+      "hopfBloom",
+      "juliaStrata",
+      "pentatopePinwheel",
+    ] as const) {
+      expect(PRESET_SCHEDULES[name]).toBeUndefined();
+      expect(PRESET_TRAPS[name]).toBeUndefined();
+      expect(PRESET_TILINGS[name]).toBeUndefined();
+    }
+  });
+
+  it("registers all three under their menu values", () => {
+    for (const name of [
+      "hopfBloom",
+      "juliaStrata",
+      "pentatopePinwheel",
+    ] as const) {
+      expect(PRESET_NAMES).toContain(name);
+    }
+  });
+});
+
+describe("the second-wave 4D surface presets", () => {
+  // The gate pairing is the point (the first trio's describe block above
+  // carries the full argument): a preset whose `w` content dropped would
+  // pass every other test here and silently become its 3D twin.
+
+  it("turnedShells turns the HEAD link — refused in 3D, admitted in 4D", () => {
+    const transforms = turnedShells();
+    const gate3 = analyzeEscapeSystem(transforms);
+    expect(gate3.status).toBe("ineligible");
+    expect(gate3.reasons.join("; ")).toContain("map 1 extends into 4D");
+    expect(analyzeEscapeSystem4(transforms).status).toBe("eligible");
+    // It is hybridChainQuaternion with the head link turned — the mirror
+    // of hybridChainShells' own relationship, so the link-turn cannot
+    // drift onto the wrong link.
+    const [head, power] = turnedShells();
+    const [flatHead, flatPower] = hybridChainQuaternion();
+    expect({ ...head, w: undefined }).toEqual({ ...flatHead, w: undefined });
+    expect(power).toEqual(flatPower);
+    expect(head.w).toEqual({ rotation: { xw: 0.3 } });
+  });
+
+  it("brickRosette is mandelboxBrick's map under a three-fold wedge", () => {
+    expect(brickRosette()).toEqual(mandelboxBrick());
+    // The 3D gate refuses the w-rotated map...
+    expect(analyzeEscapeSystem(brickRosette()).status).toBe("ineligible");
+    // ...and refuses it just as hard WITH the kaleidoscope (a w-free wedge
+    // still rotates the query, but the system itself is what extends into
+    // 4D); the 4D gate admits the whole composition.
+    expect(
+      analyzeEscapeSystem(brickRosette(), null, { order: 3, plane: "xz" })
+        .status,
+    ).toBe("ineligible");
+    expect(
+      analyzeEscapeSystem4(brickRosette(), null, { order: 3, plane: "xz" })
+        .status,
+    ).toBe("eligible");
+    expect(PRESET_SYMMETRIES.brickRosette).toEqual({ order: 3, plane: "xz" });
+  });
+
+  it("hyperkifs is the contracting 4D fold frontier the 4D fold kernel serves", () => {
+    const transforms = hyperkifs();
+    expect(transforms).toHaveLength(16);
+    // Eight mandelbox corners + eight boxfold binders, all with w content.
+    const analysis = analyzeSurfaceSystem4(transforms);
+    expect(analysis.status).toBe("eligible");
+    expect(
+      systemPartsAreNonFlat(transforms, null, { order: 1, plane: "xz" }),
+    ).toBe(true);
+    const de = buildSurfaceDE4(transforms);
+    // Folds in the maps are what route the session to `core:"fold4"` —
+    // the kernel this preset exists to reach.
+    expect(deHasFolds4(de)).toBe(true);
+    expect(de.stepScale).toBe(1);
+    // The contraction budget carries over from the 3D twin: 4·1.2·0.19
+    // must stay under 1.
+    expect(4 * 1.2 * 0.19).toBeLessThan(1);
+  });
+
+  it("hyperkifs renders a bounded, four-dimensional cloud", () => {
+    const res = runChaosGame4(
+      hyperkifs().map(toTransform4),
+      20000,
+      mulberry32(7),
+    );
+    const b = res.bounds;
+    for (const [lo, hi] of [
+      [b.minX, b.maxX],
+      [b.minY, b.maxY],
+      [b.minZ, b.maxZ],
+      [b.minW, b.maxW],
+    ]) {
+      expect(Number.isFinite(lo)).toBe(true);
+      expect(Number.isFinite(hi)).toBe(true);
+      expect(Math.max(Math.abs(lo), Math.abs(hi))).toBeLessThan(10);
+    }
+    // The attractor extends into w by as much as it does into x — the
+    // corner arrangement is isotropic in all four axes.
+    const wx = (b.maxW - b.minW) / 2;
+    const hx = (b.maxX - b.minX) / 2;
+    expect(wx).toBeGreaterThan(hx * 0.7);
+    expect(wx).toBeLessThan(hx * 1.3);
+  });
+
+  it("hints all three as surface showcases", () => {
+    for (const name of ["turnedShells", "brickRosette", "hyperkifs"] as const) {
+      expect(PRESET_RENDER_HINTS[name]).toBe("surface");
+    }
+  });
+
+  it("carries no scaffold, lens, palette, trap or view", () => {
+    for (const name of ["turnedShells", "brickRosette", "hyperkifs"] as const) {
+      expect(PRESET_SCAFFOLDS[name]).toBeUndefined();
+      expect(PRESET_FINALS[name]).toBeUndefined();
+      expect(PRESET_PALETTES[name]).toBeUndefined();
+      expect(PRESET_TRAPS[name]).toBeUndefined();
+      expect(PRESET_VIEWS[name]).toBeUndefined();
+    }
+  });
+
+  it("registers all three under their menu values", () => {
+    for (const name of ["turnedShells", "brickRosette", "hyperkifs"] as const) {
+      expect(PRESET_NAMES).toContain(name);
+    }
   });
 });

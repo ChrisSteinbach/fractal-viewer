@@ -1684,6 +1684,39 @@ export function mandelboxColumn(): Transform[] {
 }
 
 /**
+ * "Brick Rosette" — {@link mandelboxBrick}'s map under a three-fold
+ * kaleidoscope ({@link PRESET_SYMMETRIES}), the {@link foldChainFlower}
+ * relationship one dimension up: the same document plus a symmetry table
+ * entry, rendered as a different object because the escape-time estimator
+ * folds the QUERY into one sector before the orbit runs (`foldQueryIntoSector4`
+ * — 1-Lipschitz, an isometry per sector, so the set is exactly `g⁻¹(M)`).
+ *
+ * THREE, SPECIFICALLY, and measured on this exact system rather than
+ * inherited: the underlying brick carries its box fold's per-axis mirror,
+ * so the order-2 wedge is an EXACT no-op on the rendered slice — 0 of
+ * 65536 sampled points change side. But unlike the near-isotropic chain
+ * the 4D lift's measurement sheet ran its sweep on, the brick's `xw` turn
+ * breaks every OTHER mirror, so higher even orders are NOT no-ops here
+ * (order 4 changes 5.3% of points) — they are just mirrors twice over,
+ * rosettes with even petal counts that read as the same picture in half
+ * the sectors. Three-fold (8.0% of points moved against order 1) is the
+ * smallest order that is neither the identity nor a mirror: every petal
+ * is new geometry, which is what a rosette preset is for. Figures:
+ * `scripts/preset-4d-showcase.harness.ts`'s wedge-order block.
+ *
+ * The wedge plane is deliberately a `w`-FREE one (`xz`): a `w`-plane wedge
+ * reads as the unsymmetrised object with its lobes rearranged (the sheet's
+ * KALEIDOSCOPE section), because the wedge's symmetry plane contains `w`
+ * and so does not lie in the rendered slice. `analyzeEscapeSystem` refuses
+ * the underlying system (it extends into 4D); `analyzeEscapeSystem4` admits
+ * it WITH the kaleidoscope — a w-free wedge never rotates anything into
+ * 4D, which is exactly what the 3D gate's kaleidoscope clause checks.
+ */
+export function brickRosette(): Transform[] {
+  return turnedCube({ xw: 1 });
+}
+
+/**
  * "Hybrid Shells" — {@link hybridChainQuaternion} with the QUATERNION SQUARE
  * link turned 0.35 rad in the `zw` plane: the cross-family member
  * of the 4D escape-time trio, and the sheet's own pick if only one of the
@@ -1735,6 +1768,38 @@ export function hybridChainShells(): Transform[] {
   ];
 }
 
+/**
+ * "Turned Shells" — {@link hybridChainShells}' sibling with the rotation on
+ * the OTHER link: the chain's HEAD (the Mandelbox at weight 2) turned 0.3
+ * rad in the `xw` plane, the quaternion square left flat. Which link
+ * carries the `w` rotation is the whole design space the 4D chain lift's
+ * measurement sheet mapped, and the two positions are opposite findings:
+ * the power link's rotation deforms without shrinking (that sheet's own
+ * verdict, and {@link hybridChainShells}' choice), while a HEAD link's
+ * rotation reaches every later step through the whole orbit — it costs
+ * rays and flattens the set along the rotated axis. This preset spends
+ * that cost on purpose: the slice's extent column reads 3.16/3.99/3.99
+ * against the flat chain's 3.97/3.99/3.99, the 4-ball fill RISES
+ * (0.476% against 0.415% — the turn trades slice width for `w` depth),
+ * and the box architecture rotated out of true renders as larger, cleaner
+ * rings and plates — at the design sheet's entry-pose stand-off the turn
+ * costs roughly a quarter of its rays against the flat chain. Figures:
+ * `scripts/preset-4d-showcase.harness.ts`, which renders the pair beside
+ * its flat control and prints the fill/extent columns.
+ *
+ * Both gates name the difference: `analyzeEscapeSystem` refuses with
+ * `map 1 extends into 4D` (head link, not the power link — the reason this
+ * is a different object from its sibling and not a re-tune), and
+ * `analyzeEscapeSystem4` admits it. No view entry: an escape session
+ * frames on the bailout ball like every other escape-time preset.
+ */
+export function turnedShells(): Transform[] {
+  return [
+    { ...hybridLink(0, "mandelbox", 2), w: { rotation: { xw: 0.3 } } },
+    hybridLink(1, "qsquare", 1, 0.5),
+  ];
+}
+
 export function mandelboxKifs(): Transform[] {
   const foldWeight = 1.2;
   const foldScale = 0.19;
@@ -1772,6 +1837,89 @@ export function mandelboxKifs(): Transform[] {
     });
   }
   return transforms;
+}
+
+/**
+ * "Hyperbox KIFS" — {@link mandelboxKifs}' fold-FRONTIER construction one
+ * dimension up, and the shipped preset that exercises the 4D fold kernel
+ * (`core:"fold4"`, reached off `deHasFolds4`) from the menu: before this
+ * preset the contracting 4D fold path had no named way in at all — every
+ * shipped 4D surface preset is either affine-only or an escape chain, and
+ * the 4D fold-branch machinery was reachable only by hand-authoring folds.
+ *
+ * The maps are the same recipe one dimension up: eight `mandelbox` maps at
+ * the tesseract's EVEN-parity corners and eight `boxfold` binders at the
+ * odd ones (the parity swap is the 4-cube's own symmetry, the demitesseract
+ * relationship the 3D preset's even-corner tetrahedron has to `T_d`), with
+ * the `w` coordinate riding the `w` extension at the same contractions —
+ * the derived `w` scale IS the spatial one, so the fold budget
+ * `4·1.2·0.19 = 0.912` carries over exactly.
+ *
+ * THE SLICE IS THE SHOW. A zero-thickness cut through the `w = 0`
+ * hyperplane shows one cross-section of a genuinely four-dimensional
+ * solid; the slice slider sweeps other ones, and — because every map's
+ * `w` position is in play, the set's `w` extent is as wide as its `x/y/z`
+ * extent — the sections keep changing character instead of eroding away.
+ * The 3D twin's doc explains the contraction budget; every figure there
+ * (the 0.19 composite, the 100-level depth margin) transfers verbatim
+ * because the folds act per axis and the lifted `w` scale is the same
+ * 0.19. Sixteen maps is a direct per-query cost (the 3D preset's WHY
+ * TWELVE paragraph), accepted because compute is this system's only
+ * route — fold-shaped 4D is compute-only — and the GPU kernel prices
+ * maps × branches per frontier level, which 16 maps at this mix (8
+ * mandelbox / 8 boxfold) keeps near the 3D preset's cost on the same
+ * hardware.
+ */
+export function hyperkifs(): Transform[] {
+  const transforms: Transform[] = [];
+  // Eight `mandelbox` maps at the tesseract's even-parity corners and
+  // eight `boxfold` binders at the odd ones — the parity swap is the
+  // 4-cube's own symmetry, so the arrangement is symmetric under the full
+  // demitesseract group the way the 3D preset's corners are under T_d.
+  for (const [x, y, z, w] of evenTesseractCorners()) {
+    transforms.push({
+      id: transforms.length,
+      position: [x * 0.7, y * 0.7, z * 0.7],
+      rotation: [0, 0, 0],
+      scale: [0.19, 0.19, 0.19],
+      w: { position: w * 0.7 },
+      variations: [{ type: "mandelbox", weight: 1.2 }],
+    });
+  }
+  for (const [x, y, z, w] of evenTesseractCorners().map(
+    ([x, y, z, w]) => [-x, -y, -z, -w] as Vec4,
+  )) {
+    transforms.push({
+      id: transforms.length,
+      position: [x * 0.62, y * 0.62, z * 0.62],
+      rotation: [0, 0, 0],
+      scale: [0.66, 0.66, 0.66],
+      w: { position: w * 0.62 },
+      variations: [{ type: "boxfold", weight: 1 }],
+    });
+  }
+  return transforms;
+}
+
+/** The eight even-parity corners of the tesseract — the demitesseract, the
+ * 4-cube's largest inscribed cross-polytope-analogue simplex set. */
+function evenTesseractCorners(): Vec4[] {
+  const out: Vec4[] = [];
+  for (const x of [1, -1]) {
+    for (const y of [1, -1]) {
+      for (const z of [1, -1]) {
+        for (const w of [1, -1]) {
+          const minus =
+            (x < 0 ? 1 : 0) +
+            (y < 0 ? 1 : 0) +
+            (z < 0 ? 1 : 0) +
+            (w < 0 ? 1 : 0);
+          if (minus % 2 === 0) out.push([x, y, z, w]);
+        }
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -2158,6 +2306,181 @@ export function hyperfern(): Transform[] {
 }
 
 /**
+ * The two orthogonal great circles {@link hopfBloom} seeds its maps on: five
+ * vertices on the `xy` circle and five on the `zw` circle of one Clifford
+ * torus (every vertex satisfies `|xy| = r` or `|zw| = r`). The two circles are
+ * LINKED in 4-space — disjoint, but no continuous motion of one within the
+ * torus separates them — which is the picture the preset's pose is chosen to
+ * show. In the flat `w = 0` projection the `zw` ring degenerates to a segment
+ * along `z`; an `xw`/`yw` view rotation swings it out as a second ring, which
+ * is exactly the tesseract-dust trick ({@link tesseract}) applied to circles
+ * instead of corners.
+ */
+function hopfRingVertices(r: number): Vec4[] {
+  const out: Vec4[] = [];
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * 2 * Math.PI;
+    out.push([r * Math.cos(a), r * Math.sin(a), 0, 0]);
+  }
+  for (let j = 0; j < 5; j++) {
+    const b = (j / 5) * 2 * Math.PI;
+    out.push([0, 0, r * Math.cos(b), r * Math.sin(b)]);
+  }
+  return out;
+}
+
+/** The two authored palette slots {@link hopfBloom} splits its rings into —
+ * one hue family per circle, so the projection reads as two interlocked
+ * structures rather than ten. Named beside each other so the split cannot
+ * drift apart by a typo ({@link GEARWORKS_STRUCTURE_SLOT}'s reasoning). */
+const HOPF_RING_A_SLOT = 0.08;
+const HOPF_RING_B_SLOT = 0.62;
+
+/**
+ * "Hopf Bloom" — a flame composition on the Clifford torus, and the first
+ * preset to open the 4D flame renderer by hint ({@link PRESET_RENDER_HINTS}).
+ * Ten {@link flake4} maps sit on {@link hopfRingVertices}' two orthogonal
+ * great circles at ratio 0.4, each with a mild `swirl`-over-`linear` blend
+ * ({@link swirlFlame}'s trick at half strength), so the flame's log-density
+ * exposure turns two dust rings into braided plumes. Each map's `colorIndex`
+ * splits the rings into two palette families — the orbit's color coordinate
+ * tracks WHICH circle the last pick came from, so the braid reads as two
+ * interlocked structures (the whole point of the two named slots above).
+ *
+ * Why this is a 4D preset and not a prettier Spiral: the second ring lives
+ * in the `zw` plane, which no 3D document can express. At the identity rotor
+ * it projects onto a line segment through the first ring; the authored view
+ * ({@link PRESET_VIEWS}) lands an `xw`+`yw` double rotation that swings both
+ * rings out as ellipses linked through each other — a pose on the attractor
+ * a flat system cannot even define. Tumbling the rotor passes the rings
+ * THROUGH each other without intersecting, which is the Clifford link's
+ * party trick. Contraction: 0.4·(0.55 + 0.35) = 0.36 per map (the
+ * weighted-sum bound that {@link swirlFlame}'s doc explains), derived `w`
+ * scales included, so the chaos game converges from any seed.
+ */
+export function hopfBloom(): Transform[] {
+  return flake4(hopfRingVertices(1.3), 0.4).map((t, i): Transform => ({
+    ...t,
+    variations: [
+      { type: "swirl", weight: 0.55 },
+      { type: "linear", weight: 0.35 },
+    ],
+    colorIndex: i < 5 ? HOPF_RING_A_SLOT : HOPF_RING_B_SLOT,
+  }));
+}
+
+/**
+ * {@link juliaStrata}'s four Julia constants — the three
+ * {@link juliaIim}-measured ones (the rabbit, the period-2 spiral, the
+ * outside-M dust) plus one more picked by rendering the sheet: `−0.7 + 0.3i`,
+ * whose own Julia set is a Cantor dust that braids the stack's far edge.
+ * Each map is EXACT Inverse Iteration at its constant — the recipe
+ * {@link juliaIim} documents — so every sheet of the stack is a genuine
+ * Julia set, not a warp.
+ */
+const JULIA_STRATA_CONSTANTS: [number, number][] = [
+  JULIA_SET_C,
+  JULIA_SPIRAL_C,
+  JULIA_DUST_C,
+  [-0.7, 0.3],
+];
+
+/** {@link juliaStrata}'s sheet positions along `w` — symmetric about the
+ * slice the authored view lands on, far enough apart that the four sheets
+ * read as separate universes at the entry pose. */
+const JULIA_STRATA_W: number[] = [-0.9, -0.3, 0.3, 0.9];
+
+/** The palette slots {@link juliaStrata} paints its sheets with, in stack
+ * order — the structural flame walk snaps to a sheet's slot at
+ * `colorSpeed` 0.9, so the stack reads bottom-to-top along the palette. */
+const JULIA_STRATA_SLOTS: number[] = [0.05, 0.35, 0.65, 0.95];
+
+/**
+ * "Julia Strata" — four exact Julia inverse-branch maps ({@link
+ * JULIA_STRATA_CONSTANTS}), each pinned to its own depth along `w` ({@link
+ * JULIA_STRATA_W}), so the attractor is four Julia universes STACKED IN THE
+ * FOURTH DIMENSION and one orbit walking between them. Each map is the
+ * {@link juliaIim} recipe at its own constant with a `w` translation added:
+ * the sheet stays perfectly planar in z (the affine's z scale pins it) while
+ * its `w` position parks it at that map's depth, and picking map `i` steps
+ * the orbit to sheet `i`'s depth. No 3D document can hold four disjoint
+ * Julia sets at four depths of an invisible axis — that stack IS the 4D
+ * content.
+ *
+ * The authored view lands the app's soft w-slice ON at `w0 = 0`, which is
+ * the preset's whole composition: the mid sheets render bright, the outer
+ * sheets ghost at the 6% floor — "the universe you are inside, with the
+ * others faintly around it" — and sweeping the slice slider walks the stack
+ * sheet by sheet (each sheet, being planar at its own `w`, flares into
+ * full brightness as the plane reaches it). In flame the log-density
+ * exposure keeps the ghosted sheets legible as silk; {@link
+ * JULIA_STRATA_SLOTS} + `colorSpeed` 0.9 paint each sheet its own band of
+ * the {@link PRESET_PALETTES} gradient.
+ *
+ * Maps contract at the derived `w` scale (0.4 + 0.75 + 0.75)/3 ≈ 0.633 and
+ * the planar 0.75, so the game converges; the orbit's `w` walk is a
+ * contraction toward the picked sheet's fixed depth, which is what keeps
+ * the four layers distinct instead of smearing into one slab.
+ */
+export function juliaStrata(): Transform[] {
+  return JULIA_STRATA_CONSTANTS.map(([cx, cy], i): Transform => ({
+    id: i,
+    position: [-cx, -cy, 0],
+    rotation: [0, 0, 0],
+    scale: [0.75, 0.75, 0.4],
+    w: { position: JULIA_STRATA_W[i] },
+    colorIndex: JULIA_STRATA_SLOTS[i],
+    colorSpeed: 0.9,
+    variations: [{ type: "julia", weight: 1 }],
+  }));
+}
+
+/**
+ * "Pentatope Pinwheel" — {@link pentatope}'s gasket through a plot-time
+ * `julian` LENS ({@link pentatopePinwheelLens}, installed by {@link
+ * PRESET_FINALS}): the same construction {@link juliaSnowflake} and
+ * {@link juliaPinwheel} are built on — an attractor plus one lens it was
+ * composed around — one dimension up, and the first 4D preset to carry a
+ * lens. The lens triples every planar angle and pulls the radius to the
+ * 2/3 power, folding the gasket's five lobes into a three-fold pinwheel of
+ * Sierpinski silk; its `xw` tilt is what makes the LENS four-dimensional
+ * (the lens map rotates the sheet it folds out of the `w = 0` hyperplane),
+ * so the folded object is a 4D attractor of a 4D map, not a flat decal.
+ *
+ * The transform factory returns {@link pentatope} verbatim — the preset is
+ * that system plus the lens table entry, exactly {@link juliaSnowflake}'s
+ * relationship to {@link juliaIsland} — and the flame is its showcase:
+ * the lens' log-spiral fold is a density composition, and the flame's
+ * exposure is what turns the gasket's dust into the pinwheel's silk
+ * (measured on the design sheet this preset was picked off). The authored
+ * view carries the `xw`+`yw` rotor pose the composition was framed at.
+ */
+export function pentatopePinwheel(): Transform[] {
+  return pentatope();
+}
+
+/**
+ * {@link pentatopePinwheel}'s plot-time lens. `julianPower` 3 fans three
+ * copies; the 0.8 scale seats the folded star inside the frame the
+ * gasket's own auto-fit finds; the `xw` 0.25 tilt tilts the fold's sheet
+ * out of the hyperplane so the rendered object carries real `w` extent
+ * (the plotted bounds read w ∈ [−0.30, 0.77] against the flat lens's
+ * [−0.20, 0.82] — the tilt moves mass across the slice the authored view
+ * lands on). z stays pinned at 0 by the scale triple, exactly
+ * {@link juliaSnowflakeLens}'s convention.
+ */
+export function pentatopePinwheelLens(): Transform {
+  return {
+    id: 0,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [0.8, 0.8, 0.8],
+    w: { rotation: { xw: 0.25 } },
+    variations: [{ type: "julian", weight: 1, julianPower: 3, julianDist: 1 }],
+  };
+}
+
+/**
  * Conjugate every map of a system by the translation `A(p) = p + offset`,
  * moving its attractor RIGIDLY by `offset`: conjugation leaves each map's
  * linear part `M` untouched and rewrites only its translation to
@@ -2507,7 +2830,7 @@ const PRESETS = {
   mirroredLattice: sierpinskiTetrahedron,
   mirroredLattice4: pentatope,
   hyperfern,
-  // The escape-time family's 4D HALF: every preset above it is
+  // The 4D escape-time trio: every preset above it is
   // flat by gate, so the mode the site is named after had no 4D entry at
   // all. Each of these three is refused by `analyzeEscapeSystem` ("map N
   // extends into 4D") and admitted by `analyzeEscapeSystem4` — objects no 3D
@@ -2515,6 +2838,25 @@ const PRESETS = {
   mandelboxBrick,
   mandelboxColumn,
   hybridChainShells,
+  // The 4D escape-time pair's second wave: the sibling link-turn of
+  // hybridChainShells (the head link, the measured opposite of the power
+  // link's rotation cost), and mandelboxBrick under the smallest wedge that
+  // is not a no-op on its slice.
+  turnedShells,
+  brickRosette,
+  // The contracting 4D fold frontier's preset: mandelboxKifs one dimension
+  // up, the shipped way into the 4D fold kernel.
+  hyperkifs,
+  // The first 4D FLAME compositions: the 4D flame path (CPU + WGSL, both
+  // w-depth colored) shipped with no preset reaching it. Each is a
+  // composition no flat document can express — two interlocked rings of
+  // maps on a Clifford torus, four Julia universes stacked along w, and
+  // the pentatope gasket through a 4D plot-time lens — and each carries
+  // its authored view in PRESET_VIEWS because the pose is part of the
+  // picture.
+  hopfBloom,
+  juliaStrata,
+  pentatopePinwheel,
   // The sphere-inversion family's showcases. Each one's SUBJECT is its
   // PRESET_SPHERE_INVERSIONS block, which replaces the transform system as
   // the scene's subject in every renderer that draws the family (Points
@@ -2571,6 +2913,10 @@ export const PRESET_SCAFFOLDS: Partial<Record<Preset, () => [Vec4, Vec4][]>> = {
   duoprism: duoprismWireframe,
   tesseract: tesseractWireframe,
   twentyFourCell: twentyFourCellWireframe,
+  // The pinwheel's transform system IS the pentatope's (its factory
+  // returns pentatope() verbatim), so the gasket's own wireframe is its
+  // legibility scaffold in the explorer.
+  pentatopePinwheel: pentatopeWireframe,
 };
 
 /**
@@ -2680,6 +3026,20 @@ export const PRESET_RENDER_HINTS: Partial<
   mandelboxBrick: "surface",
   mandelboxColumn: "surface",
   hybridChainShells: "surface",
+  // The 4D pair's second wave routes for the identical reason — and
+  // hyperkifs for mandelboxKifs's own reason one dimension up: a pure-fold
+  // system's chaos-game cloud under-delivers its surface.
+  turnedShells: "surface",
+  brickRosette: "surface",
+  hyperkifs: "surface",
+  // The first 4D flame compositions: a non-contracting system is not the
+  // reason here — every map contracts — but the compositions ARE flame
+  // pictures: the log-density exposure is what braids the rings, layers
+  // the strata and blooms the lens-folded gasket. The point-cloud render
+  // of the same systems under-delivers the same way radiolarian does.
+  hopfBloom: "flame",
+  juliaStrata: "flame",
+  pentatopePinwheel: "flame",
   // The sphere-inversion showcases' subject is a lit surface: Points draws
   // the same set as a boundary sample, which reads as a dust ball in 4D (the
   // windows and medallions are a SLICE phenomenon), and Flame/Solid refuse
@@ -2722,6 +3082,7 @@ export const PRESET_FINALS: Partial<Record<Preset, () => Transform>> = {
   fourFinishes: fourFinishesLens,
   swirlTetrahedron: swirlTetrahedronLens,
   swirlPentatope: swirlPentatopeLens,
+  pentatopePinwheel: pentatopePinwheelLens,
 };
 
 /**
@@ -2748,6 +3109,14 @@ export const PRESET_PALETTES: Partial<Record<Preset, FlamePaletteId>> = {
   juliaIsland: "dusk",
   juliaSnowflake: "sunset",
   juliaPinwheel: "sunset",
+  // The 4D flame trio, for the same reason — the palette is half a flame's
+  // impact, and each composition's colors were tuned against its ramp:
+  // Hopf Bloom's two ring families against sunset's blue/orange poles,
+  // Julia Strata's four sheets spread across dusk, the pinwheel against
+  // aurora's teal/magenta.
+  hopfBloom: "sunset",
+  juliaStrata: "dusk",
+  pentatopePinwheel: "aurora",
 };
 
 /**
@@ -2800,6 +3169,10 @@ export const PRESET_PALETTES: Partial<Record<Preset, FlamePaletteId>> = {
  */
 export const PRESET_SYMMETRIES: Partial<Record<Preset, SymmetryParams>> = {
   foldChainFlower: { order: 5, plane: "xz" },
+  // The brick rosette (its doc carries the measured argument for the
+  // order): a w-free wedge over the 4D-proportioned brick, the smallest
+  // order that is neither the identity nor the set's own mirror.
+  brickRosette: { order: 3, plane: "xz" },
 };
 
 /**
@@ -3265,6 +3638,43 @@ export const PRESET_VIEWS: Partial<Record<Preset, PresetView>> = {
       eye: [2.1, 1.4, 3.2],
       target: [0, 0, 0],
       fov: (360 * Math.atan(0.39)) / Math.PI,
+    },
+  },
+  // The 4D flame trio's authored poses. The pose is part of the
+  // composition (a preset view lands rotor AND slice — the slice ON at
+  // the authored world w0, which is the app's default 4D state): Hopf
+  // Bloom's double rotation swings its two great-circle rings out as
+  // linked ellipses; the strata's pose sets the sheet stack obliquely so
+  // all four Julia universes read; the pinwheel's is the gasket
+  // lens-folded at the tilt the design sheet rendered.
+  hopfBloom: {
+    camera: { eye: [1.71, 1.12, 1.84], target: [0, 0, 0], fov: 55 },
+    fourD: {
+      rotation: [
+        ["xw", 0.6],
+        ["yw", 0.5],
+      ],
+      w0: 0,
+    },
+  },
+  juliaStrata: {
+    camera: { eye: [0, 0.96, 4.29], target: [0, 0, 0], fov: 60 },
+    fourD: {
+      rotation: [
+        ["xw", -1.05],
+        ["zw", 0.35],
+      ],
+      w0: 0,
+    },
+  },
+  pentatopePinwheel: {
+    camera: { eye: [1.15, 1.09, 1.52], target: [0, 0, 0], fov: 55 },
+    fourD: {
+      rotation: [
+        ["xw", 0.6],
+        ["yw", 0.5],
+      ],
+      w0: 0,
     },
   },
   // The accepted native 4D slice's world→intrinsic matrix is
