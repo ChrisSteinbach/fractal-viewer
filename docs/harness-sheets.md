@@ -1520,3 +1520,32 @@ section: the raw accumulator gain is real, unbiased and cost-free (L1
 tone-mapped display — the off-centre regression is entirely ghost-borne, and
 the ghost mass the log-density curve amplifies is flame-authored mass
 Solid's display lacks.
+
+### preset-4d-showcase
+
+The six 4D showcase presets' design record — `hopfBloom`, `juliaStrata`,
+`pentatopePinwheel` (the first 4D Flame compositions), `turnedShells`,
+`brickRosette` and `hyperkifs` — the session that answered "can the 4D half
+pay for itself with new presets". It renders the flame trio through
+`accumulateFlame4` at the structural palette, the escape pair through the
+CPU oracle behind `de-preview.ts`, and prints the acceptance columns the
+preset docs quote: the turned-head chain's slice extent 3.16/3.99/3.99
+against the flat control's 3.97/3.99/3.99 with the 4-ball fill RISING
+0.415% -> 0.476% (a head-link turn trades slice width for `w` depth, the
+measured opposite of the power-link turn `hybridChainShells` ships); the
+brick's wedge orders, order 2 an EXACT no-op (0/65536 points move), order 3
+moving 8.0% and order 4 5.3%; and `hyperkifs`' isotropy, all four extents
+±1.09 at maxDepth 100 — the property that makes its slice sweep productive.
+
+It also CORRECTS a prior record's scope: `escape-4d`'s even-order no-op
+(1 point of 262144 at orders 2/4/6/8) holds for the near-isotropic chain it
+swept, but NOT for the brick — the `xw` turn breaks every per-axis mirror
+but the one the wedge order 2 folds across, so higher even orders move
+thousands of points. Odd order 3 remains the smallest rosette that is
+neither identity nor mirror.
+
+Deliberately NO CPU panel renders `hyperkifs`' picture: the 4D fold descent
+costs ~1 ms per query at 16 fold maps, so a full CPU render is tens of
+minutes — its picture is a compute-path question, verified once in the
+browser (all six presets enter their hinted renderer and settle on the RX
+7900 XTX, zero console errors).
