@@ -4061,13 +4061,17 @@ function descend(
   const wide = de.beamWidth > 1;
   // A chain's own component ball selects its escape / in-ball thresholds;
   // with no per-state bounds (single component, or a scheduled level) the
-  // level's constants apply, bit for bit.
-  const stateBallRadius = (state: number): number =>
+  // level's constants apply, bit for bit — so the fallback is the CALLER'S
+  // own level radius, passed at each site (the depth loop's R is the
+  // schedule level's bound when one exists; a single shared fallback would
+  // read the global ball inside scheduled levels and shift the descent
+  // there — the measured schedule-agreement drift).
+  const stateBallRadius = (state: number, levelR: number): number =>
     state >= 0 &&
     de.maps[state] !== undefined &&
     de.maps[state].stateBoundRadius !== undefined
       ? de.maps[state].stateBoundRadius
-      : R;
+      : levelR;
   let best = Infinity;
 
   // Early-out threshold: the value below which the descent may
@@ -4466,7 +4470,7 @@ function descend(
           // min); an in-sphere tuple carries no positive certificate — on
           // widths 3/4 it can only get here past FOUR smaller keys, the
           // (shrunken) residual drop the slots exist for.
-          if (eR > stateBallRadius(eState) && eCert < best) {
+          if (eR > stateBallRadius(eState, R) && eCert < best) {
             const folded = refine
               ? refinedCertValue(de, eX, eY, eZ, eR, eScale, depth + 1, eState)
               : eCert;
@@ -4489,7 +4493,7 @@ function descend(
           } else if (
             eKey < Infinity &&
             futureCondensation &&
-            eR <= stateBallRadius(eState) &&
+            eR <= stateBallRadius(eState, R) &&
             depth + 1 < firstCondensationDepth
           ) {
             // Pre-band eviction: no C0 term can speak for this subtree yet
@@ -4498,7 +4502,7 @@ function descend(
             // at the candidate's level the immediate term above has already
             // covered its own stamp and this terminal is suppressed — see
             // `firstCondensationDepth`.
-            const subtree = eScale * (eR - stateBallRadius(eState));
+            const subtree = eScale * (eR - stateBallRadius(eState, R));
             if (subtree < best) best = subtree;
           }
         }
@@ -4519,7 +4523,9 @@ function descend(
     if (c1Key < Infinity) {
       if (
         c1R >
-        (childBound ? escapeRadius : ESCAPE_FACTOR * stateBallRadius(c1State))
+        (childBound
+          ? escapeRadius
+          : ESCAPE_FACTOR * stateBallRadius(c1State, R))
       ) {
         if (c1Cert < best) best = c1Cert;
       } else {
@@ -4541,7 +4547,7 @@ function descend(
         // candidate past 2R folds a bound already >= childScale * R —
         // comfortably positive, so it can never read as a ghost and
         // refining it buys nothing a marcher could see).
-        if (c2R > stateBallRadius(c2State) && c2Cert < best) {
+        if (c2R > stateBallRadius(c2State, R) && c2Cert < best) {
           const folded = refine
             ? refinedCertValue(
                 de,
@@ -4557,15 +4563,17 @@ function descend(
           if (folded < best) best = folded;
         } else if (
           futureCondensation &&
-          c2R <= stateBallRadius(c2State) &&
+          c2R <= stateBallRadius(c2State, R) &&
           depth + 1 < firstCondensationDepth
         ) {
-          const subtree = c2Scale * (c2R - stateBallRadius(c2State));
+          const subtree = c2Scale * (c2R - stateBallRadius(c2State, R));
           if (subtree < best) best = subtree;
         }
       } else if (
         c2R >
-        (childBound ? escapeRadius : ESCAPE_FACTOR * stateBallRadius(c2State))
+        (childBound
+          ? escapeRadius
+          : ESCAPE_FACTOR * stateBallRadius(c2State, R))
       ) {
         if (c2Cert < best) best = c2Cert;
       } else {
@@ -4579,7 +4587,7 @@ function descend(
       }
     }
     if (extra > 0 && c3Key < Infinity) {
-      if (c3R > stateBallRadius(c3State)) {
+      if (c3R > stateBallRadius(c3State, R)) {
         if (c3Cert < best) {
           const folded = refine
             ? refinedCertValue(
@@ -4605,7 +4613,7 @@ function descend(
       }
     }
     if (extra > 1 && c4Key < Infinity) {
-      if (c4R > stateBallRadius(c4State)) {
+      if (c4R > stateBallRadius(c4State, R)) {
         if (c4Cert < best) {
           const folded = refine
             ? refinedCertValue(
@@ -4700,7 +4708,7 @@ function descend(
   const terminalRadius = (state: number): number =>
     de.schedule
       ? de.schedule.bounds[Math.min(maxDepth, de.schedule.depth)].radius
-      : stateBallRadius(state);
+      : stateBallRadius(state, R);
   // A band that ENDED the descent leaves nothing below its chains: their
   // ball terminal would be the plain attractor's hit signal (the phantom
   // the last-level rule removes), so it folds only at a real depth cap.

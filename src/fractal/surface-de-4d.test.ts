@@ -45,13 +45,15 @@ import {
   symmetryRotation4,
   toTransform4,
 } from "./affine4";
-import { symmetryRotation } from "./chaos-game";
+import { runChaosGame, symmetryRotation } from "./chaos-game";
 import { runChaosGame4 } from "./chaos-game-4d";
 import type { ChaosGame4Result } from "./chaos-game-4d";
 import {
   doubleRotation,
   mandelboxKifs,
   pentatope,
+  PRESET_SCHEDULES,
+  presetTransforms,
   sixteenCellFlake,
   tesseract,
   twentyFourCellFlake,
@@ -59,7 +61,13 @@ import {
 import { mulberry32 } from "./rng";
 import { SHAPE_MARCH_SAFETY } from "./shapes";
 import { condensationTerm4 } from "./condensation-de";
-import type { SymmetryParams, Transform, Transform4, Vec4 } from "./types";
+import type {
+  SymmetryParams,
+  Transform,
+  Transform4,
+  Vec3,
+  Vec4,
+} from "./types";
 import { clamp } from "./vec";
 
 /** Gauss-Jordan inverse of a row-major 4x4 — the forward affine the sampler
@@ -5721,5 +5729,62 @@ describe("emitter-only finite unions in 4D", () => {
         if (exact < 1e-12) expect(plain).toBeCloseTo(0, 11);
       }
     }
+  });
+});
+
+describe("estimateDistance4Refined on the scheduled hybrid (level-bound fallback)", () => {
+  // The 4D twin of the 3D level-bound pin: the state-ball sites' no-state
+  // fallback must be each site's OWN level radius, and the flat-4D
+  // scheduled build descends exactly the 3D fixture's schedule (the bench
+  // reuses the 3D row's queries for the same reason). The literals pin
+  // the pre-state-ball behavior the level-bound fallback restores.
+  const NO_SYMMETRY: SymmetryParams = { order: 1, plane: "xz" };
+  const transforms = presetTransforms("spongeOfFerns");
+  const schedule = PRESET_SCHEDULES.spongeOfFerns;
+  if (!schedule) throw new Error("the spongeOfFerns schedule is missing");
+  const de = buildSurfaceDE4(transforms, null, NO_SYMMETRY, {
+    schedule: schedule(),
+  });
+  const cloud = runChaosGame(
+    transforms,
+    96,
+    mulberry32(0x5eed0001),
+    null,
+    NO_SYMMETRY,
+    undefined,
+    schedule(),
+  );
+  const jr = mulberry32(0x5eed0002);
+  const queries: Vec3[] = [];
+  for (let i = 0; i < 48; i++) {
+    queries.push([
+      cloud.positions[i * 3] + (jr() - 0.5) * 2e-3,
+      cloud.positions[i * 3 + 1] + (jr() - 0.5) * 2e-3,
+      cloud.positions[i * 3 + 2] + (jr() - 0.5) * 2e-3,
+    ]);
+  }
+
+  it("descends the schedule's level bounds bit for bit", () => {
+    const estimates = queries.map((q) =>
+      estimateDistance4Refined(de, [q[0], q[1], q[2], 0], 0),
+    );
+    expect(estimates).toEqual([
+      1.83270975049590146e-5, 4.75573636638382442e-4, 1.38018843810998212e-4,
+      1.34665883189303496e-4, 4.32535927647448879e-4, 3.89991623050378489e-5,
+      1.38115017702287622e-4, 3.97297738598131699e-5, 1.41260710370897101e-4,
+      1.46188894456112723e-4, 4.34306005861595022e-5, 4.69254571441329209e-5,
+      1.63701597331732346e-4, 1.50910879431015332e-5, 1.76720730679321195e-4,
+      1.48936310799039372e-5, 4.82644195247815863e-4, 5.81956773600852048e-5,
+      1.65347291736602725e-5, 8.59739517734393026e-5, 6.49341762313341848e-5,
+      1.65289249018551652e-4, 4.14785327982560741e-6, 4.55336611495151599e-5,
+      4.08287416965253411e-4, 1.23376490497232883e-4, 9.79545977820937814e-5,
+      1.41348240648127283e-4, 2.59605929674696041e-6, 1.14005403330699748e-4,
+      3.08186093887833468e-5, 2.5256889748569794e-5, 1.04544054131595576e-5,
+      1.66227670250200756e-6, 1.19665583369310311e-5, 4.1565868885684523e-6,
+      4.77932634490800643e-5, 6.2583334855205176e-5, 2.06559027171411651e-5,
+      2.35012711553779133e-5, 2.63959947035040542e-5, 8.05076046298242863e-6,
+      1.34802598664676427e-4, 1.43098990092528123e-4, 1.54349087284827609e-4,
+      1.61822140919516097e-4, 1.67957082829076027e-4, 1.74325327406818097e-4,
+    ]);
   });
 });

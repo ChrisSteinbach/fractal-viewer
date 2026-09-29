@@ -208,6 +208,31 @@ this machine (the recorded device loss lands earlier); the focused probe page
 that measured them was deleted after the run — the numbers above are the
 record.
 
+**The oracle's shared fallback drifted the scheduled rows (measured
+2026-09-29, fixed in the same pass).** On the AMD box the section's two
+GATING schedule rows — `scheduledSpongeOfFerns3` (4/700) and
+`scheduledSpongeOfFerns4Flat` (7/700), signed both ways, maxAbs 5.5e-3 and
+1.2e-2 — began failing after the state-bounds arc, deterministically. Root
+cause, found by bisect (`dad021c6` full-section pass 09-22 → this commit
+fail, verified with a fixed-query oracle dump whose WGSL digests are
+byte-identical across the bisect): the descent's shared `stateBallRadius`
+helper captured the function-scope `R` (the global ball) as its no-state
+fallback, while the six sites it replaced had each read their own
+per-depth `R` — the schedule LEVEL's bound when one exists. The helper's
+own "a scheduled level ... bit for bit" claim was therefore false exactly
+where a schedule's level bound differs from the global ball: with no state
+balls attached (scheduled builds — the component walk skips
+`preparedSchedule`), the oracle's escape/in-ball thresholds widened inside
+the B block and its estimates shifted; the schedule WGSL never carries the
+lane (the option refuses schedules), so the rows measure oracle-vs-kernel
+and failed. The fix passes each site's own level radius explicitly; the
+scheduled systems' refined estimates are restored bit for bit (fixed-query
+dump equality against the pre-arc oracle), the schedule rows return to
+fail=0 maxAbs 2.9e-7, and the full agreement section reads `verdict=pass`
+on the same driver. Unit pins in `surface-de.test.ts` /
+`surface-de-4d.test.ts` (48 near-attractor jittered queries per dimension,
+exact-float) fail on the pre-fix descent and pass on the fixed one.
+
 ## Condensation shape term
 
 The affine/fold and affine4/fold4 descent cores can compile Barnsley

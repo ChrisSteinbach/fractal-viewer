@@ -3428,14 +3428,18 @@ function descend4(
   const wide = de.beamWidth > 1;
   // A chain's own component ball selects its escape / in-ball thresholds;
   // with no per-state bounds (single component, or a scheduled level) the
-  // level's constants apply, bit for bit.
-  const stateBallRadius = (state: number): number =>
+  // level's constants apply, bit for bit — so the fallback is the CALLER'S
+  // own level radius, passed at each site (the depth loop's R is the
+  // schedule level's bound when one exists; a single shared fallback would
+  // read the global ball inside scheduled levels and shift the descent
+  // there — the measured schedule-agreement drift).
+  const stateBallRadius = (state: number, levelR: number): number =>
     !segment &&
     state >= 0 &&
     de.maps[state] !== undefined &&
     de.maps[state].stateBoundRadius !== undefined
       ? de.maps[state].stateBoundRadius
-      : R;
+      : levelR;
   let best = Infinity;
 
   // Chain slot A starts at the (lensed) query; slot B idles until beam
@@ -3871,14 +3875,14 @@ function descend4(
           // their plain certificate; an in-sphere tuple carries no positive
           // certificate — on widths 3/4 it can only get here past FOUR
           // smaller keys, the (shrunken) residual drop the slots exist for.
-          if (eR > stateBallRadius(eState) && eCert < best) best = eCert;
+          if (eR > stateBallRadius(eState, R) && eCert < best) best = eCert;
           else if (
             eKey < Infinity &&
             futureCondensation &&
-            eR <= stateBallRadius(eState) &&
+            eR <= stateBallRadius(eState, R) &&
             depth + 1 < firstCondensationDepth
           ) {
-            const subtree = eScale * (eR - stateBallRadius(eState));
+            const subtree = eScale * (eR - stateBallRadius(eState, R));
             if (subtree < best) best = subtree;
           }
         }
@@ -3897,7 +3901,9 @@ function descend4(
     if (c1Key < Infinity) {
       if (
         c1R >
-        (childBound ? escapeRadius : ESCAPE_FACTOR * stateBallRadius(c1State))
+        (childBound
+          ? escapeRadius
+          : ESCAPE_FACTOR * stateBallRadius(c1State, R))
       ) {
         if (c1Cert < best) best = c1Cert;
       } else {
@@ -3916,16 +3922,18 @@ function descend4(
       if (
         !wide ||
         c2R >
-          (childBound ? escapeRadius : ESCAPE_FACTOR * stateBallRadius(c2State))
+          (childBound
+            ? escapeRadius
+            : ESCAPE_FACTOR * stateBallRadius(c2State, R))
       ) {
-        if (c2R > stateBallRadius(c2State) && c2Cert < best) best = c2Cert;
+        if (c2R > stateBallRadius(c2State, R) && c2Cert < best) best = c2Cert;
         else if (
           !wide &&
           futureCondensation &&
-          c2R <= stateBallRadius(c2State) &&
+          c2R <= stateBallRadius(c2State, R) &&
           depth + 1 < firstCondensationDepth
         ) {
-          const subtree = c2Scale * (c2R - stateBallRadius(c2State));
+          const subtree = c2Scale * (c2R - stateBallRadius(c2State, R));
           if (subtree < best) best = subtree;
         }
       } else {
@@ -3941,7 +3949,7 @@ function descend4(
       }
     }
     if (extra > 0 && c3Key < Infinity) {
-      if (c3R > stateBallRadius(c3State)) {
+      if (c3R > stateBallRadius(c3State, R)) {
         if (c3Cert < best) best = c3Cert;
       } else {
         v1X = c3X;
@@ -3955,7 +3963,7 @@ function descend4(
       }
     }
     if (extra > 1 && c4Key < Infinity) {
-      if (c4R > stateBallRadius(c4State)) {
+      if (c4R > stateBallRadius(c4State, R)) {
         if (c4Cert < best) best = c4Cert;
       } else {
         v2X = c4X;
@@ -4042,7 +4050,7 @@ function descend4(
   const terminalRadius = (state: number): number =>
     de.schedule
       ? de.schedule.bounds[Math.min(maxDepth, de.schedule.depth)].radius
-      : stateBallRadius(state);
+      : stateBallRadius(state, R);
   if (aLive && !bandEnded) {
     const terminal = aScale * (aR - terminalRadius(aState));
     if (terminal < best) best = terminal;
@@ -4295,14 +4303,18 @@ function descend4Refined(
   const wide = de.beamWidth > 1;
   // A chain's own component ball selects its escape / in-ball thresholds;
   // with no per-state bounds (single component, or a scheduled level) the
-  // level's constants apply, bit for bit.
-  const stateBallRadius = (state: number): number =>
+  // level's constants apply, bit for bit — so the fallback is the CALLER'S
+  // own level radius, passed at each site (the depth loop's R is the
+  // schedule level's bound when one exists; a single shared fallback would
+  // read the global ball inside scheduled levels and shift the descent
+  // there — the measured schedule-agreement drift).
+  const stateBallRadius = (state: number, levelR: number): number =>
     !segment &&
     state >= 0 &&
     de.maps[state] !== undefined &&
     de.maps[state].stateBoundRadius !== undefined
       ? de.maps[state].stateBoundRadius
-      : R;
+      : levelR;
   let best = Infinity;
 
   // Early-out threshold: the value below which the descent may stop and hand
@@ -4896,7 +4908,7 @@ function descend4Refined(
           // min); an in-sphere tuple carries no positive certificate — on
           // widths 3/4 it can only get here past FOUR smaller keys, the
           // (shrunken) residual drop the slots exist for.
-          if (eR > stateBallRadius(eState) && eCert < best) {
+          if (eR > stateBallRadius(eState, R) && eCert < best) {
             const rc = refinedCert(
               eX,
               eY,
@@ -4926,10 +4938,10 @@ function descend4Refined(
           } else if (
             eKey < Infinity &&
             futureCondensation &&
-            eR <= stateBallRadius(eState) &&
+            eR <= stateBallRadius(eState, R) &&
             depth + 1 < firstCondensationDepth
           ) {
-            const subtree = eScale * (eR - stateBallRadius(eState));
+            const subtree = eScale * (eR - stateBallRadius(eState, R));
             if (subtree < best) best = subtree;
           }
         }
@@ -4949,7 +4961,9 @@ function descend4Refined(
     if (c1Key < Infinity) {
       if (
         c1R >
-        (childBound ? escapeRadius : ESCAPE_FACTOR * stateBallRadius(c1State))
+        (childBound
+          ? escapeRadius
+          : ESCAPE_FACTOR * stateBallRadius(c1State, R))
       ) {
         if (c1Cert < best) best = c1Cert;
       } else {
@@ -4966,7 +4980,7 @@ function descend4Refined(
     }
     if (c2Key < Infinity) {
       if (!wide) {
-        if (c2R > stateBallRadius(c2State) && c2Cert < best) {
+        if (c2R > stateBallRadius(c2State, R) && c2Cert < best) {
           const rc = refinedCert(
             c2X,
             c2Y,
@@ -4981,15 +4995,17 @@ function descend4Refined(
           if (rc < best) best = rc;
         } else if (
           futureCondensation &&
-          c2R <= stateBallRadius(c2State) &&
+          c2R <= stateBallRadius(c2State, R) &&
           depth + 1 < firstCondensationDepth
         ) {
-          const subtree = c2Scale * (c2R - stateBallRadius(c2State));
+          const subtree = c2Scale * (c2R - stateBallRadius(c2State, R));
           if (subtree < best) best = subtree;
         }
       } else if (
         c2R >
-        (childBound ? escapeRadius : ESCAPE_FACTOR * stateBallRadius(c2State))
+        (childBound
+          ? escapeRadius
+          : ESCAPE_FACTOR * stateBallRadius(c2State, R))
       ) {
         if (c2Cert < best) best = c2Cert;
       } else {
@@ -5005,7 +5021,7 @@ function descend4Refined(
       }
     }
     if (extra > 0 && c3Key < Infinity) {
-      if (c3R > stateBallRadius(c3State)) {
+      if (c3R > stateBallRadius(c3State, R)) {
         if (c3Cert < best) {
           const rc = refinedCert(
             c3X,
@@ -5032,7 +5048,7 @@ function descend4Refined(
       }
     }
     if (extra > 1 && c4Key < Infinity) {
-      if (c4R > stateBallRadius(c4State)) {
+      if (c4R > stateBallRadius(c4State, R)) {
         if (c4Cert < best) {
           const rc = refinedCert(
             c4X,
@@ -5144,7 +5160,7 @@ function descend4Refined(
   const terminalRadius = (state: number): number =>
     de.schedule
       ? de.schedule.bounds[Math.min(maxDepth, de.schedule.depth)].radius
-      : stateBallRadius(state);
+      : stateBallRadius(state, R);
   if (aLive && !bandEnded) {
     const terminal = aScale * (aR - terminalRadius(aState));
     if (terminal < best) best = terminal;

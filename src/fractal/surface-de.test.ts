@@ -33,6 +33,8 @@ import {
   gearworks,
   mandelboxKifs,
   mengerSponge,
+  PRESET_SCHEDULES,
+  presetTransforms,
   sierpinskiTetrahedron,
 } from "./presets";
 import { mulberry32 } from "./rng";
@@ -45,7 +47,7 @@ import {
   SPHERE_FOLD_MIN_RADIUS,
 } from "./variations";
 import { condensationTerm3 } from "./condensation-de";
-import type { SymmetryPlane, Transform, Vec3 } from "./types";
+import type { SymmetryParams, SymmetryPlane, Transform, Vec3 } from "./types";
 
 /** Sample points on the band union, in the condensation placement order the
  * descent inverts: the emitter's affine places the C0 shape (level 0), and
@@ -5426,5 +5428,68 @@ describe("emitter-only finite unions", () => {
         if (Math.abs(exact) < 1e-12) expect(plain).toBeCloseTo(0, 11);
       }
     }
+  });
+});
+
+describe("estimateDistanceRefined on the scheduled hybrid (level-bound fallback)", () => {
+  // The xaos state-ball sites' no-state fallback must be each site's OWN
+  // level radius. A single shared fallback captured the descent's
+  // function-scope R — the global ball — so inside a schedule's B levels
+  // (where the per-depth R is the schedule level's bound) the oracle's
+  // escape/in-ball tests silently widened, the scheduled systems' refined
+  // estimates shifted, and the bench's two gating schedule-agreement rows
+  // failed against their byte-identical WGSL (the kernel never moved).
+  // These literals pin the level-bound behavior the pre-state-ball
+  // oracle had; the state-ball path itself is unchanged (a state ball
+  // wins whenever the map carries one).
+  const NO_SYMMETRY: SymmetryParams = { order: 1, plane: "xz" };
+  const transforms = presetTransforms("spongeOfFerns");
+  const schedule = PRESET_SCHEDULES.spongeOfFerns;
+  if (!schedule) throw new Error("the spongeOfFerns schedule is missing");
+  const de = buildSurfaceDE(transforms, null, NO_SYMMETRY, {
+    schedule: schedule(),
+  });
+  // A schedule-aware chaos-game cloud, jittered off the attractor the way
+  // the bench's query mix is: the widened thresholds bite exactly where
+  // chains descend the B block near the sponge's structure.
+  const cloud = runChaosGame(
+    transforms,
+    96,
+    mulberry32(0x5eed0001),
+    null,
+    NO_SYMMETRY,
+    undefined,
+    schedule(),
+  );
+  const jr = mulberry32(0x5eed0002);
+  const queries: Vec3[] = [];
+  for (let i = 0; i < 48; i++) {
+    queries.push([
+      cloud.positions[i * 3] + (jr() - 0.5) * 2e-3,
+      cloud.positions[i * 3 + 1] + (jr() - 0.5) * 2e-3,
+      cloud.positions[i * 3 + 2] + (jr() - 0.5) * 2e-3,
+    ]);
+  }
+
+  it("descends the schedule's level bounds bit for bit", () => {
+    const estimates = queries.map((q) => estimateDistanceRefined(de, q, 0));
+    expect(estimates).toEqual([
+      1.8312874900922709e-5, 4.76208387473467582e-4, 1.37969336818596553e-4,
+      1.34616369644799307e-4, 4.32370784290914882e-4, 3.89843052177955954e-5,
+      4.55455501065815422e-4, 3.97149105221309112e-5, 1.41211168101258174e-4,
+      1.46139340335165233e-4, 1.37290811702772063e-4, 4.69105941713382596e-5,
+      1.6365204748783075e-4, 1.50866292656131471e-5, 1.76671182122728753e-4,
+      1.48891710894718111e-5, 4.96775607168742014e-4, 6.08051754705531518e-5,
+      4.24207166923742541e-5, 8.60923370450413601e-5, 6.50523947478517971e-5,
+      1.65239802770542527e-4, 4.15847650371915646e-6, 4.55188180129298406e-5,
+      4.0812230270992518e-4, 1.23329119022931496e-4, 9.79072175363785552e-5,
+      1.41300856385985962e-4, 3.29103491152436975e-6, 1.14418538586082458e-4,
+      3.09424963214133058e-5, 2.62521940702516178e-5, 1.05748519087709328e-5,
+      1.70596443799565685e-6, 1.19182117439332122e-5, 4.1423112481796043e-6,
+      4.77436895063666414e-5, 6.25337668013946168e-5, 2.06410309635227049e-5,
+      2.34863981837946812e-5, 2.63811171425178068e-5, 8.04629834555265488e-6,
+      1.34753036153405264e-4, 1.43049426376745697e-4, 1.54299528188223052e-4,
+      1.61772587337049434e-4, 1.67907533360385551e-4, 4.46510870239036979e-4,
+    ]);
   });
 });
