@@ -264,7 +264,13 @@ Against a certification scoped to additional RETAINED render state
 (render max − controls ≈ 81.5 MB 3D / 86.2 MB 4D), the 128 MiB line is met;
 against the boot-inclusive whole-tree observation it is not, in both
 dimensions. Which scope the go/no-go should use is an owner decision — the
-attribution either way is now measured rather than inferred.
+attribution either way is now measured rather than inferred. **Decided
+2026-09-29, at the delivered feature's qualification: the memory line is
+not a gate.** The whole-tree scope was an earlier session's arbitrary
+choice; the memory in use is not a problem, and the owner explicitly offers
+memory headroom for speed in future optimization arcs (recorded in
+`docs/surface-dielectric-transport.md`'s delivered-qualification section
+and as the memory leg's re-scope follow-up).
 
 Caveats: the monitor's progress reads starve during the page's synchronous
 base64 phase (the browser main thread is busy), so that phase is evidenced
