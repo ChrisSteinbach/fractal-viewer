@@ -18,15 +18,31 @@ import { ORBIT_RING_SHAPE } from "../fractal/shapes";
  *
  * WHAT QUALIFIES THESE COMPOSITIONS. The dielectric transport resolves on
  * the closed-solid backend, whose signed field is the condensation union —
- * so all three starters are EMITTER-ONLY C0 systems (every transform carries
- * an analytic shape emitter, no recursive maps), the exact shape the
- * qualification and the bench's emitter-only union legs pin. Both author
+ * so the three emitter-only starters (garden, corner cells, cells) are
+ * EMITTER-ONLY C0 systems (every transform carries an analytic shape
+ * emitter, no recursive maps), the exact shape the qualification and the
+ * bench's emitter-only union legs pin; the three fractal subjects below
+ * reach the same backend through the corners-stamping-one-emitter
+ * condensation route. All six author
  * `optics: {model: "dielectric", distortion: 0.08}` on every transform —
  * the Glass bundle's model at the distortion study's working value — and
- * both run the ground plane: the checker floor is the bright rear
+ * all six run the ground plane: the checker floor is the bright rear
  * structure the transmission and its restrained distortion are FOR (the
  * bead's "actual rear structure" — bent checker lines read through the
  * glass where a uniform backdrop would show nothing).
+ *
+ * THE EXPOSURE DECISION this review closes: the starters' look treatment
+ * is the STUDIO one — the glass studio gradient (preset-background.ts's),
+ * the ground plane, and the checker floor at its NATURAL lighting, no
+ * authored floor emission. Measured on the settled real-driver renders
+ * (`scripts/transmission-starters.probe.mjs`; every leg settles on
+ * engine=compute with transport lines live): the studio lighting already
+ * reads the floor brightly and the bending is visible through every
+ * member, so added emission would only push an already-near-white floor
+ * into clipping. The floor-emission 1.4 treatment stays the glass
+ * PRESETS' answer (`PRESET_SURFACE_ROOMS`), whose default dark backdrop
+ * otherwise swallows the glass (the owner's 2026-09-29 finding); the two
+ * treatments give the transport the same bright rear structure to bend.
  *
  * THE 4D POSE IS THE QUALIFIED ONE. The 4D starter's members sit at one
  * common world w with the slice ON that hyperplane and the rotor's planes
