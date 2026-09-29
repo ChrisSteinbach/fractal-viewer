@@ -7922,13 +7922,26 @@ export class SurfaceComputeRenderer {
                 slice.length * SURFACE_GPU_TRANSPORT_DEBUG_RECORD_BYTES,
               ),
             );
-            const batchStatus = new Uint32Array(
+            // MapAsync's offset must be 8-byte aligned (Dawn refuses
+            // otherwise — measured: a batch whose starting ray index is
+            // odd made offset*4 ≡ 4 (mod 8), the mapAsync OperationError
+            // failed the whole frame, and the settle silently never
+            // armed). Align the byte window down and slice the pad words.
+            const byteStart = offset * 4;
+            const alignedStart = byteStart - (byteStart % 8);
+            const span = Math.min(
+              slice.length * 4 + (byteStart - alignedStart),
+              transportBuffers.stagingStatus.size - alignedStart,
+            );
+            const windowWords = new Uint32Array(
               await this.drainStaging(
                 transportBuffers.stagingStatus,
-                slice.length * 4,
-                offset * 4,
+                span,
+                alignedStart,
               ),
             );
+            const pad = (byteStart - alignedStart) / 4;
+            const batchStatus = windowWords.subarray(pad, pad + slice.length);
             if (token !== this.frameToken || this.isLost || this.destroyed) {
               return null;
             }

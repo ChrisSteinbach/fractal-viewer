@@ -45,7 +45,11 @@
  *      transport in every antialias sample, two Save-PNGs byte for byte
  *      (the first kept under scripts/out/ for the owner's look review).
  *   7. The same flow one dimension up on the pentatope preset at depth 2
- *      (25 cells; "1 of 5"): the 4D half, native posed slice.
+ *      (25 cells; "1 of 5"): the 4D half, native posed slice — with the
+ *      pre-authoring wheel-in (the settled auto-fit leaves the hull
+ *      ~1.5% of frame, below the covered bar) and the checker floor
+ *      authored from the panel (the glass presets' studio choice; the
+ *      glass reads as darkness against the plain dark backdrop).
  *   8. The owner's Menger document, Glass on maps 1 and 20 at depth 2.
  *   Legs 6-8 are MIXED blocks, so each asserts the COMPOSITE route
  *   (`finiteComposite` on the probe): the opaque maps render as the true
@@ -225,8 +229,12 @@ try {
       const state = await probe();
       if (state && test(state)) return state;
       if (Date.now() > deadline) {
+        // The feed survives a checking failure: the last trace lines say
+        // what the session was doing when the wait gave up.
+        const tail = (activeLeg?.trace ?? []).slice(-12);
         throw new Error(
-          `timed out waiting for ${what}: ${JSON.stringify(state)}`,
+          `timed out waiting for ${what}: ${JSON.stringify(state)}` +
+            (tail.length ? `\ntrace tail:\n  ${tail.join("\n  ")}` : ""),
         );
       }
       await page.waitForTimeout(250);
@@ -643,7 +651,15 @@ try {
   // (the block, then Glass on the head map through the Finish bundle),
   // rebooted on the authored hash, and gated on the word tree's own optics
   // backend LIVE with complete transport in every antialias sample.
-  const simplicialGlassLeg = async (name, preset, depth, cells, glassMaps) => {
+  const simplicialGlassLeg = async (
+    name,
+    preset,
+    depth,
+    cells,
+    glassMaps,
+    zoomNotches = 0,
+    floor = false,
+  ) => {
     const record = leg(name);
     record.trace = [];
     await boot();
@@ -654,6 +670,27 @@ try {
         sel.dispatchEvent(new Event("change", { bubbles: true }));
       }, preset);
       await page.waitForTimeout(8000);
+    }
+    // Optional pre-authoring wheel-in (the glass-index 4D leg's
+    // affordance): the pentatope's settled auto-fit frames the
+    // attractor's full dust extent, leaving the solid hull ~1.5% of the
+    // frame — below the covered bar, so the leg would judge a session
+    // that drew its subject as if it had drawn nothing. Each notch is
+    // the shipped wheel dolly's 0.9; nothing is selected yet, so the
+    // wheel dollies the camera. The zoomed pose rides the next debounced
+    // save, so the authoring edits below carry it into the authored hash.
+    if (zoomNotches > 0) {
+      const canvas = await page.$("canvas");
+      if (!canvas) throw new Error(`main canvas is missing`);
+      const box = await canvas.boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      for (let i = 0; i < zoomNotches; i++) {
+        await page.mouse.wheel(0, -100);
+        await page.waitForTimeout(60);
+      }
+      // The wheel burst commits once after its quiet period; wait past it
+      // and any pose tween before the authoring starts.
+      await page.waitForTimeout(2500);
     }
     await page.click("#glassSolidSection > summary");
     await page.click("#glassSolidEnabledCheckbox");
@@ -771,6 +808,60 @@ try {
       }
       await page.waitForTimeout(500);
     }
+    // The subject's frames and census, captured BEFORE the look treatment
+    // below invalidates the frame: the re-settled floor-bearing frames
+    // share the frame token, so a post-edit re-parse would read 16 frames
+    // for the final token and fail the strict-completion read.
+    record.frames = traceFrames(record.trace);
+    for (const message of completionFailures(
+      record.frames,
+      samples,
+      (await probe()).census?.rays,
+    )) {
+      fail(`${name}: ${message}`);
+    }
+    // The subject's covered bar reads the AUTHORED (pre-floor) settle's
+    // census, captured before the look treatment below invalidates it.
+    const authoredCensus = (await probe()).census;
+    // THE LOOK TREATMENT, after the leg's own subject passed (the
+    // owner's note: the glass reads as darkness against the plain dark
+    // backdrop — the shipped glass presets author the checker floor as
+    // the bright rear structure the transmission is FOR): floor on,
+    // checker, the presets' emission, authored FROM THE PANEL in SURFACE
+    // mode (the Floor section is surface-mode-only). The edit
+    // invalidates the frame and re-settles on the SAME frame token, so
+    // neither a new-token wait nor the token-grouped completion read can
+    // see it; the wait reads the trace's own frame-done lines instead —
+    // the floor-bearing settle is done when the most recent completed
+    // frame drew the floor — and the exports below judge that session.
+    // The leg's own activeLeg stays set through the wait so the feed
+    // keeps landing in record.trace.
+    if (floor) {
+      await page.click("#surfaceFloorSection > summary");
+      await page.click("#surfaceGroundPlaneCheckbox");
+      await page.waitForTimeout(300);
+      await page.selectOption("#surfaceFloorPatternSelect", "checker");
+      await page.waitForTimeout(300);
+      await page.evaluate(() => {
+        const slider = document.getElementById("surfaceFloorEmissionSlider");
+        slider.value = "1.4";
+        slider.dispatchEvent(new Event("input", { bubbles: true }));
+        slider.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await page.waitForTimeout(300);
+      await waitSurface(
+        (s) => {
+          if (!s.settled || !s.firstFrame) return false;
+          const dones = record.trace.filter((line) =>
+            line.includes("frame done "),
+          );
+          const last = dones.at(-1);
+          return !!last && /plane=[1-9]/.test(last);
+        },
+        300_000,
+        "the floor-bearing settle",
+      );
+    }
     activeLeg = null;
     const state = await probe();
     if (state.opticsBackend !== "finiteSolid") {
@@ -785,20 +876,12 @@ try {
         `${name}: the session did not take the composite route (finiteComposite=${state.finiteComposite})`,
       );
     }
-    const legCensus = state.census;
+    const legCensus = authoredCensus;
     const covered = legCensus?.rays ? legCensus.covered / legCensus.rays : 0;
     if (covered < 0.05) {
       fail(
         `${name}: covered fraction ${(covered * 100).toFixed(1)}% — the session routed but did not draw the solid`,
       );
-    }
-    record.frames = traceFrames(record.trace);
-    for (const message of completionFailures(
-      record.frames,
-      samples,
-      legCensus?.rays,
-    )) {
-      fail(`${name}: ${message}`);
     }
     const lastToken = record.frames.at(-1)?.token;
     const finalFrames = record.frames.filter(
@@ -871,7 +954,15 @@ try {
     );
   }
   if (want("pentatope-4d-glass")) {
-    await simplicialGlassLeg("pentatope-4d-glass", "pentatope", 2, 25, [0]);
+    await simplicialGlassLeg(
+      "pentatope-4d-glass",
+      "pentatope",
+      2,
+      25,
+      [0],
+      6,
+      true,
+    );
   }
   // The owner's own document: the Menger maps with Glass on maps 1 and 20
   // (two opposite corners) at depth 2 — under the composite the other 18

@@ -3031,7 +3031,13 @@ emission, and the f32 twin, in ONE arc:
   this depth; the shipped depths' envelope rows are unchanged inside the
   decided envelope (glassMenger preview 739 ms / settle 6.29 s; glassMenger4
   1034 ms / 9.89 s, 0 unresolved everywhere; full bench verdict=pass with 64
-  agreement legs true; the app gate verdict=pass, 8 legs).
+  agreement legs true). RECONCILED 2026-09-29: this section's earlier
+  "the app gate verdict=pass, 8 legs" was misread off that run — its own
+  saved trace artifacts carry the boot-document leg's deterministic
+  inside-miss residue (1–3 f5 rays per settle sample), so the strict-
+  completion line did NOT hold at this checkpoint; the cost rows above
+  stand. The residue's own fix record is the walk-level arcs above, and
+  the gate legs' clean runs are the 2026-09-29 record's.
 
 ## What is not yet qualified
 
