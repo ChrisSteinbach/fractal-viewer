@@ -838,8 +838,18 @@ try {
     // keeps landing in record.trace.
     if (floor) {
       await page.click("#surfaceFloorSection > summary");
-      await page.click("#surfaceGroundPlaneCheckbox");
-      await page.waitForTimeout(300);
+      // The click TOGGLES: the room controls persist across preset loads
+      // (an earlier leg's glassMenger keeps its floor on through the
+      // later legs' absent-means-keep room table), so an already-on floor
+      // must not be clicked off — the dependent rows would hide and the
+      // pattern select would never become actionable.
+      const floorAlreadyOn = await page.evaluate(
+        () => document.getElementById("surfaceGroundPlaneCheckbox").checked,
+      );
+      if (!floorAlreadyOn) {
+        await page.click("#surfaceGroundPlaneCheckbox");
+        await page.waitForTimeout(300);
+      }
       await page.selectOption("#surfaceFloorPatternSelect", "checker");
       await page.waitForTimeout(300);
       await page.evaluate(() => {
