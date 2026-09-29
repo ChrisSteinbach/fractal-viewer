@@ -205,7 +205,7 @@ try {
 
   const boot = async () => {
     const base = args.url.replace(/\/+$/, "");
-    await page.goto(`${base}/?surfacestate`, {
+    await page.goto(`${base}/?surfacestate&surfacetransportdump`, {
       waitUntil: "load",
       timeout: 60_000,
     });
@@ -449,7 +449,7 @@ try {
     const glassHash = await page.evaluate(() => location.hash);
     activeLeg = glassLeg;
     await page.goto(
-      `${args.url.replace(/\/+$/, "")}/?surfacestate&surfacetrace${glassHash}`,
+      `${args.url.replace(/\/+$/, "")}/?surfacestate&surfacetrace&surfacetransportdump${glassHash}`,
     );
     await page.waitForFunction(
       () => typeof window.__surfaceState === "function",
@@ -585,7 +585,7 @@ try {
   // ——— Leg 5: the shaped block reads read-only and still serves optics ———
   if (want("shaped-preset-reads-read-only")) {
     const shapedLeg = leg("shaped-preset-reads-read-only");
-    await page.goto(`${args.url}/?surfacestate`);
+    await page.goto(`${args.url}/?surfacestate&surfacetransportdump`);
     await page.waitForFunction(
       () => {
         const el = document.getElementById("pointCount");
@@ -739,7 +739,7 @@ try {
     const hash = await page.evaluate(() => location.hash);
     activeLeg = record;
     await page.goto(
-      `${args.url.replace(/\/+$/, "")}/?surfacestate&surfacetrace${hash}`,
+      `${args.url.replace(/\/+$/, "")}/?surfacestate&surfacetrace&surfacetransportdump${hash}`,
     );
     await page.waitForFunction(
       () => typeof window.__surfaceState === "function",
@@ -1058,7 +1058,7 @@ try {
       record.trace = [];
       activeLeg = record;
       await page.goto(
-        `${args.url.replace(/\/+$/, "")}/?surfacestate&surfacetrace&leg=${encodeURIComponent(tag)}${hash}`,
+        `${args.url.replace(/\/+$/, "")}/?surfacestate&surfacetrace&surfacetransportdump&leg=${encodeURIComponent(tag)}${hash}`,
       );
       await page.waitForFunction(
         () => typeof window.__surfaceState === "function",

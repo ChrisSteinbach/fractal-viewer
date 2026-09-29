@@ -2679,8 +2679,17 @@ function finiteSolidGeneralFrontToBackWalk(
     const isOwnLeaf =
       anchorSeesClaim &&
       anchor !== undefined &&
-      word.length === anchor.cellIndices.length &&
+      // The word's own length is the construction's level; the anchor's
+      // cellIndices are the LEVEL-4-padded word (the trailing slots −1),
+      // so an equality check against their length could never hold —
+      // the clamp was dead for every level below 4 (measured: the
+      // boot document's inside-miss state). The slot-wise compare is
+      // the whole test; the anchor's depth already equals the level
+      // (validGeneralAnchor).
       word.every((w, slot) => w === anchor.cellIndices[slot]);
+    otrace(
+      `clipFrame word=[${word.join(",")}] isOwnLeaf=${isOwnLeaf} anchorSeesClaim=${anchorSeesClaim} wordLen=${word.length} cellIdxLen=${anchor !== undefined ? anchor.cellIndices.length : "noanchor"}`,
+    );
     const raw: {
       enter: number;
       exit: number;
@@ -2695,7 +2704,15 @@ function finiteSolidGeneralFrontToBackWalk(
       onPlaneMask(word),
       isOwnLeaf ? raw : undefined,
     );
-    if (!isOwnLeaf) return clip;
+    if (!isOwnLeaf) {
+      otrace(
+        `clipFrame word=[${word.join(",")}] raw clip=${clip ? `enter=${clip.enter.toExponential(6)} exit=${clip.exit.toExponential(6)}` : "NULL"}`,
+      );
+      return clip;
+    }
+    otrace(
+      `clipFrame word=[${word.join(",")}] OWN clamp: raw=${raw.enter.toExponential(6)}..${raw.exit.toExponential(6)} -> [${Math.min(raw.enter, 0).toExponential(6)},${Math.max(raw.exit, 0).toExponential(6)}]`,
+    );
     // THE ANCHOR'S AUTHORITY COVERS ITS OWN CLIP (the inside-miss
     // residue's walk-level diagnosis): at a corner the snap can leave
     // the point a hair outside an UNMASKED facet, whose crossing then
@@ -2867,6 +2884,9 @@ function finiteSolidGeneralFrontToBackWalk(
     const owner = generalMediumOf(coverage, media);
     medium = owner.medium;
     const t = groupT;
+    otrace(
+      `group t=${t.toExponential(6)} cov=[${coverage.join(",")}] before=${before} after=${medium} started=${started} anchorSeesClaim=${anchorSeesClaim}`,
+    );
     if (!started && t <= tMin + generalTieAbs(t)) {
       if (!anchorSeesClaim) {
         haveStart = true;
@@ -3011,7 +3031,10 @@ function finiteSolidGeneralFrontToBackWalk(
     child: { m: number[]; t: Vec4 },
   ): void => {
     const childClip = clipFrame({ forward: step, inverse: child });
-    if (!childClip) return;
+    if (!childClip) {
+      otrace(`visitLeaf word=[${word.join(",")}] -> clip NULL, dropped`);
+      return;
+    }
     if (produced >= leafCap) {
       aborted = { kind: "refused", reason: "visit-cap", visits: 0 };
       return;
@@ -3068,7 +3091,30 @@ function finiteSolidGeneralFrontToBackWalk(
         ray.p,
         ray.d,
       );
-      const key = nodeClip ? nodeClip.enter : Infinity;
+      let key = nodeClip ? nodeClip.enter : Infinity;
+      // THE SEEDED ANCHOR'S OWN LEAF IS NEVER PRUNED (the inside-miss
+      // residue's walk-level diagnosis, the oracle's rule): the seed
+      // asserts the path is inside this leaf, whose own-leaf clamp
+      // gives an interval containing t = 0 in exact arithmetic — the
+      // node prune's composed-inverse rounding must not override the
+      // anchor (measured: the boot document's inside-miss state, whose
+      // own leaf's level-0 box clip missed by the composed inverse's
+      // rounding, was skipped, and the seeded walk's coverage could
+      // never close — the exit event that fires the flip needs the
+      // leaf's own endpoint in the pool). The clamped interval's enter
+      // is <= 0, so the key 0 lower-bounds the leaf's pushed exit and
+      // the sort still orders it after the behind-origin children.
+      if (
+        anchorSeesClaim &&
+        anchor !== undefined &&
+        word.length + 1 === c.level &&
+        [...word, a].every((w, slot) => w === anchor.cellIndices[slot])
+      ) {
+        otrace(
+          `walk d=${depth} word=[${word.join(",")}] child ${a} is the seeded own leaf: key ${key === Infinity ? "FAR" : key.toExponential(6)} -> 0`,
+        );
+        key = Math.min(key, 0);
+      }
       let slot = order.length;
       while (slot > 0 && keys[order[slot - 1]] > key) slot--;
       order.splice(slot, 0, a);
@@ -3078,7 +3124,12 @@ function finiteSolidGeneralFrontToBackWalk(
       const a = order[i];
       // The next unvisited child's box entry: this level's frontier term.
       nextKey[depth] = i + 1 < order.length ? keys[order[i + 1]] : Infinity;
-      if (keys[a] === Infinity) break;
+      if (keys[a] === Infinity) {
+        otrace(
+          `walk d=${depth} word=[${word.join(",")}] child ${a} key FAR -> break`,
+        );
+        break;
+      }
       const step = composeWordStep(matrix, offset, {
         matrix: c.mapMatrix[a],
         offset: c.mapOffset[a],
@@ -3106,6 +3157,9 @@ function finiteSolidGeneralFrontToBackWalk(
     for (let d = 0; d < nextKey.length; d++) nextKey[d] = Infinity;
     drain();
     if (aborted) return aborted;
+    otrace(
+      `finish haveStart=${haveStart} startMedium=${startMedium} claimed=${claimed} started=${started} stateMatches=${stateMatches()}`,
+    );
     if (!stateMatches()) return resolveMismatch();
     return { kind: "miss", visits };
   };
@@ -3142,6 +3196,20 @@ function finiteSolidGeneralFrontToBackWalk(
 function generalTieAbs(t: number): number {
   return FINITE_SOLID_GENERAL_TIE_REL * Math.max(1, Math.abs(t));
 }
+
+// The oracle walk's trace hook (the twin's setFiniteSolidDdaF32Trace, one
+// engine over): the seed decision, the clipped leaves, the tie groups and
+// the finish read — the replay harnesses' oracle-side instrument. Null by
+// default; a set hook pays one null-check per call site.
+let generalOracleTrace: ((line: string) => void) | null = null;
+export function setFiniteSolidGeneralOracleTrace(
+  hook: ((line: string) => void) | null,
+): void {
+  generalOracleTrace = hook;
+}
+const otrace = (line: string): void => {
+  generalOracleTrace?.(line);
+};
 
 /** The UNCAPPED reference enumeration: every level-N word's simplex
  * clipped against the intrinsic ray (the same clip arithmetic and the
@@ -3636,7 +3704,18 @@ function finiteSolidGeneralNextBoundaryInternal(
       );
       const facets = cellFacets(c, frames);
       if (!facets) return false;
-      const q0 = finiteSolidIntrinsicPoint(pose, origin);
+      // THE SIDE TEST'S POINT IS THE ANCHOR'S OWN CARRIED (PRE-SNAP)
+      // INTRINSIC POINT — where the transport says the path is. The
+      // anchored continuation reconstructs the query from the anchor
+      // (the display origin it passes here is a placeholder, zeroed),
+      // and the world origin is not a point of this query at all: a
+      // side test from it judged whether the leaf lies ahead of the
+      // SCENE ORIGIN along the segment direction, which is neither the
+      // ownership question nor the transport's position (measured: the
+      // boot document's inside-miss state, whose leaf sits behind the
+      // world-origin ray, refused state-mismatch where the twin's
+      // state-point test seeded and the walk should resolve).
+      const q0 = [...anchor.intrinsicPoint] as Vec4;
       const qd0 = finiteSolidIntrinsicDirection(pose, direction);
       // THE MASKED FACETS' RESIDUALS READ AS EXACT ZEROS (the anchor's
       // authority, the same rule the walk's own-leaf clip carries): the
@@ -3656,7 +3735,12 @@ function finiteSolidGeneralNextBoundaryInternal(
         qd0,
         anchor.planeMask,
       );
-      return clip !== null && clip.exit > 0;
+      const seedAnswer = clip !== null && clip.exit > 0;
+      otrace(
+        `seedTest q0=[${q0.map((v) => v.toExponential(9)).join(",")}] ` +
+          `clip=${clip ? `enter=${clip.enter.toExponential(6)} exit=${clip.exit.toExponential(6)}` : "NULL"} -> ${seedAnswer}`,
+      );
+      return seedAnswer;
     })();
   let q: Vec4;
   if (anchor) {

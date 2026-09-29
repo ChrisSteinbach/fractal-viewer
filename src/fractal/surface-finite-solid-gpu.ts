@@ -1755,6 +1755,16 @@ ${pad}  }
 ${pad}  key${depth}[a${depth}] = FIN_FAR;
 ${pad}  let i${depth} = finChildInverse(${parentI}, a${depth});
 ${pad}  key${depth}[a${depth}] = ${key(`i${depth}`, remaining)};
+${pad}  // THE SEEDED ANCHOR'S OWN LEAF IS NEVER PRUNED (the oracle's rule,
+${pad}  // mirrored): the seed asserts the path is inside this leaf, whose
+${pad}  // own-leaf clamp gives an interval containing t = 0 — the node
+${pad}  // prune's composed-inverse rounding must not override the anchor.
+${pad}  // The clamped interval's enter is <= 0, so the key 0 lower-bounds
+${pad}  // the leaf's pushed exit and the sort keeps it after the
+${pad}  // behind-origin children.
+${pad}  if (finSeeded && all(${wordOf(depth + 1)} == finAnchorWord)) {
+${pad}    key${depth}[a${depth}] = min(key${depth}[a${depth}], 0.0);
+${pad}  }
 ${pad}}
 ${pad}for (var si${depth} = 1u; si${depth} < FIN_MAP_COUNT; si${depth}++) {
 ${pad}  let id = ord${depth}[si${depth}];
@@ -2552,7 +2562,11 @@ fn transportFiniteBoundary(
     // far wall ahead (the unmasked clip's exit > 0); the crossed child
     // has the leaf behind. A TIR-reflected child's direction may point
     // back out through its entry facets, so the incident direction
-    // cannot tell.
+    // cannot tell. THE SIDE TEST'S POINT IS THE ANCHOR'S OWN CARRIED
+    // (PRE-SNAP) INTRINSIC POINT — where the transport says the path
+    // is; the snap below is the walk's own reconstruction and must not
+    // move the test's answer (the snap can push a corner's far-wall
+    // crossing across zero).
     if (ownFacets.ok) {
       var enter = -1.0e30;
       var exit = 1.0e30;
@@ -2567,7 +2581,7 @@ fn transportFiniteBoundary(
         // entered child's is its far wall; both exact.
         let s = select(
           0.0,
-          finDot(ownFacets.n[k], q) - ownFacets.c[k],
+          finDot(ownFacets.n[k], anchorIntrinsic) - ownFacets.c[k],
           (anchorMask & (1u << u32(k))) == 0u,
         );
         if (denom == 0.0) {
@@ -3734,12 +3748,17 @@ export function finiteSolidGeneralDdaF32(
   // far wall AHEAD (the unmasked clip's exit > 0 — a TIR-reflected
   // child's direction may point back out through its entry facets, so
   // the incident direction cannot tell); the child that crossed to the
-  // far side has the leaf entirely behind.
+  // far side has the leaf entirely behind. THE SIDE TEST'S POINT IS THE
+  // ANCHOR'S OWN CARRIED (PRE-SNAP) INTRINSIC POINT — where the
+  // transport says the path is; the snap below is the walk's own
+  // reconstruction and must not move the test's answer (the snap can
+  // push a corner's far-wall crossing across zero).
   const anchorSeesClaim =
     anchor !== null &&
     anchorStartMedium === claim &&
     (() => {
       const word = anchor.cellIndices.filter((w) => w >= 0);
+      const seedQ = v4(anchor.intrinsicPoint);
       let fwd = identity();
       let inv = identity();
       for (const a of word) {
@@ -3762,7 +3781,7 @@ export function finiteSolidGeneralDdaF32(
         const s =
           (anchor.planeMask & (1 << k)) !== 0
             ? 0
-            : f(dot4(ownFacets.n[k], q) - ownFacets.c[k]);
+            : f(dot4(ownFacets.n[k], seedQ) - ownFacets.c[k]);
         if (denom === 0) {
           if (s > 0) return false;
           continue;
@@ -4072,6 +4091,22 @@ export function finiteSolidGeneralDdaF32(
         add4(apply(childInverse_, q), childInverse_.t),
         apply(childInverse_, qd),
       );
+      // THE SEEDED ANCHOR'S OWN LEAF IS NEVER PRUNED (the oracle's rule,
+      // mirrored): the seed asserts the path is inside this leaf, whose
+      // own-leaf clamp gives an interval containing t = 0 — the node
+      // prune's composed-inverse rounding must not override the anchor
+      // (measured: the boot document's inside-miss state, whose own
+      // leaf's level-0 box clip missed, was skipped, and the seeded
+      // walk's coverage could never close). The clamped interval's
+      // enter is <= 0, so the key 0 lower-bounds the leaf's pushed exit.
+      if (
+        anchorSeesClaim &&
+        anchor !== null &&
+        word.length + 1 === level &&
+        [...word, a].every((w, slot) => w === anchor.cellIndices[slot])
+      ) {
+        keys[a] = Math.min(keys[a], 0);
+      }
       let slot = order.length;
       while (slot > 0 && keys[order[slot - 1]] > keys[a]) slot--;
       order.splice(slot, 0, a);

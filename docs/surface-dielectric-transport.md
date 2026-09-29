@@ -1312,6 +1312,46 @@ same `core: "finite"` / `"finite4"` pair under
   depth differs run to run, passes 3 vs 4): the remaining class sits on
   the ladder's acceptance knife edges, the next arc's target. The bench's
   finite transport legs: every leg green as of this record.
+- **The knife-edge arc (2026-09-29, the flaky residue's fix record)**: the
+  pair run re-caught the residue with `?surfacetransportdump` now on at
+  EVERY gate goto (the flag must be on at the leg's first goto — the
+  failing frames are the settle's own, so the flag rides the leg's only
+  reboot), and the replay harness judged the two dumped states. THE
+  MECHANISM — three defects, one state, each fixed one definition across
+  the oracle, the f32 twin and the WGSL: (1) THE SEED'S SIDE TEST READ
+  THE WRONG POINT: the oracle's test derived its query point from the
+  internal call's `origin` — which the anchored continuation sets to the
+  zeroed placeholder — so it judged whether the leaf lies ahead of the
+  SCENE ORIGIN along the segment direction, not whether the leaf has
+  interior ahead of where the transport says the path is; the boot
+  document's failing state has its leaf behind the world-origin ray, so
+  the oracle's seed never fired and its unseeded start read refused
+  state-mismatch where the twin (reading the post-snap point) seeded.
+  All three now read the anchor's own carried PRE-SNAP intrinsic point,
+  masked residuals exact zeros. (2) THE SEEDED OWN LEAF WAS PRUNED: the
+  DFS's node prune keys a leaf child on its level-0 box clip, and the
+  composed-inverse rounding can miss the box for the very point the
+  anchor asserts is inside (the boot document's state: the own leaf's
+  clip crossed at t = 0 on the masked facet and exited at ~1.02e-7 —
+  inside the tie window — while the prune's box image read FAR); the
+  skipped leaf never pushed its exit endpoint, so the seeded coverage
+  could never close, the medium never moved off the seed's, and the walk
+  finished as a miss that passed its own claim check. The seeded own
+  leaf's key now clamps to ≤ 0 — which exact arithmetic's clamped
+  interval contains, and which lower-bounds the leaf's pushed exit — so
+  the leaf is always visited and its exit event always arrives. (3) THE
+  ORACLE'S OWN-LEAF CLAMP WAS DEAD: its `isOwnLeaf` required
+  `word.length === anchor.cellIndices.length`, the word's length is the
+  construction's level and the cellIndices' is the level-4-padded word,
+  so the equality could never hold below level 4 and the clamp — the
+  anchor's authority covering its own clip — never applied; the
+  slot-wise compare is the whole test now. THE MEASURED RESIDUE: both
+  dumped states resolve on both engines at the replay (f64 and f32
+  boundary, the full-trace replay `residual, failure 0`); the
+  boot-document leg standalone `verdict=pass, unresolved=0`; the bench's
+  13 transport agreement legs green on the changed WGSL; the oracle walk
+  joined the instrument set (the twin's `setFiniteSolidDdaF32Trace`, one
+  engine over). The pair-run stability rows are the gate's own record.
 
 ## The general word tree's routing and panel (landed 2026-09-21; the box tree, superseded)
 
