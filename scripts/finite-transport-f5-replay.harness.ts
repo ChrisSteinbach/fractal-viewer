@@ -16,6 +16,12 @@
  *     scripts/finite-transport-f5-replay.harness.ts
  * Env: F5_TRACE=path (default the boot-document leg's saved trace),
  *      F5_DEPTH (default 3).
+ *
+ * A trace with records asserts every dumped failing path resolves (or
+ * reproduces) on both engines. A trace with ZERO f5 records but real
+ * transport frames is the FIXED walk's own shape — nothing failed, so
+ * there is nothing to replay — and passes with that disclosure; a trace
+ * without transport lines fails (unusable, not healthy).
  */
 import { readFileSync } from "node:fs";
 import { defaultTransforms } from "../src/fractal/presets";
@@ -134,7 +140,27 @@ describe("inside-miss replay: the kernel's own failing paths", () => {
         });
       }
       console.log(`parsed ${records.length} f5 record(s) from ${TRACE_PATH}`);
-      expect(records.length).toBeGreaterThan(0);
+      // Zero records is the FIXED walk's own shape: the dump rides every
+      // gate goto and writes one record per failing trace, so a healthy
+      // run dumps nothing. Passing vacuously on an unusable trace is the
+      // hazard, so the healthy pass requires the trace to prove the
+      // compute transport actually ran this session — a run without
+      // transport lines is a broken or wrong-file instrument, not a
+      // healthy walk.
+      if (records.length === 0) {
+        const ranTransport = lines.some((l) => /transport pass=\d+/.test(l));
+        if (!ranTransport) {
+          throw new Error(
+            `no f5 records AND no transport lines in ${TRACE_PATH} — the trace is unusable, not healthy`,
+          );
+        }
+        console.log(
+          "0 f5 records with transport frames present — the walk resolved " +
+            "every dumped-eligible path this run; nothing to replay (the " +
+            "gate's own leg verdicts cover the walk's health)",
+        );
+        return;
+      }
 
       let f64Miss = 0;
       let f32Miss = 0;
