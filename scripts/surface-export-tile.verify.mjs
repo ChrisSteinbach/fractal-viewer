@@ -139,8 +139,14 @@
  * then measure retained host RSS without GC; presentation/encoding is separate.
  * GPU buffer create/destroy census independently pins 40*C+32*slots plus
  * 16+2736*min(C,4096)+4 bytes of finite continuation scratch, where C is
- * actual retained capacity. Each observable is checked against128MiB; they
- * are never added. Driver-private memory/VRAM and prior larger-raster capacity
+ * actual retained capacity. MEMORY CEILINGS ARE NOT A GATE (the owner's
+ * 2026-09-29 decision, docs/surface-dielectric-transport.md's
+ * delivered-qualification section): the RSS figure and the declared-bytes
+ * ceiling are REPORTED, never checked; what GATES is the census's own
+ * consistency — the optical census present, and every paired
+ * glass-minus-opaque buffer byte attributed (a size mismatch or an
+ * unattributed allocation is a defect, not a size). The figures are never
+ * added. Driver-private memory/VRAM and prior larger-raster capacity
  * histories remain outside this specifically scoped qualification.
  *
  * Usage: node scripts/surface-export-tile.verify.mjs [--url=...]
@@ -1228,10 +1234,8 @@ function pairedDeclaredGpuBuffers(opaque, glass) {
       errors.push(
         "total allocation delta is not fully explained by optical buffers and the uniform tail",
       );
-    if (totalDeltaBytes < 0 || totalDeltaBytes > RETAINED_RENDER_LIMIT_BYTES)
-      errors.push(
-        "total additional declared GPU buffers exceed the retained-memory limit",
-      );
+    if (!Number.isSafeInteger(totalDeltaBytes) || totalDeltaBytes < 0)
+      errors.push("total additional declared GPU delta is not a sane size");
     return {
       phase,
       opaqueLiveBytes: a.liveBytes,
@@ -2090,7 +2094,7 @@ async function main() {
       verdict: MEMORY_ONLY ? "incomplete" : "not-measured",
       limitBytes: RETAINED_RENDER_LIMIT_BYTES,
       scope:
-        "Fresh canonical 1920x1080 four-AA history. Render-phase process-tree RSS peak above repeated warmed controls plateau, and additional optical declared buffers, judged independently. No RSS+GPU summation or total physical RSS+VRAM claim.",
+        "Fresh canonical 1920x1080 four-AA history. Render-phase process-tree RSS peak above repeated warmed controls plateau, and additional optical declared buffers, reported independently — INFORMATIONAL since the owner's 2026-09-29 not-a-gate decision (docs/surface-dielectric-transport.md's delivered-qualification section); what gates is the census's own consistency: the optical census present, and every paired glass-minus-opaque buffer byte attributed. No RSS+GPU summation or total physical RSS+VRAM claim.",
       exclusions:
         "256x144 pipeline warmup and one pre-baseline CDP GC; presentation/PNG encoding reported separately; driver-private/VRAM unobserved. A previously larger raster's retained allocation high-water is outside this qualification.",
     },
@@ -2352,13 +2356,12 @@ async function main() {
               combiningObservables: false,
             };
             check(
-              glassRss != null && glassRss <= RETAINED_RENDER_LIMIT_BYTES,
-              `${preset}: measured glass retained render RSS above warmed controls ${glassRss ?? "unqualified"} <= ${RETAINED_RENDER_LIMIT_BYTES} bytes`,
+              glassRss != null,
+              `${preset}: the render-phase RSS peak above warmed controls was sampled (informational since the owner's 2026-09-29 not-a-gate decision, docs/surface-dielectric-transport.md): ${glassRss ?? "unmeasured"} bytes, limit ${RETAINED_RENDER_LIMIT_BYTES} bytes reported, not enforced`,
             );
             check(
-              opticalBytes != null &&
-                opticalBytes <= RETAINED_RENDER_LIMIT_BYTES,
-              `${preset}: independently counted optical declared buffers ${opticalBytes ?? "unqualified"} <= ${RETAINED_RENDER_LIMIT_BYTES} bytes`,
+              opticalBytes != null,
+              `${preset}: the optical declared-buffer census is present (the ceiling is informational since the owner's 2026-09-29 not-a-gate decision): ${opticalBytes ?? "missing"} bytes, limit ${RETAINED_RENDER_LIMIT_BYTES} bytes reported, not enforced`,
             );
             for (const paired of pairedDeclaredGpu)
               check(
