@@ -3058,23 +3058,51 @@ transmission leg is byte-exact in both dimensions with the distortion
 authored. The finite routing has LANDED (2026-09-19, the section above),
 with the subsequent geometry correction recorded above. Final qualification
 uses complete optical samples, not a resolved-pixel percentage.
-What remains:
-the fold core's transport (the measured timeout, three recorded paths —
-the closed-solid backend is now DOUBLY motivated for the finite-construction
-path, being its own recorded scope); built-app qualification (the final
-visual review; the delegated preview/settle/cancel envelope itself is
-MEASURED and passing in both dimensions since the 2026-09-20 run above —
-what remains unmeasured there is the larger-raster tier: the 960×640
-eight-AA settles and the full-HD export rows, whose pre-cache 120-second
-failures the resumption/cache work is expected to move but has not yet
-re-measured).
-The estimator arms' IFS
+**The qualification has run (2026-09-29, below): the built app is
+accepted, the memory line is decided not-a-gate, and the epic's
+remaining scope is the fold core's transport plus the memory leg's
+recorded re-scope to informational.** The estimator arms' IFS
 vacuity is disclosed, not solved — IFS geometry has no closed solid for
 the signed field to describe. Shader changes require the corresponding
 CPU/GPU agreement gate even before production routing is enabled; the 22
 GPU controls are the pattern. Applicability refusals
 (slab/forward/balloon/engine admissions) are preserved unchanged by this
 work.
+
+### The delivered qualification and the owner's acceptance (2026-09-29)
+
+The built app's finite-solid glass qualified end to end on certified-quiet
+RX 7900 XTX / radeonsi (quiet=YES, named hardware in every arm, tree at
+main with every gate green: unit suite, the full agreement section
+`verdict=pass`, the panel gate 10 legs / 0 failures). The delegated
+envelope rows: preview 738 ms (3D) / 1031 ms (4D) against the 1.5 s line;
+four-AA settle 6.216 s / 9.901 s against the 10 s line (4D at 99% of it —
+honest margin); transport checkpoints ≤523 ms, zero submissions above the
+600 ms line. The full-HD export qualification (1920×1080 four-AA Save PNG,
+tiled and untiled arms byte-identical, every band complete, every sample
+resolved): canonical delivery 59.0 s (3D) and 100.6 s (4D) against the
+120 s line, with the artificial-band stress arms timed separately per the
+scope correction above.
+
+The additional-state question closed by owner decision. Declared optical
+GPU buffers — the allocation plan the 128 MiB line was written against —
+measure 94,150,756 bytes with no unattributed allocations, stable across
+repeats, both dimensions. The whole-process-tree host RSS above warmed
+controls at the export peak measures 378–527 MB, reproducing the study's
+own attribution (browser/page boot, the Save-PNG base64→RGBA→PNG encode
+transients at the run peak, driver/JS overhead the sampler cannot
+attribute). The study left the go/no-go scope to the owner; decided
+2026-09-29: **the memory line is not a gate** — the scope was an earlier
+session's arbitrary choice, the memory in use is not a problem, and the
+owner explicitly offers memory headroom for speed in future optimization
+arcs. The export gate's memory leg still enforces the strict scope until
+its recorded re-scope to informational lands, so its FAIL there reads as
+the decided-not-a-gate finding, not a defect.
+
+The visual acceptance is the owner's explicit "Approve" (2026-09-29) of
+the delivered look — the 2026-09-24 box-root selection — across the
+shipped glass presets (checker floor at emission 1.4), the six starters
+(the studio treatment), and the full-HD exports.
 
 ## Reproduce
 
