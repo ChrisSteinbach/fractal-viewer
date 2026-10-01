@@ -700,24 +700,17 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     new part is the FOURTH box axis, whose `pw0/pw1/pw2` and `dwUp/dwDn`
     take the same treatment as x/y/z and whose visible-radius bound's `+ 4`
     — the axis COUNT — becomes `4·wall²`.
-    Measured verdict + numbers in the module doc: the SLICE CAVEAT costs
-    ~10% flat in `w0` (slice-aware certificates a measured won't-do,
-    `scripts/slice-cost.harness.ts`), and their 20-40x off-centre cliff
-    does not reproduce on either engine (`scripts/slice-cliff.probe.mjs`).
+    Measured verdict + numbers in the module doc (the SLICE CAVEAT's ~10%
+    flat `w0` cost; its 20-40x off-centre cliff does not reproduce on
+    either engine).
     Slab queries (`halfExtent`) route three ways — exact segment arithmetic
     (boxfold/affine), the BOUNDED MIDPOINT COVER (`SLAB_COVER_PIECES` 16,
     sound at any count) for nonlinear folds and final lenses, refusal only
     for swirl/condensation — mirrored by `surface-de-gpu.ts`'s
-    `slabCover`, routed by the app, both gates green in both browsers.
-    UNDER A FINITE reflection group the cover composes with the wall
-    split (`tiling.ts`'s `tilingSlabPieces`): each folded piece answered
-    by the cover over its own straight segment — `pieces × 16` point
-    descents, sound per piece by the cover's own argument, no new
-    soundness surface — which is the epic's Mandelbox-plus-tiling
-    acceptance case, live on both engines (the WGSL split-plus-cover arm,
-    bench M5d, the tiled browser gate's composed phases); the LATTICE arm
-    still refuses (its walls need their own crossing enumeration).
-    Proof:
+    `slabCover`, routed by the app, both gates green in both browsers;
+    under a FINITE group the cover composes with the wall split per piece
+    (the Mandelbox-plus-tiling acceptance case, live), the lattice arm
+    still refuses. Proof:
     `docs/surface-slice-thickness.md`.
   - `surface-de-gpu.ts` — WGSL fold-DE compute kernel (a spike, gated in by
     the beam-width occupancy verdict; integrated as the app's compute
