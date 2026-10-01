@@ -629,12 +629,37 @@ describe("the cutoff contract composes with the max (test 6)", () => {
   });
 });
 
-describe("4D slab refusal (test 7)", () => {
+describe("4D slab routing (test 7)", () => {
   const de = buildSurfaceDE4(pentatope());
   const t = resolveTiling({ group: "a4" })!;
   const p: Vec4 = [0.3, 0.2, 0.1, 0.4];
+  const lattice = resolveTiling(
+    { kind: "lattice", cellScale: 1 },
+    de.visibleBoundingRadius,
+  );
+  // A nonlinear fold set: the recursive spherefold pair the cover exists
+  // for — its split+cover composition is the separate nonlinear slab work,
+  // so the finite arm refuses it rather than admitting an unsound pair.
+  const nonlinear: Transform[] = [
+    {
+      id: 0,
+      position: [0.3, 0.1, 0],
+      rotation: [0.3, 0.2, 0],
+      scale: [0.12, 0.12, 0.12],
+      w: { rotation: { xw: 0.45 } },
+      variations: [{ type: "spherefold", weight: 0.9 }],
+    },
+    {
+      id: 1,
+      position: [-0.25, -0.2, 0.2],
+      rotation: [0, 0.5, 0.1],
+      scale: [0.11, 0.11, 0.11],
+      w: { rotation: { yw: 0.4 } },
+      variations: [{ type: "spherefold", weight: 1.1 }],
+    },
+  ];
 
-  it("estimateDistance4Tiled throws on any real slab, in every component", () => {
+  it("lattice tiling refuses any real slab, in every component", () => {
     const segments: Vec4[] = [
       [0.1, 0, 0, 0],
       [0, -0.2, 0, 0],
@@ -643,16 +668,114 @@ describe("4D slab refusal (test 7)", () => {
       [0.1, 0.1, 0.1, 0.1],
     ];
     for (const halfExtent of segments) {
-      expect(() => estimateDistance4Tiled(t, de, p, halfExtent)).toThrow(
-        /segment|slab|polyline/,
+      expect(() => estimateDistance4Tiled(lattice, de, p, halfExtent)).toThrow(
+        /lattice/,
       );
+      expect(() =>
+        estimateDistance4RefinedTiled(lattice, de, p, 0.05, halfExtent),
+      ).toThrow(/lattice/);
+      expect(() =>
+        estimateDistance4SampleTiled(lattice, de, p, halfExtent),
+      ).toThrow(/lattice/);
     }
   });
 
-  it("estimateDistance4RefinedTiled throws on a real slab", () => {
-    expect(() =>
-      estimateDistance4RefinedTiled(t, de, p, 0.05, [0.1, 0, 0, 0]),
-    ).toThrow(/segment|slab|polyline/);
+  it("a nonlinear fold set refuses the slab through finite tiling", () => {
+    const nonlinearDe = buildSurfaceDE4(nonlinear);
+    const segments: Vec4[] = [
+      [0.1, 0, 0, 0],
+      [0, 0, 0, 0.3],
+    ];
+    for (const halfExtent of segments) {
+      expect(() =>
+        estimateDistance4Tiled(t, nonlinearDe, p, halfExtent),
+      ).toThrow(/slabExact4/);
+      expect(() =>
+        estimateDistance4RefinedTiled(t, nonlinearDe, p, 0.05, halfExtent),
+      ).toThrow(/slabExact4/);
+    }
+  });
+
+  it("finite tiling with a segment-exact fold set answers the split", () => {
+    const segments: Vec4[] = [
+      [0.1, 0, 0, 0],
+      [0, -0.2, 0, 0],
+      [0, 0, 0.05, 0],
+      [0, 0, 0, 0.3],
+      [0.1, 0.1, 0.1, 0.1],
+    ];
+    for (const halfExtent of segments) {
+      const value = estimateDistance4Tiled(t, de, p, halfExtent);
+      expect(value).toBeGreaterThanOrEqual(0);
+      expect(Number.isFinite(value)).toBe(true);
+      // Soundness bracket: the segment's distance is at most the distance
+      // from any of its points, and the affine descent is near-exact on
+      // both sides of that inequality, so the slab estimate cannot exceed
+      // the point estimate along the segment by more than the fold's own
+      // wall allowance.
+      const point: Vec4 = [
+        p[0] + halfExtent[0],
+        p[1] + halfExtent[1],
+        p[2] + halfExtent[2],
+        p[3] + halfExtent[3],
+      ];
+      const atEndpoint = estimateDistance4Tiled(t, de, point, null);
+      expect(value).toBeLessThanOrEqual(atEndpoint + 1e-5);
+    }
+  });
+
+  it("the cutoff contract composes with the split", () => {
+    const rng = mulberry32(702);
+    for (let i = 0; i < 40; i++) {
+      const group = GROUPS4[Math.floor(rng() * GROUPS4.length)];
+      const tiling = resolveTiling({ group })!;
+      const q: Vec4 = [
+        (rng() * 2 - 1) * 2,
+        (rng() * 2 - 1) * 2,
+        (rng() * 2 - 1) * 2,
+        (rng() * 2 - 1) * 2,
+      ];
+      const ext: Vec4 = [rng() * 0.3, rng() * 0.3, rng() * 0.3, rng() * 0.3];
+      const cutoff = [0.02, 0.05, 0.1][Math.floor(rng() * 3)];
+      const short = estimateDistance4RefinedTiled(tiling, de, q, cutoff, ext);
+      const full = estimateDistance4RefinedTiled(tiling, de, q, 0, ext);
+      if (short >= cutoff) {
+        expect(short).toBe(full);
+      } else {
+        expect(full).toBeLessThan(cutoff);
+      }
+    }
+  });
+
+  it("the clip narrows per piece and never widens the answer", () => {
+    const rng = mulberry32(703);
+    const clip = sphereClip([0.4, -0.2, 0.3], 0.7);
+    for (let i = 0; i < 40; i++) {
+      const group = GROUPS4[Math.floor(rng() * GROUPS4.length)];
+      const plain = resolveTiling({ group })!;
+      const clipped = resolveTiling({ group, clip })!;
+      const q: Vec4 = [
+        (rng() * 2 - 1) * 2,
+        (rng() * 2 - 1) * 2,
+        (rng() * 2 - 1) * 2,
+        (rng() * 2 - 1) * 2,
+      ];
+      const ext: Vec4 = [rng() * 0.3, rng() * 0.3, rng() * 0.3, rng() * 0.3];
+      const without = estimateDistance4RefinedTiled(plain, de, q, 0, ext);
+      const withClip = estimateDistance4RefinedTiled(clipped, de, q, 0, ext);
+      expect(withClip).toBeGreaterThanOrEqual(without - 1e-12);
+      // And the sample twin carries the same narrowing into both lanes.
+      const sample = estimateDistance4RefinedSampleTiled(
+        clipped,
+        de,
+        q,
+        0,
+        ext,
+      );
+      expect(sample.d).toBeCloseTo(withClip, 12);
+      expect(sample.stride).toBeGreaterThanOrEqual(0);
+      expect(sample.stride).toBeLessThanOrEqual(sample.d + 1e-12);
+    }
   });
 
   it("null and zero are the point query, value for value", () => {
@@ -1165,23 +1288,19 @@ describe("finite tiling beneath Balloon", () => {
         }
       }
       if (dimension === 4) {
-        expect(() =>
-          estimateDistance4SampleTiled(
-            tiling,
-            de4,
-            [0, 0, 0, 0],
-            [0, 0, 0, 0.1],
-          ),
-        ).toThrow(/slab queries are refused/);
-        expect(() =>
-          estimateDistance4RefinedSampleTiled(
-            tiling,
-            de4,
-            [0, 0, 0, 0],
-            0,
-            [0, 0, 0, 0.1],
-          ),
-        ).toThrow(/slab queries are refused/);
+        // The finite arm's slab now routes through the split for a
+        // segment-exact fold set (pentatope is affine), so the sample
+        // twins answer and agree with the scalar entry; the refusals are
+        // the lattice arm's and the nonlinear fold set's, tested in the
+        // 4D slab routing suite.
+        const q: Vec4 = [0.3, -0.2, 0.5, 0.31];
+        const ext: Vec4 = [0, 0, 0, 0.1];
+        expect(estimateDistance4SampleTiled(tiling, de4, q, ext).d).toBe(
+          estimateDistance4Tiled(tiling, de4, q, ext),
+        );
+        expect(
+          estimateDistance4RefinedSampleTiled(tiling, de4, q, 0, ext).d,
+        ).toBe(estimateDistance4RefinedTiled(tiling, de4, q, 0, ext));
       }
     }
   });

@@ -19,14 +19,16 @@ import {
   estimateDistance4Refined,
   estimateDistance4Sample,
   estimateDistance4RefinedSample,
+  slabExact4,
 } from "./surface-de-4d";
 import {
   foldLattice3,
   foldLattice4,
   foldToChamber,
   isResolvedLatticeTiling,
+  tilingSlabPieces,
 } from "./tiling";
-import type { ResolvedTiling } from "./tiling";
+import type { ResolvedFiniteTiling, ResolvedTiling } from "./tiling";
 import type { Vec3, Vec4 } from "./types";
 
 /**
@@ -74,13 +76,23 @@ import type { Vec3, Vec4 } from "./types";
  * and by the fold's proven step bound (24 for F4, capped at `tiling.ts`'s 32)
  * it never fires. The lattice fold has fixed work and cannot fail.
  *
- * REFUSALS. Enforced HERE: the 4D slab (`halfExtent` a real segment
- * throws, both 4D entries) — the fold of a segment is a bent polyline
- * (per-point reflection sequences), and the slab's conservative-bound
- * contract does not survive it, so tiled 4D sessions run slice 0. Named
- * for context but enforced by routing: infinite lattice + Balloon has no
- * finite enclosing ball. Finite Balloon wraps these public estimators after
- * dimensional reduction, with the certified origin-centred visible ball. H4/reducible-group refusals
+ * REFUSALS. Enforced HERE, on a real slab (`halfExtent` a segment): the
+ * LATTICE arm — the affine-A1 product's walls need their own crossing
+ * enumeration and bounded work, and the finite groups' proven
+ * `maxWordLength` root table is not that enumeration; and a FINITE group
+ * whose fold set the inner estimator cannot thread exactly
+ * ({@link slabExact4} false — spherefold/mandelbox branches or a swirl
+ * final), whose split-plus-cover composition is the separate nonlinear
+ * slab work. A finite group with a segment-exact fold set composes
+ * instead: the split vocabulary (`tiling.ts`'s {@link tilingSlabPieces})
+ * divides the segment at the wall crossings and folds each piece, the
+ * inner core answers each straight folded piece with its own segment
+ * machinery, and the clip is intersected PER PIECE — the composition the
+ * split's module doc derives. Point queries keep the fold-once
+ * composition below in every arm. Named for context but enforced by
+ * routing: infinite lattice + Balloon has no finite enclosing ball.
+ * Finite Balloon wraps these public estimators after dimensional
+ * reduction, with the certified origin-centred visible ball. H4/reducible-group refusals
  * live in the group vocabulary itself (`tiling.ts`'s `TILING_GROUPS`).
  * Kaleidoscope is part of the untouched core's set A: the same nearest-copy
  * proof accepts it in every supported dimension and core family, without
@@ -180,14 +192,141 @@ function isSegment(halfExtent: Vec4 | null): halfExtent is Vec4 {
   );
 }
 
-function assertTilingPoint4(halfExtent: Vec4 | null): void {
-  if (isSegment(halfExtent)) {
+/** The slab routing gate for a REAL segment under tiling. Lattice tiling
+ * still refuses outright: the affine-A1 product's walls need their own
+ * crossing enumeration and bounded work, and the finite groups' proven
+ * `maxWordLength` root table is not that enumeration. A finite group
+ * composes through the split vocabulary (`tiling.ts`'s
+ * {@link tilingSlabPieces}) — but only where the inner estimator threads a
+ * segment EXACTLY ({@link slabExact4}: affine and boxfold fold sets): the
+ * nonlinear cover's own soundness is per-piece, and its composition with
+ * the split is the separate nonlinear slab work, so it refuses loudly
+ * rather than silently clamping after the control is enabled. Returns the
+ * finite arm, narrowed for the split's `info` reads. */
+function assertFiniteSlab4(
+  tiling: ResolvedTiling,
+  de: SurfaceDE4,
+): ResolvedFiniteTiling {
+  if (isResolvedLatticeTiling(tiling)) {
     throw new Error(
-      "tiling-de: slab queries are refused under tiling — the fold of a " +
-        "segment is a bent polyline (the tiling + 4D slab refusal, " +
-        "docs/tiling-contract.md); tiled 4D sessions run slice 0",
+      "tiling-de: slab queries are refused under lattice tiling — the " +
+        "affine-A1 product's walls need their own crossing enumeration " +
+        "and bounded work (the finite groups' root table is not that " +
+        "enumeration, docs/tiling-contract.md); tiled lattice 4D sessions " +
+        "run slice 0",
     );
   }
+  if (!slabExact4(de)) {
+    throw new Error(
+      "tiling-de: a slab through finite tiling needs a segment-exact fold " +
+        "set (slabExact4: affine and boxfold only) — spherefold and " +
+        "mandelbox through tiling is the separate nonlinear slab work " +
+        "(docs/surface-slice-thickness.md); clamp sliceHalfW to 0 for this " +
+        "system",
+    );
+  }
+  return tiling;
+}
+
+/** The finite slab answer over the split's folded pieces:
+ * `min_j max(coreDE(F_j), clipSdf(mid_j) − halfLen_j)` — the composition
+ * the split vocabulary's module doc derives, with the DE and clip
+ * combined PER PIECE so the intersection stays at one segment parameter.
+ * The cutoff threads RAW: each piece's own segment descent refines to the
+ * caller's epsilon (the body's note for why the cover's `+ halfLen`
+ * pairing is wrong here). A `null` split (a fold cap expiry, never by the
+ * proof) returns 0 — fully conservative. */
+function tiledSlabDistance4(
+  tiling: ResolvedFiniteTiling,
+  de: SurfaceDE4,
+  p: Vec4,
+  halfExtent: Vec4,
+  cutoff: number,
+  refined: boolean,
+): number {
+  const pieces = tilingSlabPieces(tiling.info, p, halfExtent);
+  if (pieces === null) return 0;
+  let bound = Infinity;
+  for (const piece of pieces) {
+    const halfLen = Math.hypot(
+      piece.extent[0],
+      piece.extent[1],
+      piece.extent[2],
+      piece.extent[3],
+    );
+    // The piece's cutoff threads RAW: each piece's segment descent covers
+    // its own folded segment exactly (no triangle slack to price in, unlike
+    // the cover's point-at-midpiece calls), so inflating the early-out by
+    // halfLen would only saturate the piece's bound at `cutoff + halfLen` —
+    // far above the marcher's acceptance epsilon — and step the render
+    // straight through the object. Measured on the A4-tiled dust: the
+    // inflated form lost ~90% of the slab's hits.
+    const inner = refined
+      ? estimateDistance4Refined(de, piece.center, cutoff, piece.extent)
+      : estimateDistance4(de, piece.center, piece.extent);
+    let value = inner;
+    if (tiling.clip) {
+      value = Math.max(
+        value,
+        shapeSdf(
+          tiling.clip,
+          piece.center[0],
+          piece.center[1],
+          piece.center[2],
+        ) - halfLen,
+      );
+    }
+    if (value < bound) bound = value;
+  }
+  return bound > 0 ? bound : 0;
+}
+
+/** The paired sample twin of {@link tiledSlabDistance4}: both lanes get the
+ * same per-piece narrowing max, and the min over pieces of each lane is the
+ * query's safe step (every piece's pair lower-bounds that piece's distance,
+ * so the nearest piece's bound governs the march). */
+function tiledSlabSample4(
+  tiling: ResolvedFiniteTiling,
+  de: SurfaceDE4,
+  p: Vec4,
+  halfExtent: Vec4,
+  cutoff: number,
+  refined: boolean,
+): SurfaceDistanceSample {
+  const pieces = tilingSlabPieces(tiling.info, p, halfExtent);
+  if (pieces === null) return { d: 0, stride: 0 };
+  let bestD = Infinity;
+  let bestStride = Infinity;
+  for (const piece of pieces) {
+    const halfLen = Math.hypot(
+      piece.extent[0],
+      piece.extent[1],
+      piece.extent[2],
+      piece.extent[3],
+    );
+    const inner = refined
+      ? estimateDistance4RefinedSample(de, piece.center, cutoff, piece.extent)
+      : estimateDistance4Sample(de, piece.center, piece.extent);
+    let d = inner.d;
+    let stride = inner.stride;
+    if (tiling.clip) {
+      const clip =
+        shapeSdf(
+          tiling.clip,
+          piece.center[0],
+          piece.center[1],
+          piece.center[2],
+        ) - halfLen;
+      d = Math.max(d, clip);
+      stride = Math.max(stride, clip);
+    }
+    if (d < bestD) bestD = d;
+    if (stride < bestStride) bestStride = stride;
+  }
+  return {
+    d: bestD > 0 ? bestD : 0,
+    stride: bestStride > 0 ? bestStride : 0,
+  };
 }
 
 /**
@@ -233,11 +372,11 @@ export function estimateDistanceRefinedTiled(
 
 /**
  * The 4D affine/fold wrapper over {@link estimateDistance4} (which takes
- * no cutoff — nothing to thread). THROWS when `halfExtent` is a real
- * segment: the contract's tiling + 4D slab refusal — the fold of a
- * segment is a bent polyline, so the slab's conservative-bound contract
- * does not survive the pre-fold; tiled 4D sessions run slice 0 (the
- * shipped default). `null`/zero — the point query — passes through.
+ * no cutoff — nothing to thread). A real `halfExtent` routes through the
+ * finite split ({@link tiledSlabDistance4}) where the fold set is
+ * segment-exact, and refuses a lattice arm or a nonlinear fold set —
+ * the routing gate's doc names each reason. `null`/zero — the point
+ * query — keeps the fold-once composition below unchanged.
  */
 export function estimateDistance4Tiled(
   tiling: ResolvedTiling,
@@ -245,7 +384,10 @@ export function estimateDistance4Tiled(
   p: Vec4,
   halfExtent: Vec4 | null = null,
 ): number {
-  assertTilingPoint4(halfExtent);
+  if (isSegment(halfExtent)) {
+    const finite = assertFiniteSlab4(tiling, de);
+    return tiledSlabDistance4(finite, de, p, halfExtent, 0, false);
+  }
   const folded = foldQuery4(tiling, p);
   if (folded === null) return 0;
   const q = folded;
@@ -255,9 +397,9 @@ export function estimateDistance4Tiled(
 
 /**
  * The 4D affine/fold wrapper over {@link estimateDistance4Refined} — the
- * refined 4D ladder one wrapper out. Same slab throw (module doc of
- * {@link estimateDistance4Tiled}), cutoff threaded through unchanged (the
- * cutoff contract composes with the max).
+ * refined 4D ladder one wrapper out. Same slab routing as
+ * {@link estimateDistance4Tiled} (the gate's module doc), cutoff threaded
+ * through unchanged (the cutoff contract composes with the max).
  */
 export function estimateDistance4RefinedTiled(
   tiling: ResolvedTiling,
@@ -266,7 +408,10 @@ export function estimateDistance4RefinedTiled(
   cutoff = 0,
   halfExtent: Vec4 | null = null,
 ): number {
-  assertTilingPoint4(halfExtent);
+  if (isSegment(halfExtent)) {
+    const finite = assertFiniteSlab4(tiling, de);
+    return tiledSlabDistance4(finite, de, p, halfExtent, cutoff, true);
+  }
   const folded = foldQuery4(tiling, p);
   if (folded === null) return 0;
   const q = folded;
@@ -311,14 +456,18 @@ export function estimateDistanceRefinedSampleTiled(
   };
 }
 
-/** 4D paired twin; the same point-only tiling certificate refuses slabs. */
+/** 4D paired twin; a real slab routes through the finite split
+ * ({@link tiledSlabSample4}) under the same gate as the scalar entry. */
 export function estimateDistance4SampleTiled(
   tiling: ResolvedTiling,
   de: SurfaceDE4,
   p: Vec4,
   halfExtent: Vec4 | null = null,
 ): SurfaceDistanceSample {
-  assertTilingPoint4(halfExtent);
+  if (isSegment(halfExtent)) {
+    const finite = assertFiniteSlab4(tiling, de);
+    return tiledSlabSample4(finite, de, p, halfExtent, 0, false);
+  }
   const q = foldQuery4(tiling, p);
   if (!q) return { d: 0, stride: 0 };
   const inner = estimateDistance4Sample(de, q, halfExtent);
@@ -328,7 +477,8 @@ export function estimateDistance4SampleTiled(
   };
 }
 
-/** Refined 4D paired twin, preserving the public cutoff argument. */
+/** Refined 4D paired twin, preserving the public cutoff argument and the
+ * same slab routing. */
 export function estimateDistance4RefinedSampleTiled(
   tiling: ResolvedTiling,
   de: SurfaceDE4,
@@ -336,7 +486,10 @@ export function estimateDistance4RefinedSampleTiled(
   cutoff = 0,
   halfExtent: Vec4 | null = null,
 ): SurfaceDistanceSample {
-  assertTilingPoint4(halfExtent);
+  if (isSegment(halfExtent)) {
+    const finite = assertFiniteSlab4(tiling, de);
+    return tiledSlabSample4(finite, de, p, halfExtent, cutoff, true);
+  }
   const q = foldQuery4(tiling, p);
   if (!q) return { d: 0, stride: 0 };
   const inner = estimateDistance4RefinedSample(de, q, cutoff, halfExtent);

@@ -21,6 +21,8 @@ import {
   resolveTiling,
   tilingFoldSource,
   tilingGroupCode,
+  tilingReflectionWalls,
+  tilingSlabPieces,
 } from "./tiling";
 import type {
   FiniteTilingSpec,
@@ -113,13 +115,13 @@ function dot(a: number[], b: number[]): number {
   return s;
 }
 
-function norm2(a: number[]): number {
+function norm2(a: readonly number[]): number {
   let s = 0;
   for (const v of a) s += v * v;
   return s;
 }
 
-function dist(a: number[], b: number[]): number {
+function dist(a: readonly number[], b: readonly number[]): number {
   let s = 0;
   for (let j = 0; j < a.length; j++) {
     const d = a[j] - b[j];
@@ -844,4 +846,185 @@ describe("mirrored affine-A1 lattice fold", () => {
       mirrorLatticeCoordinate(p4[3], h),
     ]);
   });
+});
+
+/** Exact distance from the segment `center ± extent` to a point — the
+ * independent slab-split oracle evaluates this over an explicitly
+ * enumerated point orbit, never over the fold. */
+function segmentToPoint(
+  center: number[],
+  extent: number[],
+  point: number[],
+): number {
+  let ee = 0;
+  let ce = 0;
+  for (let j = 0; j < center.length; j++) {
+    const c = center[j] - point[j];
+    ee += extent[j] * extent[j];
+    ce += c * extent[j];
+  }
+  const s = ee === 0 ? 0 : Math.max(-1, Math.min(1, -ce / ee));
+  let sum = 0;
+  for (let j = 0; j < center.length; j++) {
+    const d = center[j] + s * extent[j] - point[j];
+    sum += d * d;
+  }
+  return Math.sqrt(sum);
+}
+
+describe("slab split", () => {
+  for (const group of TILING_GROUPS) {
+    it(`derives exactly maxWordLength distinct unit mirror walls: ${group}`, () => {
+      const info = TILING_GROUP_INFO[group];
+      const walls = tilingReflectionWalls(info);
+      expect(walls.length).toBe(MAX_WORD[group]);
+      for (const wall of walls) {
+        expect(Math.abs(norm2(wall) - 1)).toBeLessThan(1e-9);
+      }
+      for (let i = 0; i < walls.length; i++) {
+        for (let j = i + 1; j < walls.length; j++) {
+          expect(dist(walls[i], walls[j])).toBeGreaterThan(1e-6);
+          // Antipodal normals were already identified, so no wall is
+          // another's negation either.
+          expect(
+            dist(
+              walls[i],
+              walls[j].map((n) => -n),
+            ),
+          ).toBeGreaterThan(1e-6);
+        }
+      }
+      // Cached: the frozen singleton returns the same array.
+      expect(tilingReflectionWalls(info)).toBe(walls);
+    });
+
+    it(`splits segments into at most maxWordLength + 1 pieces, agreeing with an explicit orbit: ${group}`, () => {
+      const info = TILING_GROUP_INFO[group];
+      const rng = mulberry32(SEEDS[group] + 11);
+      const dim = info.dim;
+      const canonical = contentPoint(info, rng);
+      const orbit: number[][] = [];
+      enumerateOrbit(info, canonical as Vec3 | Vec4, orbit);
+      let maximumPieces = 0;
+      for (let i = 0; i < 40; i++) {
+        const center = randomPoint(dim, rng, 1.5);
+        const extent = randomPoint(dim, rng, 1);
+        if (norm2(extent) < 1e-4) continue;
+        const pieces = tilingSlabPieces(
+          info,
+          center as Vec3 & Vec4,
+          extent as Vec3 & Vec4,
+        );
+        expect(pieces).not.toBeNull();
+        maximumPieces = Math.max(maximumPieces, pieces!.length);
+        expect(pieces!.length).toBeLessThanOrEqual(MAX_WORD[group] + 1);
+        const truth = Math.min(
+          ...orbit.map((member) => segmentToPoint(center, extent, member)),
+        );
+        const folded = Math.min(
+          ...pieces!.map((part) =>
+            segmentToPoint(part.center, part.extent, canonical),
+          ),
+        );
+        // The fold's FOLD_EPS wall allowance is the whole gap: an endpoint
+        // within tolerance of a wall may fold to either chamber copy.
+        expect(Math.abs(folded - truth)).toBeLessThan(4e-6);
+        for (const part of pieces!) {
+          expect(part.start).toBeGreaterThanOrEqual(-1);
+          expect(part.end).toBeLessThanOrEqual(1);
+          expect(part.end).toBeGreaterThan(part.start);
+          // Interior points fold onto the piece's own straight image —
+          // equal endpoint folds alone cannot reveal a missing crossing.
+          for (const t of [-0.75, -0.25, 0.25, 0.75]) {
+            const s =
+              (part.start + part.end) / 2 + (t * (part.end - part.start)) / 2;
+            const q = center.map((n, j) => n + s * extent[j]);
+            const expected = foldInto(info, q, new Array<number>(dim).fill(0));
+            const actual = part.center.map((n, j) => n + t * part.extent[j]);
+            expect(dist(actual, expected!)).toBeLessThan(4e-6);
+          }
+        }
+      }
+      expect(maximumPieces).toBeGreaterThan(1);
+    });
+
+    it(`degenerate zero extent is the single folded point piece: ${group}`, () => {
+      const info = TILING_GROUP_INFO[group];
+      const dim = info.dim;
+      const rng = mulberry32(SEEDS[group] + 12);
+      for (let i = 0; i < 10; i++) {
+        const center = randomPoint(dim, rng, 1.5);
+        const extent = new Array<number>(dim).fill(0);
+        const pieces = tilingSlabPieces(
+          info,
+          center as Vec3 & Vec4,
+          extent as Vec3 & Vec4,
+        );
+        expect(pieces).not.toBeNull();
+        expect(pieces!.length).toBe(1);
+        expect(pieces![0].start).toBe(-1);
+        expect(pieces![0].end).toBe(1);
+        for (let j = 0; j < dim; j++) {
+          expect(pieces![0].extent[j]).toBe(0);
+        }
+        const expected = foldInto(info, center, new Array<number>(dim).fill(0));
+        expect(dist(pieces![0].center, expected!)).toBeLessThan(1e-12);
+      }
+    });
+
+    it(`scratch reuse keeps consecutive calls independent: ${group}`, () => {
+      const info = TILING_GROUP_INFO[group];
+      const dim = info.dim;
+      const rng = mulberry32(SEEDS[group] + 13);
+      const centerA = randomPoint(dim, rng, 1.5);
+      const extentA = randomPoint(dim, rng, 1);
+      if (norm2(extentA) < 1e-4) return;
+      const first = tilingSlabPieces(
+        info,
+        centerA as Vec3 & Vec4,
+        extentA as Vec3 & Vec4,
+      );
+      expect(first).not.toBeNull();
+      const centerB = randomPoint(dim, rng, 1.5);
+      const extentB = randomPoint(dim, rng, 1);
+      if (norm2(extentB) < 1e-4) return;
+      const second = tilingSlabPieces(
+        info,
+        centerB as Vec3 & Vec4,
+        extentB as Vec3 & Vec4,
+      );
+      expect(second).not.toBeNull();
+      // The returned pieces may alias the module scratch, so the only
+      // meaningful assertion is that every piece is FULLY the second
+      // segment's: both endpoint folds recomputed from segment B reproduce
+      // center and extent, and the original parameters lie in [-1, 1].
+      // A partially-overwritten scratch slot (stale extent beside a fresh
+      // center) fails this.
+      const scratch = new Array<number>(dim).fill(0);
+      for (const piece of second!) {
+        const fa = foldInto(
+          info,
+          centerB.map((n, j) => n + piece.start * extentB[j]),
+          scratch,
+        );
+        const fb = foldInto(
+          info,
+          centerB.map((n, j) => n + piece.end * extentB[j]),
+          scratch,
+        );
+        expect(
+          dist(
+            piece.center,
+            fa!.map((n, j) => 0.5 * (n + fb![j])),
+          ),
+        ).toBeLessThan(1e-12);
+        expect(
+          dist(
+            piece.extent,
+            fa!.map((n, j) => 0.5 * (fb![j] - n)),
+          ),
+        ).toBeLessThan(1e-12);
+      }
+    });
+  }
 });
