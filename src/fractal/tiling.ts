@@ -89,8 +89,12 @@ import type { Vec3, Vec4 } from "./types";
  * - H4 (order 14400 — no real-time use) and the reducible products (the
  *   boxfold branch sweep is exactly the A1³ vocabulary this feature does
  *   not re-implement);
- * - 4D slab + tiling (the fold of a segment is a bent polyline, and the
- *   slab's conservative-bound contract does not survive it);
+ * - 4D slab + LATTICE tiling (the affine-A1 product's walls need their own
+ *   crossing enumeration and bounded work — the finite groups' proven
+ *   `maxWordLength` root table is not that enumeration); a FINITE group's
+ *   slab composes instead through the split vocabulary below
+ *   ({@link tilingSlabPieces}), for systems whose inner estimator threads
+ *   a segment exactly;
  * - balloon + infinite lattice (no finite enclosing ball certifies inversion).
  * Finite Balloon composition tiles first, then slices/projects, then inverts
  * the displayed set through its certified origin-centred enclosing ball.
@@ -682,6 +686,112 @@ export function foldLattice4(p: Vec4, h: number, out: Vec4): Vec4 {
 }
 
 /**
+ * Emit the slab split's baked constants and cut enumerator for one finite
+ * group, in either shader dialect — the shader mirror of
+ * {@link tilingSlabPieces}'s cut pass. The walls are
+ * {@link tilingReflectionWalls}' table baked as literal vectors (a group
+ * change is already a source-regenerating edit, exactly like the fold's
+ * roots); the enumerator gathers each wall's crossing parameter of the
+ * segment `q0 ± e`, keeps the ones strictly inside `(-1, 1)`, and
+ * insertion-sorts them — at most one cut per wall, so the caller's array
+ * of `2 + wallCount` entries cannot overflow and the piece loop reads the
+ * pieces between consecutive cuts. Walls parallel to the segment (`dot ==
+ * 0`) never cross; a cut exactly at an endpoint is dropped, matching the
+ * CPU's `[-1, 1]` window.
+ *
+ * WGSL receives the cut list through a `ptr<function>` parameter (the
+ * caller owns the fixed-size array); GLSL takes it `inout`. Both spell
+ * Euclidean arithmetic the CPU oracle reads value for value at f64 — the
+ * f32 shader rounding is the same wall-tolerance class the fold's
+ * `FOLD_EPS` already prices.
+ */
+export function tilingSlabSource(
+  info: TilingGroupInfo,
+  dialect: "glsl" | "wgsl",
+  names: { walls: string; cuts: string },
+): string {
+  const wallsName = shaderIdentifier(names.walls);
+  const cutsName = shaderIdentifier(names.cuts);
+  const walls = tilingReflectionWalls(info);
+  const n = walls.length;
+  const cap = n + 2;
+  const literals = walls
+    .map((wall) =>
+      dialect === "glsl"
+        ? `    vec4(${wall.map(shaderFloatLit).join(", ")})`
+        : `    vec4f(${wall.map(shaderFloatLit).join(", ")})`,
+    )
+    .join(",\n");
+  if (dialect === "glsl") {
+    return `// The group's mirror walls (${wallsName}) and the slab split's
+// crossing enumerator (${cutsName}) — tiling.ts's tilingSlabPieces cut
+// pass, one cut per wall, insertion-sorted.
+vec4 ${wallsName}[${n}] = vec4[${n}](
+${literals}
+);
+int ${cutsName}(vec4 q0, vec4 e, inout float cuts[${cap}]) {
+  int count = 2;
+  cuts[0] = -1.0;
+  cuts[1] = 1.0;
+  for (int wi = 0; wi < ${n}; wi++) {
+    float denom = dot(${wallsName}[wi], e);
+    if (denom != 0.0) {
+      float cut = -dot(${wallsName}[wi], q0) / denom;
+      if (cut > -1.0 && cut < 1.0) {
+        cuts[count] = cut;
+        int j = count;
+        while (j > 0 && cuts[j - 1] > cuts[j]) {
+          float above = cuts[j - 1];
+          cuts[j - 1] = cuts[j];
+          cuts[j] = above;
+          j--;
+        }
+        count++;
+      }
+    }
+  }
+  return count;
+}`;
+  }
+  return `// The group's mirror walls (${wallsName}) and the slab split's
+// crossing enumerator (${cutsName}) — tiling.ts's tilingSlabPieces cut
+// pass, one cut per wall, insertion-sorted.
+var<private> ${wallsName}: array<vec4f, ${n}> = array<vec4f, ${n}>(
+${literals}
+);
+
+fn ${cutsName}(q0: vec4f, e: vec4f, cuts: ptr<function, array<f32, ${cap}>>) -> u32 {
+  var count = 2u;
+  (*cuts)[0] = -1.0;
+  (*cuts)[1] = 1.0;
+  for (var wi = 0u; wi < ${n}u; wi++) {
+    let denom = dot(${wallsName}[wi], e);
+    if (denom != 0.0) {
+      let cut = -dot(${wallsName}[wi], q0) / denom;
+      if (cut > -1.0 && cut < 1.0) {
+        (*cuts)[count] = cut;
+        var j = count;
+        loop {
+          if (j == 0u) {
+            break;
+          }
+          let above = (*cuts)[j - 1u];
+          if (above <= (*cuts)[j]) {
+            break;
+          }
+          (*cuts)[j - 1u] = (*cuts)[j];
+          (*cuts)[j] = above;
+          j = j - 1u;
+        }
+        count = count + 1u;
+      }
+    }
+  }
+  return count;
+}`;
+}
+
+/**
  * The reflection primitive the fold is built from: `p' = p − 2⟨p, n⟩n`
  * across the wall `⟨·, n⟩ = 0` (n unit), writing into `out` so the
  * per-query path never allocates; `out` may alias `p` (the reflection
@@ -877,4 +987,246 @@ export function enumerateOrbit(
     }
   }
   return out.length;
+}
+
+/**
+ * THE SLAB SPLIT — the folded-piece vocabulary that carries a slice-thickness
+ * (segment) query through a finite reflection tiling. The nearest-copy
+ * theorem is a POINT statement; a segment crossing walls folds to a BENT
+ * polyline, which is why tiled slabs were refused. This vocabulary restores
+ * the slab by splitting the segment so the fold is one isometry on each
+ * piece:
+ *
+ * Every mirror hyperplane is the image of a simple root's wall under the
+ * group, and antipodal normals describe the same hyperplane, so a finite
+ * group owns exactly its `maxWordLength` distinct walls (the positive roots:
+ * A3 6, B3 9, H3 15, A4 10, B4 16, F4 24 —
+ * {@link tilingReflectionWalls} builds and asserts that table). A straight
+ * segment meets each such hyperplane at most once, so sorting the crossing
+ * parameters divides it into at most `maxWordLength + 1` pieces on which the
+ * sign pattern against ALL walls — the fold's actual cell decomposition — is
+ * constant. The fold therefore restricts to ONE isometry `g_j` per piece:
+ * the chamber copy of a point is unique, `g_j` maps the piece's cell to the
+ * fundamental chamber, and an isometry takes the straight piece to the
+ * straight folded segment `{@link TilingSlabPiece.center} ±
+ * {@link TilingSlabPiece.extent}`.
+ *
+ * An ENDPOINT lying on its wall is fixed by the crossing reflection
+ * (`s_H(a) = a` for `a` on the wall), so the previous and next cells' copies
+ * coincide there and folding endpoints — rather than interior points —
+ * still yields `g_j`'s image of the closed piece. The residual disagreement
+ * is the fold's own `FOLD_EPS` wall tolerance, the same allowance the point
+ * fold already prices. A piece whose endpoint fold expires the cap (never,
+ * by the fold's proof) reports `null` and the caller returns 0 — fully
+ * conservative, the point path's own convention.
+ *
+ * THE ESTIMATOR COMPOSITION this vocabulary exists for, per piece `j` with
+ * `F_j = g_j(S_j)`:
+ *
+ *     d(S, T) = min_j d(S_j, T) = min_j d(F_j, S)
+ *             >= min_j max(coreDE(F_j), clipSdf(mid_j) - halfLen_j)
+ *
+ * — `coreDE(F_j)` the inner core's own segment/cover certificate on the
+ * straight folded piece, and the clip term the triangle inequality on the
+ * TRUE distance field (`d(y, clip) >= d(mid, clip) - |y - mid| >=
+ * clipSdf(mid) - halfLen`, the raw signed SDF lower-bounding the true
+ * distance). Combining DE and clip PER PIECE keeps the intersection at one
+ * segment parameter: minimizing the two terms separately can pair a DE
+ * winner from one W position with a clip winner from another and falsely
+ * admit geometry. `d(F_j, S)` lower-bounds via the intersection because
+ * `S = A ∩ clip`: distance to an intersection is at least the distance to
+ * each factor.
+ */
+
+/** One folded straight piece of a split segment: the image segment
+ * `center ± extent` in the fundamental chamber, with the piece's
+ * `start`/`end` parameters on the ORIGINAL segment (in `[-1, 1]`), so a
+ * winning piece's hit parameter remaps back exactly
+ * (`s = start + (sLocal + 1) / 2 * (end - start)`). */
+export interface TilingSlabPiece<P extends Vec3 | Vec4 = Vec3 | Vec4> {
+  center: P;
+  extent: P;
+  start: number;
+  end: number;
+}
+
+/** The distinct mirror normals of one finite group, cached per frozen
+ * {@link TilingGroupInfo} singleton. Images of the simple roots under the
+ * whole group (the orbit enumerator — build-time work, never per-query),
+ * each sign-fixed by its first significant component so antipodal images
+ * collapse, deduped within 1e-9 (comfortably above f64 reflection noise,
+ * comfortably below any distinct test images' separation). The count MUST
+ * be `maxWordLength` — a missing wall would leave a piece crossing it, and
+ * the fold of that piece would bend, silently breaking the slab bound — so
+ * a wrong count throws instead of degrading. */
+const TILING_WALL_CACHE = new Map<
+  TilingGroupInfo,
+  readonly (readonly number[])[]
+>();
+
+export function tilingReflectionWalls(
+  info: TilingGroupInfo,
+): readonly (readonly number[])[] {
+  const cached = TILING_WALL_CACHE.get(info);
+  if (cached) return cached;
+  const dim = info.dim;
+  const walls: number[][] = [];
+  const orbit: number[][] = [];
+  for (let i = 0; i < dim; i++) {
+    const root = info.roots.slice(i * dim, (i + 1) * dim) as Vec3 | Vec4;
+    enumerateOrbit(info, root, orbit);
+    for (const image of orbit) {
+      let sign = 1;
+      for (const n of image) {
+        if (Math.abs(n) > 1e-10) {
+          sign = n < 0 ? -1 : 1;
+          break;
+        }
+      }
+      const normal = image.map((n) => sign * n);
+      if (
+        !walls.some((wall) =>
+          wall.every((n, j) => Math.abs(n - normal[j]) < 1e-9),
+        )
+      ) {
+        walls.push(normal);
+      }
+    }
+  }
+  if (walls.length !== info.maxWordLength) {
+    throw new Error(
+      `tiling: group ${info.id} derived ${walls.length} reflection walls, ` +
+        `expected ${info.maxWordLength} (the positive roots) — the slab ` +
+        "split's completeness depends on the full wall table",
+    );
+  }
+  const frozen = walls.map((wall) => Object.freeze(wall.slice()));
+  TILING_WALL_CACHE.set(info, Object.freeze(frozen));
+  return TILING_WALL_CACHE.get(info)!;
+}
+
+/** Split capacity: the two segment endpoints plus every wall crossing —
+ * F4's 24 walls make 26 the largest cut list. */
+const TILING_SLAB_CUTS_MAX = 26;
+
+/** Piece capacity: `maxWordLength + 1` pieces, 25 for F4. */
+const TILING_SLAB_PIECES_MAX = 25;
+
+/** Module scratch for {@link tilingSlabPieces}: the crossing parameters and
+ * one reused piece pool per dimension (the piece records with their
+ * vectors). Reused across calls like the `FOLDED` convention — the
+ * estimator is synchronous and single-threaded, and every consumer reads a
+ * piece before the next {@link tilingSlabPieces} call. */
+const SLAB_CUTS = new Float64Array(TILING_SLAB_CUTS_MAX);
+const SLAB_ENDPOINT_3A: Vec3 = [0, 0, 0];
+const SLAB_ENDPOINT_3B: Vec3 = [0, 0, 0];
+const SLAB_ENDPOINT_4A: Vec4 = [0, 0, 0, 0];
+const SLAB_ENDPOINT_4B: Vec4 = [0, 0, 0, 0];
+const SLAB_PIECES_3: TilingSlabPiece<Vec3>[] = [];
+const SLAB_PIECES_4: TilingSlabPiece<Vec4>[] = [];
+for (let i = 0; i < TILING_SLAB_PIECES_MAX; i++) {
+  SLAB_PIECES_3.push({
+    center: [0, 0, 0],
+    extent: [0, 0, 0],
+    start: 0,
+    end: 0,
+  });
+  SLAB_PIECES_4.push({
+    center: [0, 0, 0, 0],
+    extent: [0, 0, 0, 0],
+    start: 0,
+    end: 0,
+  });
+}
+
+/**
+ * Split `center ± extent` at every wall crossing and fold each piece into
+ * the fundamental chamber, returning the straight folded pieces with their
+ * original-segment parameters — or `null` when an endpoint's fold expires
+ * the cap (never, by the proof; the caller's contract reads that as
+ * estimator 0, fully conservative).
+ *
+ * The returned array and its piece vectors are MODULE SCRATCH, reused by
+ * the next call: consume every piece before calling again (the estimator
+ * wrappers do — the cores copy their inputs). `info.dim` must match the
+ * vectors' length; 3D and 4D share the construction verbatim, and the 3D
+ * groups' coverage is the oracle that the shared algebra is honest even
+ * though Surface thickness itself is a 4D view feature.
+ */
+export function tilingSlabPieces(
+  info: TilingGroupInfo,
+  center: Vec3,
+  extent: Vec3,
+): TilingSlabPiece<Vec3>[] | null;
+export function tilingSlabPieces(
+  info: TilingGroupInfo,
+  center: Vec4,
+  extent: Vec4,
+): TilingSlabPiece<Vec4>[] | null;
+export function tilingSlabPieces(
+  info: TilingGroupInfo,
+  center: Vec3 | Vec4,
+  extent: Vec3 | Vec4,
+): TilingSlabPiece<Vec3 | Vec4>[] | null {
+  const dim = info.dim;
+  if (center.length !== dim || extent.length !== dim) {
+    throw new Error(
+      `tiling: slab split for ${info.id} needs ${dim}-vectors, got ` +
+        `${center.length}/${extent.length}`,
+    );
+  }
+  const walls = tilingReflectionWalls(info);
+  // Crossing parameters, insertion-sorted: a segment meets each wall at
+  // most once, so at most `maxWordLength + 2` cuts and
+  // `maxWordLength + 1` pieces.
+  let cutCount = 2;
+  SLAB_CUTS[0] = -1;
+  SLAB_CUTS[1] = 1;
+  for (const wall of walls) {
+    let denominator = 0;
+    let numerator = 0;
+    for (let j = 0; j < dim; j++) {
+      denominator += wall[j] * extent[j];
+      numerator += wall[j] * center[j];
+    }
+    if (denominator === 0) continue;
+    const cut = -numerator / denominator;
+    if (cut <= -1 || cut >= 1) continue;
+    let slot = cutCount;
+    SLAB_CUTS[slot] = cut;
+    while (slot > 0 && SLAB_CUTS[slot - 1] > SLAB_CUTS[slot]) {
+      const above = SLAB_CUTS[slot - 1];
+      SLAB_CUTS[slot - 1] = SLAB_CUTS[slot];
+      SLAB_CUTS[slot] = above;
+      slot--;
+    }
+    cutCount++;
+  }
+  const endpointA = dim === 3 ? SLAB_ENDPOINT_3A : SLAB_ENDPOINT_4A;
+  const endpointB = dim === 3 ? SLAB_ENDPOINT_3B : SLAB_ENDPOINT_4B;
+  const pool = dim === 3 ? SLAB_PIECES_3 : SLAB_PIECES_4;
+  let count = 0;
+  for (let k = 0; k + 1 < cutCount; k++) {
+    const start = SLAB_CUTS[k];
+    const end = SLAB_CUTS[k + 1];
+    // Equal adjacent cuts — two walls crossed at one parameter, or a
+    // crossing landing on an endpoint — bound an empty piece.
+    if (end <= start) continue;
+    for (let j = 0; j < dim; j++) {
+      endpointA[j] = center[j] + start * extent[j];
+      endpointB[j] = center[j] + end * extent[j];
+    }
+    const fa = foldToChamber(info, endpointA, endpointA);
+    const fb = foldToChamber(info, endpointB, endpointB);
+    if (fa === null || fb === null) return null;
+    const piece = pool[count];
+    for (let j = 0; j < dim; j++) {
+      piece.center[j] = 0.5 * (fa[j] + fb[j]);
+      piece.extent[j] = 0.5 * (fb[j] - fa[j]);
+    }
+    piece.start = start;
+    piece.end = end;
+    count++;
+  }
+  return pool.slice(0, count);
 }
