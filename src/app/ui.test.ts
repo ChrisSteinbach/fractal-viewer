@@ -16692,8 +16692,52 @@ describe("disabled-reason notes for keyboard/AT users", () => {
 });
 
 describe("panel dark color scheme", () => {
+  const readCss = () => readFileSync(join(__dirname, "style.css"), "utf8");
+
   it("declares color-scheme: dark on :root so native dropdowns render dark", () => {
-    const css = readFileSync(join(__dirname, "style.css"), "utf8");
-    expect(css).toMatch(/color-scheme:\s*dark/);
+    expect(readCss()).toMatch(/color-scheme:\s*dark/);
+  });
+
+  // Chrome paints a native dropdown popup's body with the SELECT's own
+  // background-color, composited over the popup's canvas — and a
+  // translucent value composites over WHITE, giving a white popup with the
+  // app's light-grey text (measured in the field while every computed-style
+  // gate stayed green). So the select's background token is the frozen
+  // OPAQUE composite of what the translucent tint painted over the panel.
+  it("declares the opaque --surface-2-solid token the select popup contract reads", () => {
+    expect(readCss()).toMatch(/--surface-2-solid:\s*#21232d\s*;/);
+  });
+
+  // Every select rule backgrounds OPAQUELY: the global rule (which reaches
+  // the three evolution-modal selects outside #panel) and any selector that
+  // targets a select element itself. Option rows may stay transparent —
+  // the popup paints them over the opaque body — so option rules are not
+  // distinguished here beyond not carrying backgrounds themselves.
+  it("gives every select rule an opaque background, never a translucent one", () => {
+    const css = readCss().replace(/\/\*[\s\S]*?\*\//g, "");
+    const alphaOf = (value: string): number => {
+      if (/var\(--surface-2-solid\)/.test(value)) return 1;
+      const m = value.match(/(?:rgba?|hsla?)\(([^)]*?)[,/]\s*([\d.]+%?)\s*\)/);
+      if (!m) return 1; // a plain hex or unitless rgb() is fully opaque
+      return m[2].endsWith("%")
+        ? Number(m[2].slice(0, -1)) / 100
+        : Number(m[2]);
+    };
+    const translucent = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .filter((r) => /(^|[,\s])select([,\s{:]|$)/.test(r[1]))
+      .flatMap((r) => {
+        const bg = r[2].match(/background(?:-color)?:\s*([^;]+);/);
+        return bg ? [{ selector: r[1].trim(), value: bg[1].trim() }] : [];
+      })
+      .filter((d) => alphaOf(d.value) < 0.999);
+    expect(translucent).toEqual([]);
+  });
+
+  // The three evolution-modal selects live outside #panel; the bare select
+  // rule is what carries the popup contract to them.
+  it("themes selects outside #panel through a bare select rule with the opaque token", () => {
+    expect(readCss()).toMatch(
+      /(^|\n)select\s*\{[^}]*background:\s*var\(--surface-2-solid\)/,
+    );
   });
 });

@@ -9,20 +9,41 @@
  * dynamically built rows — Finish/Pattern/Variation/Shape groups) must meet
  * WCAG AA contrast against its EFFECTIVE background: 4.5:1 normally, 3.0:1
  * for large text (fontSize >= 24px, or >= 18.66px at fontWeight >= 700).
- * Every visible `select` must resolve a `color-scheme` containing `dark`
- * (`style.css` declares `color-scheme: dark` on `:root` so the NATIVE
- * dropdown popups render dark), and every `option`/`optgroup` inside a
+ * Every visible `select` — anywhere in the document, so the evolution
+ * modal's three count too — must resolve a `color-scheme` containing `dark`
+ * (`style.css` declares `color-scheme: dark` on `:root`) AND an OPAQUE
+ * background-color (why, below), and every `option`/`optgroup` inside a
  * visible select must meet AA against the background its popup will
  * actually paint.
+ *
+ * THE POPUP BODY IS THE SELECT'S OWN BACKGROUND-COLOR (measured 2026-10-01,
+ * after the popup went light-grey-on-white in the field). Chrome paints the
+ * native dropdown popup with the select's computed background-color,
+ * composited over the popup's canvas — and a TRANSLUCENT value composites
+ * over WHITE, not over the panel surface behind the closed control. The
+ * shipped `#panel select` background was exactly that (`--surface-2`, 6%
+ * white); `color-scheme: dark` on `:root` had fixed the popups once, and a
+ * later Chrome painted them white again — computed `color-scheme` is not
+ * what the popup obeys once a background-color is present. So the contract
+ * gained its second leg: a visible select whose background-color is not
+ * fully opaque FAILS this gate. With the background opaque (the frozen
+ * `--surface-2-solid` composite), what the popup paints IS the select's
+ * effective background — the fallback the option check already composites
+ * rows over — and the option-pair AA verdict measures the painted popup
+ * exactly.
  *
  * WHY COMPUTED STYLES AND NOT SCREENSHOTS. A native select's open popup is
  * OS/browser chrome: no headless browser will screenshot it, and the two
  * engines disagree about how much of the popup they own. So the gate asserts
- * the contract at the level browsers DO expose — the `color-scheme` the
- * page asks for and the option/optgroup computed colour pairs that style
- * the popup's rows — and leaves the open popups themselves as a ONE-TIME
- * MANUAL SPOT CHECK for the owner (open a dropdown in each engine by hand
- * once, after any theming change).
+ * the contract at the level browsers DO expose — the `color-scheme` and
+ * opaque background the page asks for and the option/optgroup computed
+ * colour pairs that style the popup's rows. The one thing computed styles
+ * cannot see is the popup's own pixels, so the open popups stay covered by
+ * `scripts/select-popup-capture.mjs`: it opens the preset dropdown headed on
+ * a real display, captures the popup's X window, and measures its light-pixel
+ * fraction (>= 25% near-white fails; the measured broken popup was 88.1%,
+ * the fixed one 0.57%). Run it after any theming change — it is the old
+ * manual spot check, with numbers.
  *
  * DISABLED TEXT IS DELIBERATELY INCLUDED at the same AA thresholds, even
  * though WCAG exempts inactive controls: a panel that greys a disabled row
@@ -341,6 +362,7 @@ const AUDIT_SOURCE = (stateLabel) => {
     suppressed: 0,
     visibleSelects: 0,
     selectSchemeFailures: 0,
+    selectBgFailures: 0,
     optionSamples: 0,
     optionFailures: [],
     optionsSuppressed: 0,
@@ -412,16 +434,37 @@ const AUDIT_SOURCE = (stateLabel) => {
     }
   }
 
-  /* ── selects: color-scheme + option/optgroup popup rows ──────────────── */
-  for (const select of panel.querySelectorAll("select")) {
+  /* ── selects: color-scheme + opaque popup body + option rows ────────────
+     DOCUMENT-wide, not #panel-scoped: the evolution modal's selects live
+     outside #panel and the popup contract is theirs too (their CSS-level
+     pin lives in ui.test.ts, since this walk never opens their modal). */
+  for (const select of document.querySelectorAll("select")) {
     if (!isRendered(select)) continue;
     out.visibleSelects += 1;
-    const scheme = getComputedStyle(select).colorScheme;
+    const cs = getComputedStyle(select);
+    const scheme = cs.colorScheme;
     if (!/dark/i.test(scheme)) {
       out.selectSchemeFailures += 1;
       out.failures.push({
         path: `select#${select.id || "(unnamed)"}`,
         text: `color-scheme "${scheme}" has no dark`,
+        ratio: null,
+        need: null,
+        fg: "-",
+        bg: "-",
+        disabled: false,
+      });
+    }
+    /* The popup paints the select's own background-color over the popup's
+     * canvas, so a translucent value washes the light text out over WHITE
+     * (the measured field defect). Opaque is the contract; with it the
+     * effective background below is exactly what the popup paints. */
+    const selectRaw = parseColor(cs.backgroundColor);
+    if (!selectRaw || selectRaw.a < 1 - 1e-6) {
+      out.selectBgFailures += 1;
+      out.failures.push({
+        path: `select#${select.id || "(unnamed)"}`,
+        text: `background-color ${cs.backgroundColor} is not opaque — Chrome paints the popup with it over a WHITE canvas`,
         ratio: null,
         need: null,
         fg: "-",
@@ -439,8 +482,9 @@ const AUDIT_SOURCE = (stateLabel) => {
       if (!rowFg) continue;
       const rowBgRaw = parseColor(rowCs.backgroundColor);
       // Chrome computes options transparent; the popup paints the
-      // select's background, so a fully transparent row background falls
-      // back to the parent select's effective background.
+      // select's background, whose OPAQUE-ness the check above enforces —
+      // so a fully transparent row background falls back to the parent
+      // select's effective background, which IS the popup's paint.
       const bgInfo =
         rowBgRaw && rowBgRaw.a > 1e-6 ? effectiveBackground(row) : selectBg;
       if (bgInfo.usedPageFallback) out.pageFallbackReads += 1;
@@ -841,6 +885,7 @@ async function runEngine(name) {
   const textFails = audits.flatMap((a) => a.failures);
   const optionFails = audits.flatMap((a) => a.optionFailures);
   const schemeFails = audits.reduce((s, a) => s + a.selectSchemeFailures, 0);
+  const bgFails = audits.reduce((s, a) => s + a.selectBgFailures, 0);
   const worst = audits
     .map((a) => a.worst)
     .filter(Boolean)
@@ -864,6 +909,11 @@ async function runEngine(name) {
     `every visible select resolves a dark color-scheme (${name})`,
     schemeFails === 0 && distinctSelects.size > 0,
     `${String(distinctSelects.size)} distinct select-bearing state(s), ${String(schemeFails)} violation(s)`,
+  );
+  check(
+    `every visible select's popup background is opaque (${name})`,
+    bgFails === 0 && distinctSelects.size > 0,
+    `${String(distinctSelects.size)} distinct select-bearing state(s), ${String(bgFails)} translucent background(s) — Chrome paints the popup with the select's own background-color over a WHITE canvas`,
   );
   check(
     `option/optgroup colours meet AA (${name})`,
