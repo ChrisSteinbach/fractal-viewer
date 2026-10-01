@@ -9,7 +9,7 @@ import {
   BACKGROUND_SHAPE_GLSL,
   backgroundShapeSource,
 } from "../fractal/background-shape";
-import { radiusBandInvRange } from "../fractal/surface-de-4d";
+import { radiusBandInvRange, slabExact4 } from "../fractal/surface-de-4d";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 import {
   SURFACE_LENS_SWIRL,
@@ -25,6 +25,7 @@ import {
   isResolvedLatticeTiling,
   type ResolvedTiling,
 } from "../fractal/tiling";
+
 import {
   SURFACE_FINISH_GLSL,
   surfaceFinishShadeSource,
@@ -3254,6 +3255,16 @@ float surfaceDE(
  * moves the plain 4D source, since the shading site is shared — are in
  * `docs/surface-glsl-tracers.md`'s table.
  */
+/** The stored composed-slab gate (the tiling wall split's compile gate),
+ * read by every source reassembly so an orthogonal toggle (ground plane,
+ * balloon, materials, lighting) never drops the composed arm. */
+function material4SlabCapable(material: THREE.ShaderMaterial): boolean {
+  return (
+    (material.userData as { surface4SlabCapable?: boolean })
+      .surface4SlabCapable ?? false
+  );
+}
+
 export function surface4FragmentFor(
   balloon = 0,
   plane = 0,
@@ -3274,6 +3285,10 @@ export function surface4FragmentFor(
   // the closed-solid backend refuses that composition.
   optics = 0,
   opticsBackend = 0,
+  // The finite tiling wall split's compile gate, threaded through the 4D
+  // resolver into `withTilingGlsl`'s `slabCapable`. Absent (false) keeps
+  // every existing caller's source byte-identical.
+  slabCapable = false,
 ): string {
   if (optics !== 0 && opticsBackend === 1 && swirlLens !== 0) {
     throw new RangeError(
@@ -3301,6 +3316,7 @@ export function surface4FragmentFor(
     0, // sphereInversion — 4D sessions are compute-only there
     optics,
     opticsBackend,
+    slabCapable,
   );
 }
 
@@ -3322,6 +3338,7 @@ export function surface4FragmentResolvedFor(
   lighting = 0,
   optics = 0,
   opticsBackend = 0,
+  slabCapable = false,
 ): string {
   if (optics !== 0 && opticsBackend === 1 && swirlLens !== 0) {
     throw new RangeError(
@@ -3349,6 +3366,7 @@ export function surface4FragmentResolvedFor(
     0, // sphereInversion — 4D sessions are compute-only there
     optics,
     opticsBackend,
+    slabCapable,
   );
 }
 
@@ -3857,17 +3875,31 @@ export function setSurfaceSystem4(
   const data = material.userData as {
     surfaceCondensationShapeKey4?: string | null;
     surfaceCondensationShapes4?: ShapeSpec[] | null;
+    surface4SlabCapable?: boolean;
   };
   const wantCondensation = emitters.length > 0 ? 1 : 0;
   const wantSchedule = schedule ? 1 : 0;
   const wantChaos = chaos ? 1 : 0;
   const wantSwirlLens = lens ? 1 : 0;
+  // The finite tiling wall split's compile gate: the GLSL 4D estimator is
+  // the segment-exact affine descent, so the composed arm emits for a
+  // finite group exactly when the system keeps that exactness
+  // (`slabExact4` — no swirl final, no condensation, no nonlinear fold
+  // branches). The lattice arm and a nonlinear fold set keep the guard
+  // form, their slab refusals standing.
+  const slabCapable =
+    tiling !== null &&
+    !isResolvedLatticeTiling(tiling) &&
+    wantCondensation === 0 &&
+    wantSwirlLens === 0 &&
+    slabExact4(de);
   if (
     material.defines.SURFACE4_CONDENSATION !== wantCondensation ||
     (material.defines.SURFACE4_SCHEDULE === 1 ? 1 : 0) !== wantSchedule ||
     (material.defines.SURFACE4_CHAOS === 1 ? 1 : 0) !== wantChaos ||
     (material.defines.SURFACE4_SWIRL_LENS === 1 ? 1 : 0) !== wantSwirlLens ||
     (data.surfaceCondensationShapeKey4 ?? null) !== condensationKey ||
+    (data.surface4SlabCapable ?? false) !== slabCapable ||
     tilingChanged
   ) {
     material.defines.SURFACE4_CONDENSATION = wantCondensation;
@@ -3879,6 +3911,7 @@ export function setSurfaceSystem4(
     else delete material.defines.SURFACE4_SWIRL_LENS;
     data.surfaceCondensationShapeKey4 = condensationKey;
     data.surfaceCondensationShapes4 = condensationShapes;
+    data.surface4SlabCapable = slabCapable;
     material.fragmentShader = surface4FragmentFor(
       material.defines.SURFACE4_BALLOON === 1 ? 1 : 0,
       material.defines.SURFACE4_GROUND_PLANE === 1 ? 1 : 0,
@@ -3892,6 +3925,7 @@ export function setSurfaceSystem4(
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
       material.defines.SURFACE4_OPTICS === 1 ? 1 : 0,
       materialOpticsBackend(material),
+      material4SlabCapable(material),
     );
     material.needsUpdate = true;
   }
@@ -4041,13 +4075,28 @@ export function setSurfaceView4(
   w0: number,
   sliceHalfW: number,
 ): void {
-  if (sliceHalfW > 0 && material.defines.SURFACE4_SWIRL_LENS === 1) {
-    throw new RangeError("A swirl final lens cannot carry a nonzero 4D slab");
-  }
-  if (sliceHalfW > 0 && materialSurfaceTiling(material, true)) {
-    throw new RangeError(
-      "Space tiling cannot compose with a 4D slab: the fold of a segment is a bent polyline",
-    );
+  if (sliceHalfW > 0) {
+    if (material.defines.SURFACE4_SWIRL_LENS === 1) {
+      throw new RangeError("A swirl final lens cannot carry a nonzero 4D slab");
+    }
+    const tiling = materialSurfaceTiling(material, true);
+    if (tiling && isResolvedLatticeTiling(tiling)) {
+      throw new RangeError(
+        "Lattice Space tiling cannot compose with a 4D slab: the affine-A1 " +
+          "product's walls need their own crossing enumeration and bounded " +
+          "work",
+      );
+    }
+    if (material.defines.SURFACE4_CONDENSATION === 1) {
+      throw new RangeError(
+        "A condensation shape cannot carry a nonzero 4D slab: its carried " +
+          "solid needs its own segment evaluator",
+      );
+    }
+    // A finite reflection group with a segment-exact fold set composes:
+    // the compiled program is the composed wall split, which answers the
+    // slab soundly. Anything else that somehow reached here with a live
+    // slab still meets the compiled guard's conservative 0.
   }
   const u = material.uniforms;
   const invRotor = u.uInvRotor.value as THREE.Matrix4;
@@ -4154,6 +4203,7 @@ export function setSurface4Balloon(
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
       material.defines.SURFACE4_OPTICS === 1 ? 1 : 0,
       materialOpticsBackend(material),
+      material4SlabCapable(material),
     );
     material.needsUpdate = true;
   }
@@ -4203,6 +4253,7 @@ export function setSurface4GroundPlane(
           material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
           material.defines.SURFACE4_OPTICS === 1 ? 1 : 0,
           materialOpticsBackend(material),
+          material4SlabCapable(material),
         );
   const u = material.uniforms;
   if (spec) {
@@ -4337,6 +4388,7 @@ export function setSurface4Materials(
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
       wantOptics,
       materialOpticsBackend(material),
+      material4SlabCapable(material),
     );
     material.needsUpdate = true;
   }
@@ -4365,6 +4417,7 @@ export function setSurface4Lighting(
     enabled ? 1 : 0,
     material.defines.SURFACE4_OPTICS === 1 ? 1 : 0,
     materialOpticsBackend(material),
+    material4SlabCapable(material),
   );
   material.needsUpdate = true;
 }
