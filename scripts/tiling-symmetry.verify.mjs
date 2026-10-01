@@ -174,6 +174,9 @@ function scene(dimension, lattice) {
             q: [1, 0, 0, 0],
             sliceOn: false,
             sliceCenter: 0,
+            // The persisted pose names the WORLD hyperplane beside the
+            // normalized fraction; a slice-centred-0 pose carries 0.
+            sliceW: 0,
             sliceThickness: 0,
             sliceRelColor: false,
           },

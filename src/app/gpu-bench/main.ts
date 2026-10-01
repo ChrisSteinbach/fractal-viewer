@@ -3971,7 +3971,8 @@ interface SurfaceCrossCheckRow {
     | "shared-vs-private"
     | "stage2-on-vs-off"
     | "slabext-on-vs-off"
-    | "cover-on-vs-noslab";
+    | "cover-on-vs-noslab"
+    | "tiled-slab-on-vs-noslab";
   system: string;
   width: number;
   n: number;
@@ -6225,6 +6226,12 @@ function affine4Queries(
   view4: SurfaceGpu4View,
   seed: number,
   refined = true,
+  // The boundary-bisection predicate's own oracle. Default: the untiled
+  // composed one. The tiled slab leg passes its tiled oracle so the chord
+  // mix bisects toward the TILED set's own thin sublevel boundary —
+  // bisecting on the untiled field would cluster chords where the wall
+  // split never matters.
+  nearBoundaryAt?: (p: Vec3) => number,
 ): Vec3[] {
   const R4 = de.boundingRadius;
   const visR = surface4ToleranceR(de);
@@ -6251,8 +6258,10 @@ function affine4Queries(
     out.push([Math.fround(p[0]), Math.fround(p[1]), Math.fround(p[2])]);
   }
   const threshold = 0.02 * R4;
-  const nearBoundary = (p: Vec3): boolean =>
-    estimateSurface4Composed(de, view4, p, refined) < threshold;
+  const oracleAt =
+    nearBoundaryAt ??
+    ((p: Vec3) => estimateSurface4Composed(de, view4, p, refined));
+  const nearBoundary = (p: Vec3): boolean => oracleAt(p) < threshold;
   for (let i = 0; i < 200; i++) {
     let a: Vec3 = [
       (rng() - 0.5) * 0.5 * rq,
@@ -14813,13 +14822,21 @@ async function ensureSurface4EvalBuffers(
   device: GPUDevice,
   layout: GPUBindGroupLayout,
   sys: Surface4SystemState,
+  tiling: ResolvedTiling | null = null,
 ): Promise<NonNullable<Surface4SystemState["buffers"]>> {
   if (sys.buffers) return sys.buffers;
   const n = sys.queries.length;
-  const paramsData = packSurface4GpuParams(sys.de, sys.view4, {
-    itemCount: n,
-    cutoff: 0,
-  });
+  const paramsData = packSurface4GpuParams(
+    sys.de,
+    sys.view4,
+    {
+      itemCount: n,
+      cutoff: 0,
+    },
+    null,
+    null,
+    tiling,
+  );
   // Re-wrapped copy — see ensureSurfaceEvalBuffers' mapsData note.
   const mapsData = new Float32Array(
     packSurfaceGpuMaps4(sys.de, {
@@ -23726,6 +23743,345 @@ async function runSurfaceDeSection(
     }
 
     await canaryCheck("the M5b cover agreement leg");
+
+    // ----- M5c: the TILED slab's agreement leg — GATING -----
+    // The finite wall split (tiling.ts's tilingSlabPieces, mirrored by the
+    // tiled 4D kernels' baked walls and cut enumerator) as the affine4 and
+    // fold4 cores answer a slab THROUGH a finite reflection group: the
+    // lifted segment splits at the wall crossings, each folded straight
+    // piece feeds the untouched core with its own extent, and the answer
+    // is min_j max(coreDE(F_j), clip term) — combined PER PIECE so the
+    // clip intersection stays at one segment parameter. Two fixture
+    // families, each at h = 0 (the identity row), h = 0.10 R and h = 0.25
+    // R under two pose rotors — segment-exact fold sets only
+    // (`slabExact4`), because the split-plus-cover composition is the
+    // separate nonlinear slab work:
+    //   · `tiled4Affine` — pentatope under A4 (aligned with tiling.ts's
+    //     A4 chamber, matching the production surface-tiling gate), the
+    //     affine4 ladder;
+    //   · `tiled4Boxfold` — the boxfold pair under F4, the fold4 frontier.
+    // The CPU oracle is the tiled composed f64 (the kernel's own lift in
+    // f64, then the TILED public entry: refined on the affine arm, plain
+    // on the fold arm — M4's refine rule). The h=0 rows also get the
+    // identity A/B against the tiled POINT kernel (slabExt false): the
+    // composed wrapper's `sliceHalfW <= 0.0` branch is that kernel's own
+    // composition, and `segmentRadius4` at e = 0 IS `length(q)`.
+    {
+      const tiledSlabRotorA = symmetryRotation4("yw", 0.55);
+      const tiledSlabRotorB = symmetryRotation4("xw", 0.62);
+      const tiledSlabDefs: {
+        name: string;
+        seed: number;
+        transforms: Transform[];
+        tiling: ResolvedFiniteTiling;
+        rotor: number[];
+        w0f: number;
+        hF: number;
+      }[] = [];
+      // This pentatope is aligned with tiling.ts's A4 chamber, matching
+      // the production surface-tiling gate. The standard menu pentatope
+      // has a different orientation; an empty chamber would be a vacuous
+      // success.
+      const tiledAlignedPentatope: Transform[] = [
+        [-0.6325, -0.3651, -0.2582, -0.2],
+        [0.6325, -0.3651, -0.2582, -0.2],
+        [0, 0.7303, -0.2582, -0.2],
+        [0, 0, 0.7746, -0.2],
+        [0, 0, 0, 0.8],
+      ].map(([x, y, z, w], id) => ({
+        id,
+        position: [x, y, z],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        w: { position: w },
+      }));
+      [
+        {
+          prefix: "tiled4Affine",
+          seed: 581,
+          transforms: tiledAlignedPentatope,
+          group: "a4" as const,
+        },
+        {
+          prefix: "tiled4Boxfold",
+          seed: 591,
+          transforms: surfaceFold4Boxfold(),
+          group: "f4" as const,
+        },
+      ].forEach(({ prefix, seed, transforms, group }) => {
+        const tiling = resolveTiling({ group })!;
+        (
+          [
+            ["H0", tiledSlabRotorA, 0.15, 0],
+            ["H10", tiledSlabRotorA, 0.15, 0.1],
+            ["H25", tiledSlabRotorB, 0.08, 0.25],
+          ] as const
+        ).forEach(([suffix, rotor, w0f, hF], index) => {
+          tiledSlabDefs.push({
+            name: `${prefix}${suffix}`,
+            seed: seed + index,
+            transforms,
+            tiling,
+            rotor,
+            w0f,
+            hF,
+          });
+        });
+      });
+      const tiledSlabSystems: Surface4SystemState[] = [];
+      for (const def of tiledSlabDefs) {
+        status(`cpu oracle: ${def.name}…`);
+        activity.setState("gpu", `Surface tiled slab CPU oracle — ${def.name}`);
+        await new Promise<void>((resolve) => setTimeout(resolve));
+        const eligibility = analyzeSurfaceSystem4(def.transforms, null);
+        if (eligibility.status === "ineligible") {
+          throw new Error(
+            `tiled slab bench fixture ${def.name} is ineligible: ` +
+              eligibility.reasons.join("; "),
+          );
+        }
+        const de = buildSurfaceDE4(def.transforms, null);
+        // The fixtures must actually take the split: a system that
+        // regressed out of slabExact4 would pass through the cover route
+        // and pin nothing about the wall split.
+        if (!slabExact4(de)) {
+          throw new Error(
+            `tiled slab bench fixture ${def.name} is not slabExact4 — ` +
+              "the wall split is not what this row would exercise",
+          );
+        }
+        const refined = !deHasFolds4(de);
+        const view4: SurfaceGpu4View = {
+          rotor: def.rotor,
+          w0: def.w0f * de.boundingRadius,
+          sliceHalfW: def.hF * de.boundingRadius,
+        };
+        const tiledComposed = (q: Vec3): number => {
+          const composed = surface4ComposedQuery(view4, q);
+          return refined
+            ? estimateDistance4RefinedTiled(
+                def.tiling,
+                de,
+                composed.p,
+                0,
+                composed.ext,
+              )
+            : estimateDistance4Tiled(def.tiling, de, composed.p, composed.ext);
+        };
+        const queries = affine4Queries(
+          de,
+          view4,
+          def.seed,
+          refined,
+          tiledComposed,
+        );
+        const cpu = queries.map(tiledComposed);
+        const R = surface4ToleranceR(de);
+        const stable = cpu.map((c, i) =>
+          surface4QueryStable(
+            de,
+            view4,
+            queries[i],
+            c,
+            surfaceEvalTol(c, R),
+            refined,
+            tiledComposed,
+          ),
+        );
+        tiledSlabSystems.push({
+          name: def.name,
+          de,
+          view4,
+          transforms: def.transforms,
+          queries,
+          cpu,
+          stable,
+        });
+        render();
+      }
+      const tiledSlabGroups = [
+        {
+          name: "tiled4-slab-fold",
+          core: "fold4" as const,
+          width: SURFACE_FOLD_BEAM_WIDTH,
+          systems: tiledSlabSystems.filter((sys) => deHasFolds4(sys.de)),
+          compare: compareSurfaceFold4Agreement,
+        },
+        {
+          name: "tiled4-slab-affine",
+          core: "affine4" as const,
+          width: SURFACE_AFFINE_LADDER_WIDTH,
+          systems: tiledSlabSystems.filter((sys) => !deHasFolds4(sys.de)),
+          compare: compareSurface4Agreement,
+        },
+      ];
+      for (const group of tiledSlabGroups) {
+        if (group.systems.length === 0) continue;
+        const cfg: SurfaceKernelConfig = {
+          core: group.core,
+          variant: "private",
+          width: group.width,
+          stage2: false,
+          wg: surfaceWgFor(config, "private"),
+        };
+        const label = `tiled4 slab ${configLabel(cfg)}`;
+        status(`agreement: compiling ${label}…`);
+        activity.setState("gpu", `Surface DE agreement — ${label}`);
+        let pipeline: GPUComputePipeline | null = null;
+        try {
+          const code = surfaceDeKernelWgsl({
+            mode: "eval",
+            core: group.core,
+            slabExt: true,
+            tiling: resolveTiling({
+              group: group.core === "fold4" ? "f4" : "a4",
+            }),
+            width: cfg.width,
+            workgroupSize: cfg.wg,
+            sharedFrontier: false,
+            bnbStage2: false,
+          });
+          ({ pipeline } = await buildSurfacePipeline(
+            device,
+            pipelineLayout,
+            code,
+            "evalQueries",
+            `surface-de eval ${label}`,
+          ));
+        } catch (e) {
+          compileFailed = true;
+          results.notes.push(`agreement ${label}: ${describeError(e)}`);
+        }
+        if (pipeline !== null) {
+          for (const sys of group.systems) {
+            status(`agreement: ${label} × ${sys.name}…`);
+            await ensureSurface4EvalBuffers(
+              device,
+              bindGroupLayout,
+              sys,
+              resolveTiling({ group: group.core === "fold4" ? "f4" : "a4" }),
+            );
+            const gpu = await runSurfaceEvalDispatch(
+              device,
+              pipeline,
+              sys,
+              cfg.wg,
+            );
+            const row = group.compare(sys, cfg, gpu);
+            results.agreement.push(row);
+            const excluded = row.excluded ?? 0;
+            const cap = cover4ExcludedCap(sys.name);
+            if (excluded > cap) {
+              results.notes.push(
+                `tiled4 slab agreement ${sys.name}: excluded ${String(excluded)}/${String(row.n)} queries (> ${String(cap)}) from the oracle-continuity gate`,
+              );
+            }
+            render();
+            await new Promise<void>((resolve) => setTimeout(resolve));
+          }
+        }
+        render();
+
+        // The h=0 identity pin: the composed tiling wrapper's
+        // `sliceHalfW <= 0.0` branch is the tiled point wrapper's own
+        // composition, and `segmentRadius4` at e = 0 IS `length(q)` — so
+        // the slab kernel must agree with the `slabExt: false` tiled
+        // point kernel elementwise on the same queries.
+        const h0Systems = group.systems.filter(
+          (sys) => sys.view4.sliceHalfW === 0,
+        );
+        if (h0Systems.length > 0 && pipeline !== null) {
+          status(`${group.name} identity A/B: compiling…`);
+          try {
+            const code = surfaceDeKernelWgsl({
+              mode: "eval",
+              core: group.core,
+              slabExt: false,
+              tiling: resolveTiling({
+                group: group.core === "fold4" ? "f4" : "a4",
+              }),
+              width: cfg.width,
+              workgroupSize: cfg.wg,
+              sharedFrontier: false,
+              bnbStage2: false,
+            });
+            const { pipeline: noslabPipeline } = await buildSurfacePipeline(
+              device,
+              pipelineLayout,
+              code,
+              "evalQueries",
+              `surface-de eval ${group.name} noslab`,
+            );
+            for (const sys of h0Systems) {
+              await ensureSurface4EvalBuffers(
+                device,
+                bindGroupLayout,
+                sys,
+                resolveTiling({ group: group.core === "fold4" ? "f4" : "a4" }),
+              );
+              const gpuPoint = await runSurfaceEvalDispatch(
+                device,
+                noslabPipeline,
+                sys,
+                cfg.wg,
+              );
+              // Re-dispatch the composed pipeline on the same buffers.
+              const gpuSlabValue = await runSurfaceEvalDispatch(
+                device,
+                pipeline,
+                sys,
+                cfg.wg,
+              );
+              let mismatches = 0;
+              let maxAbs = 0;
+              for (let i = 0; i < gpuPoint.length; i++) {
+                if (gpuPoint[i] !== gpuSlabValue[i]) {
+                  mismatches++;
+                  maxAbs = Math.max(
+                    maxAbs,
+                    Math.abs(gpuPoint[i] - gpuSlabValue[i]),
+                  );
+                }
+              }
+              const tol =
+                SURFACE_FOLD4_SLABEXT_TOL_FACTOR * sys.de.boundingRadius;
+              const withinTolerance = maxAbs <= tol;
+              results.crossChecks.push({
+                kind: "tiled-slab-on-vs-noslab",
+                system: sys.name,
+                width: group.width,
+                n: gpuPoint.length,
+                mismatches,
+                maxDelta: maxAbs,
+                note:
+                  mismatches === 0
+                    ? "exact — the composed wrapper's h=0 branch is the tiled point kernel bit for bit"
+                    : withinTolerance
+                      ? "sub-tolerance mismatches (fma/contraction noise)"
+                      : "MISMATCH — the composed wrapper's h=0 branch must reproduce the tiled point kernel (surface-de-gpu.ts's tiled slab doc)",
+              });
+              if (!withinTolerance) {
+                cover4IdentityFailed = true;
+                results.notes.push(
+                  `${group.name} identity A/B ${sys.name}: ` +
+                    `${String(mismatches)} mismatches, maxAbs ` +
+                    `${maxAbs.toExponential(2)} exceeds tolerance ` +
+                    `${tol.toExponential(2)}`,
+                );
+              }
+            }
+          } catch (e) {
+            cover4IdentityFailed = true;
+            results.notes.push(
+              `${group.name} identity A/B: ${describeError(e)}`,
+            );
+          }
+          render();
+        }
+      }
+    }
+
+    await canaryCheck("the M5c tiled slab agreement leg");
 
     // ----- M7: the ESCAPE4 core's agreement leg — GATING -----
     // The forward escape-time orbit ONE DIMENSION UP, behind the 4D cores'
