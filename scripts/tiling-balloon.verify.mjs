@@ -338,10 +338,16 @@ function scene(dimension, renderer = "points") {
     ...(dimension === 4
       ? {
           fourD: {
-            p: [0.9847, 0.1741, 0, 0],
-            q: [0.9847, -0.1741, 0, 0],
+            // The pose the app restores is normalizeRotorPair's, so the
+            // fixture carries the normalized pair the copied document
+            // names.
+            p: [0.9847271296061361, 0.1741047966532226, 0, 0],
+            q: [0.9847271296061361, -0.1741047966532226, 0, 0],
             sliceOn: false,
             sliceCenter: 0,
+            // The persisted pose names the WORLD hyperplane beside the
+            // normalized fraction; a slice-centred-0 pose carries 0.
+            sliceW: 0,
             sliceThickness: 0,
             sliceRelColor: false,
           },

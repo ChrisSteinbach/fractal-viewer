@@ -54,6 +54,8 @@ import {
   resolveTiling,
   TILING_GROUP_INFO,
   TILING_GROUPS,
+  tilingReflectionWalls,
+  tilingSlabPieces,
 } from "../src/fractal/tiling";
 import type { TilingGroupInfo } from "../src/fractal/tiling";
 import type { Transform, Vec3, Vec4 } from "../src/fractal/types";
@@ -165,72 +167,29 @@ function segmentToBall(
   );
 }
 
-/** Every mirror normal is an image of a simple root. Antipodal roots define
- * the same hyperplane. A straight segment meets each such hyperplane at most
- * once, so at most maxWordLength + 1 pieces are needed (25 for F4).
- * This is build-time work, not a per-query group enumeration. */
-function reflectionWalls(info: TilingGroupInfo): number[][] {
-  const walls: number[][] = [];
-  const orbit: number[][] = [];
-  for (let i = 0; i < info.dim; i++) {
-    const root = info.roots.slice(i * info.dim, (i + 1) * info.dim) as
-      Vec3 | Vec4;
-    enumerateOrbit(info, root, orbit);
-    for (const image of orbit) {
-      const sign = image.find((n) => Math.abs(n) > 1e-10)! < 0 ? -1 : 1;
-      const normal = image.map((n) => sign * n);
-      if (
-        !walls.some((wall) =>
-          wall.every((n, j) => Math.abs(n - normal[j]) < 1e-9),
-        )
-      )
-        walls.push(normal);
-    }
-  }
-  return walls;
-}
-
-/** Exact finite-fold polyline, apart from the existing fold's FOLD_EPS
- * arithmetic. This prototype deliberately accepts NO clip: separately
- * minimizing a clip SDF and a DE can choose different points on a segment.
- * It also cannot transport a segment through a nonlinear final or base map. */
-function foldedSegments(
+/** The wall table and the piece split are the PRODUCTION vocabulary now
+ * (`tiling.ts`'s `tilingReflectionWalls` / `tilingSlabPieces`, oracle-tested
+ * there); the sheet keeps the orbit-level checks and the SPLIT panel arm
+ * pointed at the shipped code rather than a local copy. The dimension-
+ * generic sites want plain `number[]` vectors, so this wrapper narrows the
+ * module's typed overloads by `info.dim` and copies out of its scratch. */
+function splitPieces(
   info: TilingGroupInfo,
-  walls: number[][],
-  center: Vec3 | Vec4,
-  extent: Vec3 | Vec4,
-): { center: number[]; extent: number[]; start: number; end: number }[] {
-  const cuts = [-1, 1];
-  for (const normal of walls) {
-    const denominator = normal.reduce((sum, n, i) => sum + n * extent[i], 0);
-    if (denominator === 0) continue;
-    const numerator = normal.reduce((sum, n, i) => sum + n * center[i], 0);
-    const cut = -numerator / denominator;
-    if (cut > -1 && cut < 1) cuts.push(cut);
-  }
-  cuts.sort((a, b) => a - b);
-  const segments = [];
-  let start = cuts[0];
-  const endpoint = (s: number): number[] => {
-    const p = center.map((n, i) => n + s * extent[i]) as Vec3 | Vec4;
-    const folded = foldToChamber(info, p, [...p] as Vec3 | Vec4);
-    if (folded === null) throw new Error("Finite fold failed");
-    return folded;
-  };
-  let previous = endpoint(start);
-  for (const end of cuts.slice(1)) {
-    if (end === start) continue;
-    const next = endpoint(end);
-    segments.push({
-      center: previous.map((n, i) => (n + next[i]) / 2),
-      extent: previous.map((n, i) => (next[i] - n) / 2),
-      start,
-      end,
-    });
-    previous = next;
-    start = end;
-  }
-  return segments;
+  center: number[],
+  extent: number[],
+): { center: number[]; extent: number[]; start: number; end: number }[] | null {
+  const pieces =
+    info.dim === 3
+      ? tilingSlabPieces(info, center as Vec3, extent as Vec3)
+      : tilingSlabPieces(info, center as Vec4, extent as Vec4);
+  return pieces === null
+    ? null
+    : pieces.map((piece) => ({
+        center: [...piece.center],
+        extent: [...piece.extent],
+        start: piece.start,
+        end: piece.end,
+      }));
 }
 
 function pointDistance(de: SurfaceDE4, p: Vec4): number {
@@ -321,7 +280,7 @@ describe("adaptive continuous slab experiment", () => {
     const rng = mulberry32(0x71e51ab);
     for (const name of TILING_GROUPS) {
       const info = TILING_GROUP_INFO[name];
-      const walls = reflectionWalls(info);
+      const walls = tilingReflectionWalls(info);
       expect(walls.length).toBe(info.maxWordLength);
       const seed = [0.81, -0.27, 0.43, 0.19].slice(0, info.dim) as Vec3 | Vec4;
       const canonical = foldToChamber(info, seed, [...seed] as Vec3 | Vec4)!;
@@ -335,7 +294,8 @@ describe("adaptive continuous slab experiment", () => {
           { length: info.dim },
           () => rng() * 1.5 - 0.75,
         ) as Vec3 | Vec4;
-        const segments = foldedSegments(info, walls, center, extent);
+        const segments = splitPieces(info, center, extent);
+        if (segments === null) throw new Error("Finite fold failed");
         maximumPieces = Math.max(maximumPieces, segments.length);
         expect(segments.length).toBeLessThanOrEqual(info.maxWordLength + 1);
         const truth = Math.min(
@@ -460,7 +420,6 @@ describe("adaptive continuous slab experiment", () => {
       const w0 = 0.08 * radius;
       const extent = [3, 7, 11, 15].map((i) => rotor[i] * halfW) as Vec4;
       const tiling = resolveTiling({ group: "a4" })!;
-      const walls = reflectionWalls(tiling.info);
       const point = (p: Vec4) =>
         fixture.tiled
           ? estimateDistance4RefinedTiled(tiling, de, p)
@@ -531,18 +490,12 @@ describe("adaptive continuous slab experiment", () => {
             return estimateDistance4Refined(de, q, 0, extent);
           }
           if (arm === "SPLIT") {
-            const pieces = foldedSegments(tiling.info, walls, q, extent);
-            counts.push(pieces.length);
-            return Math.min(
-              ...pieces.map((piece) =>
-                estimateDistance4Refined(
-                  de,
-                  piece.center as Vec4,
-                  0,
-                  piece.extent as Vec4,
-                ),
-              ),
-            );
+            // The SHIPPED composition: the public tiled refined entry
+            // splits at the walls and answers each folded piece with the
+            // core's own segment machinery (the A4 fixture authors no
+            // clip, so the clip term is inert here).
+            counts.push(splitPieces(tiling.info, q, extent)!.length);
+            return estimateDistance4RefinedTiled(tiling, de, q, 0, extent);
           }
           if (arm === "ADAPTIVE") return adaptive(p, radius * 0.002);
           counts.push(1);

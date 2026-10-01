@@ -8,10 +8,12 @@ with the **bounded midpoint cover** below, and the app routes the
 combination: `main.ts` sets the panel's thickness availability from
 `slabSupported4`, and an untiled nonlinear 4D session compiles the cover
 kernel (`slabCover: true` in `surface-de-gpu.ts`) beside its h=0 point
-kernel. The remaining refusals are swirl finals, condensation, forward
-escape-time systems, and both Space tiling arms; the CPU entries, the GPU
-packers, and the UI enforce each independently, and the panel names the
-refusing branch.
+kernel. A FINITE reflection tiling composes through the wall split
+(below) for segment-exact fold sets — both 4D engines, the GLSL fallback
+included. The remaining refusals are swirl finals, condensation, forward
+escape-time systems, the lattice tiling arm, and a nonlinear fold set
+under finite tiling; the CPU entries, the GPU packers, and the UI enforce
+each independently, and the panel names the refusing branch.
 
 The initial report was reproduced on 12 September 2026 with a fresh production
 build and a verified hardware Intel Iris Xe WebGPU adapter. A Mandelbox final,
@@ -289,20 +291,32 @@ This construction has a geometric cap, independent of pixel resolution:
 | B4    |                     16 |             17 |
 | F4    |                     24 |             25 |
 
-The prototype checks each piece's interior against the existing point fold
-and checks segment distance against an independently enumerated orbit of a
-canonical point. It exercises all six groups, preserving the shared 3D/4D
-reflection algebra even though Surface thickness itself is a 4D view feature.
-The tolerance includes the existing point fold's `FOLD_EPS` allowance.
+SHIPPED (the tiling child's work): the wall table and the piece split are
+`tiling.ts`'s `tilingReflectionWalls` / `tilingSlabPieces` — oracle-tested
+against explicitly enumerated point orbits for all six groups, 3D included,
+and the estimator composition is the one the tiling contract records
+(min_j max(coreDE(F_j), clipSdf(mid_j) − halfLen_j), DE and clip combined
+PER PIECE). The prototype's orbit checks live on in
+`scripts/slab-adaptive.harness.ts`, whose SPLIT panel arm now drives the
+SHIPPED public entry (`estimateDistance4RefinedTiled`) — the harness
+reproduced its recorded reference on the A4 fixture: 153 hits, IoU 1.0
+against the adaptive reference, at a median of 3 core calls per query
+(p99 7, max 8) against the reference's median 21 (85,972 core calls for
+the panel against the shipped entry's 9,062 — measured on the i7-1165G7
+study, 13/14 September 2026 figures re-recorded 1 October 2026 with the
+extracted vocabulary).
 
-For an unclipped finite tiling over a segment-capable IFS, the minimum of the
-existing DE over these pieces is a conservative slab estimator. The prototype
-does not pass a segment through a spherefold or a Mandelbox final. It also
-does **not** qualify clips: separately minimizing the DE and clip SDF can
-select different W positions and falsely admit geometry. A clip needs its
-intersection evaluated on the same query pieces. Lattice walls require their
-own crossing enumeration and work bound; the finite-root table is not that
-enumeration.
+The prototype deliberately accepts NO clip: separately minimizing a clip
+SDF and a DE can choose different points on a segment. The shipped
+composition closes exactly that hole — the clip term is evaluated at each
+folded piece's own midpoint minus that piece's half-length and maxed into
+that piece's bound, so the intersection stays at one segment parameter.
+It also cannot transport a segment through a nonlinear final or base map:
+the nonlinear cover's composition with the split is the separate nonlinear
+slab work, refused loudly (slabExact4 false under tiling) rather than
+admitted unsound. Lattice walls need their own crossing enumeration and
+bounded work; the finite-root table is not that enumeration, and the
+lattice arm refuses a slab.
 
 ## Measured comparison
 
@@ -359,7 +373,9 @@ IoU against the adaptive reference:
 `SEGMENT` are the same call; the IoU-1 row is the cross-check that the
 cover did not disturb exactness, and the FIXED arms are the alternative
 mechanism's curve, not something those systems would use.
-² Tiled sessions still refuse a slab; the tiling child owns that lift.
+² Tiled sessions run the wall split for segment-exact fold sets (the
+tiling child's work, below); the nonlinear cover's tiled composition is
+the separate nonlinear slab work and stays refused.
 
 `COVER` equals `FIXED16` on the nonlinear rows by construction — the public
 entry uses `SLAB_COVER_PIECES = 16`. Cost is the piece count in point
@@ -395,7 +411,10 @@ nonlinear systems: exact segment arithmetic for affine/boxfold, the bounded
 midpoint cover for spherefold and Mandelbox (recursive maps AND final
 lenses) on both engines, bit-exact zero thickness on both, the cutoff
 contract through the cover, and routing/UI that admits the combination.
-What remains:
+The TILING composition shipped (the tiling child's work): the finite wall
+split for segment-exact fold sets on both engines and both 4D renderers,
+with the routing, panel disclosures and the browser gate below. What
+remains:
 
 - **Cost qualification.** The shading-tap fix shipped (one-piece cover
   probe, measured above), and the fence-cost gate's `--cover4` arm PASSED
@@ -415,18 +434,33 @@ What remains:
   objects, the levers are quality/cost decisions, not soundness ones: fewer
   pieces (measured IoU 0.67-0.84 at 8), scale pieces with thickness, or the
   per-system thickness cap the earlier study discussed.
-- **Tiling composition.** Tiled 4D sessions still clamp thickness to zero;
-  finite pieces need the split/cover composition and lattice walls need
-  crossing enumeration (the tiling child's work).
+- **The nonlinear cover's composition with tiling.** The split's pieces
+  would each need the cover's own per-piece answer — the separate
+  nonlinear slab work, and the epic's Mandelbox-plus-tiling acceptance
+  case. Refused loudly today (the packer, the CPU entries and the panel's
+  own `tilingFold` reason each name it).
+- **Lattice walls.** The affine-A1 product's walls need their own
+  crossing enumeration and bounded work; the finite groups' proven
+  `maxWordLength` root table is not that enumeration. Refused, disclosed.
 - **Browser matrix.** The lift gate gates all THREE cover classes end to
   end (enter, row enabled, invalidation, completed settle, draw) at
   `surfacesamples=1`, including the zero-thickness identity on real pixels
   (byte-exact on all three), one posed rotor/slice view, and authored fold
   radii + a map post; the slab gate adds the reload and capture rows (pose-
   carried thickness restored byte-exactly, thick export separated from the
-  h = 0 and explorer exports). Still owed: more thicknesses and rotor poses
-  (one thickness — 0.2 — and one pose per cover class so far), the
-  Mandelbox-plus-tiling acceptance case the epic names (the tiling child's),
+  h = 0 and explorer exports). The TILED classes have their own gate,
+  `scripts/surface-tiled-slab.verify.mjs`, measured on the AMD RX 7900
+  XTX, bundled Chrome, production build, 1 October 2026: the A4-tiled
+  affine scene enters with the thickness row ENABLED (the report's own
+  defect was this row disabled), the thick frame at h = 0.2 changes
+  2.0879% of the canvas against the entry frame, driving back to zero
+  reproduces the entry frame BYTE FOR BYTE (max 0, scene region), the
+  share link carries `fourD.sliceThickness = 0.2` and a real reload
+  restores the thick frame byte for byte (max 0), the thick capture sits
+  4.96x closer to the h = 0 capture than to the explorer's (0.7749 vs
+  3.8431), the engine column is compute throughout, and the 3D b3-tiled
+  parity fixture settles and draws (2.5s). Still owed: more thicknesses
+  and rotor poses (one thickness — 0.2 — and one pose per class so far),
   plus panel-gate coverage for the new availability set.
 
 CPU agreement, the heavy-class cost fix, the fence/teardown gates and the

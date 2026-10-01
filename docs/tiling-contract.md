@@ -236,19 +236,86 @@ composition chain above.
 
 ## Legal combinations and refusals (frozen)
 
-| combination                                                      | verdict                                                                                                                                                                                                                   |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| tiling + ground plane                                            | composes — the landscape case; the plane is world-space in the sliced 3D space, the fold never touches it                                                                                                                 |
-| tiling + lens (`foldFinal`)                                      | composes — pre-fold vs post-fold                                                                                                                                                                                          |
-| tiling + condensation / schedule / chaos / shape trap / finishes | compose — they live at the estimator/orbit level                                                                                                                                                                          |
-| finite tiling + balloon                                          | supported in both dimensions and all four renderers: tile, slice/project, then invert the displayed set through its certified origin ball; existing IFS-only and Solid centre-density limits remain                       |
-| lattice tiling + balloon                                         | REFUSED, adjacent reason — the infinite set has no finite enclosing ball; presentation clipping cannot certify its inversion                                                                                              |
-| tiling + kaleidoscope                                            | supported in 3D/4D wherever the core itself supports that symmetry; tiling uses the already-symmetrized set as canonical content. The nearest-copy theorem needs no commuting. Proof and qualification below.             |
-| tiling + 4D slab (`halfExtent > 0`)                              | REFUSED, adjacent reason — the fold of a segment is a bent polyline (per-point reflection sequences), and the slab's conservative-bound contract does not survive it. Tiled 4D sessions run slice 0 (the shipped default) |
-| tiling + H4 / reducible groups                                   | REFUSED — vocabulary above                                                                                                                                                                                                |
-| tiling + escape4                                                 | supported without slab or final lens; its own single-plane kaleidoscope may follow the tiling fold, including w planes. Escape4 still refuses a double-rotation twist.                                                    |
+| combination                                                      | verdict                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| tiling + ground plane                                            | composes — the landscape case; the plane is world-space in the sliced 3D space, the fold never touches it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| tiling + lens (`foldFinal`)                                      | composes — pre-fold vs post-fold                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| tiling + condensation / schedule / chaos / shape trap / finishes | compose — they live at the estimator/orbit level                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| finite tiling + balloon                                          | supported in both dimensions and all four renderers: tile, slice/project, then invert the displayed set through its certified origin ball; existing IFS-only and Solid centre-density limits remain                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| lattice tiling + balloon                                         | REFUSED, adjacent reason — the infinite set has no finite enclosing ball; presentation clipping cannot certify its inversion                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| tiling + kaleidoscope                                            | supported in 3D/4D wherever the core itself supports that symmetry; tiling uses the already-symmetrized set as canonical content. The nearest-copy theorem needs no commuting. Proof and qualification below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| tiling + 4D slab (`halfExtent > 0`)                              | FINITE groups: COMPOSES through the wall split (`tiling.ts`'s `tilingSlabPieces` — the segment divides at every mirror crossing, at most `maxWordLength + 1` pieces, the fold one isometry per piece, each folded straight piece feeding the inner core with its own extent; the clip is intersected PER PIECE at one segment parameter) — for segment-exact fold sets only (`slabExact4`: affine and boxfold). Nonlinear fold sets under tiling stay REFUSED, adjacent reason — the cover's per-piece answer inside the split is the separate nonlinear slab work. LATTICE tiling stays REFUSED, adjacent reason — its walls need their own crossing enumeration and bounded work (the finite groups' proven root table is not that enumeration). Zero thickness is the point query, value for value |
+| tiling + H4 / reducible groups                                   | REFUSED — vocabulary above                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| tiling + escape4                                                 | supported without slab or final lens; its own single-plane kaleidoscope may follow the tiling fold, including w planes. Escape4 still refuses a double-rotation twist.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
-## Finite Balloon composition
+## The finite wall split (tiling + 4D slab)
+
+The nearest-copy theorem is a point statement. A segment crossing walls
+folds to a bent polyline, which is why tiled slabs were refused; the split
+vocabulary restores the slab for the finite groups. Every mirror hyperplane
+is the image of a simple root's wall, and antipodal normals describe the
+same hyperplane, so a finite group owns exactly its `maxWordLength`
+distinct walls (A3 6, B3 9, H3 15, A4 10, B4 16, F4 24 — the positive
+roots). A straight segment meets each such hyperplane at most once, so
+sorting the crossing parameters divides it into at most
+`maxWordLength + 1` pieces on which the sign pattern against ALL walls —
+the fold's actual cell decomposition — is constant; the fold therefore
+restricts to ONE isometry per piece (the chamber copy of a point is
+unique, and the group acts simply transitively on the cells), and the
+piece's folded image is straight. An endpoint lying on its wall is fixed
+by the crossing reflection (`s_H(a) = a` for `a` on the wall), so
+folding endpoints — rather than interior points — still yields that
+isometry's image of the closed piece; the residual disagreement is the
+fold's own `FOLD_EPS` wall tolerance, the allowance the point fold already
+prices.
+
+The estimator composition per piece `F_j = g_j(S_j)`:
+
+```text
+d(S, T) = min_j d(S_j, T) = min_j d(F_j, S)
+        >= min_j max(coreDE(F_j), clipSdf(mid_j) - halfLen_j)
+```
+
+— the inner core's own segment machinery on the straight folded piece
+(exact for the affine ladder and the boxfold frontier — the
+`slabExact4` gate — the midpoint cover for nonlinear cores is the
+separate nonlinear slab work and stays refused under tiling), and the clip
+term the triangle inequality on the TRUE distance field
+(`d(y, clip) >= d(mid, clip) - |y - mid| >= clipSdf(mid) - halfLen`, the
+raw signed SDF lower-bounding the true distance). Combining DE and clip
+PER PIECE keeps the intersection at one segment parameter; minimizing the
+two terms separately can pair a DE winner from one W position with a clip
+winner from another and falsely admit geometry. The cutoff threads like
+the cover's: a piece asked at `cutoff + halfLen` that clears it proves the
+piece clears `cutoff`. Zero thickness bypasses the split (the point
+wrapper, bit-exact — the h=0 identity A/B against the tiled point kernel
+measures `mismatches=0, maxDelta=0`).
+
+Measured agreement (AMD RX 7900 XTX, real-driver `npm run bench:surface`,
+serial and quiet; 700 queries per row, tolerance floor `2e-4 R`):
+
+| Fixture (finite tiling) | core    | h      | fail | maxAbsErr | p99AbsErr |
+| ----------------------- | ------- | ------ | ---: | --------: | --------: |
+| A4-aligned pentatope    | affine4 | 0      |    0 |    3.4e-7 |    2.7e-7 |
+| A4-aligned pentatope    | affine4 | 0.10 R |    0 |    3.2e-7 |    2.6e-7 |
+| A4-aligned pentatope    | affine4 | 0.25 R |    0 |    4.2e-7 |    2.8e-7 |
+| boxfold pair            | fold4   | 0      |    0 |    3.1e-7 |    1.9e-7 |
+| boxfold pair            | fold4   | 0.10 R |    0 |    3.5e-7 |    2.0e-7 |
+| boxfold pair            | fold4   | 0.25 R |    0 |    3.6e-7 |    2.5e-7 |
+
+The per-row tolerance floor is `2e-4 R`, three orders above the measured
+error; both h=0 identity cross-checks report `mismatches=0, maxDelta=0`.
+The CPU side agrees with `scripts/slab-adaptive.harness.ts`'s adaptive
+reference (which never folds segments — it subdivides the ORIGINAL
+segment and evaluates the tiled POINT estimator per sample): the shipped
+entry reproduces that reference's hit mask at IoU 1.0 on the A4 fixture at
+a median of 3 core calls per query against the reference's 21
+(`docs/surface-slice-thickness.md`). The piece counts against an
+explicitly enumerated point orbit for all six groups, 3D included — the
+shared reflection algebra's oracle — even though Surface thickness itself
+is a 4D view feature.
+
+| Finite Balloon composition
 
 Finite reflections preserve Euclidean norm. If the canonical content lies in
 `ball(0, R)`, so does its finite orbit; clipping only removes content. The
