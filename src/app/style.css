@@ -7,6 +7,13 @@
   --bg: #0f1018;
   --surface: rgb(20 22 33 / 82%);
   --surface-2: rgb(255 255 255 / 6%);
+
+  /* --surface-2's 6% white composited over --surface's 82% dark over --bg:
+     the select popup contract's OPAQUE form (a native dropdown popup paints
+     the select's own background-color over a WHITE canvas, so a translucent
+     one washes the light text out — scripts/panel-contrast.verify.mjs
+     asserts every visible select resolves this token's kind of value). */
+  --surface-2-solid: #21232d;
   --surface-3: rgb(255 255 255 / 10%);
   --border: rgb(255 255 255 / 10%);
   --border-strong: rgb(255 255 255 / 18%);
@@ -1029,6 +1036,19 @@ input[type="range"] {
   margin-bottom: 8px;
 }
 
+/* EVERY select's background is the OPAQUE dark token, not a translucent
+   tint: Chrome paints the native dropdown popup with the select's own
+   background-color, and a translucent value composites over the popup's
+   WHITE canvas — the light-grey-on-white unreadable popup this token
+   exists to prevent (measured before/after: scripts/panel-contrast.verify
+   .mjs and scripts/select-popup-capture.mjs). The global rule also reaches
+   the three selects outside #panel (the evolution modal's Branch/Compare/
+   Breed rows), which no other theme rule touches. */
+select {
+  background: var(--surface-2-solid);
+  color: var(--text);
+}
+
 /* Every select inside the panel gets the dark theme — including the
    dynamically created .variation-add, which lives in #panel too, so a
    single tag-scoped rule covers it without a separate class entry. */
@@ -1038,7 +1058,7 @@ input[type="range"] {
   padding: 9px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--surface-2);
+  background: var(--surface-2-solid);
   color: var(--text);
   font-size: 13px;
   cursor: pointer;
