@@ -1485,23 +1485,35 @@ describe("compile-gated finite tiling in the 4D GLSL tracer", () => {
     ).toThrow(/cannot compile into the balloon variant/);
   });
 
-  it("installs the group beside the kaleidoscope and allows finite Balloon while retaining the slab refusal", () => {
+  it("installs the group beside the kaleidoscope, allows finite Balloon, and composes the slab for a segment-exact fold set", () => {
     const material = createSurfaceMaterial4();
-    setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]], undefined, f4);
-    expect(materialSurfaceTiling(material, true)).toBe(f4);
+    setSurfaceSystem4(
+      material,
+      de4([map4()]),
+      [[0, 0, 0]],
+      undefined,
+      clippedF4,
+    );
+    expect(materialSurfaceTiling(material, true)).toBe(clippedF4);
     expect(material.uniforms.uTilingGroup.value).toBe(6);
     expect(material.defines.SURFACE4_TILING).toBe(1);
     expect(material.fragmentShader).toContain("surfaceTilingFold");
 
     setSurface4GroundPlane(material, groundSpec());
-    expect(materialSurfaceTiling(material, true)).toBe(f4);
+    expect(materialSurfaceTiling(material, true)).toBe(clippedF4);
     expect(material.fragmentShader).toContain("surfaceTilingFold");
     expect(material.fragmentShader).toContain("shadeGroundPlane");
     setSurface4GroundPlane(material, null);
     expect(() => setSurfaceView4(material, IDENTITY4, 0.25, 0)).not.toThrow();
 
     const version = material.version;
-    setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]], undefined, f4);
+    setSurfaceSystem4(
+      material,
+      de4([map4()]),
+      [[0, 0, 0]],
+      undefined,
+      clippedF4,
+    );
     expect(material.version).toBe(version);
     expect(() =>
       setSurfaceSystem4(
@@ -1509,14 +1521,28 @@ describe("compile-gated finite tiling in the 4D GLSL tracer", () => {
         de4([map4()], { order: 3, stepBack: IDENTITY4 }),
         [[0, 0, 0]],
         undefined,
-        f4,
+        clippedF4,
       ),
     ).not.toThrow();
     expect(material.uniforms.uSymOrder.value).toBe(3);
     expect(material.uniforms.uTilingGroup.value).toBe(6);
     expect(material.version).toBe(version);
-    expect(() => setSurfaceView4(material, IDENTITY4, 0, 0.1)).toThrow(
-      /cannot compose with a 4D slab/,
+    // The finite arm's slab now composes: the setter admits the value and
+    // the source is the composed wall split (tiling.ts's baked walls, the
+    // per-piece core calls, the sStar remap). The lattice arm keeps the
+    // refusal, tested in the lattice suite.
+    expect(() => setSurfaceView4(material, IDENTITY4, 0, 0.1)).not.toThrow();
+    expect(material.fragmentShader).toContain(
+      "vec4 tilingWalls[24] = vec4[24](",
+    );
+    expect(material.fragmentShader).toContain(
+      "int tilingSlabCuts(vec4 q0, vec4 e, inout float cuts[26])",
+    );
+    expect(material.fragmentShader).toContain(
+      "float pieceBound = max(inner, tilingClipSdf(surfaceTilingQuery4.xyz) - halfLen);",
+    );
+    expect(material.fragmentShader).toContain(
+      "sStar = bestStart + (sLocal + 1.0) * 0.5 * (bestEnd - bestStart);",
     );
     expect(() => setSurface4Balloon(material, balloonSpec())).not.toThrow();
     expect(material.fragmentShader).toContain("surfaceDEFractal");

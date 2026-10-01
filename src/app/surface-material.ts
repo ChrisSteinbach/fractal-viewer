@@ -78,6 +78,8 @@ import {
   latticeFoldSource,
   tilingFoldSource,
   tilingGroupCode,
+  tilingReflectionWalls,
+  tilingSlabSource,
   type ResolvedFiniteTiling,
   type ResolvedLatticeTiling,
   type ResolvedTiling,
@@ -8342,10 +8344,18 @@ ${fourD ? "" : "#endif"}
  * four-dimensional. The compiled-only adapter replaces the two estimator
  * prologues' view lift with `surfaceTilingQuery4`, which the outer wrapper
  * fills from `tilingFold(uInvRotor * vec4(p, uW0))` before calling the
- * otherwise untouched bodies. Slabs are refused: the fold of a segment is a
- * bent polyline, so a tiled 4D program returns the conservative guard value 0
- * if a stale caller leaves `uSliceHalfW` live (the material setter throws
- * before that state can be authored).
+ * otherwise untouched bodies. Slabs are refused by the GUARD form below
+ * (`|| uSliceHalfW > 0.0` returns the conservative 0) unless
+ * {@link withTilingGlsl} receives `slabCapable` — the finite arm's composed
+ * wall split (tiling.ts's `tilingSlabPieces`): the baked walls and cut
+ * enumerator divide the lifted segment at every wall crossing, each folded
+ * straight piece rides the same query globals into the untouched body, and
+ * the answer mins the per-piece `max(core, clipSdf(mid) - halfLen)` — DE
+ * and clip combined AT ONE SEGMENT PARAMETER. The gate is the resolver's
+ * (`slabCapable`): the 4D arm's estimator is the segment-exact affine
+ * descent, but the swirl lens (whose wrapper owns the lift and hard-disables
+ * the segment flag) and the condensation shapes keep the guard form — their
+ * slab refusals stand, and a stale live `uSliceHalfW` still returns 0.
  */
 function withTilingGlsl(
   source: string,
@@ -8354,6 +8364,7 @@ function withTilingGlsl(
   trap: ShapeSpec | null,
   hasMarchPair: boolean,
   balloon = false,
+  slabCapable = false,
 ): string {
   if (isResolvedLatticeTiling(tiling)) {
     return withLatticeTilingGlsl(source, tiling, fourD, trap, hasMarchPair);
@@ -8399,11 +8410,30 @@ function withTilingGlsl(
       .replaceAll("#define surfaceDEMarchTilingCore surfaceDEMarchFractal", "");
   }
   if (fourD) {
+    const composed = slabCapable;
     let replaced = 0;
     core = core.replace(/vec4 q = uInvRotor \* vec4\(p, uW0\);/g, () => {
       replaced++;
       return "vec4 q = surfaceTilingQuery4;";
     });
+    // The composed arm hands each folded piece's extent through a second
+    // global beside the query, replacing the bodies' own `uInvRotor[3] *
+    // uSliceHalfW` derivation. Point-only lifts (the balloon hit-info's
+    // own) keep their q lines and have no ext line to replace — the
+    // invariant is that NO descent body still derives an extent of its
+    // own, which the post-check asserts.
+    if (composed) {
+      core = core.replace(
+        /vec4 ext = segment \? uInvRotor\[3\] \* uSliceHalfW : vec4\(0\.0\);/g,
+        "vec4 ext = surfaceTilingQuery4Ext;",
+      );
+      if (core.includes("uInvRotor[3] * uSliceHalfW")) {
+        throw new Error(
+          "surface-material: a 4D body still derives its own slab extent " +
+            "under the composed tiling arm",
+        );
+      }
+    }
     // +1 per prologue the early optics splice contributes to THIS core
     // half: the closed-solid transport field's own lift rides the same
     // `vec4 q = uInvRotor * vec4(p, uW0)` line. It sits before the
@@ -8431,6 +8461,10 @@ function withTilingGlsl(
     }
     const declarationAt = precisionAt + precision.length;
     core = `${core.slice(0, declarationAt)}\nvec4 surfaceTilingQuery4;${core.slice(declarationAt)}`;
+    if (composed) {
+      const queryAt = core.indexOf("vec4 surfaceTilingQuery4;");
+      core = `${core.slice(0, queryAt)}vec4 surfaceTilingQuery4Ext;\n${core.slice(queryAt)}`;
+    }
   }
   let rest = source.slice(split);
   const replaceRequired = (from: string, to: string): void => {
@@ -8507,9 +8541,12 @@ function withTilingGlsl(
   const clipTerm = tiling.clip
     ? `return max(inner, tilingClipSdf(q${fourD ? ".xyz" : ""}));`
     : "return inner;";
-  const guard = fourD
-    ? `uTilingGroup != ${tilingGroupCode(tiling.group)} || uSliceHalfW > 0.0`
-    : `uTilingGroup != ${tilingGroupCode(tiling.group)}`;
+  const composed = fourD && slabCapable;
+  const guard = composed
+    ? `uTilingGroup != ${tilingGroupCode(tiling.group)}`
+    : fourD
+      ? `uTilingGroup != ${tilingGroupCode(tiling.group)} || uSliceHalfW > 0.0`
+      : `uTilingGroup != ${tilingGroupCode(tiling.group)}`;
   const failHit = fourD
     ? "firstChoice = 0; trap = 0.0; rings = 0.0; sheets = 0.0; sStar = 0.0;"
     : trap
@@ -8548,7 +8585,134 @@ float surfaceDE(
     : trap
       ? "firstChoice, trap, rings, sheets, shapeTrap"
       : "firstChoice, trap, rings, sheets";
-  const wrapper = `
+  // The composed arm's per-piece clip term: the raw signed SDF at the
+  // folded piece midpoint minus the piece half-length — the triangle
+  // inequality on the true distance field, DE and clip combined AT ONE
+  // SEGMENT PARAMETER.
+  const slabClipPieceTerm = tiling.clip
+    ? "max(inner, tilingClipSdf(surfaceTilingQuery4.xyz) - halfLen)"
+    : "inner";
+  const wrapper = composed
+    ? `
+// Finite reflection tiling through a SLAB query: the split vocabulary
+// (tiling.ts's tilingSlabPieces — the baked walls and cut enumerator
+// below) divides the lifted segment at every wall crossing — at most
+// maxWordLength + 1 pieces, on each of which the fold is ONE isometry, so
+// the piece's folded image is straight — and the untouched core answers
+// each folded piece through the query globals. The answer is
+// min_j max(coreDE(F_j), clipSdf(F_j mid) - halfLen_j): DE and clip
+// combined PER PIECE so the intersection stays at one segment parameter.
+// The cutoff threads like the WGSL cover's: a piece asked at
+// cutoff + halfLen that clears it proves the piece clears cutoff. Zero
+// thickness takes the point path, value for value.
+uniform int uTilingGroup;
+${tilingFoldSource(tiling.info, "glsl")}
+${tilingSlabSource(tiling.info, "glsl", { walls: "tilingWalls", cuts: "tilingSlabCuts" })}
+bool surfaceTilingFold4(vec4 raw, out vec4 q) {
+  TilingFoldResult folded = tilingFold(raw);
+  q = folded.point;
+  return folded.ok;
+}
+${point} surfaceTilingHitPoint;
+float surfaceDE(vec3 p, float cutoff) {
+  if (${guard}) return 0.0;
+  vec4 q0 = uInvRotor * vec4(p, uW0);
+  if (uSliceHalfW <= 0.0) {
+    vec4 q;
+    if (!surfaceTilingFold4(q0, q)) return 0.0;
+    surfaceTilingQuery4 = q;
+    surfaceTilingQuery4Ext = vec4(0.0);
+    float inner = surfaceDETilingCore(p, cutoff);
+    ${clipTerm}
+  }
+  vec4 e = uInvRotor[3] * uSliceHalfW;
+  float cuts[${tilingReflectionWalls(tiling.info).length + 2}];
+  int cutCount = tilingSlabCuts(q0, e, cuts);
+  float bound = 1e30;
+  for (int k = 0; k + 1 < cutCount; k++) {
+    float s0 = cuts[k];
+    float s1 = cuts[k + 1];
+    if (s1 <= s0) continue;
+    TilingFoldResult fa = tilingFold(q0 + s0 * e);
+    TilingFoldResult fb = tilingFold(q0 + s1 * e);
+    if (!fa.ok || !fb.ok) return 0.0;
+    surfaceTilingQuery4Ext = 0.5 * (fb.point - fa.point);
+    surfaceTilingQuery4 = 0.5 * (fa.point + fb.point);
+    float halfLen = length(surfaceTilingQuery4Ext);
+    float inner = surfaceDETilingCore(p, cutoff > 0.0 ? cutoff + halfLen : 0.0);
+    float pieceBound = ${slabClipPieceTerm};
+    bound = min(bound, pieceBound);
+  }
+  return max(bound, 0.0);
+}
+float surfaceDE(vec3 p) {
+  return surfaceDE(p, 0.0);
+}
+${hitSignature} {
+  vec4 rawTilingPoint = uInvRotor * vec4(p, uW0);
+  surfaceTilingHitPoint = rawTilingPoint;
+  if (${guard}) {
+    ${failHit}
+    return 0.0;
+  }
+  if (uSliceHalfW <= 0.0) {
+    vec4 q;
+    if (!surfaceTilingFold4(rawTilingPoint, q)) {
+      surfaceTilingHitPoint = rawTilingPoint;
+      ${failHit}
+      return 0.0;
+    }
+    surfaceTilingHitPoint = q;
+    surfaceTilingQuery4 = q;
+    surfaceTilingQuery4Ext = vec4(0.0);
+    float inner = surfaceDETilingCore(p, ${hitArgs});
+    ${clipTerm}
+  }
+  vec4 e = uInvRotor[3] * uSliceHalfW;
+  float cuts[${tilingReflectionWalls(tiling.info).length + 2}];
+  int cutCount = tilingSlabCuts(rawTilingPoint, e, cuts);
+  float bestD = 1e30;
+  float bestStart = -1.0;
+  float bestEnd = 1.0;
+  vec4 bestMid = vec4(0.0);
+  vec4 bestExt = vec4(0.0);
+  for (int k = 0; k + 1 < cutCount; k++) {
+    float s0 = cuts[k];
+    float s1 = cuts[k + 1];
+    if (s1 <= s0) continue;
+    TilingFoldResult fa = tilingFold(rawTilingPoint + s0 * e);
+    TilingFoldResult fb = tilingFold(rawTilingPoint + s1 * e);
+    if (!fa.ok || !fb.ok) {
+      surfaceTilingHitPoint = rawTilingPoint;
+      ${failHit}
+      return 0.0;
+    }
+    surfaceTilingQuery4Ext = 0.5 * (fb.point - fa.point);
+    surfaceTilingQuery4 = 0.5 * (fa.point + fb.point);
+    float halfLen = length(surfaceTilingQuery4Ext);
+    float pieceBound = surfaceDETilingCore(p);${tiling.clip ? `\n    pieceBound = max(pieceBound, tilingClipSdf(surfaceTilingQuery4.xyz) - halfLen);` : ""}
+    if (pieceBound < bestD) {
+      bestD = pieceBound;
+      bestStart = s0;
+      bestEnd = s1;
+      bestMid = surfaceTilingQuery4;
+      bestExt = surfaceTilingQuery4Ext;
+    }
+  }
+  surfaceTilingQuery4 = bestMid;
+  surfaceTilingQuery4Ext = bestExt;
+  float inner = surfaceDETilingCore(p, ${hitArgs});
+  float sLocal = sStar;
+  surfaceTilingHitPoint = bestMid + sLocal * bestExt;
+  sStar = bestStart + (sLocal + 1.0) * 0.5 * (bestEnd - bestStart);
+  ${
+    tiling.clip
+      ? "return max(inner, tilingClipSdf(surfaceTilingHitPoint.xyz));"
+      : "return inner;"
+  }
+}
+`
+    : `
 // Finite reflection tiling: fold once, evaluate the untouched core, then
 // intersect with the optional authored clip through max(core, signed SDF).
 uniform int uTilingGroup;
@@ -9088,6 +9252,12 @@ export function surfaceFragmentResolvedFor(
   // closedSolid yet; the parameter exists so the arm's source, pins and
   // future routing share one resolver.
   opticsBackend = 0,
+  // The finite 4D tiling arm's slab-composition gate, appended last so
+  // every positional caller keeps its meaning: true emits the composed
+  // wall split beside the tiled estimator (the 4D affine descent's
+  // segment exactness), false keeps the guard form and every existing
+  // source byte-identical. Only the 4D tracer's own setters pass it.
+  slabCapable = false,
 ): string {
   if (sphereInversion !== 0) {
     // The arm replaces the descent bodies wholesale (the escape/bulb
@@ -9234,6 +9404,13 @@ export function surfaceFragmentResolvedFor(
         trap,
         condensation4 ? source.includes("vec2 surfaceDEMarch(") : lens !== 0,
         balloon !== 0,
+        // The finite 4D arm's slab-composition gate, decided by the
+        // CALLER (the 4D tracer's setter, which reads the built DE's
+        // `slabExact4` and its own lens/condensation gates): the swirl
+        // lens's wrapper owns the lift and hard-disables the segment
+        // flag, and the condensation shapes need their own segment
+        // evaluator, so both keep the guard form here.
+        condensation4 && slabCapable,
       )
     : source;
   const resolved = resolveVariantArms(gatedSource, {
@@ -9377,6 +9554,7 @@ export function surfaceFragmentFor(
   sphereInversion = 0,
   optics = 0,
   opticsBackend = 0,
+  slabCapable = false,
 ): string {
   const resolved = surfaceFragmentResolvedFor(
     escape,
@@ -9399,6 +9577,7 @@ export function surfaceFragmentFor(
     sphereInversion,
     optics,
     opticsBackend,
+    slabCapable,
   );
   return plane !== 0 || resolved.length > SURFACE_GLSL_STRIP_BYTES
     ? stripGlslSource(resolved)
