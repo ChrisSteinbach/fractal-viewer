@@ -2170,7 +2170,7 @@ describe("the finite-solid route", () => {
     expect(result.status).toBe("degraded");
     expect(result.kind).toBe("finiteSolid");
     expect(result.note).toContain("level-2");
-    expect(result.note).toContain("document's own maps");
+    expect(result.note).toContain("Word-tree render");
   });
 
   it("routes the general block in 4D off the scene's dimension", () => {

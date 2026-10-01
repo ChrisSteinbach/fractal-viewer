@@ -1396,13 +1396,13 @@ authored in the app, both dimensions) LANDED:
   disclose the enumeration cap's refusal shape beside the routing. The
   block is Surface-route state only: the effect refreshes the gate and
   restarts a live Surface session, and never regenerates the Points
-  cloud. Per-document refusals flow through the existing eligibility
-  note row (persistent, beside the mode switch — the transient-toast
-  complaint's answer).
+  cloud. Per-document refusals flow through the eligibility channel: the
+  disabled Surface button's own tooltip (persistent — the transient-toast
+  complaint's answer) plus the refused door's toast.
 - **The app gate** (`scripts/glass-solid-panel.verify.mjs`, real driver
   RX 7900 XTX, certified quiet): the checkbox authored on the SIERPINSKI
   preset's document, `{level: 1}` decoded from the `#v1=` hash, the
-  word-tree route named in the eligibility note, the compute session's
+  word-tree route named in the eligibility tooltip, the compute session's
   settled first frame (estimator optics — no Glass authored), the depth
   rewrite's restart-and-re-settle with the depth note's own 16-cell
   count, and the shaped block's read-only state with the glassMenger

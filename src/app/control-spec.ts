@@ -412,10 +412,10 @@ export interface ControlEffects {
   cancelBalloonSweep(): void;
   /**
    * Settle a sphere-inversion block edit everywhere the block reaches
-   * outside the panel: the Flame/Solid refusal beside the mode switch, the
-   * flame-backdrop placeholder, the transform editor's dormant notes, and a
-   * live Surface session, which RESTARTS only when the block's authored
-   * JSON differs from the one it entered with.
+   * outside the panel: the Flame/Solid refusal on the mode buttons'
+   * tooltips, the flame-backdrop placeholder, the transform editor's
+   * dormant notes, and a live Surface session, which RESTARTS only when
+   * the block's authored JSON differs from the one it entered with.
    */
   syncSphereInversion(): void;
 }

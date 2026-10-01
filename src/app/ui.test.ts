@@ -1987,16 +1987,13 @@ describe("Ui shape-trap geometry", () => {
     },
   );
 
-  it("offers a structured gate-level recovery without putting interaction in the live region", () => {
+  it("offers a structured gate-level recovery, its label self-describing and its title carrying the refusal", () => {
     const ui = new Ui(document);
     const button = document.getElementById(
       "surfaceEligibilityRecoveryBtn",
     ) as HTMLButtonElement;
-    const note = document.getElementById("surfaceNote") as HTMLElement;
 
     expect(button.closest("#panelSections")).toBeNull();
-    expect(note.contains(button)).toBe(false);
-    expect(button.getAttribute("aria-describedby")).toBe("surfaceNote");
     expect(button.textContent?.trim()).toBe("Turn trap geometry off");
 
     ui.setSurfaceEligibility(
@@ -2006,6 +2003,9 @@ describe("Ui shape-trap geometry", () => {
       "disableShapeTrapGeometry",
     );
     expect(button.classList.contains("hidden")).toBe(false);
+    expect(button.title).toBe(
+      "Surface render unavailable: Shape-trap geometry is unsupported here.",
+    );
 
     ui.setSurfaceEligibility("ineligible", "an unrelated refusal", null);
     expect(button.classList.contains("hidden")).toBe(true);
@@ -7356,9 +7356,6 @@ describe("Ui render mode switch", () => {
     expect(
       document.getElementById("pointsViewGrid")?.classList.contains("hidden"),
     ).toBe(false);
-    expect(document.getElementById("pointsLayoutNote")?.textContent).toContain(
-      "Edit 4D transforms in the panel",
-    );
     expect(
       document.getElementById("pointsParallelViewsNote")?.textContent,
     ).toContain("projected 4D scene");
@@ -7471,74 +7468,67 @@ describe("Ui render mode switch", () => {
     expect(toast.classList.contains("hidden")).toBe(true);
   });
 
-  it("associates a persistent Surface eligibility note beside the mode switch", () => {
-    const switcher = document.getElementById("renderModeSwitch");
-    const note = document.getElementById("surfaceNote");
-
-    expect(switcher?.nextElementSibling).toBe(note);
-    expect(modeBtn("surface").getAttribute("aria-describedby")).toBe(
-      "surfaceNote",
-    );
-    expect(note?.getAttribute("role")).toBe("status");
-    expect(note?.getAttribute("aria-live")).toBe("polite");
-    expect(note?.classList.contains("hidden")).toBe(false);
-    expect(note?.textContent).toBe("");
+  // The owner's red line: the strip between the mode switch and Undo/Redo
+  // carries no prose. The one permitted resident is the recovery button —
+  // a labeled control, revealed only for a remediable refusal.
+  it("keeps the red line: no prose between the mode switch and Undo/Redo", () => {
+    const stop = document.getElementById("undoRedoRow")!;
+    const between: Element[] = [];
+    let node = document.getElementById("renderModeSwitch")!.nextElementSibling;
+    while (node && node !== stop) {
+      between.push(node);
+      node = node.nextElementSibling;
+    }
+    expect(
+      between.map((el) => el.id || el.tagName),
+      "only the recovery button may live between the mode switch and Undo/Redo",
+    ).toEqual(["surfaceEligibilityRecoveryBtn"]);
   });
 
-  it("discloses ineligible and degraded Surface routes before entry, then clears", () => {
+  it("discloses ineligible and degraded Surface routes on the button tooltip, then clears", () => {
     const ui = new Ui(document);
     ui.updateLabels(initialState(true));
-    const note = document.getElementById("surfaceNote") as HTMLElement;
     const surfaceStatus = document.getElementById(
       "surfaceStatus",
     ) as HTMLElement;
     const normalTitle = "Sphere-traced surface of the attractor";
 
     expect(surfaceStatus.classList.contains("hidden")).toBe(true);
-    expect(surfaceStatus.contains(note)).toBe(false);
 
     ui.setSurfaceEligibility("ineligible", "map 1 uses variations");
     expect(modeBtn("surface").disabled).toBe(true);
     expect(modeBtn("surface").title).toBe(
       "Surface render unavailable: map 1 uses variations",
     );
-    expect(note.textContent).toBe(
-      "Surface render unavailable: map 1 uses variations",
-    );
-    expect(note.closest(".hidden")).toBeNull();
 
     const degraded =
       "Mandelbulb render: Surface will march the forward-orbit object.";
     ui.setSurfaceEligibility("degraded", degraded);
     expect(modeBtn("surface").disabled).toBe(false);
-    expect(modeBtn("surface").title).toBe(normalTitle);
-    expect(note.textContent).toBe(degraded);
-    expect(note.closest(".hidden")).toBeNull();
+    expect(modeBtn("surface").title).toBe(degraded);
 
     ui.setSurfaceEligibility("eligible", null);
     expect(modeBtn("surface").disabled).toBe(false);
     expect(modeBtn("surface").title).toBe(normalTitle);
-    expect(note.textContent).toBe("");
   });
 
   it("keeps the ineligible refusal persistent across a render-mode round-trip, not only as a toast", () => {
     // The refused-entry bounce's trace: the transient toast names the reason
-    // once, and the PERSISTENT note — re-derived from the same document on
+    // once, and the PERSISTENT tooltip — re-derived from the same document on
     // every refresh, whatever render mode the app returns to — must still
     // carry the refusal after the mode has left and come back. The owner's
     // 'the edit is silently ignored' reading is what this pin exists to
-    // keep impossible: a bounce always leaves its reason on the row.
+    // keep impossible: a bounce always leaves its reason on the button.
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     ui.updateLabels(initialState(true));
     ui.updateLabels({ ...initialState(true), renderMode: "surface" });
-    const note = document.getElementById("surfaceNote") as HTMLElement;
 
     ui.setSurfaceEligibility(
       "ineligible",
       "Finite-solid scene refused: map 1 carries variations; the cell decomposition is pure affine",
     );
-    expect(note.textContent).toContain("map 1 carries variations");
+    expect(modeBtn("surface").title).toContain("map 1 carries variations");
 
     // The bounce's own path: exit to points, then refresh in the returned
     // mode (deactivate → refreshUi → refreshSurfaceEligibility), then a
@@ -7549,7 +7539,7 @@ describe("Ui render mode switch", () => {
       "ineligible",
       "Finite-solid scene refused: map 1 carries variations; the cell decomposition is pure affine",
     );
-    expect(note.textContent).toBe(
+    expect(modeBtn("surface").title).toBe(
       "Surface render unavailable: Finite-solid scene refused: map 1 carries variations; the cell decomposition is pure affine",
     );
     expect(modeBtn("surface").disabled).toBe(true);
@@ -7566,16 +7556,15 @@ describe("Ui render mode switch", () => {
     ["ineligible", "map 1 uses variations"],
     ["degraded", "marched conservatively"],
   ] as const)(
-    "does not rewrite an unchanged %s Surface live-region message",
+    "does not rewrite an unchanged %s Surface tooltip",
     (status, detail) => {
       const ui = new Ui(document);
-      const note = document.getElementById("surfaceNote") as HTMLElement;
+      const button = modeBtn("surface");
       ui.setSurfaceEligibility(status, detail);
       const observer = new MutationObserver(() => undefined);
-      observer.observe(note, {
-        childList: true,
-        characterData: true,
-        subtree: true,
+      observer.observe(button, {
+        attributes: true,
+        attributeFilter: ["title"],
       });
 
       ui.setSurfaceEligibility(status, detail);
@@ -10850,19 +10839,6 @@ describe("Ui automatic-motion controls", () => {
     return document.getElementById(id) as HTMLElement;
   }
 
-  it("states why 4D tumble replaces camera orbit", () => {
-    const note = (el("autoMotionMechanismNote").textContent ?? "")
-      .replace(/\s+/g, " ")
-      .trim();
-    expect(note).toContain("tumble replaces camera orbit");
-    expect(note).toContain("hidden axes");
-    expect(
-      (el("autoMotionToggle") as HTMLInputElement).getAttribute(
-        "aria-describedby",
-      ),
-    ).toContain("autoMotionMechanismNote");
-  });
-
   it("hides the contextual speed row and fires the one handler when automatic motion is toggled off", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
@@ -11263,10 +11239,6 @@ describe("Ui Surface Quality antialiasing", () => {
 });
 
 describe("Ui symmetry controls", () => {
-  function note(): HTMLElement | null {
-    return document.getElementById("symmetryNote");
-  }
-
   /** The symmetry spec touches only these four capabilities. Keeping this
    * focused lets the UI tests exercise the real spec effect after a real DOM
    * event without cloning control-spec.test.ts's exhaustive scene mock. */
@@ -11532,7 +11504,6 @@ describe("Ui symmetry controls", () => {
     const surfaceButton = document.getElementById(
       "modeSurfaceBtn",
     ) as HTMLButtonElement;
-    const surfaceNote = document.getElementById("surfaceNote") as HTMLElement;
     const symmetrySection = document.getElementById(
       "symmetrySection",
     ) as HTMLDetailsElement;
@@ -11544,7 +11515,7 @@ describe("Ui symmetry controls", () => {
     symmetrySection.open = true;
     symmetrySection.dispatchEvent(new Event("toggle"));
     expect(surfaceButton.disabled).toBe(false);
-    expect(surfaceNote.textContent).toContain("Mandelbulb render");
+    expect(surfaceButton.title).toContain("Mandelbulb render");
 
     const slider = document.getElementById(
       "symmetryOrderSlider",
@@ -11557,39 +11528,8 @@ describe("Ui symmetry controls", () => {
     expect(symmetrySection.classList.contains("hidden")).toBe(false);
     expect(effects.refreshSurfaceEligibility).toHaveBeenCalledTimes(1);
     expect(surfaceButton.disabled).toBe(true);
-    expect(surfaceNote.textContent).toMatch(/^Surface render unavailable: /);
-    expect(surfaceNote.textContent).not.toContain("Mandelbulb render");
-  });
-
-  it("hides the reduction note when the requested order fits under the transform limit", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      symmetry: { order: 9, plane: "xz" },
-    });
-
-    expect(note()?.classList.contains("hidden")).toBe(true);
-    expect(note()?.textContent).toBe("");
-  });
-
-  it("shows a reduced-from message when the requested order would exceed the transform limit", () => {
-    const ui = new Ui(document);
-    // 9-fold over 30 transforms is 270 slots, past the 256-transform cap, so
-    // the note should report the largest order that still fits (8).
-    const manyTransforms = Array.from(
-      { length: 30 },
-      () => defaultTransforms()[0],
-    );
-    ui.updateLabels({
-      ...initialState(true),
-      transforms: manyTransforms,
-      symmetry: { order: 9, plane: "xz" },
-    });
-
-    expect(note()?.classList.contains("hidden")).toBe(false);
-    expect(note()?.textContent).toBe(
-      "Reduced to 8-fold (from 9-fold) to fit the 256-transform limit.",
-    );
+    expect(surfaceButton.title).toMatch(/^Surface render unavailable: /);
+    expect(surfaceButton.title).not.toContain("Mandelbulb render");
   });
 });
 
@@ -16165,14 +16105,14 @@ describe("page-level heading", () => {
 });
 
 describe("mid-session status notes are live regions", () => {
-  // These five populate/change via targeted setters (software-renderer
-  // detection, CPU fallback, memory clamps, Surface eligibility). Surface can
-  // refresh on drag ticks but equality-guards its text; #symmetryNote is
-  // deliberately absent because it rewrites every tick without such a guard.
+  // These four populate/change via targeted setters (software-renderer
+  // detection, CPU fallback, memory clamps). The Surface gate's verdict is
+  // deliberately absent — it rides the mode button's tooltip (the owner's
+  // red line leaves no prose in the strip above Undo/Redo), not a live
+  // region — as are the drag-coupled notes, which rewrite every tick.
   const NOTE_IDS = [
     "softwareRendererNote",
     "flameBackendNote",
-    "surfaceNote",
     "flameSupersampleNote",
     "solidResolutionNote",
   ];
@@ -16184,7 +16124,7 @@ describe("mid-session status notes are live regions", () => {
   });
 
   // A live region ENTERING the accessibility tree already populated
-  // announces unreliably, so the five ship rendered — populated then
+  // announces unreliably, so the four ship rendered — populated then
   // un-hidden is exactly the path this rules out.
   it.each(NOTE_IDS)("ships #%s rendered, not display-hidden", (id) => {
     expect(document.getElementById(id)?.classList.contains("hidden")).toBe(
@@ -16204,12 +16144,6 @@ describe("mid-session status notes are live regions", () => {
       "flameBackendNote",
       (ui: Ui) => ui.setFlameBackendNote("cpu", undefined, "GPU failed"),
       (ui: Ui) => ui.setFlameBackendNote(null),
-    ],
-    [
-      "surfaceNote",
-      (ui: Ui) =>
-        ui.setSurfaceEligibility("degraded", "marched conservatively"),
-      (ui: Ui) => ui.setSurfaceEligibility("eligible", null),
     ],
     [
       "flameSupersampleNote",
@@ -16239,52 +16173,11 @@ describe("mid-session status notes are live regions", () => {
   );
 });
 
-describe("document-level panel disclosures", () => {
-  const note = (id: string): HTMLElement =>
-    document.getElementById(id) as HTMLElement;
-
-  it.each(["symmetryNote", "scheduleNote", "driftNote"])(
-    "keeps #%s outside every mode-gated accordion section",
-    (id) => {
-      expect(note(id).closest("#panelSections")).toBeNull();
-      expect(note(id).closest("details.panel-section")).toBeNull();
-    },
-  );
-
-  it("keeps drag-coupled document prose non-live while associating Drift", () => {
-    for (const id of ["symmetryNote", "scheduleNote"]) {
-      expect(note(id).hasAttribute("role"), id).toBe(false);
-      expect(note(id).hasAttribute("aria-live"), id).toBe(false);
-    }
-    expect(
-      document.getElementById("driftBtn")?.getAttribute("aria-describedby"),
-    ).toBe("driftNote");
-  });
-
-  it.each(["points", "flame", "solid", "surface"] as const)(
-    "keeps effective document warnings readable in %s mode",
-    (renderMode) => {
-      const ui = new Ui(document);
-      const manyTransforms = Array.from({ length: 30 }, (_, id) => ({
-        ...defaultTransforms()[0],
-        id,
-      }));
-      ui.updateLabels({
-        ...initialState(true),
-        renderMode,
-        transforms: manyTransforms,
-        symmetry: { order: 9, plane: "xz" },
-        schedule: { transforms: defaultTransforms(), depth: 2 },
-      });
-      ui.setDriftAvailable(false);
-
-      for (const id of ["symmetryNote", "scheduleNote", "driftNote"]) {
-        expect(note(id).textContent).not.toBe("");
-        expect(note(id).closest(".hidden"), id).toBeNull();
-      }
-    },
-  );
-});
+// The former "document-level panel disclosures" block (symmetry/schedule/
+// drift prose above the accordion) is gone with those notes: the owner's
+// red line leaves no prose between the mode switch and Undo/Redo, and the
+// strip's surviving structural pin — only the recovery button may live
+// there — is asserted beside the Surface gate tests above.
 
 // The render-progress announcer. Its closest relative is the "mid-session
 // status notes are live regions" block above — same
@@ -16529,23 +16422,19 @@ describe("Ui render-progress announcer", () => {
 
 // Native `disabled` pulls a button out of the tab ring, so the existing
 // title-only disabled reason (hover-only) is invisible to a keyboard/AT
-// user. driftBtn, galleryDriftBtn, exportCollectionBtn and the timeline
-// buttons each have role="status"/aria-live="polite" reason prose — the
-// "mid-session status notes are live regions" idiom above. Unlike that
-// block's five notes, these setters (setDriftAvailable, renderGallery,
-// setCollectionCount,
+// user. galleryDriftBtn, exportCollectionBtn and the timeline buttons each
+// have role="status"/aria-live="polite" reason prose beside themselves —
+// the "mid-session status notes are live regions" idiom above. (driftBtn
+// keeps the title-only swap: the owner's red line leaves no prose beside
+// the mode-status strip, where its button lives.) Unlike that block's
+// notes, these setters (renderGallery, setCollectionCount,
 // syncTimelineButtons via renderTimeline/setTimelineActive/
 // setTimelineAvailable/setTimelineExportProgress) re-run on every panel
 // refresh/timeline edit/collection change rather than only at a meaningful
 // transition, so each also gets a no-chatter pin: repeating the same
 // disabled state must not rewrite (and therefore not re-announce) the note.
 describe("disabled-reason notes for keyboard/AT users", () => {
-  it.each([
-    "driftNote",
-    "galleryDriftNote",
-    "exportCollectionNote",
-    "timelineNote",
-  ])(
+  it.each(["galleryDriftNote", "exportCollectionNote", "timelineNote"])(
     "ships #%s as a role=status/aria-live=polite region, rendered and empty",
     (id) => {
       const note = document.getElementById(id);
@@ -16556,55 +16445,30 @@ describe("disabled-reason notes for keyboard/AT users", () => {
     },
   );
 
-  describe("driftBtn / driftNote", () => {
+  // driftBtn's reason rides its swapped-in title alone: the owner's red
+  // line leaves no prose beside the mode-status strip, and the modal-local
+  // galleryDriftNote keeps the in-dialog channel for the gallery twin.
+  describe("driftBtn title-only reduced-motion swap", () => {
     function btn(): HTMLButtonElement {
       return document.getElementById("driftBtn") as HTMLButtonElement;
     }
-    function note(): HTMLElement {
-      return document.getElementById("driftNote") as HTMLElement;
-    }
 
-    it("writes the reduced-motion reason into the note when disabled, alongside the existing title swap", () => {
+    it("swaps the reduced-motion reason into the title when disabled", () => {
       const ui = new Ui(document);
       ui.setDriftAvailable(false);
-      expect(note().textContent).toBe(
-        "Unavailable: your system asks for reduced motion.",
-      );
+      expect(btn().disabled).toBe(true);
       expect(btn().title).toBe(
         "Unavailable: your system asks for reduced motion",
       );
     });
 
-    it("clears the note when re-enabled, restoring the authored title", () => {
+    it("restores the authored title when re-enabled", () => {
       const ui = new Ui(document);
       const authoredTitle = btn().title;
       ui.setDriftAvailable(false);
       ui.setDriftAvailable(true);
-      expect(note().textContent).toBe("");
       expect(btn().disabled).toBe(false);
       expect(btn().title).toBe(authoredTitle);
-    });
-
-    it("does not rewrite the note when the disabled state repeats (no chatter)", () => {
-      const ui = new Ui(document);
-      ui.setDriftAvailable(false);
-      let mutations = 0;
-      const observer = new MutationObserver((records) => {
-        mutations += records.length;
-      });
-      observer.observe(note(), {
-        childList: true,
-        characterData: true,
-        subtree: true,
-      });
-
-      ui.setDriftAvailable(false); // e.g. a later syncMotionAvailability with no real change
-
-      observer.disconnect();
-      expect(mutations).toBe(0);
-      expect(note().textContent).toBe(
-        "Unavailable: your system asks for reduced motion.",
-      );
     });
   });
 

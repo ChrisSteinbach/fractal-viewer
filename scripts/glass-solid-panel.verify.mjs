@@ -10,7 +10,7 @@
  *
  * Legs:
  *   1. The general flow: click #glassSolidEnabledCheckbox, assert the
- *      depth row appears at depth 1, the eligibility note names the
+ *      depth row appears at depth 1, the eligibility tooltip names the
  *      word-tree route, and the DOCUMENT carries `{level: 1}` — decoded
  *      from the `#v1=` hash, not read off the panel.
  *   2. Enter Surface: the session settles on the compute engine with a
@@ -31,7 +31,7 @@
  *      exports byte for byte.
  *   5. The shaped read-only state: load the glassMenger preset, assert the
  *      checkbox reads checked+disabled beside its reason, the depth select
- *      reads 2, the eligibility note names the Menger route — and Surface
+ *      reads 2, the eligibility tooltip names the Menger route — and Surface
  *      enters on compute with the finiteSolid optics backend LIVE (the
  *      shipped byte-identical path serving the preset's own construction).
  *   6. Glass on the viewer's own ROTATING boot document (the box tree
@@ -310,7 +310,7 @@ try {
         .getElementById("glassSolidDepthRow")
         .classList.contains("hidden"),
       depth: document.getElementById("glassSolidDepthSelect").value,
-      note: document.getElementById("surfaceNote").textContent,
+      note: document.getElementById("modeSurfaceBtn").title,
       sectionNote: document.getElementById("glassSolidNote").textContent,
     }));
     if (!checkbox.checked) fail("the checkbox did not latch checked");
@@ -615,7 +615,7 @@ try {
       depth: document.getElementById("glassSolidDepthSelect").value,
       depthDisabled: document.getElementById("glassSolidDepthSelect").disabled,
       note: document.getElementById("glassSolidNote").textContent,
-      eligibility: document.getElementById("surfaceNote").textContent,
+      eligibility: document.getElementById("modeSurfaceBtn").title,
     }));
     if (!shaped.checked) fail("the shaped block did not read checked");
     if (!shaped.disabled)
@@ -698,7 +698,7 @@ try {
     await page.selectOption("#glassSolidDepthSelect", String(depth));
     await page.waitForTimeout(300);
     const routed = await page.evaluate(() => ({
-      note: document.getElementById("surfaceNote").textContent,
+      note: document.getElementById("modeSurfaceBtn").title,
       depthNote: document.getElementById("glassSolidDepthNote").textContent,
     }));
     if (!routed.note.includes("Word-tree render")) {

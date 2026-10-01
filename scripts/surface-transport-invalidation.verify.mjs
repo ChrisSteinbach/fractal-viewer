@@ -1357,7 +1357,9 @@ async function armFiniteGlRefusal(browser, args, scene) {
     const disclosed = await pollUntil(
       page,
       async () => {
-        const note = await page.locator("#surfaceNote").textContent();
+        const note = await page
+          .locator("#modeSurfaceBtn")
+          .getAttribute("title");
         return /finite-solid.*WebGPU|WebGPU.*finite-solid/i.test(note ?? "");
       },
       30000,

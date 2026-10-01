@@ -941,11 +941,11 @@ ratifies or overturns it.
 
 ### Per-mode verdict
 
-| Mode          | 3D                                        | Native 4D                                                         |
-| ------------- | ----------------------------------------- | ----------------------------------------------------------------- |
-| Points        | SHIPS: exact boundary sample of `O_D`     | SHIPS: exact boundary sample on `xyzw`, then the live rotor/slice |
-| Flame         | REFUSED, disclosed beside the mode switch | REFUSED, same note                                                |
-| Sampled Solid | REFUSED, disclosed beside the mode switch | REFUSED, same note                                                |
+| Mode          | 3D                                    | Native 4D                                                         |
+| ------------- | ------------------------------------- | ----------------------------------------------------------------- |
+| Points        | SHIPS: exact boundary sample of `O_D` | SHIPS: exact boundary sample on `xyzw`, then the live rotor/slice |
+| Flame         | REFUSED at the disabled mode button   | REFUSED, same reason                                              |
+| Sampled Solid | REFUSED at the disabled mode button   | REFUSED, same reason                                              |
 
 **Points.** `src/fractal/sphere-inversion-sample.ts` draws points ON the
 boundary of the depth-D seed orbit: uniform patch samples of `∂(K ∩ F)`
@@ -970,8 +970,8 @@ density accumulation of the boundary sample would make its brightness a
 property of the sampler's chosen density rather than of the scene. Both are
 refused by `surface-eligibility.ts`'s `sphereInversionRenderModeRefusal` for
 any present block, resolvable or not (a refused block is still the subject):
-the buttons disable and name the note beside the mode switch
-(`#sphereInversionModeNote`), `switchRenderMode` refuses every door with the
+the buttons disable and carry the reason on their tooltips,
+`switchRenderMode` refuses every door with the
 same text, and a block that arrives under a live Flame or Solid session exits
 to Points with a toast. The lift's shape, if one is ever wanted: a Flame
 histogram of the boundary sample needs an area-uniform density across
@@ -1512,7 +1512,7 @@ stays document-only.
   drag tick would rebuild the construction's tables (472 KiB at the 600-cell)
   dozens of times.
 - **Flame and Sampled Solid.** With a block present they are already refused
-  beside the mode switch, and the app leaves them. With no block, every
+  at the disabled mode buttons, and the app leaves them. With no block, every
   control in the section is disabled, with the reason beside it.
 
 ### Absent means default, refusals preserved
@@ -1546,9 +1546,9 @@ dormant authored capability visible but disabled beside its reason, and
 editing transforms nothing draws would silently queue an edit whose result
 appears only when the block is removed.
 
-- **Transforms, Xaos, Symmetry and Hybrid schedule** each show a note, "Sphere
-  inversion replaces the transform system, so … not drawn. Turn off Sphere
-  inversion to edit.", and every control inside the section is disabled and
+- **Transforms, Xaos, Symmetry and Hybrid schedule** each show the one
+  canonical note, "Turn off Sphere inversion to edit.", and every control
+  inside the section is disabled and
   described by it (`aria-describedby`). That includes both halves of every
   slider pair, the transform list and editor, the final-lens toggle and the
   per-transform finish rows.

@@ -84,10 +84,16 @@ export interface SphereInversionFieldRange {
 export const SPHERE_INVERSION_AUTHORED_OPTION = "__authored";
 
 /** Why the section is unavailable in Flame and Solid while no block
- * is present (with one present, those modes are already refused beside the
+ * is present (with one present, those modes are already refused at the
  * mode switch and the app leaves them). */
 export const SPHERE_INVERSION_CONTROLS_MODE_REASON =
-  "Flame and Solid cannot draw a sphere-inversion scene. Switch to Points or Surface to add or edit one.";
+  "Flame and Solid cannot draw a sphere-inversion scene. Use Points or Surface.";
+
+/** The ONE canonical reason every sphere-inversion dormancy row carries:
+ * the control's own label says what is dormant; the note names the action
+ * that re-enables it. Shared so the wording cannot drift between rows. */
+export const SPHERE_INVERSION_DORMANT_REASON =
+  "Turn off Sphere inversion to edit.";
 
 const SEED_FIELDS: readonly SphereInversionNumericField[] = [
   "size",

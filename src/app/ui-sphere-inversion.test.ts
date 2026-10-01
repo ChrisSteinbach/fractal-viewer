@@ -189,7 +189,7 @@ describe("Sphere inversion section", () => {
         el<HTMLInputElement>("sphereInversionDepthSliderNumber").disabled,
       ).toBe(true);
       expect(el("sphereInversionNote").textContent).toMatch(
-        /Switch to Points or Surface/,
+        /Use Points or Surface/,
       );
     }
     ui.updateLabels(initialState(true));
@@ -250,8 +250,8 @@ describe("dormant sections under a sphere-inversion block", () => {
         const controls = controlsOf(sectionId);
         expect(controls.length, sectionId).toBeGreaterThan(0);
         expect(hidden(noteId), noteId).toBe(false);
-        expect(el(noteId).textContent).toMatch(
-          /^Sphere inversion replaces the transform system, .* not drawn\. Turn off Sphere inversion to edit\.$/,
+        expect(el(noteId).textContent).toBe(
+          "Turn off Sphere inversion to edit.",
         );
         for (const control of controls) {
           const name =
@@ -319,15 +319,15 @@ describe("dormant sections under a sphere-inversion block", () => {
       withBlock({ arrangement: "oct6" }, { finalTransform: lens }),
     );
     expect(hidden("finalLensNote")).toBe(false);
-    expect(el("finalLensNote").textContent).toMatch(
-      /^Dormant while Sphere inversion is the subject: the final transform lens/,
+    expect(el("finalLensNote").textContent).toBe(
+      "Turn off Sphere inversion to edit.",
     );
     expect(
       el("finalTransformToggle").getAttribute("aria-describedby"),
     ).toContain("finalLensNote");
   });
 
-  it("refuses only Background's Flame option beside its reason", () => {
+  it("refuses only Background's Flame option, without prose", () => {
     const ui = new Ui(document);
     const flameBackdrop = {
       ...initialState(true).background,
@@ -339,7 +339,6 @@ describe("dormant sections under a sphere-inversion block", () => {
       )!;
 
     ui.updateLabels({ ...initialState(true), background: flameBackdrop });
-    expect(hidden("backgroundNote")).toBe(true);
     expect(flameOption().disabled).toBe(false);
 
     for (const arrangement of ["oct6", "cell600"]) {
@@ -348,17 +347,7 @@ describe("dormant sections under a sphere-inversion block", () => {
       );
       expect(flameOption().disabled, arrangement).toBe(true);
       expect(el<HTMLSelectElement>("background").disabled).toBe(false);
-      expect(el("backgroundNote").textContent).toMatch(
-        /Sphere inversion replaces, so the plain gradient shows instead\. Turn off Sphere inversion to choose it\./,
-      );
     }
-    ui.updateLabels(withBlock({ arrangement: "oct6" }));
-    expect(el("backgroundNote").textContent).toBe(
-      "Flame backdrop is unavailable: it draws the transforms, which Sphere inversion replaces. Turn off Sphere inversion to choose it.",
-    );
-    expect(el("background").getAttribute("aria-describedby")).toBe(
-      "backgroundNote",
-    );
     ui.updateLabels(initialState(true));
     expect(flameOption().disabled).toBe(false);
   });
