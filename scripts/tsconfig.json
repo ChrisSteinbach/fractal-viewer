@@ -38,7 +38,10 @@
     "./**/*.ts",
     "./gpu-ci-swept.mjs",
     "./lib/dist-freshness.mjs",
-    "./lib/machine-quiet.mjs"
+    "./lib/gate-registry.mjs",
+    "./lib/machine-quiet.mjs",
+    "./lib/verify-plan.mjs",
+    "./lib/surface-browser-runner.mjs"
   ],
   // Same conflict the root tsconfig.json avoids (see its own comment): the
   // service worker needs the WebWorker lib, which this program doesn't set,

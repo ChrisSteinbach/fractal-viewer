@@ -1,6 +1,59 @@
+import crypto from "node:crypto";
 import process from "node:process";
 import { chromium } from "playwright-core";
 import { contendedReason, quietBaseline } from "./machine-quiet.mjs";
+
+/**
+ * THE SHARED WARM-BROWSER SESSION (`npm run verify`).
+ *
+ * The orchestrator (scripts/verify.mjs) builds once, serves `dist/` once,
+ * takes the boot machine-quiet baseline once, launches ONE Chromium per
+ * browser signature, and then runs the named gates SEQUENTIALLY as child
+ * processes that CONNECT to that browser over CDP instead of launching their
+ * own. The two environment variables below are the whole handoff: the
+ * orchestrator sets them on every gate it spawns, and `launchSurfaceBrowser`
+ * consults them at its existing call site — a gate's own code does not
+ * change to join the warm session, and with no orchestrator running the
+ * variables are absent and every gate behaves exactly as before.
+ *
+ * A shared browser is a real browser: contexts are per-gate (fresh storage,
+ * pinned viewport, reduced motion) and GPU work stays serial because the
+ * orchestrator runs gates one at a time. What is amortized is what each gate
+ * used to pay privately — the browser boot, its GPU process bring-up, and
+ * the shader-program caches (the ~25s Mesa GLSL link cliff lands once per
+ * session instead of once per gate). What is deliberately NOT amortized is
+ * the machine-quiet certification: each gate still samples its own baseline
+ * at connect time, because the certification is per-run by design and an
+ * idle shared browser contributes ~0 engine-time delta while its client
+ * samples.
+ *
+ * ISOLATION IS CHROMIUM'S, NOT OURS. A gate process that exits without
+ * cleanup — crash, hang then kill, hard exit — drops its CDP client
+ * transport, and Chromium destroys the browser contexts that client created
+ * (measured: the devtools /json/list target list is empty 200ms after a
+ * client that had a live page exits without closing). So a crashed gate
+ * cannot leak contexts into the next gate's session, and `browser.close()`
+ * on a connectOverCDP client only DISCONNECTS — a gate's ordinary cleanup
+ * cannot kill the shared browser. The orchestrator still recycles the
+ * browser after any gate failure, as cheap insurance against a wedged GPU
+ * context a fresh page might inherit.
+ *
+ * The signature comparison is what keeps mode semantics exact: the
+ * orchestrator advertises the signature of the browser it actually launched
+ * (derived from `surfaceLaunchOptions(mode)` — the X display and the full
+ * WebGPU/SwiftShader argument set), and a gate that wants a different
+ * signature — a different mode, or a gate with private launch options like
+ * surface-repro's ANGLE-GL SwiftShader — falls back to its own browser with
+ * a one-line note. Never connect a gate to a browser shaped differently
+ * from what its own launcher would have built.
+ */
+export const SHARED_BROWSER_CDP_ENV = "GATE_BROWSER_CDP";
+export const SHARED_BROWSER_SIG_ENV = "GATE_BROWSER_SIG";
+
+/** `browserSignature` truncates to this many hex chars — 48 bits of a SHA-1
+ * over a small JSON fingerprint; collision odds are irrelevant against a
+ * fixed alphabet of modes on one machine. */
+const SIGNATURE_CHARS = 12;
 
 export const RELEASE_VIEWPORT = Object.freeze({ width: 960, height: 540 });
 export const RELEASE_DEVICE_SCALE_FACTOR = 1;
@@ -65,14 +118,66 @@ export function surfaceLaunchOptions(mode) {
   };
 }
 
-export async function launchSurfaceBrowser(mode) {
-  // The machine's conditions, before this launcher puts its own browser on
-  // the GPU. Every real-driver gate that comes through here asks for "a
-  // QUIET machine" in prose; the baseline is what makes that checkable —
-  // in the run's own output, with UNKNOWN spelled out rather than reading
-  // as quiet. Report-only: a behavior gate's verdict survives contention,
-  // and each gate that measures (rather than asserts) refuses on its own —
-  // `quiet` is exposed on the browser for it.
+/**
+ * PURE over `surfaceLaunchOptions(mode)`. The identity of the browser a gate
+ * wants: the X display it targets plus the exact argument set that shapes
+ * its WebGPU/SwiftShader backend. The orchestrator advertises the signature
+ * of the browser it launched; a gate whose desired signature differs runs
+ * standalone, so mode semantics stay exact without the runner knowing any
+ * gate's private options.
+ */
+export function browserSignature(mode) {
+  const launch = surfaceLaunchOptions(mode);
+  const fingerprint = JSON.stringify({
+    display: launch.env?.DISPLAY ?? null,
+    args: launch.args,
+  });
+  return crypto
+    .createHash("sha1")
+    .update(fingerprint)
+    .digest("hex")
+    .slice(0, SIGNATURE_CHARS);
+}
+
+/** The shared session's CDP endpoint when the environment offers one shaped
+ * like this gate's own browser, else `null` (with a reason a caller may
+ * log). Malformed or stale variables fall back to standalone rather than
+ * taking a gate down — the orchestrator's env is an optimization, not a
+ * contract the gate must enforce with an exit code. */
+export function sharedSessionFor(mode) {
+  const endpoint = process.env[SHARED_BROWSER_CDP_ENV];
+  const wanted = browserSignature(mode);
+  const advertised = process.env[SHARED_BROWSER_SIG_ENV];
+  if (!endpoint) return { endpoint: null, reason: "no shared session" };
+  if (!/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(endpoint)) {
+    return { endpoint: null, reason: `malformed ${SHARED_BROWSER_CDP_ENV}` };
+  }
+  if (advertised !== wanted) {
+    return {
+      endpoint: null,
+      reason: `browser shape mismatch (session ${advertised ?? "none"}, wanted ${wanted})`,
+    };
+  }
+  return { endpoint, reason: null };
+}
+
+function noteSharedSessionMiss(reason) {
+  console.error(
+    `[surface-browser] not joining the shared session: ${reason} — launching a private browser.`,
+  );
+}
+
+/**
+ * The machine's conditions for one gate run: sampled while the gate has
+ * nothing of its own on the GPU. In the shared session that moment is AFTER
+ * the connect — the browser is already up and idle (the connect itself adds
+ * no GPU work), so the sample correctly counts it as a separate process and
+ * a leaked busy page from a previous leg would name itself here. The
+ * STANDALONE path samples BEFORE its launch for the same reason: the
+ * browser's own bring-up is part of "this run's" GPU work and must not
+ * pollute its own baseline.
+ */
+async function takeQuietBaseline() {
   const quiet = await quietBaseline((line) =>
     console.error(`[surface-browser] ${line}`),
   );
@@ -84,6 +189,34 @@ export async function launchSurfaceBrowser(mode) {
         " from this run does not.",
     );
   }
+  return quiet;
+}
+
+export async function launchSurfaceBrowser(mode) {
+  const shared = sharedSessionFor(mode);
+  if (shared.endpoint !== null) {
+    try {
+      const browser = await chromium.connectOverCDP(shared.endpoint, {
+        timeout: 10_000,
+      });
+      browser.gpuQuiet = await takeQuietBaseline();
+      return browser;
+    } catch (error) {
+      noteSharedSessionMiss(
+        `connect over CDP failed (${String(error?.message ?? error)})`,
+      );
+    }
+  } else if (process.env[SHARED_BROWSER_CDP_ENV]) {
+    noteSharedSessionMiss(shared.reason);
+  }
+  // The machine's conditions, before this launcher puts its own browser on
+  // the GPU. Every real-driver gate that comes through here asks for "a
+  // QUIET machine" in prose; the baseline is what makes that checkable —
+  // in the run's own output, with UNKNOWN spelled out rather than reading
+  // as quiet. Report-only: a behavior gate's verdict survives contention,
+  // and each gate that measures (rather than asserts) refuses on its own —
+  // `quiet` is exposed on the browser for it.
+  const quiet = await takeQuietBaseline();
   const launch = surfaceLaunchOptions(mode);
   const browser = await chromium.launch({
     executablePath: chromium.executablePath(),

@@ -11,6 +11,7 @@
     "bench:gpu": "node scripts/gpu-flame-bench.mjs",
     "bench:surface": "node scripts/gpu-flame-bench.mjs --surface-only",
     "bench:mesh-sdf": "node scripts/mesh-sdf-bench.ts",
+    "verify": "node scripts/verify.mjs",
     "verify:pattern-release": "npm run build && node scripts/pattern-release.verify.mjs",
     "verify:pattern-release-review": "node scripts/pattern-release-review-score.ts",
     "test": "vitest run",

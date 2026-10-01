@@ -131,13 +131,13 @@ npm run test:coverage # Tests with coverage report
 npm run lint          # Type-check + ESLint + Stylelint + Prettier check
 npm run lint:fix      # Auto-fix ESLint + Stylelint + Prettier issues
 npm run lint:eslint   # ESLint only (no type-check)
-npm run lint:stylelint # Stylelint only (CSS)
+npm run lint:stylelint # Stylelint only
 npm run format        # Prettier check only
 npm run format:fix    # Prettier auto-fix only
 npm run dev           # Start Vite dev server (HTTPS, binds 0.0.0.0 for phones)
 npm run build         # Production build → dist/app/
-npm run preview       # Preview the production build locally
 npm run smoke         # Headless WebGL smoke test (SwiftShader) — boots the app, asserts it renders
+npm run verify        # Warm gate runner (docs/gate-velocity.md): one build+preview+browser per gate batch; --watch re-verdicts per rebuild
 npm run bench:gpu     # Headless WebGPU flame agreement/bench (real Chrome) — pins the WGSL kernels to their CPU oracles; run after touching flame-gpu*.ts kernels (CI runs it on SwiftShader)
 npm run bench:surface # WebGPU fold-DE kernel agreement/timing — pins surface-de-gpu.ts (all seven cores; eval/march baselines + the app path's march-unproject/shade) to its CPU oracles; add --display=:0 for real-driver timing. Run it QUIET (below), never beside the test suite: a contended software device corrupts mid-run readbacks; the canary reports verdict=device-unreliable (exit 2, rerun). JUDGE THE ESCAPE ROWS ON --display=:0 — escChainKaleido carries a known SwiftShader-only false failure and the flip cap must NOT be raised to make it green. Fixtures, caps and measured rows: docs/gpu-bench-surface.md
 npm run bench:mesh-sdf # 64³ trefoil cold-bake vs its 2s budget, BVH-vs-exact agreement
@@ -176,11 +176,9 @@ PROCESS off DRM
 fdinfo (a global percentage cannot tell whose work it is), and EVERY gate
 that measures a real driver — the bench, the shared browser launcher, the
 direct-launching gates and probes, the browser harness sheet — takes the
-baseline BEFORE its browser launches and prints it; a contended run says so
+baseline before its own GPU work and prints it; a contended run says so
 (UNCERTIFIED) in its own output rather than being believed. UNKNOWN NEVER
 READS AS QUIET.
-
-Run a single test file: `npx vitest run src/fractal/chaos-game.test.ts`
 
 The escape-time family's in-app gate (not an npm script — it drives a
 real build in a real browser): `npm run build && npm run preview &` then
@@ -265,7 +263,7 @@ The catalogue of sheets and what each one's verdict was is in
 Requires **Node.js 22+** (.nvmrc pins 22; the compile target is ES2022).
 
 Reproduce the COOP/COEP first-visit reload locally:
-`node scripts/isolation-reload.verify.mjs` (not an npm script) —
+`node scripts/isolation-reload.verify.mjs` —
 serves the production build over a plain static server with no COOP/COEP
 and a deliberately delayed `sw.js`, widening the reload window on demand;
 `npm run preview` can trigger the same dance, but only at real localhost timing.
