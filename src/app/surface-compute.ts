@@ -3801,18 +3801,25 @@ export class SurfaceComputeRenderer {
     // full one: the shipped slider position is sliceHalfW 0, where the
     // slab pair's ext registers are pure occupancy tax. Both pairs share
     // the explicit bind group layouts below, so bind groups stay
-    // variant-agnostic and runFrame's pick is a pipeline handle. A
-    // tiled 4D system can NEVER take a slab query (the packer throws on
-    // sliceHalfW > 0 and the app clamps the thickness slider), so it sits
-    // with the non-ifs4 kinds and its ONE pair compiles slab-free; a
-    // nonlinear untiled system takes the full pair generated with
-    // `slabCover` (the bounded midpoint cover IS its slab answer), and
-    // its slab-free twin is the shipped h=0 kernel.
+    // variant-agnostic and runFrame's pick is a pipeline handle. A tiled
+    // 4D system takes a slab only through the finite wall split, and only
+    // for a segment-exact fold set (`slabExact4` — affine and boxfold):
+    // the lattice arm and the nonlinear fold sets keep the single
+    // slab-free pair, and the packer's own throws refuse any sliceHalfW
+    // they cannot answer. A nonlinear untiled system takes the full pair
+    // generated with `slabCover` (the bounded midpoint cover IS its slab
+    // answer), and its slab-free twin is the shipped h=0 kernel.
+    const targetTiling = target.tiling ?? null;
     const canSlab =
       target.kind !== "ifs4" ||
-      (slabSupported4(target.de) && (target.tiling ?? null) === null);
+      (slabSupported4(target.de) &&
+        (targetTiling === null ||
+          (!isResolvedLatticeTiling(targetTiling) && slabExact4(target.de))));
     const slabCover =
-      target.kind === "ifs4" && canSlab && !slabExact4(target.de);
+      target.kind === "ifs4" &&
+      canSlab &&
+      targetTiling === null &&
+      !slabExact4(target.de);
     const wantNoSlab = target.kind === "ifs4" && canSlab;
     const [marchModule, shadeModule, marchModuleNoSlab, shadeModuleNoSlab] =
       await Promise.all([
