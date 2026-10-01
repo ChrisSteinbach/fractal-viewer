@@ -5191,6 +5191,178 @@ describe("surfaceDeKernelWgsl nonlinear slab cover (slabCover)", () => {
   });
 });
 
+describe("surfaceDeKernelWgsl finite tiling wall split (tiling × slabExt)", () => {
+  const f4 = resolveTiling({ group: "f4" })!;
+  const a4 = resolveTiling({ group: "a4" })!;
+  const f4Clipped = resolveTiling({ group: "f4", clip: GEAR_SHAPE })!;
+
+  it("keeps the point wrapper wherever the split cannot fire", () => {
+    // slabExt off: the register-pressure probe's tiling wrapper stays the
+    // point composition, and no walls or cut enumerator exist.
+    const noslab = surfaceDeKernelWgsl(
+      kernelOpts({ core: "affine4", tiling: f4, slabExt: false }),
+    );
+    expect(noslab).toContain(
+      "let folded = tilingFold(rotorInvApply4(vec4f(pIn, params.w0)));",
+    );
+    expect(noslab).not.toContain("var<private> tilingWalls");
+    expect(noslab).not.toContain("fn tilingSlabCuts(");
+    expect(noslab).not.toContain("tilingSlabCuts(q0, e, &cuts)");
+    // 3D cores have no slab concept at all: the point wrapper only.
+    for (const core of ["affine", "fold", "escape", "bulb"] as const) {
+      const source = surfaceDeKernelWgsl(
+        kernelOpts({ core, tiling: resolveTiling({ group: "b3" })! }),
+      );
+      expect(source).toContain("let folded = tilingFold(pIn);");
+      expect(source).not.toContain("var<private> tilingWalls");
+    }
+    // escape4 is 4D but forward: no ext register, point wrapper only.
+    const escape4 = surfaceDeKernelWgsl(
+      kernelOpts({ core: "escape4", tiling: f4 }),
+    );
+    expect(escape4).toContain("let folded = tilingFold(liftEscape4(pIn));");
+    expect(escape4).not.toContain("var<private> tilingWalls");
+  });
+
+  it("bakes the group's wall table and cut enumerator beside the composed wrapper only", () => {
+    const f4Source = surfaceDeKernelWgsl(
+      kernelOpts({ core: "affine4", tiling: f4 }),
+    );
+    expect(f4Source).toContain(
+      "var<private> tilingWalls: array<vec4f, 24> = array<vec4f, 24>(",
+    );
+    expect(f4Source).toContain(
+      "fn tilingSlabCuts(q0: vec4f, e: vec4f, cuts: ptr<function, array<f32, 26>>) -> u32 {",
+    );
+    const a4Source = surfaceDeKernelWgsl(
+      kernelOpts({ core: "fold4", tiling: a4 }),
+    );
+    expect(a4Source).toContain(
+      "var<private> tilingWalls: array<vec4f, 10> = array<vec4f, 10>(",
+    );
+    expect(a4Source).toContain(
+      "fn tilingSlabCuts(q0: vec4f, e: vec4f, cuts: ptr<function, array<f32, 12>>) -> u32 {",
+    );
+    // Absent tiling emits neither.
+    expect(surfaceDeKernelWgsl(kernelOpts({ core: "affine4" }))).not.toContain(
+      "tilingWalls",
+    );
+  });
+
+  it("composes the split around the untouched point wrapper: zero thickness stays the point call, live slabs run the piece loop", () => {
+    for (const core of ["affine4", "fold4"] as const) {
+      const source = surfaceDeKernelWgsl(
+        kernelOpts({ core, mode: "shade", tiling: f4Clipped }),
+      );
+      // The point path is the pre-split wrapper's own body.
+      expect(source).toContain(
+        "let q0 = rotorInvApply4(vec4f(pIn, params.w0));",
+      );
+      expect(source).toContain(
+        "if (params.sliceHalfW <= 0.0) {\n    let folded = tilingFold(q0);",
+      );
+      expect(source).toContain(
+        "let inner = surfaceDETilingCore(folded.point, vec4f(0.0), cutoff, li);",
+      );
+      expect(source).toContain(
+        "return max(inner, tilingClipSdf(folded.point.xyz));",
+      );
+      // The live-slab path: cut list, piece loop, per-piece core call at
+      // the lifted cutoff, and the per-piece clip intersection.
+      expect(source).toContain(
+        "var cuts: array<f32, 26>;\n  let cutCount = tilingSlabCuts(q0, e, &cuts);",
+      );
+      expect(source).toContain("let e = rotorInvWCol4() * params.sliceHalfW;");
+      expect(source).toContain("let fa = tilingFold(q0 + s0 * e);");
+      expect(source).toContain("let fb = tilingFold(q0 + s1 * e);");
+      expect(source).toContain("let ext = 0.5 * (fb.point - fa.point);");
+      expect(source).toContain("let mid = 0.5 * (fa.point + fb.point);");
+      expect(source).toContain("let halfLen = length(ext);");
+      expect(source).toContain(
+        "let inner = surfaceDETilingCore(mid, ext, cutoff, li);",
+      );
+      expect(source).toContain(
+        "let pieceBound = max(inner, tilingClipSdf(mid.xyz) - halfLen);",
+      );
+      expect(source).toContain("return max(bound, 0.0);");
+    }
+    // No clip: the per-piece term is the bare inner value.
+    const plain = surfaceDeKernelWgsl(
+      kernelOpts({ core: "affine4", tiling: f4 }),
+    );
+    expect(plain).toContain("let pieceBound = inner;");
+    expect(plain).not.toContain("tilingClipSdf(mid.xyz)");
+  });
+
+  it("attributes the hit at the VALUE-argmin piece and remaps its sStar into the original slab coordinate", () => {
+    for (const core of ["affine4", "fold4"] as const) {
+      const source = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core, tiling: f4Clipped }),
+      );
+      expect(source).toContain(
+        "var pieceBound = surfaceDETilingCore(mid, ext, 0.0, li);",
+      );
+      expect(source).toContain(
+        "pieceBound = max(pieceBound, tilingClipSdf(mid.xyz) - halfLen);",
+      );
+      expect(source).toContain("if (pieceBound < bestD) {");
+      expect(source).toContain(
+        "var info = surfaceDEHitInfoTilingCore(bestMid, bestExt, li);",
+      );
+      expect(source).toContain("let sLocal = info.sStar;");
+      expect(source).toContain(
+        "info.tilingPoint = bestMid + sLocal * bestExt;",
+      );
+      expect(source).toContain(
+        "info.sStar = bestStart + (sLocal + 1.0) * 0.5 * (bestEnd - bestStart);",
+      );
+      // The zero-thickness point path is the shipped attribution.
+      expect(source).toContain(
+        "var info = surfaceDEHitInfoTilingCore(folded.point, vec4f(0.0), li);",
+      );
+      expect(source).toContain("info.tilingPoint = folded.point;");
+    }
+  });
+
+  it("gives the shade probe the identical split, renamed one level out", () => {
+    const source = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "fold4",
+        tiling: f4,
+        shadeDeWidth: 1,
+      }),
+    );
+    expect(source).toContain(
+      "fn surfaceDEProbe(pIn: vec3f, cutoff: f32, li: u32) -> f32 {",
+    );
+    const probeStart = source.indexOf("fn surfaceDEProbe(pIn: vec3f");
+    const probeBody = source.slice(probeStart, probeStart + 2400);
+    expect(probeBody).toContain("tilingSlabCuts(q0, e, &cuts)");
+    expect(probeBody).toContain(
+      "surfaceDEProbeTilingCore(mid, ext, cutoff, li)",
+    );
+    expect(probeBody).toContain("let fa = tilingFold(q0 + s0 * e);");
+  });
+
+  it("balances every brace under every split composition, lens and clip included", () => {
+    for (const core of ["affine4", "fold4"] as const) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        for (const lens of [false, true]) {
+          for (const tiling of [f4, f4Clipped]) {
+            const source = surfaceDeKernelWgsl(
+              kernelOpts({ mode, core, lens, tiling }),
+            );
+            const opens = [...source.matchAll(/\{/g)].length;
+            const closes = [...source.matchAll(/\}/g)].length;
+            expect(closes).toBe(opens);
+          }
+        }
+      }
+    }
+  });
+});
+
 describe("surfaceDeKernelWgsl 4D maps address space (mapsUniform, the maps-load probe)", () => {
   const STORAGE_LINE =
     "@group(0) @binding(1) var<storage, read> maps: array<GpuMap4>;";
@@ -9175,12 +9347,25 @@ describe("finite reflection tiling WGSL and params ABI", () => {
         expect(wgsl).toContain("let folded = tilingFold(liftEscape4(pIn));");
         expect(wgsl).toContain("surfaceDETilingCore(folded.point, cutoff, li)");
       } else {
+        // The 4D descent cores compile the composed slab wrapper under
+        // their default slabExt: the point path keeps the exact point
+        // call, and the split's walls/cut enumerator and per-piece loop
+        // are present beside it.
         expect(wgsl).toContain(
-          "let folded = tilingFold(rotorInvApply4(vec4f(pIn, params.w0)));",
+          "let q0 = rotorInvApply4(vec4f(pIn, params.w0));",
         );
+        expect(wgsl).toContain("let folded = tilingFold(q0);");
         expect(wgsl).toContain(
           "surfaceDETilingCore(folded.point, vec4f(0.0), cutoff, li)",
         );
+        expect(wgsl).toContain("var<private> tilingWalls: array<vec4f, 24>");
+        expect(wgsl).toContain(
+          "fn tilingSlabCuts(q0: vec4f, e: vec4f, cuts: ptr<function, array<f32, 26>>) -> u32",
+        );
+        expect(wgsl).toContain(
+          "let inner = surfaceDETilingCore(mid, ext, cutoff, li)",
+        );
+        expect(wgsl).toContain("return max(bound, 0.0);");
       }
     }
   });
@@ -9272,11 +9457,22 @@ describe("finite reflection tiling WGSL and params ABI", () => {
         expect(source).toContain("tilingPoint: vec4f");
         expect(source).toContain("vec4f(0.0), vec3f(0.0), 0.0)");
         if (fourD) {
+          // The 4D descent cores compile the composed slab wrapper under
+          // their default slabExt: the point path keeps the exact point
+          // call, and the split's walls/cut enumerator and per-piece loop
+          // are present beside it.
           expect(source).toContain(
-            "let folded = tilingFold(rotorInvApply4(vec4f(pIn, params.w0)));",
+            "let q0 = rotorInvApply4(vec4f(pIn, params.w0));",
           );
+          expect(source).toContain("let folded = tilingFold(q0);");
           expect(source).toContain(
             "surfaceDETilingCore(folded.point, vec4f(0.0), cutoff, li)",
+          );
+          expect(source).toContain(
+            "var<private> tilingWalls: array<vec4f, 24>",
+          );
+          expect(source).toContain(
+            "let inner = surfaceDETilingCore(mid, ext, cutoff, li)",
           );
           expect(source).toMatch(
             /fn surfaceDEHitInfoTilingCore\((?:qIn|pFolded): vec4f/,
@@ -9307,14 +9503,31 @@ describe("finite reflection tiling WGSL and params ABI", () => {
               tiling: fourD ? tiled4 : tiled3,
             }),
           );
-          expect(march).toContain("fn surfaceDEMarchFractal(pIn: vec3f");
-          expect(march).toContain(
-            "let inner = surfaceDEMarchFractal(inv.xyz, innerCutoff, li);",
-          );
-          expect(march).toContain("surfaceDEMarchLens(folded.point");
-          expect(march).toContain(
-            "max(inner, vec2f(tilingClipSdf(folded.point",
-          );
+          if (fourD) {
+            // The composed arm's march-sample twin carries the wall split
+            // (the piece loop rides the lens march pair), so the balloon
+            // union wraps a split-aware twin.
+            expect(march).toContain("fn surfaceDEMarchFractal(pIn: vec3f");
+            expect(march).toContain(
+              "let inner = surfaceDEMarchFractal(inv.xyz, innerCutoff, li);",
+            );
+            expect(march).toContain("tilingSlabCuts(q0, e, &cuts)");
+            expect(march).toContain(
+              "let pair = surfaceDEMarchLens(mid, ext, cutoff, li);",
+            );
+            expect(march).toContain(
+              "bound = vec2f(min(bound.x, stride), min(bound.y, d));",
+            );
+          } else {
+            expect(march).toContain("fn surfaceDEMarchFractal(pIn: vec3f");
+            expect(march).toContain(
+              "let inner = surfaceDEMarchFractal(inv.xyz, innerCutoff, li);",
+            );
+            expect(march).toContain("surfaceDEMarchLens(folded.point");
+            expect(march).toContain(
+              "max(inner, vec2f(tilingClipSdf(folded.point",
+            );
+          }
         }
       }
     }
@@ -9629,6 +9842,21 @@ describe("finite reflection tiling WGSL and params ABI", () => {
       symmetricParams,
       tiled3,
     );
+    // The finite arm's slab now composes through the wall split for a
+    // segment-exact fold set: the affine system packs a real sliceHalfW.
+    const tiledSlabParams = packSurface4GpuParams(
+      buildSurfaceDE4(fourDSystemTransforms()),
+      view4({ sliceHalfW: 0.1 }),
+      { itemCount: 1 },
+      null,
+      null,
+      tiled4,
+    );
+    expect(new DataView(tiledSlabParams).getFloat32(420, true)).toBeCloseTo(
+      0.1,
+      6,
+    );
+    // The lattice arm and a nonlinear fold set keep their guards.
     expect(() =>
       packSurface4GpuParams(
         buildSurfaceDE4(fourDSystemTransforms()),
@@ -9636,9 +9864,22 @@ describe("finite reflection tiling WGSL and params ABI", () => {
         { itemCount: 1 },
         null,
         null,
+        resolveTiling(
+          { kind: "lattice", cellScale: 1.5 },
+          buildSurfaceDE4(fourDSystemTransforms()).visibleBoundingRadius,
+        ),
+      ),
+    ).toThrow(/lattice tiling\+4D slab/);
+    expect(() =>
+      packSurface4GpuParams(
+        buildSurfaceDE4(fourDSpherefoldSystemTransforms()),
+        view4({ sliceHalfW: 0.1 }),
+        { itemCount: 1 },
+        null,
+        null,
         tiled4,
       ),
-    ).toThrow(/tiling\+4D slab/);
+    ).toThrow(/slabExact4/);
 
     const balloon = {
       center: [0, 0, 0] as [number, number, number],
