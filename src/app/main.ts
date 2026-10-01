@@ -106,6 +106,7 @@ import {
   buildSurfaceDE4,
   deHasFolds4,
   slabSupported4,
+  slabExact4,
   type SurfaceDE4,
 } from "../fractal/surface-de-4d";
 import { SURFACE_LENS_SWIRL } from "../fractal/swirl-lens";
@@ -6652,17 +6653,28 @@ async function main(): Promise<void> {
             // SOUND: boxfold/affine systems take the exact segment path,
             // and nonlinear fold sets (spherefold/mandelbox, recursive or
             // in the final lens) are answered by the bounded midpoint
-            // cover the compute kernels and the CPU oracle share. Only a
-            // swirl final (its inverse curves the segment with no point
-            // cover in this frame), a condensation shape (a carried
-            // solid needs its own segment evaluator) and Space tiling (a
-            // fold bends the segment across cell walls) refuse, and each
-            // names itself in the panel's reason.
-            surface4SlabAvailable = surfaceTiling ? false : slabSupported4(de);
+            // cover the compute kernels and the CPU oracle share. Under a
+            // FINITE reflection group the slab composes through the wall
+            // split, for segment-exact fold sets only — the split-plus-
+            // cover composition is the separate nonlinear slab work. The
+            // lattice arm, a swirl final, condensation, and a nonlinear
+            // fold set under tiling each refuse, and each names itself in
+            // the panel's reason.
+            surface4SlabAvailable = surfaceTiling
+              ? !isResolvedLatticeTiling(surfaceTiling) && slabExact4(de)
+              : slabSupported4(de);
             ui.setFourDSlabAvailable(
               surface4SlabAvailable,
               surfaceTiling
-                ? "tiling"
+                ? isResolvedLatticeTiling(surfaceTiling)
+                  ? "tiling"
+                  : surface4SlabAvailable
+                    ? null
+                    : de.foldFinal?.foldKind === SURFACE_LENS_SWIRL
+                      ? "swirl"
+                      : de.condensation !== undefined
+                        ? "condensation"
+                        : "tilingFold"
                 : de.foldFinal?.foldKind === SURFACE_LENS_SWIRL
                   ? "swirl"
                   : de.condensation !== undefined

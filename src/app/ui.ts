@@ -3066,6 +3066,7 @@ export class Ui {
   private fourDSlabRefusal:
     | "swirl"
     | "tiling"
+    | "tilingFold"
     | "condensation"
     | "sphereInversion"
     | "finiteSolid"
@@ -4801,14 +4802,18 @@ export class Ui {
     // TWO SESSIONS REFUSE THE SLAB AND THEY OWE DIFFERENT REASONS, each
     // named by the branch that refused it: a swirl final (its inverse
     // curves the segment with no point cover), a condensation shape (the
-    // carried solid's set distance needs its own segment evaluator), and
-    // Space tiling (a fold bends the segment across cell walls). A 4D
-    // escape-time session refuses it at every fold family, because a
-    // forward orbit has no branch enumeration at all: the box fold that
-    // the IFS descent's cover handles is exactly the one that turns a
-    // segment into a bent polyline here. Spherefold/mandelbox IFS
-    // sessions no longer appear here at all — their slab is answered by
-    // the bounded midpoint cover.
+    // carried solid's set distance needs its own segment evaluator), the
+    // LATTICE Space tiling arm (its walls need their own crossing
+    // enumeration), and a NONLINEAR fold set under finite tiling (the
+    // split's pieces would need the cover's own per-piece answer, the
+    // separate nonlinear slab work). A 4D escape-time session refuses it
+    // at every fold family, because a forward orbit has no branch
+    // enumeration at all: the box fold that the IFS descent's cover
+    // handles is exactly the one that turns a segment into a bent polyline
+    // here. Spherefold/mandelbox IFS sessions no longer appear here at all
+    // — their slab is answered by the bounded midpoint cover, and a
+    // segment-exact fold set under a FINITE group is answered by the wall
+    // split.
     this.fourDSliceThicknessRow.title = !slabRefused
       ? ""
       : this.fourDSlabRefusal === "swirl"
@@ -4825,15 +4830,20 @@ export class Ui {
                 "carried solid needs its own set-distance evaluator for a " +
                 "segment. A zero-thickness slice remains available."
               : this.fourDSlabRefusal === "tiling"
-                ? "Slab thickness is unavailable with Space tiling: folding a " +
-                  "segment bends it across cell walls. A zero-thickness slice " +
-                  "remains available."
-                : this.surfaceSessionKind === "escape"
-                  ? "Slab thickness is unavailable in the escape-time render: its " +
-                    "orbit runs the maps FORWARD, with no branches to thread a " +
-                    "segment through, so a slab has no certificate at any fold " +
-                    "family. The IFS surface render keeps it."
-                  : "";
+                ? "Slab thickness is unavailable with lattice Space tiling: its " +
+                  "mirror walls need their own segment enumeration. A " +
+                  "zero-thickness slice remains available."
+                : this.fourDSlabRefusal === "tilingFold"
+                  ? "Slab thickness with Space tiling needs a segment-exact fold " +
+                    "set: affine and boxfold systems take the wall split, while " +
+                    "spherefold and mandelbox through tiling are future work. A " +
+                    "zero-thickness slice remains available."
+                  : this.surfaceSessionKind === "escape"
+                    ? "Slab thickness is unavailable in the escape-time render: its " +
+                      "orbit runs the maps FORWARD, with no branches to thread a " +
+                      "segment through, so a slab has no certificate at any fold " +
+                      "family. The IFS surface render keeps it."
+                    : "";
     this.fourDSliceThicknessUnavailableNote.textContent =
       this.fourDSliceThicknessRow.title;
     this.fourDSliceThicknessUnavailableNote.classList.toggle(
@@ -4878,13 +4888,15 @@ export class Ui {
   /** Whether the live 4D surface session can take a slab at all (see
    * {@link fourDSlabAvailable}) — main.ts derives it from the system's
    * `slabSupported4` (a nonlinear fold set is answered by the bounded
-   * midpoint cover; only swirl/condensation/tiling refuse) at session
-   * routing and resets it true on session end. */
+   * midpoint cover; only swirl/condensation/lattice refuse), or — under a
+   * tiling — from the finite wall split's segment-exact gate at session
+   * routing, and resets it true on session end. */
   setFourDSlabAvailable(
     available: boolean,
     reason:
       | "swirl"
       | "tiling"
+      | "tilingFold"
       | "condensation"
       | "sphereInversion"
       | "finiteSolid"
@@ -5552,7 +5564,7 @@ export class Ui {
       note +=
         state.renderMode === "flame"
           ? " In 4D Flame, raw reflected images are reduced by the frozen rotor and soft slice."
-          : " 4D finite tiling uses the zero-thickness W slice; slab thickness is unavailable while tiled.";
+          : " 4D finite tiling composes with slab thickness for segment-exact fold sets; other systems keep the zero-thickness slice.";
     }
     this.tilingNote.textContent = note;
   }
