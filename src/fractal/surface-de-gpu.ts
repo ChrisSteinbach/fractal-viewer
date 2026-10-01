@@ -112,7 +112,6 @@ import {
   radiusBandInvRange,
   SLAB_COVER_PIECES,
   slabSupported4,
-  slabExact4,
   type SurfaceDE4,
 } from "./surface-de-4d";
 import {
@@ -2378,7 +2377,11 @@ export interface SurfaceGpuKernelOptions {
    * The hit-info wrapper carries the same cover and attributes the hit to
    * the value-argmin sample (`sStar = s_i`; the pattern `source4` from
    * that sample's own hit info), so radius/pattern coloring rides the
-   * slab location that actually won. `sliceHalfW == 0` takes the point
+   * slab location that actually won. Under a FINITE tiling the cover
+   * composes through the wall split: the split-plus-cover arm's piece
+   * loop covers each folded piece over the same point body, and the
+   * hit-info attribution rides the cover's argmin inside the winning
+   * piece. `sliceHalfW == 0` takes the point
    * body — value-for-value the no-cover kernel. Absent or `false`
    * reproduces today's source byte for byte. HOST CONTRACT: a
    * `slabCover: true` pipeline must never be fed a slab for a system
@@ -3198,8 +3201,14 @@ export interface SurfaceGpu4View {
  * slab is answered by the bounded midpoint cover, which the kernel for
  * those systems must be generated with (`slabCover: true`; the exact
  * `slabExt` kernel is for systems {@link slabExact4} accepts, and the
- * callers' pairing is the host contract). The app clamps `sliceHalfW` to
- * 0 for refused sessions.
+ * callers' pairing is the host contract). Under a FINITE tiling the
+ * cover composes through the wall split (`tiling.ts`'s
+ * {@link tilingSlabPieces}): the kernel for those systems carries
+ * `slabCover: true` AND the tiling, so the split-plus-cover arm is
+ * generated beside the baked walls; the lattice arm still refuses (its
+ * walls need their own crossing enumeration) and a `slabExt: false`
+ * kernel must never be fed a slab for ANY system. The app clamps
+ * `sliceHalfW` to 0 for refused sessions.
  */
 export function packSurface4GpuParams(
   de: SurfaceDE4,
@@ -3236,12 +3245,11 @@ export function packSurface4GpuParams(
           "and bounded work; tiled lattice 4D sessions run slice 0",
       );
     }
-    if (!slabExact4(de)) {
+    if (!slabSupported4(de)) {
       throw new Error(
-        "surface-de-gpu: a slab through finite tiling needs a " +
-          "segment-exact fold set (slabExact4: affine and boxfold only) — " +
-          "spherefold and mandelbox through tiling is the separate " +
-          "nonlinear slab work; clamp sliceHalfW to 0 for this system",
+        "surface-de-gpu: slab queries are refused for a swirl final lens " +
+          "or condensation shape, tiled or not — clamp sliceHalfW to 0 " +
+          "for this system (slabSupported4)",
       );
     }
   }
@@ -6107,10 +6115,10 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
   // The nonlinear slab cover (option doc). Structurally inert outside the
   // 4D descent cores, exactly like slabExt — but a 4D request must be
   // coherent: the cover IS the slab answer, so it requires slabExt on.
-  // It still refuses the tiling composition: the COVER is a per-piece
-  // point cover whose composition with the wall split is the separate
-  // nonlinear slab work — the split alone (below) is for the
-  // segment-exact fold sets.
+  // Under a FINITE tiling it COMPOSES (the split-plus-cover arm below);
+  // under the LATTICE arm it still refuses — the lattice walls need their
+  // own crossing enumeration and bounded work, which no finite-root
+  // table supplies.
   const slabCover =
     core4 && !forward && !siCore && !finiteCore
       ? (opts.slabCover ?? false)
@@ -6121,12 +6129,12 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
         "answer under the 4D descent cores",
     );
   }
-  if (slabCover && tiling !== null) {
+  if (slabCover && latticeTiling) {
     throw new Error(
-      "surface-de-gpu: slabCover+tiling is excluded — the split's pieces " +
-        "would need the cover's own per-piece answer, the separate " +
-        "nonlinear slab work; segment-exact fold sets take the split " +
-        "instead",
+      "surface-de-gpu: slabCover+lattice tiling is excluded — the " +
+        "affine-A1 product's walls need their own crossing enumeration " +
+        "and bounded work (the finite groups' root table is not that " +
+        "enumeration); tiled lattice 4D sessions run slice 0",
     );
   }
   // The covered descent/lens/hit-info bodies are generated as the POINT
@@ -6139,9 +6147,9 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
   // baked walls and cut enumerator emitted beside the fold). The core
   // body already takes an external (qIn, qExt) pair under tiling, so the
   // split's folded pieces feed it unchanged; the packer admits
-  // sliceHalfW only for a segment-exact fold set (slabExact4), which is
-  // what keeps this emission reachable only for systems the split can
-  // answer exactly. Every other tiling shape keeps the point wrapper.
+  // sliceHalfW wherever the CPU entries do (slabSupported4), which is
+  // what keeps this emission reachable only for systems some slab answer
+  // exists for. Every other tiling shape keeps the point wrapper.
   const tiledSlab =
     tiling !== null &&
     !latticeTiling &&
@@ -6149,6 +6157,21 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
     !forward &&
     slabExt &&
     !slabCover;
+  // The split-plus-COVER composition (the slabCover option doc): a
+  // nonlinear fold set under a FINITE group. The split enumerates the
+  // folded pieces exactly as the segment-exact arm above does; each
+  // piece is then answered by the BOUNDED MIDPOINT COVER over its
+  // folded straight segment — the point body sampled at the piece's
+  // equally spaced midpoints, `min_i max(0, DE(mid_i) - halfPiece)` —
+  // sound per piece by the cover's own triangle-inequality argument, so
+  // the composition adds no soundness surface: `min_j
+  // max(coverCert_j, clipSdf(mid_j) - halfLen_j)`. The body is the
+  // POINT estimator (bodySlabExt false), renamed `surfaceDECovered` by
+  // the cover flow, and the composed wrapper's piece loop inlines the
+  // cover's sample loop over it — `pieces x SLAB_COVER_PIECES` point
+  // descents per query, bounded.
+  const tiledSlabCover =
+    tiling !== null && !latticeTiling && core4 && !forward && slabCover;
   // A 4D fold/lens wrapper must run before the core's affine-final prologue.
   // Both the lens and finite tiling therefore hoist the view lift and hand an
   // already-lifted vec4 into the otherwise shared core body; the cover does
@@ -6156,16 +6179,18 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
   // then samples).
   const core4ExternalLift = core4 && (lens || tiling !== null || slabCover);
   // The split's baked walls and cut enumerator — emitted only beside the
-  // composed wrapper, keeping every other program's text byte-identical.
-  const tilingSlabText = tiledSlab
-    ? `${tilingSlabSource((tiling as ResolvedFiniteTiling).info, "wgsl", {
-        walls: "tilingWalls",
-        cuts: "tilingSlabCuts",
-      })}\n`
-    : "";
-  const tilingSlabCutsCap = tiledSlab
-    ? 2 + tilingReflectionWalls((tiling as ResolvedFiniteTiling).info).length
-    : 0;
+  // composed wrappers, keeping every other program's text byte-identical.
+  const tilingSlabText =
+    tiledSlab || tiledSlabCover
+      ? `${tilingSlabSource((tiling as ResolvedFiniteTiling).info, "wgsl", {
+          walls: "tilingWalls",
+          cuts: "tilingSlabCuts",
+        })}\n`
+      : "";
+  const tilingSlabCutsCap =
+    tiledSlab || tiledSlabCover
+      ? 2 + tilingReflectionWalls((tiling as ResolvedFiniteTiling).info).length
+      : 0;
   // The march-sample path (the balloon's certified stride pair) is
   // DISABLED under the cover: the sample twin is derived from the lens
   // wrapper's own text, and the covered lens wrapper takes an
@@ -8916,6 +8941,226 @@ fn surfaceDEHitInfo(pIn: vec3f, li: u32) -> SurfaceHitInfo {
   return hi;
 }`;
 
+  // THE SPLIT-PLUS-COVER ARM (tiling + slabCover): the tiled wrapper's
+  // piece loop calling the covered POINT body. The split vocabulary
+  // (tiling.ts's tilingSlabPieces — the baked walls and cut enumerator in
+  // the header) divides the lifted segment at every wall crossing — at
+  // most maxWordLength + 1 pieces, on each of which the fold is ONE
+  // isometry, so the piece's folded image is straight — and each folded
+  // piece is answered by the BOUNDED MIDPOINT COVER over it:
+  // ${SLAB_COVER_PIECES} equally spaced point descents into the covered
+  // body, each certified `DE(mid_i) - halfPiece` by the triangle
+  // inequality over a COMPLETE partition of the piece — the cover's own
+  // soundness argument, per piece, so the composition adds no soundness
+  // surface. The piece loop mirrors `tilingSlabValueWrapText` term for
+  // term (the DE+clip combined AT ONE SEGMENT PARAMETER per piece), the
+  // cover loop mirrors `coverValueWrapText`'s sample loop term for term
+  // (cutoff `+ halfPiece` per piece, its own contract). Zero thickness is
+  // the tiled point path, value for value.
+  const tilingSlabCoverValueWrapText = tiledSlabCover
+    ? /* wgsl */ `// Finite reflection tiling through a SLAB query on a nonlinear fold
+// set: the split vocabulary (tiling.ts's tilingSlabPieces — the baked
+// walls and cut enumerator in the header) divides the lifted segment at
+// every wall crossing — at most maxWordLength + 1 pieces, on each of
+// which the fold is ONE isometry, so the piece's folded image is
+// straight — and each folded piece is answered by the BOUNDED MIDPOINT
+// COVER over it: ${SLAB_COVER_PIECES} equally spaced point descents into
+// the covered body above, each certified \`DE(mid_i) - halfPiece\` by the
+// triangle inequality over a COMPLETE partition of the piece. The answer
+// is min_j max(coverCert_j, clipSdf(F_j mid) - halfLen_j): DE and clip
+// combined PER PIECE so the intersection stays at one segment parameter,
+// the min over the complete piece cover lower-bounds the segment's
+// distance. The cutoff threads like the cover's: a piece asked at
+// cutoff + halfPiece that clears it proves the piece clears cutoff.
+// Zero thickness takes the point path, value for value.
+fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+  if (params.tilingGroup != ${tilingInfo!.code}u) {
+    return 0.0;
+  }
+  let q0 = rotorInvApply4(vec4f(pIn, params.w0));
+  if (params.sliceHalfW <= 0.0) {
+    let folded = tilingFold(q0);
+    if (!folded.ok) {
+      return 0.0;
+    }
+    let inner = surfaceDECovered(folded.point, cutoff, li);
+    ${tiling?.clip ? "return max(inner, tilingClipSdf(folded.point.xyz));" : "return inner;"}
+  }
+  let e = rotorInvWCol4() * params.sliceHalfW;
+  var cuts: array<f32, ${tilingSlabCutsCap}>;
+  let cutCount = tilingSlabCuts(q0, e, &cuts);
+  var bound = 1e30;
+  var k = 0u;
+  loop {
+    if (k + 1u >= cutCount) {
+      break;
+    }
+    let s0 = cuts[k];
+    let s1 = cuts[k + 1u];
+    k = k + 1u;
+    if (s1 <= s0) {
+      continue;
+    }
+    let fa = tilingFold(q0 + s0 * e);
+    let fb = tilingFold(q0 + s1 * e);
+    if (!fa.ok || !fb.ok) {
+      return 0.0;
+    }
+    let ext = 0.5 * (fb.point - fa.point);
+    let mid = 0.5 * (fa.point + fb.point);
+    let halfLen = length(ext);
+    let halfPiece = halfLen * ${coverFraction};
+    let innerCutoff = select(0.0, cutoff + halfPiece, cutoff > 0.0);
+    var coverBound = 1e30;
+    for (var i = 0u; i < ${SLAB_COVER_PIECES}u; i++) {
+      let s = -1.0 + (2.0 * f32(i) + 1.0) * ${coverFraction};
+      coverBound = min(coverBound, surfaceDECovered(mid + s * ext, innerCutoff, li) - halfPiece);
+    }
+    let pieceBound = ${tiling?.clip ? "max(coverBound, tilingClipSdf(mid.xyz) - halfLen)" : "coverBound"};
+    bound = min(bound, pieceBound);
+  }
+  return max(bound, 0.0);
+}`
+    : "";
+  // The composed arm's shading probe (`coveredProbe`): ONE whole-segment
+  // relaxation at the query's own folded midpoint —
+  // `max(DE(fold(q0)), clipSdf(fold(q0).xyz)) - |e|` is still a sound
+  // lower bound over the whole segment by the triangle inequality (every
+  // point of the segment lies within |e| of its midpoint; the nearest-copy
+  // theorem carries the fold) — deliberately loose, the same trade the
+  // untiled cover's one-piece probe makes, against pieces x
+  // ${SLAB_COVER_PIECES} descents per tap. Zero thickness is the tiled
+  // point probe, value for value.
+  const tilingSlabCoverProbeWrapText = tiledSlabCover
+    ? /* wgsl */ `// The composed shading probe (\`coveredProbe\` under tiling): ONE
+// whole-segment relaxation at the query's own folded midpoint —
+// \`max(DE(fold(q0)), clipSdf(fold(q0).xyz)) - |e|\` is still a sound
+// lower bound over the whole segment by the triangle inequality —
+// deliberately loose, the same trade the untiled cover's one-piece
+// probe makes, against pieces x ${SLAB_COVER_PIECES} descents per tap.
+fn surfaceDEProbe(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+  if (params.tilingGroup != ${tilingInfo!.code}u) {
+    return 0.0;
+  }
+  let q0 = rotorInvApply4(vec4f(pIn, params.w0));
+  if (params.sliceHalfW <= 0.0) {
+    let folded = tilingFold(q0);
+    if (!folded.ok) {
+      return 0.0;
+    }
+    let inner = ${coverProbeTarget}(folded.point, cutoff, li);
+    ${tiling?.clip ? "return max(inner, tilingClipSdf(folded.point.xyz));" : "return inner;"}
+  }
+  let e = rotorInvWCol4() * params.sliceHalfW;
+  let folded = tilingFold(q0);
+  if (!folded.ok) {
+    return 0.0;
+  }
+  let halfPiece = length(e);
+  let innerCutoff = select(0.0, cutoff + halfPiece, cutoff > 0.0);
+  let inner = ${coverProbeTarget}(folded.point, innerCutoff, li);
+  let pieceBound = ${tiling?.clip ? "max(inner, tilingClipSdf(folded.point.xyz))" : "inner"};
+  return max(pieceBound - halfPiece, 0.0);
+}`
+    : "";
+  // The composed hit-info twin: attribute the hit to the VALUE-argmin
+  // cover sample inside the VALUE-argmin piece (the same min the value
+  // wrapper returns, clip included), so radius/pattern coloring rides
+  // the sample that actually won. The winning sample's sStar remaps into
+  // the original slab coordinate (s = start + (sLocal + 1) / 2 *
+  // (end - start)), and tilingPoint — the chamber point every 4D tiled
+  // color source reads — is the winning sample's folded position. Zero
+  // thickness keeps the point path.
+  const tilingSlabCoverHitInfoWrapText = tiledSlabCover
+    ? /* wgsl */ `// Finite tiling hit attribution through a SLAB query on a nonlinear
+// fold set: attribute the hit to the VALUE-argmin cover sample inside
+// the VALUE-argmin piece (the same min the value wrapper returns, clip
+// included), so radius/pattern coloring rides the sample that actually
+// won.
+fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+  let rawTilingPoint = rotorInvApply4(vec4f(p, params.w0));
+  var failed = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}${tilingCtorArg}${balloonCtorArg});
+  failed.tilingPoint = rawTilingPoint;
+  if (params.tilingGroup != ${tilingInfo!.code}u) {
+    return failed;
+  }
+  if (params.sliceHalfW <= 0.0) {
+    let folded = tilingFold(rawTilingPoint);
+    if (!folded.ok) {
+      return failed;
+    }
+    var info = surfaceDEHitInfoCovered(folded.point, li);
+    info.tilingPoint = folded.point;${
+      balloon && pattern && core4 && !lens
+        ? "\n  info.source4 = finalApply4(folded.point);"
+        : ""
+    }
+    return info;
+  }
+  let e = rotorInvWCol4() * params.sliceHalfW;
+  var cuts: array<f32, ${tilingSlabCutsCap}>;
+  let cutCount = tilingSlabCuts(rawTilingPoint, e, &cuts);
+  var bestD = 1e30;
+  var bestStart = -1.0;
+  var bestEnd = 1.0;
+  var bestMid = vec4f(0.0);
+  var bestExt = vec4f(0.0);
+  var bestI = 0u;
+  var k = 0u;
+  loop {
+    if (k + 1u >= cutCount) {
+      break;
+    }
+    let s0 = cuts[k];
+    let s1 = cuts[k + 1u];
+    k = k + 1u;
+    if (s1 <= s0) {
+      continue;
+    }
+    let fa = tilingFold(rawTilingPoint + s0 * e);
+    let fb = tilingFold(rawTilingPoint + s1 * e);
+    if (!fa.ok || !fb.ok) {
+      return failed;
+    }
+    let ext = 0.5 * (fb.point - fa.point);
+    let mid = 0.5 * (fa.point + fb.point);
+    let halfLen = length(ext);
+    let halfPiece = halfLen * ${coverFraction};
+    var coverBound = 1e30;
+    var coverI = 0u;
+    for (var i = 0u; i < ${SLAB_COVER_PIECES}u; i++) {
+      let s = -1.0 + (2.0 * f32(i) + 1.0) * ${coverFraction};
+      let d = surfaceDECovered(mid + s * ext, 0.0, li);
+      if (d < coverBound) {
+        coverBound = d;
+        coverI = i;
+      }
+    }
+    var pieceBound = coverBound - halfPiece;
+    ${tiling?.clip ? `pieceBound = max(pieceBound, tilingClipSdf(mid.xyz) - halfLen);` : ""}
+    if (pieceBound < bestD) {
+      bestD = pieceBound;
+      bestStart = s0;
+      bestEnd = s1;
+      bestMid = mid;
+      bestExt = ext;
+      bestI = coverI;
+    }
+  }
+  let sLocal = -1.0 + (2.0 * f32(bestI) + 1.0) * ${coverFraction};
+  let winPoint = bestMid + sLocal * bestExt;
+  var info = surfaceDEHitInfoCovered(winPoint, li);
+  info.tilingPoint = winPoint;
+  info.sStar = bestStart + (sLocal + 1.0) * 0.5 * (bestEnd - bestStart);${
+    balloon && pattern && core4 && !lens
+      ? `
+  info.source4 = finalApply4(winPoint);`
+      : ""
+  }
+  return info;
+}`
+    : "";
+
   // The SPHERE-INVERSION hit-info (decision 6): one siEstimate, whose
   // bookkeeping already names the winning term. "By Transform" colours by
   // GENERATION — firstChoice is the word length, so a host packs one slot per
@@ -9234,7 +9479,15 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     tiling
       ? latticeTiling
         ? latticeTiledHitInfoText
-        : finiteTiledHitInfoText
+        : tiledSlabCover
+          ? `${balloonRename(
+              lensedHitInfoText,
+              "fn surfaceDEHitInfo(",
+              "fn surfaceDEHitInfoCovered(",
+            )}
+
+${tilingSlabCoverHitInfoWrapText}`
+          : finiteTiledHitInfoText
       : coveredHitInfoText,
   );
 
@@ -16343,9 +16596,12 @@ ${lensPost ? "  let p = lensUnpost(pIn);\n" : ""}  let kind = u32(params.lensPar
   // dimension-sensitive quantity the 4D one: 81/3/243 branches decoded
   // `b = selX + 3*selY + 9*selZ + 27*selW` (the mandelbox's sphere branch
   // turning over every 81st index, its shell guard skipping `b += 80u`),
-  // `segmentRadius4` in place of every `length` so a slice-thickness slab rides
-  // through the lens (boxfold lenses only — `slabExact4` refuses the
-  // rest, and {@link packSurface4GpuParams} throws rather than pack one),
+  // `segmentRadius4` in place of every `length` so a slice-thickness slab
+  // rides through the lens where the ext machinery exists — a boxfold
+  // lens takes it directly; a nonlinear lens (spherefold/mandelbox) is
+  // answered by the cover OUTSIDE it (the covered body samples the lensed
+  // point estimator, slabCover), and {@link packSurface4GpuParams} throws
+  // rather than pack a system no slab answer exists for —
   // and an ORIGIN-anchored visible ball at the FULL 4D radius
   // `params.visRadius4` — NOT the frozen `visibleRadius` slot, which
   // carries this core's slice-adjusted march gate (packing contract).
@@ -16735,7 +16991,7 @@ ${coverProbeWrapText}`
   const withBalloonBody = (inner: string): string =>
     balloon
       ? `${
-          probeWidth === null
+          probeWidth === null && !coveredProbe
             ? balloonRename(inner, "fn surfaceDE(", "fn surfaceDEFractal(")
             : balloonRename(
                 balloonRename(inner, "fn surfaceDE(", "fn surfaceDEFractal("),
@@ -16766,7 +17022,7 @@ fn balloonInvert(p: vec3f) -> vec4f {
   );
 }
 ${balloonDeWrapText}${
-          probeWidth === null
+          probeWidth === null && !coveredProbe
             ? ""
             : `
 
@@ -16852,7 +17108,7 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
     : "";
   const tilingDeWrapText = tiledSlab
     ? tilingSlabValueWrapText
-    : tiling && !latticeTiling
+    : tiling && !latticeTiling && !tiledSlabCover
       ? /* wgsl */ `fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   if (params.tilingGroup != ${tilingInfo!.code}u) {
     return 0.0;
@@ -16954,7 +17210,7 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
         .replaceAll("surfaceDETilingCore(", "surfaceDEProbeTilingCore(")
     : "";
   const finiteTiledBodyBlock =
-    tiling && !latticeTiling
+    tiling && !latticeTiling && !tiledSlabCover
       ? `${balloonRename(
           probeWidth === null
             ? lensedBodyBlock
@@ -16979,6 +17235,26 @@ ${tilingDeWrapText}${
 ${tilingProbeWrapText}`
         }`
       : "";
+  // THE SPLIT-PLUS-COVER body block: the covered POINT body (the cover
+  // flow's own rename — `surfaceDECovered`, `surfaceDEProbeCovered`) with
+  // the composed tiled wrappers owning the public names. No
+  // `surfaceDETilingCore` exists here: the piece loop inlines the cover's
+  // sample loop over `surfaceDECovered` directly (THE SPLIT-PLUS-COVER
+  // ARM's comment).
+  const tiledSlabCoverBodyBlock = tiledSlabCover
+    ? `${lensedBodyBlock
+        .replace("fn surfaceDE(", "fn surfaceDECovered(")
+        .replace("fn surfaceDEProbe(", "fn surfaceDEProbeCovered(")}
+
+${tilingSlabCoverValueWrapText}${
+        coveredProbe
+          ? `
+
+// The composed taps' own probe — one whole-segment relaxation, taps only.
+${tilingSlabCoverProbeWrapText}`
+          : ""
+      }`
+    : "";
   const latticeTiledBodyBlock = latticeTiling
     ? `${balloonRename(
         probeWidth === null
@@ -17012,7 +17288,9 @@ ${tilingProbeWrapText}`
     tiling
       ? latticeTiling
         ? latticeTiledBodyBlock
-        : finiteTiledBodyBlock
+        : tiledSlabCover
+          ? tiledSlabCoverBodyBlock
+          : finiteTiledBodyBlock
       : coveredBodyBlock,
   );
 

@@ -48,6 +48,17 @@
  *   6. 3D PARITY: the b3-tiled affine scene enters Surface, settles
  *      COMPLETED and draws coverage > 0 — the shared finite wrapper's 3D
  *      arm renders unchanged.
+ *   7. THE COMPOSED SCENE (the epic's acceptance case): the mandelbox
+ *      FINAL over the A4-aligned pentatope — a NONLINEAR fold set under
+ *      finite tiling, `slabExact4` false — enters, settles COMPLETED,
+ *      draws and visibly changes thickness at 0.2, returns to zero
+ *      byte-exactly, carries thickness through a real reload, and exports
+ *      the thick render; its settle budget is its own (the split-plus-
+ *      cover arm's piece factor multiplies the march work).
+ *   8. LATTICE DISCLOSURE: the composed fixture's lattice variant enters
+ *      and renders its h=0 slice, but the thickness row DISABLES with the
+ *      lattice reason — the refused combination disclosed, not clamped
+ *      silently.
  *
  * NON-VACUITY: the thick-vs-entry comparison fails when thickness never
  * reached the render (0 changed); the zero-return identity fails when
@@ -67,10 +78,20 @@ import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 import {
   TILED4_SLAB_HASH,
   TILED4_SLAB_HASH_3D,
+  TILED4_COMPOSED_SLAB_HASH,
+  TILED4_COMPOSED_LATTICE_HASH,
 } from "./lib/surface-tiled-slab-scene.mjs";
 
 const DEFAULT_SETTLE_MS = 300000;
 const DEFAULT_CAPTURE_MS = 300000;
+/** The composed scene's own settle budget: the split-plus-cover arm
+ * multiplies the untiled cover's march work by the piece count (up to
+ * maxWordLength + 1 pieces, each covered at SLAB_COVER_PIECES midpoints),
+ * so the thick settle runs minutes, not seconds — the lift gate's own
+ * lesson ("every scene gets its own settle budget"), scaled to this arm.
+ * Measured entry/thick/identity figures are recorded in
+ * docs/surface-slice-thickness.md. */
+const COMPOSED_SETTLE_MS = 1200000;
 /** The thick export must sit canvas-close (the same render read through
  * the export pipeline, DOF aside) and must differ from both references —
  * see the capture row's doc for why the cover gate's 2x ratio is the
@@ -85,6 +106,7 @@ function parseArgs(argv) {
     display: undefined,
     settleMs: DEFAULT_SETTLE_MS,
     captureMs: DEFAULT_CAPTURE_MS,
+    composedSettleMs: COMPOSED_SETTLE_MS,
   };
   for (const raw of argv) {
     const [key, value] = raw.replace(/^--/, "").split("=");
@@ -92,6 +114,8 @@ function parseArgs(argv) {
     else if (key === "display") out.display = value ?? ":0";
     else if (key === "settle" && value) out.settleMs = Number(value);
     else if (key === "capture" && value) out.captureMs = Number(value);
+    else if (key === "composed-settle" && value)
+      out.composedSettleMs = Number(value);
   }
   return out;
 }
@@ -491,6 +515,185 @@ async function driveTiledScene(browser, args, rows) {
   }
 }
 
+async function driveComposedScene(browser, args, rows) {
+  const page = await browser.newPage({
+    ignoreHTTPSErrors: true,
+    viewport: { width: 1024, height: 640 },
+  });
+  page.on("pageerror", (e) => {
+    process.stderr.write(`[page:uncaught] ${e.message}\n`);
+  });
+  try {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: async (text) => {
+            window.__shareLink = text;
+          },
+        },
+      });
+    });
+    await page.goto(
+      `${args.url}/?surfacestate&surfacesamples=1#${TILED4_COMPOSED_SLAB_HASH}`,
+      { waitUntil: "load" },
+    );
+    await waitStableLatch(page);
+    // The explorer's own capture, same export pipeline — the wrong-subject
+    // reference for the capture discrimination, taken before any surface
+    // export could toggle depth of field (the tiled drive's rule).
+    rows.composedCapPoints = await savePng(page, args.captureMs);
+    await page.waitForTimeout(2500);
+
+    await enterSurface(page);
+    rows.composedEntry = await waitSettle(page, args.composedSettleMs);
+    rows.composedEntryEngine = rows.composedEntry.state
+      ? rows.composedEntry.state.engine
+      : null;
+    rows.composedRowEnabled = await rowEnabled(page);
+    rows.composedEntryShot = await canvasShot(page);
+
+    // The slab must reach the render: the thick settle's canvas differs
+    // from the entry frame, and the slider drove it live.
+    const drove = await driveThickness(page, 0.2);
+    const invalidated = await waitInvalidation(page);
+    const thick = await waitSettle(page, args.composedSettleMs);
+    rows.composedThick = thick;
+    rows.composedThickEngine = thick.state ? thick.state.engine : null;
+    rows.composedThickShot = await canvasShot(page);
+    rows.composedThickOk = drove && invalidated && thick.settled;
+
+    // The share link is copied while the thick value is live, so the
+    // document it encodes carries thickness 0.2; the reload below
+    // restores it. Its confirmation toast overlays the scene region for
+    // ~1.8s, so wait it out before any frame the identity compares.
+    const shareLink = await copyLink(page);
+    await page.waitForFunction(
+      () =>
+        document.getElementById("toast")?.classList.contains("hidden") ?? true,
+      null,
+      { timeout: 15000 },
+    );
+    await page.waitForTimeout(500);
+
+    // Zero thickness reproduces the entry frame byte for byte in the
+    // scene region — the composed kernel's h=0 branch is the tiled point
+    // kernel's own composition, measured as pixels — and deliberately
+    // BEFORE any surface export could toggle depth of field.
+    const back = await driveThickness(page, 0);
+    const backInvalidated = await waitInvalidation(page);
+    const backSettle = await waitSettle(page, args.composedSettleMs);
+    const backShot = await canvasShot(page);
+    rows.composedIdentity = await sceneDiff(
+      page,
+      rows.composedEntryShot,
+      backShot,
+    );
+    rows.composedBackOk = back && backInvalidated && backSettle.settled;
+
+    // Capture: the thick export differs from the h=0 export and is not
+    // the explorer's image.
+    rows.composedCapZero = await savePng(page, args.captureMs);
+    await page.waitForTimeout(2500);
+    await driveThickness(page, 0.2);
+    rows.composedCapThickInvalidated = await waitInvalidation(page);
+    await waitSettle(page, args.composedSettleMs);
+    rows.composedCapThick = await savePng(page, args.captureMs);
+
+    // A REAL reload through a unique query key, restoring thickness.
+    const payload = decodePayload(shareLink);
+    rows.composedCarriedThickness =
+      payload && payload.fourD ? payload.fourD.sliceThickness : null;
+    const reloadUrl = shareLink.replace(
+      /#/,
+      "?surfacestate&surfacesamples=1&composedreload=1#",
+    );
+    await page.goto(reloadUrl, { waitUntil: "load" });
+    await waitStableLatch(page);
+    await enterSurface(page);
+    const reload = await waitSettle(page, args.composedSettleMs);
+    rows.composedReloadEngine = reload.state ? reload.state.engine : null;
+    rows.composedSliderAfter = await page.evaluate(() => {
+      const el = document.getElementById("fourDSliceThicknessSlider");
+      return el instanceof HTMLInputElement ? el.value : null;
+    });
+    const reloadShot = await canvasShot(page);
+    rows.composedReloadIdentity = await sceneDiff(
+      page,
+      rows.composedThickShot,
+      reloadShot,
+    );
+    rows.composedReloadOk =
+      rows.composedCarriedThickness === 0.2 &&
+      rows.composedSliderAfter === "0.2" &&
+      reload.entered &&
+      reload.settled &&
+      rows.composedReloadIdentity.maxDelta === 0;
+
+    rows.composedThickChanged = await sceneDiff(
+      page,
+      rows.composedEntryShot,
+      rows.composedThickShot,
+    );
+    const pointsGray = rows.composedCapPoints
+      ? await gray64(page, rows.composedCapPoints)
+      : null;
+    const zeroGray = rows.composedCapZero
+      ? await gray64(page, rows.composedCapZero)
+      : null;
+    const thickGray = rows.composedCapThick
+      ? await gray64(page, rows.composedCapThick)
+      : null;
+    rows.composedCapThickVsZero =
+      thickGray && zeroGray ? grayDistance(thickGray, zeroGray) : null;
+    rows.composedCapThickVsPoints =
+      thickGray && pointsGray ? grayDistance(thickGray, pointsGray) : null;
+  } finally {
+    await page.close();
+  }
+}
+
+/** The lattice refusal disclosure: the composed fixture's lattice variant
+ * enters and renders (the h=0 slice is unrefused), but the thickness row
+ * DISABLES with the tiling reason — the explicit disclosure the epic's
+ * acceptance names, measured on the live panel rather than argued. */
+async function driveLatticeDisclosure(browser, args, rows) {
+  const page = await browser.newPage({
+    ignoreHTTPSErrors: true,
+    viewport: { width: 1024, height: 640 },
+  });
+  try {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto(
+      `${args.url}/?surfacestate&surfacesamples=1#${TILED4_COMPOSED_LATTICE_HASH}`,
+      { waitUntil: "load" },
+    );
+    await waitStableLatch(page);
+    await enterSurface(page);
+    const settle = await waitSettle(page, args.settleMs);
+    rows.latticeEngine = settle.state ? settle.state.engine : null;
+    rows.latticeRowEnabled = await rowEnabled(page);
+    rows.latticeReason = await page.evaluate(
+      () => document.getElementById("fourDSliceThicknessRow")?.title ?? "",
+    );
+    rows.latticeCoverage = await page.evaluate(() => {
+      const el = document.getElementById("pointCount");
+      const n = el ? Number(el.textContent.replace(/[^\d.]/g, "")) : 0;
+      return Number.isFinite(n) ? n : 0;
+    });
+    rows.latticeOk =
+      settle.entered &&
+      settle.settled &&
+      rows.latticeCoverage > 0 &&
+      rows.latticeRowEnabled === false &&
+      rows.latticeReason.includes("lattice Space tiling");
+    rows.latticeMs = settle.ms;
+  } finally {
+    await page.close();
+  }
+}
+
 /** The 3D parity fixture: enter, settle COMPLETED, draw coverage > 0. */
 async function driveParityScene(browser, args, rows) {
   const page = await browser.newPage({
@@ -552,6 +755,8 @@ async function run() {
   let failed = false;
   try {
     await driveTiledScene(browser, args, rows);
+    await driveComposedScene(browser, args, rows);
+    await driveLatticeDisclosure(browser, args, rows);
     await driveParityScene(browser, args, rows);
 
     const thickChangedOk =
@@ -573,11 +778,27 @@ async function run() {
       rows.capThickVsPoints !== null &&
       rows.capThickVsZero > 1.0 &&
       rows.capThickVsPoints > 1.0;
+    // The composed scene's own rows: availability, visible thickness,
+    // byte-exact zero return, reload, capture — the epic's acceptance
+    // case end to end.
+    const composedChangedOk =
+      rows.composedThickChanged.changedFraction > THICK_CHANGED_FRACTION;
+    const composedIdentityOk =
+      rows.composedBackOk && rows.composedIdentity.maxDelta === 0;
+    const composedCaptureOk =
+      rows.composedCapThickInvalidated === true &&
+      rows.composedCapThickVsZero !== null &&
+      rows.composedCapThickVsPoints !== null &&
+      rows.composedCapThickVsZero > 1.0 &&
+      rows.composedCapThickVsPoints > 1.0;
     const engineOk =
       args.display === undefined ||
       (rows.entryEngine === "compute" &&
         rows.thickEngine === "compute" &&
-        rows.reloadEngine === "compute");
+        rows.reloadEngine === "compute" &&
+        rows.composedEntryEngine === "compute" &&
+        rows.composedThickEngine === "compute" &&
+        rows.composedReloadEngine === "compute");
     const ok =
       rows.entryRowEnabled &&
       rows.entry.entered &&
@@ -587,6 +808,15 @@ async function run() {
       identityOk &&
       rows.reloadOk &&
       captureOk &&
+      rows.composedRowEnabled &&
+      rows.composedEntry.entered &&
+      rows.composedEntry.settled &&
+      rows.composedThickOk &&
+      composedChangedOk &&
+      composedIdentityOk &&
+      rows.composedReloadOk &&
+      composedCaptureOk &&
+      rows.latticeOk &&
       rows.parityOk &&
       engineOk;
     if (!ok) failed = true;
@@ -599,14 +829,33 @@ async function run() {
         `identity=${String(identityOk).padEnd(5)}(max ${rows.identity.maxDelta}) ` +
         `reload=${String(rows.reloadOk).padEnd(5)}(max ${rows.reloadIdentity.maxDelta}) ` +
         `capture=${String(captureOk).padEnd(5)} ` +
-        `parity=${String(rows.parityOk).padEnd(5)}(cov ${rows.parityCoverage}, ${String(rows.parityMs)}ms) ` +
         `engine=${String(rows.entryEngine).padEnd(8)}(want compute)\n` +
         `  capture thick-vs-zero=${rows.capThickVsZero === null ? "n/a" : rows.capThickVsZero.toFixed(4)} ` +
         `thick-vs-points=${rows.capThickVsPoints === null ? "n/a" : rows.capThickVsPoints.toFixed(4)} ` +
         `thick-vs-canvas=n/a ` +
         `invalidated=${String(rows.capThickInvalidated)} ` +
         `reload carriedThickness=${String(rows.carriedThickness)} ` +
-        `slider=${String(rows.sliderBefore)}->${String(rows.sliderAfter)}\n`,
+        `slider=${String(rows.sliderBefore)}->${String(rows.sliderAfter)}\n` +
+        `  composed ` +
+        `rowEnabled=${String(rows.composedRowEnabled).padEnd(5)} ` +
+        `entry=${String(rows.composedEntry.settled).padEnd(5)}(${rows.composedEntry.ms}ms) ` +
+        `thick=${String(rows.composedThickOk).padEnd(5)}(${rows.composedThick.ms ?? "?"}ms) ` +
+        `changed=${(rows.composedThickChanged.changedFraction * 100).toFixed(4)}% ` +
+        `identity=${String(composedIdentityOk).padEnd(5)}(max ${rows.composedIdentity.maxDelta}) ` +
+        `reload=${String(rows.composedReloadOk).padEnd(5)}(max ${rows.composedReloadIdentity.maxDelta}) ` +
+        `capture=${String(composedCaptureOk).padEnd(5)} ` +
+        `engine=${String(rows.composedEntryEngine).padEnd(8)}\n` +
+        `  composed capture thick-vs-zero=${rows.composedCapThickVsZero === null ? "n/a" : rows.composedCapThickVsZero.toFixed(4)} ` +
+        `thick-vs-points=${rows.composedCapThickVsPoints === null ? "n/a" : rows.composedCapThickVsPoints.toFixed(4)} ` +
+        `invalidated=${String(rows.composedCapThickInvalidated)} ` +
+        `reload carriedThickness=${String(rows.composedCarriedThickness)} ` +
+        `slider=${String(rows.composedSliderAfter)}\n` +
+        `  lattice disclosure rowEnabled=${String(rows.latticeRowEnabled).padEnd(5)} ` +
+        `reason="${rows.latticeReason ? rows.latticeReason.slice(0, 48) : ""}" ` +
+        `coverage=${rows.latticeCoverage} ` +
+        `disclosed=${String(rows.latticeOk)} ` +
+        `engine=${String(rows.latticeEngine)}\n` +
+        `  parity=${String(rows.parityOk).padEnd(5)}(cov ${rows.parityCoverage}, ${String(rows.parityMs)}ms)\n`,
     );
   } finally {
     await browser.close();

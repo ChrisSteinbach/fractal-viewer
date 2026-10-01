@@ -3802,24 +3802,23 @@ export class SurfaceComputeRenderer {
     // slab pair's ext registers are pure occupancy tax. Both pairs share
     // the explicit bind group layouts below, so bind groups stay
     // variant-agnostic and runFrame's pick is a pipeline handle. A tiled
-    // 4D system takes a slab only through the finite wall split, and only
-    // for a segment-exact fold set (`slabExact4` — affine and boxfold):
-    // the lattice arm and the nonlinear fold sets keep the single
-    // slab-free pair, and the packer's own throws refuse any sliceHalfW
-    // they cannot answer. A nonlinear untiled system takes the full pair
-    // generated with `slabCover` (the bounded midpoint cover IS its slab
-    // answer), and its slab-free twin is the shipped h=0 kernel.
+    // 4D system takes a slab wherever the CPU entries answer one: a
+    // segment-exact fold set through the finite wall split (the exact
+    // ext-transport kernel), a nonlinear fold set (spherefold/mandelbox,
+    // recursive or in the final lens) through the split-plus-cover
+    // composition — the finite kernel generated with `slabCover: true`
+    // beside its baked walls — and the lattice arm keeps the single
+    // slab-free pair (the packer's own throws refuse any sliceHalfW
+    // nothing can answer). An untiled nonlinear system takes the full
+    // pair generated with `slabCover` (the bounded midpoint cover IS its
+    // slab answer), and its slab-free twin is the shipped h=0 kernel.
     const targetTiling = target.tiling ?? null;
     const canSlab =
       target.kind !== "ifs4" ||
       (slabSupported4(target.de) &&
-        (targetTiling === null ||
-          (!isResolvedLatticeTiling(targetTiling) && slabExact4(target.de))));
+        (targetTiling === null || !isResolvedLatticeTiling(targetTiling)));
     const slabCover =
-      target.kind === "ifs4" &&
-      canSlab &&
-      targetTiling === null &&
-      !slabExact4(target.de);
+      target.kind === "ifs4" && canSlab && !slabExact4(target.de);
     const wantNoSlab = target.kind === "ifs4" && canSlab;
     const [marchModule, shadeModule, marchModuleNoSlab, shadeModuleNoSlab] =
       await Promise.all([

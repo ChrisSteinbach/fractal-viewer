@@ -10,10 +10,11 @@ combination: `main.ts` sets the panel's thickness availability from
 kernel (`slabCover: true` in `surface-de-gpu.ts`) beside its h=0 point
 kernel. A FINITE reflection tiling composes through the wall split
 (below) for segment-exact fold sets — both 4D engines, the GLSL fallback
-included. The remaining refusals are swirl finals, condensation, forward
-escape-time systems, the lattice tiling arm, and a nonlinear fold set
-under finite tiling; the CPU entries, the GPU packers, and the UI enforce
-each independently, and the panel names the refusing branch.
+included — and through the SPLIT-PLUS-COVER arm (below) for the nonlinear
+ones. The remaining refusals are swirl finals, condensation, forward
+escape-time systems, and the lattice tiling arm; the CPU entries, the GPU
+packers, and the UI enforce each independently, and the panel names the
+refusing branch.
 
 The initial report was reproduced on 12 September 2026 with a fresh production
 build and a verified hardware Intel Iris Xe WebGPU adapter. A Mandelbox final,
@@ -272,6 +273,124 @@ h = 0.2). MEASURED on the Iris Xe, headed Chrome, 14 September 2026:
   export differs from the h = 0 export (0.1047) and sits 4.9x closer to it
   than to the explorer's capture (0.5149), against a 2x gate.
 
+## The split-plus-cover arm (tiling × nonlinear folds)
+
+The wall split (`tiling.ts`'s `tilingSlabPieces`, the "Exact finite
+reflection pieces" section below) and the bounded midpoint cover compose
+without a new soundness surface, and this composition is what makes the
+epic's Mandelbox-plus-tiling acceptance case live. The split enumerates
+the folded pieces EXACTLY as the segment-exact arm does — the segment
+divides at every wall crossing, the fold is one isometry per piece, each
+piece's folded image is straight — and each folded piece is then answered
+by the COVER over that straight segment instead of the segment machinery:
+
+```text
+min_j max(coverCert_j, clipSdf(mid_j) - halfLen_j)
+coverCert_j = min_i max(0, DE_point(mid_ij) - halfLen_j / SLAB_COVER_PIECES)
+```
+
+Soundness is per piece: the cover's own triangle-inequality argument
+certifies the piece's distance exactly as it certifies the untiled
+segment (the piece is a complete partition, the point estimator's
+distance-bound contract carries it), and the nearest-copy theorem equates
+`d(S_j, T)` with `d(F_j, T)` — the same chain the segment-exact
+composition uses. Work is `pieces × SLAB_COVER_PIECES` point descents per
+query (at most 25 × 16 = 400 for F4) — bounded and suspension-free, and
+the count is an accuracy knob per piece exactly as it is untiled. The
+cutoff threads raw into each piece's entry and the cover prices its own
+`+ halfPiece` internally, so the public cutoff contract survives the
+composition unchanged. Zero thickness bypasses the split entirely (the
+tiled point path, value for value). The clip is intersected PER PIECE at
+one segment parameter, exactly as the segment-exact composition requires
+(minimizing the DE and clip separately could pair a DE winner from one W
+position with a clip winner from another).
+
+CPU: `tiling-de.ts`'s `tiledSlabDistance4`/`tiledSlabSample4` ask each
+piece of the UNTILED public entries (`estimateDistance4`/
+`estimateDistance4Refined` at the piece's extent), which route to the
+segment machinery or the cover by `slabExact4` — so the composition's
+routing lives entirely in `assertFiniteSlab4`'s gate, which now refuses
+only the lattice arm and a core without any slab certificate
+(`slabSupported4` false: a swirl final lens or a condensation shape).
+Unit tests pin the composition identity (the tiled answer equals the
+piece loop evaluated independently), the soundness bracket against
+point estimates along the segment, the cutoff contract, the clip's
+per-piece narrowing, zero-thickness identity, and the surviving refusals.
+
+WGSL: `surface-de-gpu.ts` composes the same way (`tiledSlabCover`): the
+covered POINT body (the untiled cover's own `surfaceDECovered` rename)
+sits behind the tiled wrapper's piece loop, which inlines the cover's
+sample loop per piece; the packer
+(`packSurface4GpuParams`) admits `sliceHalfW` wherever the CPU entries
+do, and the codegen refuses only `slabCover` + the LATTICE arm. The
+composed value wrapper's h=0 branch is the tiled POINT kernel's own
+composition (fold once, point body, clip), pinned bit-exact by the bench
+leg's identity A/B. The shading taps ride a ONE-PIECE whole-segment
+relaxation probe at the query's own folded midpoint —
+`max(DE(fold(q0)), clipSdf(fold(q0).xyz)) - |e|` — still sound by the
+triangle inequality over the whole segment (the nearest-copy theorem
+carries the fold), deliberately loose, the same trade the untiled cover's
+one-piece probe makes. The hit-info attribution finds the VALUE-argmin
+cover sample INSIDE the value-argmin piece (the same min the value
+wrapper returns, clip included), builds the covered hit-info at that
+winning sample's chamber point, remaps `sStar` into the original slab
+coordinate (`s = start + (sLocal + 1) / 2 * (end - start)`) and carries
+`tilingPoint` — the chamber point every 4D tiled color source reads —
+from that sample.
+
+`npm run bench:surface`'s M5d leg pins the mirror against the tiled CPU
+oracle on the same two fixture pairings M5b uses, one tiling over:
+`tiled4CoverMandel` (the A4-aligned pentatope under the mandelbox FINAL
+lens — the affine4 core under the lens, refined oracle, the lens post
+included) and `tiled4CoverSphere` (the parameterized mandelbox+spherefold
+pair under F4 — 24 walls, the widest split, AUTHORED fold lengths — the
+fold4 frontier, plain oracle). Rows at h = 0, 0.10 R and 0.25 R under two
+pose rotors, 700 queries per row; the h=0 rows carry the identity A/B
+against the tiled point kernel.
+
+| Fixture           | h      | Core    | fail | maxAbsErr | p99AbsErr | excluded |
+| ----------------- | ------ | ------- | ---: | --------: | --------: | -------: |
+| tiled4CoverSphere | 0      | fold4   |    0 |    2.1e-7 |    1.5e-7 |        0 |
+| tiled4CoverSphere | 0.10 R | fold4   |    0 |    2.2e-7 |    1.7e-7 |        0 |
+| tiled4CoverSphere | 0.25 R | fold4   |    0 |    2.7e-7 |    1.8e-7 |        0 |
+| tiled4CoverMandel | 0      | affine4 |    0 |    1.2e-6 |    6.3e-7 |        0 |
+| tiled4CoverMandel | 0.10 R | affine4 |    0 |    8.2e-7 |    6.8e-7 |        0 |
+| tiled4CoverMandel | 0.25 R | affine4 |    0 |    1.2e-6 |    6.0e-7 |        0 |
+
+The per-row tolerance floor is `2e-4 R`, three orders above the measured
+error. The h=0 identity cross-checks report `mismatches=0, maxDelta=0`
+for both families — the composed h=0 branch is the tiled point kernel bit
+for bit. (Measured on the AMD RX 7900 XTX, real-driver
+`npm run bench:surface -- --display=:0`, serial and quiet.)
+
+The browser matrix's own gate, `scripts/surface-tiled-slab.verify.mjs`,
+now carries the composed fixture — the SAME A4-aligned pentatope base,
+tiling, camera (radius 1.6) and rotor/slice pose as its exact-segment
+fixture, with the mandelbox final lens (AUTHORED fold lengths
+0.375/0.5/0.75) that makes the fold set nonlinear — through the full
+phase set: enter, row ENABLED, completed settles, visible thickness at
+0.2, byte-exact zero return, a real reload carrying thickness, and the
+capture discrimination. Its lattice variant (the same document under the
+mirrored affine-A1 lattice) must still REFUSE the slab with the panel's
+lattice reason while its h=0 slice renders — the explicit disclosure.
+
+| Composed scene phase                    | figure                                                                                 |
+| --------------------------------------- | -------------------------------------------------------------------------------------- |
+| entry settle                            | 1.26s                                                                                  |
+| thick (0.2) settle                      | 7.33s                                                                                  |
+| thick vs entry                          | 50.14% changed                                                                         |
+| back-to-0 identity                      | max 0, byte-exact (scene region)                                                       |
+| reload identity                         | max 0, thickness 0.2 carried and restored                                              |
+| capture thick-vs-zero / thick-vs-points | 3.09 / 4.11 (both > 1: the slab reached the export and it is not the explorer's image) |
+
+MEASURED on the AMD RX 7900 XTX, bundled Chrome, production build,
+1 October 2026, `?surfacesamples=1` throughout. The lattice variant's
+disclosure row measured on the same run: the thickness row DISABLED with
+the lattice reason, the h=0 slice still rendering (compute engine). The
+exact-segment fixture's own rows are unchanged by this work (44.25%
+changed at 0.2, identity max 0, reload max 0), and the 3D b3-tiled
+parity fixture settles and draws (2.8s).
+
 ## Exact finite reflection pieces
 
 All reflection hyperplanes are represented by the group orbits of the simple
@@ -311,10 +430,12 @@ SDF and a DE can choose different points on a segment. The shipped
 composition closes exactly that hole — the clip term is evaluated at each
 folded piece's own midpoint minus that piece's half-length and maxed into
 that piece's bound, so the intersection stays at one segment parameter.
-It also cannot transport a segment through a nonlinear final or base map:
-the nonlinear cover's composition with the split is the separate nonlinear
-slab work, refused loudly (slabExact4 false under tiling) rather than
-admitted unsound. Lattice walls need their own crossing enumeration and
+The shipped vocabulary ALSO composes with the nonlinear bounded midpoint
+cover now (the split-plus-cover arm above): each folded piece is answered
+by the cover over its own straight segment, which lifts the old refusal —
+"cannot transport a segment through a nonlinear final or base map" — for
+the finite groups, at `pieces × SLAB_COVER_PIECES` point descents per
+query. Lattice walls still need their own crossing enumeration and
 bounded work; the finite-root table is not that enumeration, and the
 lattice arm refuses a slab.
 
@@ -373,9 +494,9 @@ IoU against the adaptive reference:
 `SEGMENT` are the same call; the IoU-1 row is the cross-check that the
 cover did not disturb exactness, and the FIXED arms are the alternative
 mechanism's curve, not something those systems would use.
-² Tiled sessions run the wall split for segment-exact fold sets (the
-tiling child's work, below); the nonlinear cover's tiled composition is
-the separate nonlinear slab work and stays refused.
+² Tiled sessions run the wall split for segment-exact fold sets, and the
+split-plus-cover composition for the nonlinear ones (below); the A4 +
+Mandelbox-final row's slab is therefore live in the shipped app.
 
 `COVER` equals `FIXED16` on the nonlinear rows by construction — the public
 entry uses `SLAB_COVER_PIECES = 16`. Cost is the piece count in point
@@ -434,14 +555,16 @@ remains:
   objects, the levers are quality/cost decisions, not soundness ones: fewer
   pieces (measured IoU 0.67-0.84 at 8), scale pieces with thickness, or the
   per-system thickness cap the earlier study discussed.
-- **The nonlinear cover's composition with tiling.** The split's pieces
-  would each need the cover's own per-piece answer — the separate
-  nonlinear slab work, and the epic's Mandelbox-plus-tiling acceptance
-  case. Refused loudly today (the packer, the CPU entries and the panel's
-  own `tilingFold` reason each name it).
+- **The nonlinear cover's composition with tiling — SHIPPED** (the
+  split-plus-cover arm above): the split's pieces each covered at their
+  own midpoints, on both engines, with the bench's M5d agreement rows,
+  the composed browser phases, and the lattice disclosure row in the
+  tiled gate. The epic's Mandelbox-plus-tiling acceptance case is live.
 - **Lattice walls.** The affine-A1 product's walls need their own
   crossing enumeration and bounded work; the finite groups' proven
-  `maxWordLength` root table is not that enumeration. Refused, disclosed.
+  `maxWordLength` root table is not that enumeration. Refused, disclosed
+  (the panel's tiling reason and the tiled gate's lattice row both name
+  it).
 - **Browser matrix.** The lift gate gates all THREE cover classes end to
   end (enter, row enabled, invalidation, completed settle, draw) at
   `surfacesamples=1`, including the zero-thickness identity on real pixels
@@ -459,11 +582,14 @@ remains:
   restores the thick frame byte for byte (max 0), the thick capture sits
   4.96x closer to the h = 0 capture than to the explorer's (0.7749 vs
   3.8431), the engine column is compute throughout, and the 3D b3-tiled
-  parity fixture settles and draws (2.5s). Still owed: more thicknesses
-  and rotor poses (one thickness — 0.2 — and one pose per class so far),
-  plus panel-gate coverage for the new availability set.
+  parity fixture settles and draws (2.5s). The COMPOSED class rides the
+  same gate (the acceptance-case phases above, measured figures in the
+  split-plus-cover section). Still owed: more thicknesses and rotor poses
+  (one thickness — 0.2 — and one pose per class so far).
 
-CPU agreement, the heavy-class cost fix, the fence/teardown gates and the
+CPU agreement, the heavy-class cost fix, the fence/teardown gates, the
 browser matrix (three cover classes with the zero-thickness identity, one
-posed rotor/slice view, authored radii/posts, reload and capture rows) are
-all done; what remains here is tiling composition, the sibling track.
+posed rotor/slice view, authored radii/posts, reload and capture rows)
+and the tiling composition — exact and split-plus-cover, both engines,
+with the acceptance case gated end to end — are all done; the lattice
+walls' own crossing enumeration is the one remaining refusal, disclosed.
