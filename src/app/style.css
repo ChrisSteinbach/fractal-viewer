@@ -854,8 +854,8 @@ body {
 /* A gated mode — the Surface segment while the system has no distance
    estimator (ui.ts's setSurfaceEligibility) — must LOOK unavailable, not
    just swallow clicks: dim it, drop the pointer affordance, and keep the
-   hover highlight off. Adjacent #surfaceNote carries the accessible reason;
-   the tooltip and tap toast supplement it. */
+   hover highlight off. The gate's reason rides the button's own title
+   tooltip; the tap toast supplements it. */
 .segmented .segment:disabled {
   opacity: 0.35;
   cursor: not-allowed;
@@ -1533,14 +1533,13 @@ summary.editor-group-title {
   margin: 0 0 4px;
 }
 
-/* The five status-note live regions stay RENDERED at all times — a live
+/* The status-note live regions stay RENDERED at all times — a live
    region entering the accessibility tree already populated is announced
    unreliably, so their setters toggle only TEXT and never the .hidden
    class. Empty IS the hidden state: no content means no line box, and
-   zeroing the box model here makes an empty note occupy nothing.
-   #surfaceNote sits beside the mode switch; the other four may live in
-   status blocks. (#symmetryNote keeps its .hidden toggle — deliberately
-   not a live region.) */
+   zeroing the box model here makes an empty note occupy nothing. The
+   in-section notes may carry .hidden toggles (deliberately not live
+   regions when they rewrite per drag tick). */
 .flame-note:empty,
 .flame-note-info:empty {
   margin: 0;

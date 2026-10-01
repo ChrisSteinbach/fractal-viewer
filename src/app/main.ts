@@ -7686,7 +7686,7 @@ async function main(): Promise<void> {
 
   // A sphere-inversion block has no Flame or Sampled Solid representation
   // (surface-eligibility.ts's sphereInversionRenderModeRefusal): disable both
-  // with the reason beside the switch, and when a block ARRIVES under a live
+  // with the reason on their tooltips, and when a block ARRIVES under a live
   // Flame/Solid session (undo, a loaded link) leave for Points once this
   // refresh returns, with the reason as a toast. The generated flame backdrop
   // draws the preserved transforms, so it rests on its gradient placeholder

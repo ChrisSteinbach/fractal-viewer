@@ -429,8 +429,8 @@ morphs into place instead of snapping (see **Presets** below).
   map (or the final-transform lens) uses variations, is nearly flat
   (scale ≈ 0), or does not contract (scale ≥ 1), and also when the map
   count exceeds the tracer's fixed uniform budget. The complete refusal is
-  shown in the status beside the mode switch for keyboard and assistive
-  technology, with the tooltip and touch toast as supplements. An ordinary document
+  carried on the disabled Surface button's own tooltip for keyboard and
+  assistive technology, with the touch toast as a supplement. An ordinary document
   counts its bare active maps; a **Hybrid schedule** counts the physical
   `A | B | emitter` records together against the same 24-slot limit, for
   flat and 4D systems alike (the 4D
@@ -500,7 +500,7 @@ morphs into place instead of snapping (see **Presets** below).
   anyway: such a map has no IFS attractor at all, so Surface marches
   its **escape-time set** instead — the classic ray-marched Mandelbox
   object, in the Mandelbrot form every published render uses,
-  disclosed before entry by the status beside the mode switch. The transform's own offset is not
+  disclosed before entry on the Surface button's tooltip. The transform's own offset is not
   the escape constant; it shifts the fold's centre, so it deforms the
   object rather than replacing it, and an offset of zero gives the
   textbook Mandelbox at whatever weight the fold carries. This render is cheap —
@@ -554,8 +554,8 @@ morphs into place instead of snapping (see **Presets** below).
   **A chain need not stay in 3D**. A non-contracting fold — or a
   chain of them — that reaches out of the `w = 0` hyperplane is marched as
   the **W slice** of its 4D escape-time set, the same way a contracting 4D
-  system is marched as the slice of its attractor, and the persistent status
-  beside the mode switch says which of the two you will enter ("Escape-time render: these
+  system is marched as the slice of its attractor, and the Surface
+  button's tooltip says which of the two you will enter ("Escape-time render: these
   N maps reach out of the w = 0 hyperplane and do not all contract, so
   Surface marches the w-slice of the escape-time set of the chain they form
   — one link per orbit step — rather than an IFS attractor"). Everything
@@ -639,7 +639,7 @@ morphs into place instead of snapping (see **Presets** below).
   The same group's **Mandelbulb**, **Mandelbulb Offset** and **Mandelbulb
   Rotated** are the escape-time family's second object: a single
   map whose only variation is the triplex 8th power, marched the same
-  forward way and disclosed before entry by the status beside the mode switch
+  forward way and disclosed before entry on the Surface button's tooltip
   ("Mandelbulb render").
   Its two knobs are the map's own — the position slider is a PRE-power
   offset that bites into the bulbs rather than sliding them (zero gives the
@@ -723,7 +723,7 @@ morphs into place instead of snapping (see **Presets** below).
   marches the current slice position.) A **Slice thickness** slider sits under
   it, giving that cut some depth — see the 4D section below. Anisotropic
   (non-uniformly scaled) maps are a
-  softer case: the button stays enabled, but the status beside the mode switch
+  softer case: the button stays enabled, but its tooltip
   warns before entry that those maps are marched conservatively — a smaller step size
   that trades some speed to stay a safe, non-overshooting bound. Its contextual
   inspector splits independent concerns into separate sections. **Surface
@@ -814,8 +814,8 @@ morphs into place instead of snapping (see **Presets** below).
   marched object on conformal fold-only escape chains; power-link and
   Mandelbulb sessions keep the color controls but do not offer this geometry
   switch, and inverse-descent Surface routes refuse an authored geometry flag
-  rather than ignore it. When that flag is the disclosed refusal, the status
-  beside the mode switch offers **Turn trap geometry off**; Shape trap stays
+  rather than ignore it. When that flag is the disclosed refusal, a recovery
+  button under the mode switch offers **Turn trap geometry off**; Shape trap stays
   Surface-only. The recovery uses the same authored edit as the checkbox and
   preserves the trap's color state. **Geometry levels** selects **All**, **Root only**, or **Custom**
   inclusive post-link levels; custom exposes the minimum and maximum sliders

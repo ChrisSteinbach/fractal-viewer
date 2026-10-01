@@ -56,7 +56,6 @@ import {
   SPHERE_INVERSION_GLSL_MAX_SEED_MEMBERS,
   sphereInversionFragmentArmLimit,
 } from "../fractal/surface-sphere-inversion-gpu";
-import { SPHERE_INVERSION_POINTS_MAX } from "../fractal/sphere-inversion-sample";
 import type { ShapeSpec } from "../fractal/shapes";
 import { TILING_GROUP_INFO, isLatticeTilingSpec } from "../fractal/tiling";
 import type { TilingSpec } from "../fractal/tiling";
@@ -332,11 +331,11 @@ export function sphereInversionDormantDisclosures(
 }
 
 export const SPHERE_INVERSION_DORMANT_KALEIDOSCOPE =
-  "the kaleidoscope belongs to the replaced transform system and is not read (the arrangement carries its own symmetry)";
+  "the kaleidoscope is not read (the arrangement carries its own symmetry)";
 export const SPHERE_INVERSION_DORMANT_LENS =
-  "the final transform lens belongs to the replaced transform system and is not read";
+  "the final transform lens is not read";
 export const SPHERE_INVERSION_DORMANT_FINISHES =
-  "per-transform finishes belong to the replaced transform system and are not read";
+  "per-transform finishes are not read";
 
 /** The 4D slab refusal every sphere-inversion disclosure shares — the
  * thickness row's note and the gate's. */
@@ -479,13 +478,13 @@ function deriveFiniteSolidEligibility(
     const dim = value.shape === "hyperMenger" ? 4 : 3;
     return {
       status: "degraded",
-      note: `Finite-solid render: Surface marches the level-${value.level} ${dim === 4 ? "hyper-Menger" : "Menger"} cell decomposition — the solid the glass transport walks — rather than the transform system's IFS attractor.`,
+      note: `Finite-solid render: Surface marches the level-${value.level} ${dim === 4 ? "hyper-Menger" : "Menger"} solid, not the IFS attractor.`,
       kind: dim === 4 ? "finiteSolid4" : "finiteSolid",
     };
   }
   return {
     status: "degraded",
-    note: `Word-tree render: Surface marches the level-${value.level} glass solid from the document's own maps — the transmission transport's object, not the IFS attractor.`,
+    note: `Word-tree render: Surface marches the level-${value.level} glass solid, not the IFS attractor.`,
     kind: fourD ? "finiteSolid4" : "finiteSolid",
     perMapMaterials: true,
   };
@@ -510,9 +509,11 @@ export function sphereInversionSessionRefusal(session: {
 }
 
 /** Why Balloon is refused in a sphere-inversion scene — the session door's
- * toast and the in-session Balloon row's adjacent reason share it. */
+ * toast names the refusal and the action beside it; the in-session Balloon
+ * row carries the panel's canonical dormancy reason
+ * (`sphere-inversion-controls.ts`'s `SPHERE_INVERSION_DORMANT_REASON`). */
 export const SPHERE_INVERSION_BALLOON_SESSION_REASON =
-  "Balloon is not available with a sphere-inversion scene: its echo would invert this estimator, whose inner queries and far-field ball have not been measured.";
+  "Balloon is not available with a sphere-inversion scene.";
 
 /**
  * The render-mode half of the family's per-mode verdict
@@ -522,8 +523,8 @@ export const SPHERE_INVERSION_BALLOON_SESSION_REASON =
  * sample and Surface traces the estimator. A PRESENT block refuses whether or
  * not it resolves — a refused block is still the scene's subject, and drawing
  * the preserved transforms instead would show a different object. Returns the
- * reason (the note beside the mode switch and every refused door's toast), or
- * `null` when `mode` may be entered.
+ * reason (the disabled mode buttons' tooltip and every refused door's toast),
+ * or `null` when `mode` may be entered.
  */
 export function sphereInversionRenderModeRefusal(
   block: SphereInversionAuthored | null | undefined,
@@ -531,7 +532,7 @@ export function sphereInversionRenderModeRefusal(
 ): string | null {
   if (block === null || block === undefined) return null;
   if (mode !== "flame" && mode !== "solid") return null;
-  return `Flame and Solid are unavailable for a sphere-inversion scene: neither draws its seed orbit. Points samples the orbit's boundary exactly (at most ${SPHERE_INVERSION_POINTS_MAX.toLocaleString("en-US")} points), and Surface traces it.`;
+  return "Flame and Solid are unavailable for a sphere-inversion scene. Use Points or Surface.";
 }
 
 /** The one machine fact the document cannot answer (module doc and

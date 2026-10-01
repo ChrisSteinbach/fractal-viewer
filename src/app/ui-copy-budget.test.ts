@@ -53,15 +53,7 @@ const HINT_WORD_BUDGET = 16;
 const NOTE_WORD_BUDGET = 24;
 const DISCLOSURE_WORD_BUDGET = 60;
 
-const HINT_ALLOWLIST: Record<string, { budget: number; reason: string }> = {
-  pointsLayoutNote: {
-    budget: 32,
-    reason:
-      "One multi-fact view contract: axis-lock, per-pane transform editing, " +
-      "Current-only camera/effects, and saved-image scope. Trimming drops a " +
-      "disclosure, and splitting duplicates labels.",
-  },
-};
+const HINT_ALLOWLIST: Record<string, { budget: number; reason: string }> = {};
 
 const parsed = new DOMParser().parseFromString(indexHtml, "text/html");
 
@@ -419,9 +411,9 @@ describe("panel copy budget", () => {
         ).length;
       }
 
-      // The static markup alone has 47 hints and 12 disclosures; a walk that
+      // The static markup alone has 37 hints and 12 disclosures; a walk that
       // found fewer never rendered the panel it claims to judge.
-      expect(hintTotal).toBeGreaterThan(47);
+      expect(hintTotal).toBeGreaterThan(37);
       expect(disclosureTotal).toBeGreaterThan(12);
       // Generated rows, not just index.html's static copy.
       expect(seen).toContain("transformColorTimingHint");

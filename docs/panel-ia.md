@@ -111,10 +111,16 @@ consumers with home.
   it. Put a concise reason next to the control and associate it in the DOM
   (for example with `aria-describedby`); a hover-only tooltip is insufficient
   for touch and keyboard users. The reason should name the condition and, when
-  possible, the action that makes the control available.
-- Put document-level status in an always-applicable status area or beside the
-  shared section that owns the affected concept. It must not exist only inside
-  a Points/Flame/Solid/Surface wrapper: switching renderers must not hide a
+  possible, the action that makes the control available. THE OWNER'S RED LINE
+  is the one standing exception: the strip between the render-mode switch and
+  Undo/Redo carries NO prose at all, so a verdict that would live there rides
+  the mode button's own tooltip with the door toast as the touch channel,
+  while every dormancy row carries the shared canonical reason beside itself
+  ("Turn off Sphere inversion to edit." for the sphere-inversion family).
+- Put document-level status beside the shared section that owns the affected
+  concept, or in a mode-status block below Undo/Redo (progress and its
+  associated text only). It must not exist only inside a
+  Points/Flame/Solid/Surface wrapper: switching renderers must not hide a
   warning about the document itself.
 - Every visible editable control discloses its timing. Live controls need no
   repeated warning when the response is immediate and obvious. Restart
@@ -186,8 +192,10 @@ the stable family order is:
 
 Within Workflow, creation and composition entry points such as Systems come
 before Collection and Timeline, which come before Capture and Share. The mode
-selector and global/document status sit above the accordion rather than
-pretending to be a fifth family. A section may be absent when it has no rows at
+selector, Undo/Redo and the render-mode status blocks (progress and its
+associated text only) sit above the accordion rather than pretending to be a
+fifth family, and nothing but a labeled control may live between the selector
+and Undo/Redo. A section may be absent when it has no rows at
 all, but switching modes must not reorder the families that remain.
 
 Sharing a source vocabulary does not make three system gestures one mode.

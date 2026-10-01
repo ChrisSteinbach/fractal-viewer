@@ -188,7 +188,6 @@
           id="modeFlameBtn"
           type="button"
           aria-pressed="false"
-          aria-describedby="sphereInversionModeNote"
           title="Fractal-flame exposure of the current view"
         >
           ✺ Flame
@@ -198,7 +197,6 @@
           id="modeSolidBtn"
           type="button"
           aria-pressed="false"
-          aria-describedby="sphereInversionModeNote"
           title="Voxel-density solid"
         >
           ◆ Solid
@@ -208,56 +206,23 @@
           id="modeSurfaceBtn"
           type="button"
           aria-pressed="false"
-          aria-describedby="surfaceNote"
           title="Sphere-traced surface of the attractor"
         >
           ◈ Surface
         </button>
       </div>
-      <!-- Persistent eligibility for entering Surface. It stays outside the
-           mode-gated status block so keyboard and AT users can read a refusal
-           or degraded-route detail before entry. Tooltip and touch toast are
-           supplements; setSurfaceEligibility equality-guards live updates.
-           A structured analyzer remedy may reveal the adjacent recovery
-           button below; interactive content never enters the live region. -->
-      <p
-        id="surfaceNote"
-        class="flame-note-info"
-        role="status"
-        aria-live="polite"
-      ></p>
+      <!-- The strip between the mode switch and Undo/Redo carries NO prose:
+           the owner's red line. A Surface gate verdict rides the disabled or
+           degraded button's own title tooltip (setSurfaceEligibility), the
+           refused door's toast names it for touch, and a structured analyzer
+           remedy may reveal the recovery button below. -->
       <button
         class="btn btn-ghost hidden"
         id="surfaceEligibilityRecoveryBtn"
         type="button"
-        aria-describedby="surfaceNote"
       >
         Turn trap geometry off
       </button>
-      <!-- Document-level refusal for the renderers a sphere-inversion scene
-           has no representation in (Flame, Solid). Beside the mode
-           switch for the same reason as surfaceNote: the disabled buttons
-           describe themselves with it, and it must stay readable from every
-           renderer. Text alone drives visibility. -->
-      <p
-        id="sphereInversionModeNote"
-        class="flame-note-info"
-        role="status"
-        aria-live="polite"
-      ></p>
-      <!-- Document-level disclosures stay beside the mode switch rather than
-           inside Points-only sections: every renderer is showing the same
-           effective symmetry/schedule, and reduced-motion disables Drift
-           everywhere. Symmetry and schedule are intentionally not live
-           regions because their text can change on slider drag ticks. -->
-      <p id="symmetryNote" class="flame-note hidden"></p>
-      <p id="scheduleNote" class="flame-note-info hidden"></p>
-      <p
-        id="driftNote"
-        class="flame-note-info"
-        role="status"
-        aria-live="polite"
-      ></p>
 
       <!-- Content that is NOT part of any accordion section lives here, above
            ALL the sections: floating content wedged between two collapsed
@@ -289,18 +254,17 @@
            per-mode status sections so a silently software-rendered
            session (the trigger incident: a browser-blocklisted GPU) is
            disclosed in every mode, Points included. -->
-      <!-- role="status" (here and on four setter-driven notes elsewhere):
-           these populate/change mid-session — software-renderer detection, a
-           CPU fallback on a flame restart, a memory clamp — so without a
+      <!-- role="status" (here and on one setter-driven note elsewhere):
+           these populate/change mid-session — software-renderer detection,
+           a CPU fallback on a flame restart, a memory clamp — so without a
            live region a screen-reader user gets no signal. The
-           slider-coupled #symmetryNote is deliberately NOT one of them: it
-           rewrites per drag tick, which a live region would announce as
-           chatter. UNLIKE the #updateBanner/#renderError notices, these five
+           slider-coupled notes are deliberately NOT among them: they
+           rewrite per drag tick, which a live region would announce as
+           chatter. UNLIKE the #updateBanner/#renderError notices, these two
            never carry .hidden: a live region entering the accessibility tree
            already populated announces unreliably, so the elements stay
            rendered, their setters toggle only TEXT, and style.css's :empty
-           rule collapses the empty state visually. Surface eligibility can
-           also refresh on drag ticks, so its setter skips unchanged text. -->
+           rule collapses the empty state visually. -->
       <p
         id="softwareRendererNote"
         class="flame-note"
@@ -309,10 +273,6 @@
       ></p>
 
       <div id="flameStatus" class="hidden">
-        <p class="flame-hint">
-          Flame renders the frozen camera view. Return to Points to keep
-          exploring.
-        </p>
         <div id="flameProgress" class="flame-progress">0%</div>
         <p
           id="flameBackendNote"
@@ -323,16 +283,10 @@
       </div>
 
       <div id="solidStatus" class="hidden">
-        <p class="flame-hint">
-          Keep orbiting while Solid converges; lighting responds immediately.
-        </p>
         <div id="solidProgress" class="flame-progress">0%</div>
       </div>
 
       <div id="surfaceStatus" class="hidden">
-        <p class="flame-hint">
-          Quick previews sharpen after you stop moving; progress appears below.
-        </p>
         <div id="surfaceProgress" class="flame-progress hidden">0%</div>
         <!-- The preview tier's one-shot escape: shown only while a preview is
              actually grinding (setSurfaceProgress's skippable flag) — a WebGL
@@ -1138,7 +1092,7 @@
           <div id="backgroundRow">
             <label class="select-label">
               Background
-              <select id="background" aria-describedby="backgroundNote">
+              <select id="background">
                 <option value="dark">Dark</option>
                 <option value="haze">Haze</option>
                 <option value="auto">Auto</option>
@@ -1146,7 +1100,6 @@
                 <option value="custom">Custom</option>
               </select>
             </label>
-            <p id="backgroundNote" class="flame-note hidden"></p>
           </div>
 
           <!-- The backdrop's gradient SHAPE: orthogonal to the gradient
@@ -1378,8 +1331,9 @@
         </details>
 
         <!-- Authored Scene / Look state consumed by every renderer. Keep this
-             one shared editor outside renderer-specific applicability; its
-             document-level effective-order disclosure is #symmetryNote above. -->
+             one shared editor outside renderer-specific applicability; a
+             clamp below the requested order reads off the order slider
+             itself. -->
         <details
           class="panel-section"
           id="symmetrySection"
@@ -2677,7 +2631,6 @@
               class="segmented points-layout-switch"
               role="group"
               aria-label="Points layout"
-              aria-describedby="pointsLayoutNote"
             >
               <button
                 class="segment active"
@@ -2710,23 +2663,15 @@
                 perspective.
               </p>
             </div>
-            <p class="flame-hint" id="pointsLayoutNote">
-              X, Y, and Z stay axis-locked. Move a selected transform in any
-              pane; camera controls stay in Current.
-            </p>
           </div>
           <label class="checkbox-label" id="continuousZoomRow">
             <input
               type="checkbox"
               id="continuousZoomToggle"
-              aria-describedby="continuousZoomNote continuousZoomUnavailableNote"
+              aria-describedby="continuousZoomUnavailableNote"
             />
             Continuous zoom
           </label>
-          <p class="flame-hint" id="continuousZoomNote">
-            Zoom narrows the lens past a safe distance; right-drag or two-finger
-            drag places the orbit target.
-          </p>
           <p class="flame-hint hidden" id="continuousZoomUnavailableNote">
             The camera is frozen during Flame accumulation.
           </p>
@@ -2750,14 +2695,11 @@
             <input
               type="checkbox"
               id="autoMotionToggle"
-              aria-describedby="autoMotionMechanismNote automaticMotionParkedHint"
+              aria-describedby="automaticMotionParkedHint"
               checked
             />
             Automatic motion
           </label>
-          <p class="flame-hint" id="autoMotionMechanismNote">
-            In 4D, tumble replaces camera orbit to reveal hidden axes.
-          </p>
           <div id="autoOrbitRow">
             <label class="select-label">
               <span class="control-label-line">
@@ -3001,14 +2943,10 @@
             id="driftBtn"
             type="button"
             aria-pressed="false"
-            aria-describedby="driftNote"
             title="Ambient show: keep morphing into fresh random systems until you edit or toggle it off"
           >
             ▶ Drift
           </button>
-          <!-- #driftNote lives in the document-status area above the
-               accordion so reduced-motion remains disclosed in every mode;
-               aria-describedby preserves the explicit control association. -->
           <label class="checkbox-label">
             <input type="checkbox" id="combineSystemsCheckbox" />
             Combine systems
@@ -3075,11 +3013,11 @@
           <!-- Native `disabled` pulls a button out of the tab ring, so its
                title-only reason is invisible to a keyboard/AT user — this
                mirrors it in prose beside the button, in the same
-               role="status" idiom as #surfaceNote et al. (see the
+               role="status" idiom as #flameBackendNote (see the
                role="status" comment above #softwareRendererNote); the
                setter guards against rewriting an unchanged reason so a
-               repeated refresh doesn't re-announce it. Same idiom on the
-               global driftNote and on timelineNote below. -->
+               repeated refresh doesn't re-announce it. Same idiom on
+               timelineNote below. -->
           <p
             id="exportCollectionNote"
             class="flame-note-info"
@@ -3365,8 +3303,8 @@
           </button>
         </div>
         <!-- Modal-local mirror: aria-modal makes the page behind the gallery
-             inert, so the always-visible #driftNote cannot carry this
-             button's reduced-motion/empty-collection reason by itself. -->
+             inert, so this button's reduced-motion/empty-collection reason
+             is carried here, beside it. -->
         <p
           id="galleryDriftNote"
           class="flame-note-info"

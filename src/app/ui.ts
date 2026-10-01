@@ -4,7 +4,6 @@ import type { FinalSwirlRadiusControlAnalysis } from "./swirl-radius-control";
 import {
   DEFAULT_COLOR_SPEED,
   derivedColorIndex,
-  effectiveSymmetryOrder,
   MAX_TRANSFORMS,
   prepareChaosGame,
   resolveChaosEntry,
@@ -164,14 +163,13 @@ import { isGlassSolidDepth } from "./control-spec";
 import {
   SPHERE_INVERSION_AUTHORED_OPTION,
   SPHERE_INVERSION_CONTROLS_MODE_REASON,
+  SPHERE_INVERSION_DORMANT_REASON,
   sphereInversionControlNotes,
   sphereInversionSeedKind,
   sphereInversionVisibleRows,
   type SphereInversionNoteRow,
 } from "./sphere-inversion-controls";
 import {
-  SPHERE_INVERSION_BALLOON_SESSION_REASON,
-  SPHERE_INVERSION_DORMANT_LENS,
   SPHERE_INVERSION_SLAB_REFUSAL,
   surfaceTrapGeometryRestriction,
   type SurfaceEligibilityRecovery,
@@ -669,8 +667,8 @@ function glassSolidGeneralNote(transforms: readonly Transform[]): string {
       ? `the rest render as opaque cells (over ${String(SURFACE_GPU_UNIFORM_MAP_SLOTS)} maps)`
       : "the rest render as the fractal itself";
   return glass === 0
-    ? `No map is Glass, so the solid renders as opaque cells; set a map's Finish to Glass. ${limit}`
-    : `${String(glass)} of ${String(active.length)} maps are Glass; ${rest}. ${limit}`;
+    ? `No map is Glass; cells render opaque. Set a map's Finish to Glass. ${limit}`
+    : `${String(glass)} of ${String(active.length)} maps are Glass; ${rest}.`;
 }
 const GLASS_SOLID_SHAPED_NOTE =
   "The glass preset authors this exact construction; the depth control stays read-only.";
@@ -2466,9 +2464,6 @@ export class Ui {
   private readonly surpriseBtn: HTMLButtonElement;
   private readonly driftBtn: HTMLButtonElement;
   private readonly driftTitle: string;
-  /** The reason-in-prose sibling of {@link driftTitle}'s disabled
-   * swap — see {@link setDriftAvailable}. */
-  private readonly driftNote: HTMLElement;
   private readonly regenerateBtn: HTMLButtonElement;
   private readonly savePngBtn: HTMLButtonElement;
   /** "⤓ Save PNG"'s authored title, restored once a capture finishes — the
@@ -2505,8 +2500,8 @@ export class Ui {
   private readonly galleryCloseBtn: HTMLButtonElement;
   private readonly galleryDriftBtn: HTMLButtonElement;
   private readonly galleryDriftTitle: string;
-  /** Modal-local disabled reason for {@link galleryDriftBtn}; the page-level
-   * driftNote sits outside an aria-modal dialog's accessible scope. */
+  /** Modal-local disabled reason for {@link galleryDriftBtn}; the page
+   * behind an aria-modal dialog is inert, so the reason lives in here. */
   private readonly galleryDriftNote: HTMLElement;
   private readonly galleryGrid: HTMLElement;
   private readonly galleryEmpty: HTMLElement;
@@ -2736,7 +2731,6 @@ export class Ui {
   private readonly fogTintColorInput: HTMLInputElement;
   private readonly fogTintStrengthInput: HTMLInputElement;
   private readonly fogNote: HTMLElement;
-  private readonly symmetryNote: HTMLElement;
   private readonly symmetryEditHint: HTMLElement;
   /** Space tiling is shared authored Scene / Look state. Its editor remains
    * visible in every renderer; these rows disclose the active renderer's
@@ -2758,7 +2752,6 @@ export class Ui {
   private readonly scheduleDepthSlider: HTMLInputElement;
   private readonly scheduleDepthNumeric: RangeNumberControl;
   private readonly scheduleDepthLabel: HTMLElement;
-  private readonly scheduleNote: HTMLElement;
   private readonly scheduleEditHint: HTMLElement;
   /** The Xaos section's controls — see the UiHandlers Xaos trio for the
    * contract each drives. `xaosAddSource` shares the schedule picker's
@@ -2923,20 +2916,16 @@ export class Ui {
   private readonly sphereInversionDormantSections: readonly {
     section: HTMLElement;
     note: HTMLElement;
-    noun: string;
   }[];
   /** Whether {@link applySphereInversionDormancy} has disabled anything the
    * release pass must restore. */
   private sphereInversionDormancyApplied = false;
-  private readonly backgroundNote: HTMLElement;
 
-  // The surface render's mode-gated status block contains its hint and trace
-  // progress (see setSurfaceProgress). The document-derived eligibility note
-  // sits beside the mode switch instead, so it remains readable before entry.
-  // The mode button carries the gate and describes itself with that note.
+  // The surface render's mode-gated status block contains its trace progress
+  // (see setSurfaceProgress). The document-derived eligibility verdict rides
+  // the mode button's own title tooltip: the strip between the mode switch
+  // and Undo/Redo carries no prose (the owner's red line).
   private readonly surfaceStatus: HTMLElement;
-  private readonly surfaceNote: HTMLElement;
-  private readonly sphereInversionModeNote: HTMLElement;
   /** Gate-level escape hatch shown only when the analyzer says disabling the
    * authored trap geometry resolves the refusal. Never part of the contextual
    * Surface inspector sections. */
@@ -2996,7 +2985,6 @@ export class Ui {
   // the same home without becoming part of the preference.
   private readonly viewControls: HTMLElement;
   private readonly pointsLayoutRow: HTMLElement;
-  private readonly pointsLayoutNote: HTMLElement;
   private readonly pointsParallelViewsControls: HTMLElement;
   private readonly pointsParallelViewsToggle: HTMLInputElement;
   private readonly pointsParallelViewsNote: HTMLElement;
@@ -3378,7 +3366,6 @@ export class Ui {
     this.surpriseBtn = this.byId("surpriseBtn");
     this.driftBtn = this.byId("driftBtn");
     this.driftTitle = this.driftBtn.title;
-    this.driftNote = this.byId("driftNote");
     this.regenerateBtn = this.byId("regenerateBtn");
     this.savePngBtn = this.byId("savePngBtn");
     this.savePngTitle = this.savePngBtn.title;
@@ -3544,7 +3531,6 @@ export class Ui {
     this.fogTintColorInput = this.byId("fogTintColor");
     this.fogTintStrengthInput = this.byId("fogTintStrength");
     this.fogNote = this.byId("fogNote");
-    this.symmetryNote = this.byId("symmetryNote");
     this.symmetryEditHint = this.byId("symmetryEditHint");
     this.tilingControls = this.byId("tilingControls");
     this.tilingTimingHint = this.byId("tilingTimingHint");
@@ -3556,7 +3542,6 @@ export class Ui {
     this.scheduleSnapshotBtn = this.byId("scheduleSnapshotBtn");
     this.scheduleDepthSlider = this.byId("scheduleDepthSlider");
     this.scheduleDepthLabel = this.byId("scheduleDepthLabel");
-    this.scheduleNote = this.byId("scheduleNote");
     this.scheduleEditHint = this.byId("scheduleEditHint");
     // The sentinel the picker shows while a block is installed (the
     // document stores B's MAPS, not their source, so no source name can be
@@ -3658,8 +3643,6 @@ export class Ui {
     this.flameStatus = this.byId("flameStatus");
     this.solidStatus = this.byId("solidStatus");
     this.surfaceStatus = this.byId("surfaceStatus");
-    this.surfaceNote = this.byId("surfaceNote");
-    this.sphereInversionModeNote = this.byId("sphereInversionModeNote");
     this.sphereInversionControls = this.byId("sphereInversionControls");
     this.sphereInversionTimingHint = this.byId("sphereInversionTimingHint");
     this.sphereInversionNote = this.byId("sphereInversionNote");
@@ -3687,16 +3670,14 @@ export class Ui {
     };
     this.finalLensNote = this.byId("finalLensNote");
     this.sphereInversionDormantSections = [
-      ["transformsSection", "transformsDormantNote", "the transforms are"],
-      ["xaosSection", "xaosDormantNote", "Xaos is"],
-      ["symmetrySection", "symmetryDormantNote", "the symmetry is"],
-      ["scheduleSection", "scheduleDormantNote", "the hybrid schedule is"],
-    ].map(([section, note, noun]) => ({
+      ["transformsSection", "transformsDormantNote"],
+      ["xaosSection", "xaosDormantNote"],
+      ["symmetrySection", "symmetryDormantNote"],
+      ["scheduleSection", "scheduleDormantNote"],
+    ].map(([section, note]) => ({
       section: this.byId(section),
       note: this.byId(note),
-      noun,
     }));
-    this.backgroundNote = this.byId("backgroundNote");
     this.surfaceEligibilityRecoveryBtn = this.byId(
       "surfaceEligibilityRecoveryBtn",
     );
@@ -3740,7 +3721,6 @@ export class Ui {
     ];
     this.viewControls = this.byId("viewControls");
     this.pointsLayoutRow = this.byId("pointsLayoutRow");
-    this.pointsLayoutNote = this.byId("pointsLayoutNote");
     this.pointsParallelViewsControls = this.byId("pointsParallelViewsControls");
     this.pointsParallelViewsToggle = this.byId("pointsParallelViewsToggle");
     this.pointsParallelViewsNote = this.byId("pointsParallelViewsNote");
@@ -4982,7 +4962,7 @@ export class Ui {
     const reason = solidRefused
       ? BALLOON_CENTRE_REFUSAL_REASON
       : context.surfaceKind === "sphereInversion"
-        ? SPHERE_INVERSION_BALLOON_SESSION_REASON
+        ? SPHERE_INVERSION_DORMANT_REASON
         : applicability.kind === "disabled"
           ? applicability.reason
           : "";
@@ -5135,20 +5115,18 @@ export class Ui {
   /**
    * Disable the replaced transform system's sections while a sphere-inversion
    * block is the subject (refused blocks included): every control stays
-   * visible, is disabled, and is described by its section's reason, which
-   * names the action that re-enables it. Auto-update is exempt — it is a
-   * session preference that also governs the block's own Points regeneration.
-   * Controls this pass disabled are MARKED, so the release pass restores
-   * exactly those and never an owner's own refusal. Runs after every owner
-   * (the end of updateLabels, and after each section re-render).
+   * visible, is disabled, and is described by its section's one shared
+   * canonical reason, which names the action that re-enables it. Auto-update
+   * is exempt — it is a session preference that also governs the block's own
+   * Points regeneration. Controls this pass disabled are MARKED, so the
+   * release pass restores exactly those and never an owner's own refusal.
+   * Runs after every owner (the end of updateLabels, and after each section
+   * re-render).
    */
   private applySphereInversionDormancy(): void {
     if (!this.sphereInversionPresent) return;
-    for (const { section, note, noun } of this.sphereInversionDormantSections) {
-      this.setReasonNote(
-        note,
-        `Sphere inversion replaces the transform system, so ${noun} not drawn. Turn off Sphere inversion to edit.`,
-      );
+    for (const { section, note } of this.sphereInversionDormantSections) {
+      this.setReasonNote(note, SPHERE_INVERSION_DORMANT_REASON);
       note.classList.remove("hidden");
       for (const control of this.dormantSectionControls(section)) {
         if (!control.disabled) {
@@ -5737,29 +5715,10 @@ export class Ui {
       environment.numeric?.setDisabled(authoredLighting);
     }
 
-    const effectiveOrder = effectiveSymmetryOrder(
-      state.symmetry.order,
-      state.transforms.length,
-    );
-    if (state.sphereInversion !== undefined && state.symmetry.order > 1) {
-      // The ownership split: the block's subject replaces the transform
-      // system, so its kaleidoscope is kept but not read.
-      this.symmetryNote.textContent =
-        "Dormant in a sphere-inversion scene: the arrangement's symmetry replaces the kaleidoscope, which returns when the block is off.";
-      this.symmetryNote.classList.remove("hidden");
-    } else if (effectiveOrder !== state.symmetry.order) {
-      this.symmetryNote.textContent = `Reduced to ${effectiveOrder}-fold (from ${state.symmetry.order}-fold) to fit the ${MAX_TRANSFORMS}-transform limit.`;
-      this.symmetryNote.classList.remove("hidden");
-    } else {
-      this.symmetryNote.textContent = "";
-      this.symmetryNote.classList.add("hidden");
-    }
-
     // The Hybrid schedule rows reflect the DOCUMENT's block: the picker
     // shows the installed sentinel (the document stores B's maps, not
     // their source, so no source name can honestly survive a
-    // reload/undo), the depth slider the block's depth (0 = absent), and
-    // the note names the composition and its Surface cost profile.
+    // reload/undo) and the depth slider the block's depth (0 = absent).
     const schedule = state.schedule;
     this.scheduleInstalledOption.hidden = schedule === undefined;
     if (schedule) {
@@ -5767,17 +5726,10 @@ export class Ui {
       this.scheduleSource.value = "__installed";
       this.scheduleDepthNumeric.setValue(schedule.depth);
       this.scheduleDepthLabel.textContent = String(schedule.depth);
-      this.scheduleNote.textContent =
-        `Applies ${schedule.depth} random System B ` +
-        `map${schedule.depth === 1 ? "" : "s"} to each point. ` +
-        "Surface requires every map to support inverse descent.";
-      this.scheduleNote.classList.remove("hidden");
     } else {
       this.scheduleSource.value = "";
       this.scheduleDepthNumeric.setValue(0);
       this.scheduleDepthLabel.textContent = "off";
-      this.scheduleNote.textContent = "";
-      this.scheduleNote.classList.add("hidden");
     }
 
     this.finalTransformToggle.checked = state.finalTransform !== undefined;
@@ -5786,9 +5738,7 @@ export class Ui {
       state.sphereInversion !== undefined && state.finalTransform !== undefined;
     this.setReasonNote(
       this.finalLensNote,
-      dormantLens
-        ? `Dormant while Sphere inversion is the subject: ${SPHERE_INVERSION_DORMANT_LENS}. Turn off Sphere inversion to edit it.`
-        : "",
+      dormantLens ? SPHERE_INVERSION_DORMANT_REASON : "",
     );
     this.finalLensNote.classList.toggle("hidden", !dormantLens);
     this.syncSphereInversionSection(state);
@@ -5828,9 +5778,6 @@ export class Ui {
     // Surface, the preserved transforms' in Points/Flame/Solid (state.ts).
     const nonFlat = displayedIsNonFlat(state);
     this.viewIsNonFlat = nonFlat;
-    this.pointsLayoutNote.textContent = nonFlat
-      ? "X, Y, and Z stay axis-locked. Edit 4D transforms in the panel; only Current accepts view gestures. Bloom and EDL are shown in Current-only Single view. Saved images capture Current."
-      : "X, Y, and Z stay axis-locked. Move a selected transform in any pane; camera controls stay in Current. Bloom and EDL are shown in Current-only Single view. Saved images capture Current.";
     this.pointsParallelViewsNote.textContent = nonFlat
       ? "When on, X, Y, and Z use parallel views of the projected 4D scene. Current, 4D rotation, and the W slice are unchanged."
       : "When on, X, Y, and Z keep the same size at every depth. Current stays perspective.";
@@ -6157,24 +6104,14 @@ export class Ui {
     );
     // The generated backdrop runs the chaos game on the transforms, which a
     // sphere-inversion block replaces, so main.ts rests it on the gradient
-    // placeholder; say so beside the select rather than failing silently.
-    // Only the Flame choice is refused: every other backdrop still draws.
+    // placeholder and the Flame choice disables without prose (the owner's
+    // no-ambient-copy rule). Only the Flame choice is refused: every other
+    // backdrop still draws.
     const blockPresent = state.sphereInversion !== undefined;
     const flameOption = Array.from(
       this.scalarSelect("background").options,
     ).find((option) => option.value === "flame");
     if (flameOption) flameOption.disabled = blockPresent;
-    this.setReasonNote(
-      this.backgroundNote,
-      blockPresent
-        ? `Flame backdrop is unavailable: it draws the transforms, which Sphere inversion replaces${
-            state.background.mode === "flame"
-              ? ", so the plain gradient shows instead"
-              : ""
-          }. Turn off Sphere inversion to choose it.`
-        : "",
-    );
-    this.backgroundNote.classList.toggle("hidden", !blockPresent);
     // The custom backdrop pickers: shown only while the Background select
     // sits on Custom (therefore hidden for Flame too); synced to the resolved
     // stops with the same only-write-on-change guard as the axis pickers above.
@@ -6626,14 +6563,13 @@ export class Ui {
 
   /**
    * Write `text` into a frequently refreshed live region only when it differs
-   * from what the note already shows. Shared by {@link surfaceNote},
-   * {@link driftNote}, {@link galleryDriftNote},
+   * from what the note already shows. Shared by {@link galleryDriftNote},
    * {@link exportCollectionNote} and {@link timelineNote}: their setters can
    * re-run on every document drag/panel refresh/timeline edit/collection
    * change whether or not the reason changed. A plain
    * textContent write would re-announce unchanged prose to a screen reader.
    *
-   * Honest scope note (wave-5 review): two of the latter four notes live inside
+   * Honest scope note (wave-5 review): two of the latter notes live inside
    * collapsible accordion sections, and a closed `<details>`' content is
    * not exposed to AT — a reason written while its section is closed is
    * not announced, and this guard means opening the section does not
@@ -6705,10 +6641,7 @@ export class Ui {
 
   /** Enable/disable the Drift toggle for the OS reduced-motion
    * preference: no motion means no drift, so the button explains itself
-   * instead of silently doing nothing. Native `disabled` pulls the button
-   * out of the tab ring, so the title-only explanation is hover-only.
-   * {@link driftNote} mirrors the same reason in the always-applicable
-   * document-status area and aria-describedby associates it with the button. */
+   * instead of silently doing nothing with a swapped-in title. */
   setDriftAvailable(available: boolean): void {
     this.driftAvailable = available;
     this.syncGalleryDriftBtn();
@@ -6716,10 +6649,6 @@ export class Ui {
     this.driftBtn.title = available
       ? this.driftTitle
       : "Unavailable: your system asks for reduced motion";
-    this.setReasonNote(
-      this.driftNote,
-      available ? "" : "Unavailable: your system asks for reduced motion.",
-    );
   }
 
   /** Reflect the saved-scene count on the "▦ Gallery (N)" button — and on
@@ -8218,10 +8147,10 @@ export class Ui {
   /**
    * Reflect a sphere-inversion block's Flame/Solid refusal (the family's
    * per-mode verdict in `docs/sphere-inversion-family.md`): a non-null note
-   * disables both mode buttons and mirrors the complete reason into the
-   * persistent note beside the switch, which both buttons name with
-   * `aria-describedby`; `null` restores the default affordance and clears the
-   * text. The document keeps its render-mode-independent state either way.
+   * disables both mode buttons and rides their `title` tooltips; `null`
+   * restores the default affordance. A block arriving under a live
+   * Flame/Solid session is main.ts's toast, not panel copy. The document
+   * keeps its render-mode-independent state either way.
    */
   setSphereInversionModeRefusal(note: string | null): void {
     const { flame, solid } = this.modeButtons;
@@ -8230,20 +8159,21 @@ export class Ui {
     flame.title = note ?? "Fractal-flame exposure of the current view";
     solid.title =
       note ?? "Sampled voxel-density Solid; distinct from analytic Surface";
-    this.setReasonNote(this.sphereInversionModeNote, note ?? "");
     this.sphereInversionScene = note !== null;
     this.syncBalloonRows();
   }
 
   /**
    * Reflect the surface render's marchability (from `analyzeSurfaceSystem` +
-   * the uniform-array cap): `ineligible` disables the mode button and mirrors
-   * its complete reason into the persistent adjacent note; `degraded` keeps
-   * it enabled and shows the analyzer's exact detail before entry (which may
-   * describe an alternate valid object, not merely reduced fidelity);
-   * `eligible` restores the default affordance and clears stale text. main.ts
+   * the uniform-array cap): `ineligible` disables the mode button and rides
+   * its complete reason on the button's own title tooltip; `degraded` keeps
+   * it enabled with the analyzer's exact detail on the tooltip before entry
+   * (which may describe an alternate valid object, not merely reduced
+   * fidelity); `eligible` restores the default affordance. The strip between
+   * the mode switch and Undo/Redo carries no prose (the owner's red line);
+   * a refused door's toast (main.ts) names the reason for touch. main.ts
    * recomputes this on every document change, including drag ticks, so the
-   * equality-guarded note never chatters when its text is unchanged.
+   * equality-guarded title never chatters when its text is unchanged.
    */
   setSurfaceEligibility(
     status: "eligible" | "degraded" | "ineligible",
@@ -8256,16 +8186,13 @@ export class Ui {
     const button = this.modeButtons.surface;
     const blocked = status === "ineligible";
     const refusal = `Surface render unavailable: ${detail ?? "not marchable"}`;
-    const noteText = blocked
+    const tooltip = blocked
       ? refusal
       : status === "degraded" && detail
         ? detail
-        : "";
+        : "Sphere-traced surface of the attractor";
     button.disabled = blocked;
-    button.title = blocked ? refusal : "Sphere-traced surface of the attractor";
-    // Text alone drives visibility; the element stays rendered so the live
-    // region announces transitions and remains outside hidden mode content.
-    this.setReasonNote(this.surfaceNote, noteText);
+    if (button.title !== tooltip) button.title = tooltip;
     this.surfaceEligibilityRecoveryBtn.classList.toggle(
       "hidden",
       !blocked || recovery === null,
@@ -8274,6 +8201,7 @@ export class Ui {
       recovery === "includeCondensationRoot"
         ? "Use root shapes"
         : "Turn trap geometry off";
+    this.surfaceEligibilityRecoveryBtn.title = refusal;
     // The full verdict reaches the shared transform editor: re-applied to a
     // live editor here because the gate refresh runs AFTER the editor build
     // on every refresh path. Store it rather than only its route so a later
@@ -8297,7 +8225,7 @@ export class Ui {
    * rows it hides rather than parking at 0%, because most surface renders
    * finish within a frame or two and a permanent "0%" would read as a stuck
    * render. POSE-derived and polled from the render loop — never shares
-   * {@link setSurfaceEligibility}'s document-derived note element. `detail`
+   * {@link setSurfaceEligibility}'s document-derived button tooltip. `detail`
    * is a fallback-reason token ("compute failed" / "compute unavailable")
    * appended TRAILING after the percentage, so the engine token and
    * percentage stay the prominent read — the render-backend disclosure's
@@ -8429,11 +8357,13 @@ export class Ui {
     this.surfacePreviewToggle.checked = on;
   }
 
-  /** Disclose a diagnostic query override beside the authored choice. */
+  /** Disclose a diagnostic query override beside the authored choice; no
+   * override carries no prose (the owner's red line for ambient copy — the
+   * element collapses via style.css's :empty rule). */
   setSurfaceSamplesOverride(samples: number | null): void {
     this.surfaceAntialiasNote.textContent =
       samples === null
-        ? "Used for full-detail settles and Save PNG. Quick previews stay at 1 sample/pixel."
+        ? ""
         : `Diagnostic override active: ${String(samples)} samples/pixel is used for settles and Save PNG; the saved choice remains unchanged.`;
   }
 
