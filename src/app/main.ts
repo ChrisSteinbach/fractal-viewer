@@ -106,7 +106,6 @@ import {
   buildSurfaceDE4,
   deHasFolds4,
   slabSupported4,
-  slabExact4,
   type SurfaceDE4,
 } from "../fractal/surface-de-4d";
 import { SURFACE_LENS_SWIRL } from "../fractal/swirl-lens";
@@ -4470,11 +4469,12 @@ async function main(): Promise<void> {
   let surfaceSessionIs4D = false;
   let surfaceLatticePresentation: ResolvedLatticePresentation | null = null;
   // False while the live 4D surface session cannot take a slab at all
-  // (swirl final / condensation / Space tiling — `slabSupported4`), where
-  // the view pushes clamp the slice thickness to 0 and the panel disables
-  // the row with its reason. Spherefold/mandelbox fold sets ARE supported
-  // through the bounded midpoint cover. Session-scoped like the flag
-  // above.
+  // (a swirl final or condensation — `slabSupported4` — or the lattice
+  // Space tiling arm), where the view pushes clamp the slice thickness to
+  // 0 and the panel disables the row with its reason. Spherefold/mandelbox
+  // fold sets ARE supported through the bounded midpoint cover, tiled or
+  // not (the finite wall split composes with it); only the lattice walls
+  // have no crossing enumeration. Session-scoped like the flag above.
   let surface4SlabAvailable = true;
 
   // Monotonic token guarding the async shader-compile gate: each
@@ -6654,15 +6654,16 @@ async function main(): Promise<void> {
             // and nonlinear fold sets (spherefold/mandelbox, recursive or
             // in the final lens) are answered by the bounded midpoint
             // cover the compute kernels and the CPU oracle share. Under a
-            // FINITE reflection group the slab composes through the wall
-            // split, for segment-exact fold sets only — the split-plus-
-            // cover composition is the separate nonlinear slab work. The
-            // lattice arm, a swirl final, condensation, and a nonlinear
-            // fold set under tiling each refuse, and each names itself in
-            // the panel's reason.
-            surface4SlabAvailable = surfaceTiling
-              ? !isResolvedLatticeTiling(surfaceTiling) && slabExact4(de)
-              : slabSupported4(de);
+            // FINITE reflection group the slab composes: the wall split
+            // for segment-exact fold sets, and the split-plus-cover
+            // composition (each folded piece covered at its own midpoints)
+            // for the nonlinear ones. The lattice arm, a swirl final, and
+            // condensation each refuse, and each names itself in the
+            // panel's reason.
+            surface4SlabAvailable =
+              slabSupported4(de) &&
+              (surfaceTiling === null ||
+                !isResolvedLatticeTiling(surfaceTiling));
             ui.setFourDSlabAvailable(
               surface4SlabAvailable,
               surfaceTiling
@@ -6672,9 +6673,7 @@ async function main(): Promise<void> {
                     ? null
                     : de.foldFinal?.foldKind === SURFACE_LENS_SWIRL
                       ? "swirl"
-                      : de.condensation !== undefined
-                        ? "condensation"
-                        : "tilingFold"
+                      : "condensation"
                 : de.foldFinal?.foldKind === SURFACE_LENS_SWIRL
                   ? "swirl"
                   : de.condensation !== undefined

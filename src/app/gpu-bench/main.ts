@@ -3972,7 +3972,8 @@ interface SurfaceCrossCheckRow {
     | "stage2-on-vs-off"
     | "slabext-on-vs-off"
     | "cover-on-vs-noslab"
-    | "tiled-slab-on-vs-noslab";
+    | "tiled-slab-on-vs-noslab"
+    | "tiled-cover-on-vs-noslab";
   system: string;
   width: number;
   n: number;
@@ -5616,6 +5617,27 @@ function surfaceLens4MandelboxFinal(): Transform {
     variations: [{ type: "mandelbox", weight: 1.1 }],
     post: SURFACE_BENCH_POST,
   };
+}
+
+/** The A4-chamber-aligned pentatope — tiling.ts's own A4 chamber axes, so
+ * the tiled legs' queries land on real content inside the cell (the
+ * standard menu pentatope has a different orientation; an empty chamber
+ * would be a vacuous success). Shared by the M5c wall-split leg and the
+ * M5d split-plus-cover leg — the two tiled fixtures' common base. */
+function tiledAlignedPentatope(): Transform[] {
+  return [
+    [-0.6325, -0.3651, -0.2582, -0.2],
+    [0.6325, -0.3651, -0.2582, -0.2],
+    [0, 0.7303, -0.2582, -0.2],
+    [0, 0, 0.7746, -0.2],
+    [0, 0, 0, 0.8],
+  ].map(([x, y, z, w], id) => ({
+    id,
+    position: [x, y, z],
+    rotation: [0, 0, 0],
+    scale: [0.5, 0.5, 0.5],
+    w: { position: w },
+  }));
 }
 
 function parseSurfaceIntList(raw: string | null, fallback: number[]): number[] {
@@ -23779,27 +23801,13 @@ async function runSurfaceDeSection(
         hF: number;
       }[] = [];
       // This pentatope is aligned with tiling.ts's A4 chamber, matching
-      // the production surface-tiling gate. The standard menu pentatope
-      // has a different orientation; an empty chamber would be a vacuous
-      // success.
-      const tiledAlignedPentatope: Transform[] = [
-        [-0.6325, -0.3651, -0.2582, -0.2],
-        [0.6325, -0.3651, -0.2582, -0.2],
-        [0, 0.7303, -0.2582, -0.2],
-        [0, 0, 0.7746, -0.2],
-        [0, 0, 0, 0.8],
-      ].map(([x, y, z, w], id) => ({
-        id,
-        position: [x, y, z],
-        rotation: [0, 0, 0],
-        scale: [0.5, 0.5, 0.5],
-        w: { position: w },
-      }));
+      // the production surface-tiling gate (the helper above).
+      const tiledAlignedPentatopeFixtures = tiledAlignedPentatope();
       [
         {
           prefix: "tiled4Affine",
           seed: 581,
-          transforms: tiledAlignedPentatope,
+          transforms: tiledAlignedPentatopeFixtures,
           group: "a4" as const,
         },
         {
@@ -24082,6 +24090,367 @@ async function runSurfaceDeSection(
     }
 
     await canaryCheck("the M5c tiled slab agreement leg");
+
+    // ----- M5d: the SPLIT-PLUS-COVER leg — the epic's acceptance
+    // composition — GATING -----
+    // The finite wall split (M5c) composed with the bounded midpoint
+    // cover (M5b): the split enumerates the folded pieces exactly as the
+    // segment-exact arm does; each folded straight piece is then answered
+    // by the COVER over it — SLAB_COVER_PIECES point descents at the
+    // piece's equally spaced midpoints, each certified `DE(mid) -
+    // halfPiece` by the triangle inequality over a complete partition of
+    // the piece — so the answer is min_j max(coverCert_j, clip term),
+    // bounded work (pieces x 16 descents), no new soundness surface. Two
+    // fixtures, each at h = 0 (the identity row), h = 0.10 R and h = 0.25
+    // R under two pose rotors — M5b's cover pairings one tiling over:
+    //   · `tiled4CoverMandel` — the A4-aligned pentatope under the
+    //     mandelbox FINAL lens, the affine4 core UNDER the lens
+    //     (`lens: true`, the M5b cover-affine pairing), the REFINED tiled
+    //     oracle;
+    //   · `tiled4CoverSphere` — the parameterized mandelbox+spherefold pair
+    //     under F4 (24 walls, the widest split), the fold4 frontier, the
+    //     PLAIN tiled oracle — AUTHORED fold lengths on both maps, so the
+    //     cover reads the same radii the fold4 kernel packs, split across
+    //     wall pieces.
+    // The CPU oracle is the tiled composed f64 with the split's OWN
+    // entry (the cover routes inside it); the kernel carries `slabCover:
+    // true` AND the tiling, so the split-plus-cover arm generates beside
+    // the baked walls. The h=0 rows also get the identity A/B against the
+    // tiled POINT kernel (slabExt false, no cover): the composed h=0
+    // branch is that kernel's own composition (fold once, point body,
+    // clip) and `segmentRadius4` at e = 0 IS `length(q)`.
+    {
+      const tiledCoverRotorA = symmetryRotation4("yw", 0.55);
+      const tiledCoverRotorB = symmetryRotation4("xw", 0.62);
+      const tiledCoverDefs: {
+        name: string;
+        seed: number;
+        transforms: Transform[];
+        finalTransform: Transform | null;
+        tiling: ResolvedFiniteTiling;
+        rotor: number[];
+        w0f: number;
+        hF: number;
+      }[] = [];
+      (
+        [
+          {
+            prefix: "tiled4CoverMandel",
+            seed: 601,
+            transforms: tiledAlignedPentatope(),
+            finalTransform: surfaceLens4MandelboxFinal(),
+            group: "a4" as const,
+          },
+          {
+            prefix: "tiled4CoverSphere",
+            seed: 611,
+            transforms: surfaceFold4Parameterized(),
+            finalTransform: null,
+            group: "f4" as const,
+          },
+        ] as const
+      ).forEach(({ prefix, seed, transforms, finalTransform, group }) => {
+        const tiling = resolveTiling({ group })!;
+        (
+          [
+            ["H0", tiledCoverRotorA, 0.15, 0],
+            ["H10", tiledCoverRotorA, 0.15, 0.1],
+            ["H25", tiledCoverRotorB, 0.08, 0.25],
+          ] as const
+        ).forEach(([suffix, rotor, w0f, hF], index) => {
+          tiledCoverDefs.push({
+            name: `${prefix}${suffix}`,
+            seed: seed + index,
+            transforms,
+            finalTransform,
+            tiling,
+            rotor,
+            w0f,
+            hF,
+          });
+        });
+      });
+      const tiledCoverSystems: Surface4SystemState[] = [];
+      for (const def of tiledCoverDefs) {
+        status(`cpu oracle: ${def.name}…`);
+        activity.setState(
+          "cpu",
+          `Surface cover-tiled CPU oracle — ${def.name}`,
+        );
+        await new Promise<void>((resolve) => setTimeout(resolve));
+        const eligibility = analyzeSurfaceSystem4(
+          def.transforms,
+          def.finalTransform,
+        );
+        if (eligibility.status === "ineligible") {
+          throw new Error(
+            `tiled cover bench fixture ${def.name} is ineligible: ` +
+              eligibility.reasons.join("; "),
+          );
+        }
+        const de = buildSurfaceDE4(def.transforms, def.finalTransform);
+        // The fixtures must actually NEED the composition: a segment-exact
+        // system would pass through M5c's own wall-split rows and pin
+        // nothing about the cover; a swirl/condensation system would be
+        // refused before either.
+        if (slabExact4(de)) {
+          throw new Error(
+            `tiled cover bench fixture ${def.name} is slabExact4 — the ` +
+              "split-plus-cover arm is not what this row would exercise",
+          );
+        }
+        if (!slabSupported4(de)) {
+          throw new Error(
+            `tiled cover bench fixture ${def.name} is not slabSupported4 — ` +
+              "the tiled composition (and the packer) would refuse its slab",
+          );
+        }
+        const refined = !deHasFolds4(de);
+        const view4: SurfaceGpu4View = {
+          rotor: def.rotor,
+          w0: def.w0f * de.boundingRadius,
+          sliceHalfW: def.hF * de.boundingRadius,
+        };
+        const tiledCoverComposed = (q: Vec3): number => {
+          const composed = surface4ComposedQuery(view4, q);
+          return refined
+            ? estimateDistance4RefinedTiled(
+                def.tiling,
+                de,
+                composed.p,
+                0,
+                composed.ext,
+              )
+            : estimateDistance4Tiled(def.tiling, de, composed.p, composed.ext);
+        };
+        const queries = affine4Queries(
+          de,
+          view4,
+          def.seed,
+          refined,
+          tiledCoverComposed,
+        );
+        const cpu = queries.map(tiledCoverComposed);
+        const R = surface4ToleranceR(de);
+        const stable = cpu.map((c, i) =>
+          surface4QueryStable(
+            de,
+            view4,
+            queries[i],
+            c,
+            surfaceEvalTol(c, R),
+            refined,
+            tiledCoverComposed,
+          ),
+        );
+        tiledCoverSystems.push({
+          name: def.name,
+          de,
+          view4,
+          transforms: def.transforms,
+          queries,
+          cpu,
+          stable,
+        });
+        render();
+      }
+      const tiledCoverGroups = [
+        {
+          name: "tiled4-cover-fold",
+          core: "fold4" as const,
+          lens: false,
+          lensPost: false,
+          width: SURFACE_FOLD_BEAM_WIDTH,
+          systems: tiledCoverSystems.filter((sys) => deHasFolds4(sys.de)),
+          compare: compareSurfaceFold4Agreement,
+        },
+        {
+          name: "tiled4-cover-affine",
+          core: "affine4" as const,
+          lens: true,
+          lensPost: true,
+          width: SURFACE_AFFINE_LADDER_WIDTH,
+          systems: tiledCoverSystems.filter((sys) => !deHasFolds4(sys.de)),
+          compare: compareSurface4Agreement,
+        },
+      ];
+      for (const group of tiledCoverGroups) {
+        if (group.systems.length === 0) continue;
+        const cfg: SurfaceKernelConfig = {
+          core: group.core,
+          variant: "private",
+          width: group.width,
+          stage2: false,
+          wg: surfaceWgFor(config, "private"),
+        };
+        const label = `tiled4 cover ${configLabel(cfg)}${group.lens ? " lens" : ""}`;
+        status(`agreement: compiling ${label}…`);
+        activity.setState("gpu", `Surface DE agreement — ${label}`);
+        let pipeline: GPUComputePipeline | null = null;
+        try {
+          const code = surfaceDeKernelWgsl({
+            mode: "eval",
+            core: group.core,
+            lens: group.lens,
+            lensPost: group.lensPost,
+            slabExt: true,
+            slabCover: true,
+            tiling: resolveTiling({
+              group: group.core === "fold4" ? "f4" : "a4",
+            }),
+            width: cfg.width,
+            workgroupSize: cfg.wg,
+            sharedFrontier: false,
+            bnbStage2: false,
+          });
+          ({ pipeline } = await buildSurfacePipeline(
+            device,
+            pipelineLayout,
+            code,
+            "evalQueries",
+            `surface-de eval ${label}`,
+          ));
+        } catch (e) {
+          compileFailed = true;
+          results.notes.push(`agreement ${label}: ${describeError(e)}`);
+        }
+        if (pipeline !== null) {
+          for (const sys of group.systems) {
+            status(`agreement: ${label} × ${sys.name}…`);
+            await ensureSurface4EvalBuffers(
+              device,
+              bindGroupLayout,
+              sys,
+              resolveTiling({
+                group: group.core === "fold4" ? "f4" : "a4",
+              }),
+            );
+            const gpu = await runSurfaceEvalDispatch(
+              device,
+              pipeline,
+              sys,
+              cfg.wg,
+            );
+            const row = group.compare(sys, cfg, gpu);
+            results.agreement.push(row);
+            const excluded = row.excluded ?? 0;
+            const cap = cover4ExcludedCap(sys.name);
+            if (excluded > cap) {
+              results.notes.push(
+                `tiled4 cover agreement ${sys.name}: excluded ${String(excluded)}/${String(row.n)} queries (> ${String(cap)}) from the oracle-continuity gate`,
+              );
+            }
+            render();
+            await new Promise<void>((resolve) => setTimeout(resolve));
+          }
+        }
+        render();
+
+        // The h=0 identity pin: the composed wrapper's
+        // `sliceHalfW <= 0.0` branch is the tiled point kernel's own
+        // composition (fold once, point body, clip), and `segmentRadius4`
+        // at e = 0 IS `length(q)` — so the cover-tiled kernel must agree
+        // with the `slabExt: false` tiled point kernel elementwise on the
+        // same queries (M5c's identity A/B shape, one cover over).
+        const h0Systems = group.systems.filter(
+          (sys) => sys.view4.sliceHalfW === 0,
+        );
+        if (h0Systems.length > 0 && pipeline !== null) {
+          status(`${group.name} identity A/B: compiling…`);
+          try {
+            const code = surfaceDeKernelWgsl({
+              mode: "eval",
+              core: group.core,
+              lens: group.lens,
+              lensPost: group.lensPost,
+              slabExt: false,
+              tiling: resolveTiling({
+                group: group.core === "fold4" ? "f4" : "a4",
+              }),
+              width: group.width,
+              workgroupSize: cfg.wg,
+              sharedFrontier: false,
+              bnbStage2: false,
+            });
+            const { pipeline: noslabPipeline } = await buildSurfacePipeline(
+              device,
+              pipelineLayout,
+              code,
+              "evalQueries",
+              `surface-de eval ${group.name} noslab`,
+            );
+            for (const sys of h0Systems) {
+              await ensureSurface4EvalBuffers(
+                device,
+                bindGroupLayout,
+                sys,
+                resolveTiling({
+                  group: group.core === "fold4" ? "f4" : "a4",
+                }),
+              );
+              const gpuPoint = await runSurfaceEvalDispatch(
+                device,
+                noslabPipeline,
+                sys,
+                cfg.wg,
+              );
+              // Re-dispatch the composed pipeline on the same buffers.
+              const gpuCoverValue = await runSurfaceEvalDispatch(
+                device,
+                pipeline,
+                sys,
+                cfg.wg,
+              );
+              let mismatches = 0;
+              let maxAbs = 0;
+              for (let i = 0; i < gpuPoint.length; i++) {
+                if (gpuPoint[i] !== gpuCoverValue[i]) {
+                  mismatches++;
+                  maxAbs = Math.max(
+                    maxAbs,
+                    Math.abs(gpuPoint[i] - gpuCoverValue[i]),
+                  );
+                }
+              }
+              const tol =
+                SURFACE_FOLD4_SLABEXT_TOL_FACTOR * sys.de.boundingRadius;
+              const withinTolerance = maxAbs <= tol;
+              results.crossChecks.push({
+                kind: "tiled-cover-on-vs-noslab",
+                system: sys.name,
+                width: group.width,
+                n: gpuPoint.length,
+                mismatches,
+                maxDelta: maxAbs,
+                note:
+                  mismatches === 0
+                    ? "exact — the split-plus-cover wrapper's h=0 branch is the tiled point kernel bit for bit"
+                    : withinTolerance
+                      ? "sub-tolerance mismatches (fma/contraction noise)"
+                      : "MISMATCH — the split-plus-cover wrapper's h=0 branch must reproduce the tiled point kernel (surface-de-gpu.ts's tiled slab doc)",
+              });
+              if (!withinTolerance) {
+                cover4IdentityFailed = true;
+                results.notes.push(
+                  `${group.name} identity A/B ${sys.name}: ` +
+                    `${String(mismatches)} mismatches, maxAbs ` +
+                    `${maxAbs.toExponential(2)} exceeds tolerance ` +
+                    `${tol.toExponential(2)}`,
+                );
+              }
+            }
+          } catch (e) {
+            cover4IdentityFailed = true;
+            results.notes.push(
+              `${group.name} identity A/B: ${describeError(e)}`,
+            );
+          }
+          render();
+        }
+      }
+    }
+
+    await canaryCheck("the M5d split-plus-cover agreement leg");
 
     // ----- M7: the ESCAPE4 core's agreement leg — GATING -----
     // The forward escape-time orbit ONE DIMENSION UP, behind the 4D cores'

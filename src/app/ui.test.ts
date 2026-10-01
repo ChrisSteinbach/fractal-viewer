@@ -10591,7 +10591,7 @@ describe("Ui 4D surface session controls", () => {
     );
   });
 
-  it("names the lattice tiling arm as its own slab reason, separate from the nonlinear fold set's", () => {
+  it("names the lattice tiling arm as its own slab reason", () => {
     const ui = new Ui(document);
     const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
     ui.setSurfaceSessionKind("ifs");
@@ -10605,14 +10605,6 @@ describe("Ui 4D surface session controls", () => {
     expect(
       el("fourDSliceThicknessUnavailableNote").classList.contains("hidden"),
     ).toBe(false);
-
-    // The finite arm's nonlinear fold set refuses for a different reason:
-    // the split's pieces would need the cover's own per-piece answer.
-    ui.setFourDSlabAvailable(false, "tilingFold");
-    const foldTitle = el("fourDSliceThicknessRow").title;
-    expect(foldTitle).toContain("segment-exact fold set");
-    expect(foldTitle).toContain("affine and boxfold");
-    expect(foldTitle).not.toContain("lattice");
     expect((el("fourDSliceThicknessSlider") as HTMLInputElement).disabled).toBe(
       true,
     );

@@ -19,7 +19,7 @@ import {
   estimateDistance4Refined,
   estimateDistance4Sample,
   estimateDistance4RefinedSample,
-  slabExact4,
+  slabSupported4,
 } from "./surface-de-4d";
 import {
   foldLattice3,
@@ -79,16 +79,22 @@ import type { Vec3, Vec4 } from "./types";
  * REFUSALS. Enforced HERE, on a real slab (`halfExtent` a segment): the
  * LATTICE arm — the affine-A1 product's walls need their own crossing
  * enumeration and bounded work, and the finite groups' proven
- * `maxWordLength` root table is not that enumeration; and a FINITE group
- * whose fold set the inner estimator cannot thread exactly
- * ({@link slabExact4} false — spherefold/mandelbox branches or a swirl
- * final), whose split-plus-cover composition is the separate nonlinear
- * slab work. A finite group with a segment-exact fold set composes
- * instead: the split vocabulary (`tiling.ts`'s {@link tilingSlabPieces})
- * divides the segment at the wall crossings and folds each piece, the
- * inner core answers each straight folded piece with its own segment
- * machinery, and the clip is intersected PER PIECE — the composition the
- * split's module doc derives. Point queries keep the fold-once
+ * `maxWordLength` root table is not that enumeration; and a system whose
+ * core has no slab certificate at all ({@link slabSupported4} false — a
+ * swirl final lens or a condensation shape), whose point queries the
+ * inner entries refuse too. A finite group with a supported core
+ * composes instead: the split vocabulary (`tiling.ts`'s
+ * {@link tilingSlabPieces}) divides the segment at the wall crossings and
+ * folds each piece, the inner core answers each straight folded piece —
+ * its own SEGMENT machinery where the fold set is segment-exact
+ * ({@link slabExact4}: affine and boxfold), and the BOUNDED MIDPOINT
+ * COVER where it is not (spherefold/mandelbox, recursive maps or the
+ * final lens): the cover's certificate is sound PER PIECE by the same
+ * triangle-inequality argument it makes untiled, so the composition is
+ * `min_j max(coverCert_j, clipSdf(mid_j) - halfLen_j)` — bounded work
+ * (`pieces x SLAB_COVER_PIECES` point descents), no new
+ * soundness surface. The clip is intersected PER PIECE — the composition
+ * the split's module doc derives. Point queries keep the fold-once
  * composition below in every arm. Named for context but enforced by
  * routing: infinite lattice + Balloon has no finite enclosing ball.
  * Finite Balloon wraps these public estimators after dimensional
@@ -197,12 +203,21 @@ function isSegment(halfExtent: Vec4 | null): halfExtent is Vec4 {
  * crossing enumeration and bounded work, and the finite groups' proven
  * `maxWordLength` root table is not that enumeration. A finite group
  * composes through the split vocabulary (`tiling.ts`'s
- * {@link tilingSlabPieces}) — but only where the inner estimator threads a
- * segment EXACTLY ({@link slabExact4}: affine and boxfold fold sets): the
- * nonlinear cover's own soundness is per-piece, and its composition with
- * the split is the separate nonlinear slab work, so it refuses loudly
- * rather than silently clamping after the control is enabled. Returns the
- * finite arm, narrowed for the split's `info` reads. */
+ * {@link tilingSlabPieces}) wherever the core has a slab certificate at
+ * all ({@link slabSupported4}): a segment-exact fold set
+ * ({@link slabExact4}: affine and boxfold) takes the split's own segment
+ * machinery per piece, and a nonlinear one (spherefold/mandelbox,
+ * recursive or in the final lens) takes the BOUNDED MIDPOINT COVER per
+ * piece — the cover's triangle-inequality certificate is sound over each
+ * folded straight piece exactly as it is over the untiled segment, so
+ * the composition is the split's `min_j` over `max(coverCert_j,
+ * clipSdf(mid_j) - halfLen_j)` with `coverCert_j` the cover's bound on
+ * that piece, bounded work (`pieces x SLAB_COVER_PIECES` point
+ * descents), no new soundness surface. Only the core-wide refusals
+ * (condensation, a swirl final lens) and the lattice arm stay — each
+ * names itself, and nothing silently clamps after the control is
+ * enabled. Returns the finite arm, narrowed for the split's `info`
+ * reads. */
 function assertFiniteSlab4(
   tiling: ResolvedTiling,
   de: SurfaceDE4,
@@ -216,13 +231,12 @@ function assertFiniteSlab4(
         "run slice 0",
     );
   }
-  if (!slabExact4(de)) {
+  if (!slabSupported4(de)) {
     throw new Error(
-      "tiling-de: a slab through finite tiling needs a segment-exact fold " +
-        "set (slabExact4: affine and boxfold only) — spherefold and " +
-        "mandelbox through tiling is the separate nonlinear slab work " +
-        "(docs/surface-slice-thickness.md); clamp sliceHalfW to 0 for this " +
-        "system",
+      "tiling-de: slab queries are refused for this system's nonlinear " +
+        "final lens (swirl) or condensation shape — the tiled composition " +
+        "needs the core's own point certificate first (slabSupported4); " +
+        "clamp sliceHalfW to 0 for this system",
     );
   }
   return tiling;
@@ -232,10 +246,16 @@ function assertFiniteSlab4(
  * `min_j max(coreDE(F_j), clipSdf(mid_j) − halfLen_j)` — the composition
  * the split vocabulary's module doc derives, with the DE and clip
  * combined PER PIECE so the intersection stays at one segment parameter.
- * The cutoff threads RAW: each piece's own segment descent refines to the
- * caller's epsilon (the body's note for why the cover's `+ halfLen`
- * pairing is wrong here). A `null` split (a fold cap expiry, never by the
- * proof) returns 0 — fully conservative. */
+ * Each piece's `coreDE` is the inner public entry's own answer at the
+ * piece's extent: the segment machinery where the fold set is exact
+ * ({@link slabExact4}), the bounded midpoint cover where it is not —
+ * whose certificate is sound over the straight folded piece by the same
+ * argument it makes untiled. The cutoff threads RAW into each piece's
+ * entry, whose own machinery prices its slack: the segment descent none
+ * (exact), the cover `+ halfPiece` internally (its cutoff contract), so
+ * a piece clearing the inflated early-out proves the piece clears
+ * `cutoff`. A `null` split (a fold cap expiry, never by the proof)
+ * returns 0 — fully conservative. */
 function tiledSlabDistance4(
   tiling: ResolvedFiniteTiling,
   de: SurfaceDE4,
@@ -254,13 +274,13 @@ function tiledSlabDistance4(
       piece.extent[2],
       piece.extent[3],
     );
-    // The piece's cutoff threads RAW: each piece's segment descent covers
-    // its own folded segment exactly (no triangle slack to price in, unlike
-    // the cover's point-at-midpiece calls), so inflating the early-out by
-    // halfLen would only saturate the piece's bound at `cutoff + halfLen` —
-    // far above the marcher's acceptance epsilon — and step the render
-    // straight through the object. Measured on the A4-tiled dust: the
-    // inflated form lost ~90% of the slab's hits.
+    // The piece's cutoff threads RAW: each piece's own machinery prices
+    // its slack (the segment descent is exact, so inflating its early-out
+    // by halfLen would only saturate the piece's bound at `cutoff +
+    // halfLen` — far above the marcher's acceptance epsilon — and step
+    // the render straight through the object; measured on the A4-tiled
+    // dust, the inflated form lost ~90% of the slab's hits). The cover
+    // adds its own `halfPiece` internally, keeping the same contract.
     const inner = refined
       ? estimateDistance4Refined(de, piece.center, cutoff, piece.extent)
       : estimateDistance4(de, piece.center, piece.extent);
@@ -373,10 +393,11 @@ export function estimateDistanceRefinedTiled(
 /**
  * The 4D affine/fold wrapper over {@link estimateDistance4} (which takes
  * no cutoff — nothing to thread). A real `halfExtent` routes through the
- * finite split ({@link tiledSlabDistance4}) where the fold set is
- * segment-exact, and refuses a lattice arm or a nonlinear fold set —
- * the routing gate's doc names each reason. `null`/zero — the point
- * query — keeps the fold-once composition below unchanged.
+ * finite split ({@link tiledSlabDistance4}) — each folded piece answered
+ * by the core's own segment machinery or midpoint cover — and refuses a
+ * lattice arm or a core without a slab certificate; the routing gate's
+ * doc names each reason. `null`/zero — the point query — keeps the
+ * fold-once composition below unchanged.
  */
 export function estimateDistance4Tiled(
   tiling: ResolvedTiling,

@@ -708,8 +708,16 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     (boxfold/affine), the BOUNDED MIDPOINT COVER (`SLAB_COVER_PIECES` 16,
     sound at any count) for nonlinear folds and final lenses, refusal only
     for swirl/condensation — mirrored by `surface-de-gpu.ts`'s
-    `slabCover`, routed by the app, both gates green in both browsers;
-    tiling composition remains owed. Proof:
+    `slabCover`, routed by the app, both gates green in both browsers.
+    UNDER A FINITE reflection group the cover composes with the wall
+    split (`tiling.ts`'s `tilingSlabPieces`): each folded piece answered
+    by the cover over its own straight segment — `pieces × 16` point
+    descents, sound per piece by the cover's own argument, no new
+    soundness surface — which is the epic's Mandelbox-plus-tiling
+    acceptance case, live on both engines (the WGSL split-plus-cover arm,
+    bench M5d, the tiled browser gate's composed phases); the LATTICE arm
+    still refuses (its walls need their own crossing enumeration).
+    Proof:
     `docs/surface-slice-thickness.md`.
   - `surface-de-gpu.ts` — WGSL fold-DE compute kernel (a spike, gated in by
     the beam-width occupancy verdict; integrated as the app's compute

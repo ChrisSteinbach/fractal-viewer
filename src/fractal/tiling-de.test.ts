@@ -32,6 +32,7 @@ import {
   foldToChamber,
   isInChamber,
   resolveTiling,
+  tilingSlabPieces,
 } from "./tiling";
 import type { TilingGroup, TilingGroupInfo } from "./tiling";
 import {
@@ -187,6 +188,55 @@ function canonicalMandelbox(overrides: Partial<Transform> = {}): Transform {
     scale: [1, 1, 1],
     variations: [{ type: "mandelbox", weight: 2 }],
     ...overrides,
+  };
+}
+
+/** A two-map pure-mandelbox 4D system — the cover's widest fold class as a
+ * BASE (surface-de-4d.test.ts's `pureMandelboxPair4`, DAMP-duplicated). */
+function mandelboxPair4(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.3, -0.15, 0.1],
+      rotation: [0.2, 0.4, 0],
+      scale: [0.12, 0.12, 0.12],
+      w: { position: 0.15, rotation: { xw: 0.25 } },
+      variations: [{ type: "mandelbox", weight: 1.3 }],
+    },
+    {
+      id: 1,
+      position: [-0.25, 0.2, -0.2],
+      rotation: [0.1, 0, 0.3],
+      scale: [0.13, 0.13, 0.13],
+      w: { position: -0.15, rotation: { xw: 0.25 } },
+      variations: [{ type: "mandelbox", weight: 1.2 }],
+    },
+  ];
+}
+
+/** A mandelbox FINAL lens over an affine 4D base (surface-de-4d.test.ts's
+ * `mandelboxFinal4`, DAMP-duplicated) — the composition the epic's
+ * acceptance case names. */
+function mandelboxFinal4(): Transform {
+  return {
+    id: 99,
+    position: [0.05, 0.1, 0],
+    rotation: [0.3, 0, 0.2],
+    scale: [0.85, 0.85, 0.85],
+    variations: [{ type: "mandelbox", weight: 0.6 }],
+  };
+}
+
+/** A swirl FINAL lens — the core-wide refusal that survives under tiling.
+ * Small enough to pass the lens's own pre-swirl radius admission. */
+function swirlFinal4(): Transform {
+  return {
+    id: 99,
+    position: [0.02, -0.03, 0.01],
+    rotation: [0.2, 0.1, 0.3],
+    scale: [0.3, 0.3, 0.3],
+    w: { position: 0.02, rotation: { yw: 0.1 } },
+    variations: [{ type: "swirl", weight: 0.7 }],
   };
 }
 
@@ -680,20 +730,229 @@ describe("4D slab routing (test 7)", () => {
     }
   });
 
-  it("a nonlinear fold set refuses the slab through finite tiling", () => {
+  it("a nonlinear fold set answers the slab through the split-plus-cover composition", () => {
     const nonlinearDe = buildSurfaceDE4(nonlinear);
     const segments: Vec4[] = [
       [0.1, 0, 0, 0],
+      [0, -0.2, 0, 0],
+      [0, 0, 0.05, 0],
       [0, 0, 0, 0.3],
+      [0.1, 0.1, 0.1, 0.1],
     ];
     for (const halfExtent of segments) {
-      expect(() =>
-        estimateDistance4Tiled(t, nonlinearDe, p, halfExtent),
-      ).toThrow(/slabExact4/);
-      expect(() =>
-        estimateDistance4RefinedTiled(t, nonlinearDe, p, 0.05, halfExtent),
-      ).toThrow(/slabExact4/);
+      const value = estimateDistance4Tiled(t, nonlinearDe, p, halfExtent);
+      expect(value).toBeGreaterThanOrEqual(0);
+      expect(Number.isFinite(value)).toBe(true);
+      // Soundness bracket: the slab bound may not exceed the point bound at
+      // any segment point. The cover's per-piece certificate is min_i
+      // (DE(mid_i) - halfPiece), each mid_i the folded image of an original
+      // segment point whose fold-once point estimate reads the same chamber
+      // DE, so the slab estimate sits at or under every sampled point
+      // estimate up to the fold's own wall allowance.
+      for (const s of [-1, -0.5, 0, 0.5, 1]) {
+        const at: Vec4 = [
+          p[0] + s * halfExtent[0],
+          p[1] + s * halfExtent[1],
+          p[2] + s * halfExtent[2],
+          p[3] + s * halfExtent[3],
+        ];
+        const atPoint = estimateDistance4Tiled(t, nonlinearDe, at, null);
+        expect(value).toBeLessThanOrEqual(atPoint + 1e-5);
+      }
+      // The refined lane brackets the same way.
+      const refinedValue = estimateDistance4RefinedTiled(
+        t,
+        nonlinearDe,
+        p,
+        0,
+        halfExtent,
+      );
+      expect(refinedValue).toBeGreaterThanOrEqual(0);
+      for (const s of [-1, 0, 1]) {
+        const at: Vec4 = [
+          p[0] + s * halfExtent[0],
+          p[1] + s * halfExtent[1],
+          p[2] + s * halfExtent[2],
+          p[3] + s * halfExtent[3],
+        ];
+        const atPoint = estimateDistance4RefinedTiled(t, nonlinearDe, at, 0);
+        expect(refinedValue).toBeLessThanOrEqual(atPoint + 1e-5);
+      }
     }
+  });
+
+  it("the composed answer is the split's pieces each covered, evaluated independently", () => {
+    // The composition identity: the tiled entry's answer is
+    // min_j max(coverCert_j, clipSdf(mid_j) - halfLen_j) over the split's
+    // pieces, where coverCert_j is the UNTILED public entry's own answer at
+    // the piece (the cover routes inside it). Evaluated here with the
+    // independent piece records — the plumbing the wrapper must not drift
+    // from.
+    const nonlinearDe = buildSurfaceDE4(nonlinear);
+    const mandelDe = buildSurfaceDE4(mandelboxPair4());
+    const lensBase = pentatope().map((t, id) => ({ ...t, id }));
+    const lensedDe = buildSurfaceDE4(lensBase, mandelboxFinal4());
+    const rng = mulberry32(711);
+    for (let i = 0; i < 12; i++) {
+      const de = [nonlinearDe, mandelDe, lensedDe][i % 3];
+      const refined = i % 3 === 2;
+      const group = GROUPS4[Math.floor(rng() * GROUPS4.length)];
+      const tiling = resolveTiling({ group })!;
+      const q: Vec4 = [
+        (rng() * 2 - 1) * 2,
+        (rng() * 2 - 1) * 2,
+        (rng() * 2 - 1) * 2,
+        (rng() * 2 - 1) * 2,
+      ];
+      const ext: Vec4 = [rng() * 0.3, rng() * 0.3, rng() * 0.3, rng() * 0.3];
+      const pieces = tilingSlabPieces(tiling.info, q, ext);
+      expect(pieces).not.toBeNull();
+      let bound = Infinity;
+      for (const piece of pieces!) {
+        const inner = refined
+          ? estimateDistance4Refined(de, piece.center, 0, piece.extent)
+          : estimateDistance4(de, piece.center, piece.extent);
+        if (inner < bound) bound = inner;
+      }
+      const expected = bound > 0 ? bound : 0;
+      const actual = refined
+        ? estimateDistance4RefinedTiled(tiling, de, q, 0, ext)
+        : estimateDistance4Tiled(tiling, de, q, ext);
+      expect(actual).toBeCloseTo(expected, 10);
+    }
+  });
+
+  it("zero thickness is the fold-once point path, value for value, on the nonlinear systems", () => {
+    const nonlinearDe = buildSurfaceDE4(nonlinear);
+    const lensedDe = buildSurfaceDE4(
+      pentatope().map((t, id) => ({ ...t, id })),
+      mandelboxFinal4(),
+    );
+    for (const de of [nonlinearDe, lensedDe]) {
+      expect(estimateDistance4Tiled(t, de, p, [0, 0, 0, 0])).toBe(
+        estimateDistance4Tiled(t, de, p, null),
+      );
+      expect(estimateDistance4RefinedTiled(t, de, p, 0, [0, 0, 0, 0])).toBe(
+        estimateDistance4RefinedTiled(t, de, p, 0, null),
+      );
+      const sample = estimateDistance4SampleTiled(t, de, p, null);
+      const zeroSample = estimateDistance4SampleTiled(t, de, p, [0, 0, 0, 0]);
+      expect(zeroSample.d).toBe(sample.d);
+      expect(zeroSample.stride).toBe(sample.stride);
+    }
+  });
+
+  it("the cutoff contract composes with the cover pieces", () => {
+    const nonlinearDe = buildSurfaceDE4(nonlinear);
+    const rng = mulberry32(712);
+    for (let i = 0; i < 30; i++) {
+      const group = GROUPS4[Math.floor(rng() * GROUPS4.length)];
+      const tiling = resolveTiling({ group })!;
+      const q: Vec4 = [
+        (rng() * 2 - 1) * 2,
+        (rng() * 2 - 1) * 2,
+        (rng() * 2 - 1) * 2,
+        (rng() * 2 - 1) * 2,
+      ];
+      const ext: Vec4 = [rng() * 0.3, rng() * 0.3, rng() * 0.3, rng() * 0.3];
+      const cutoff = [0.02, 0.05, 0.1][Math.floor(rng() * 3)];
+      const short = estimateDistance4RefinedTiled(
+        tiling,
+        nonlinearDe,
+        q,
+        cutoff,
+        ext,
+      );
+      const full = estimateDistance4RefinedTiled(
+        tiling,
+        nonlinearDe,
+        q,
+        0,
+        ext,
+      );
+      if (short >= cutoff) {
+        expect(short).toBe(full);
+      } else {
+        expect(full).toBeLessThan(cutoff);
+      }
+    }
+  });
+
+  it("the clip narrows the composed cover per piece and never widens the answer", () => {
+    const rng = mulberry32(713);
+    const clip = sphereClip([0.4, -0.2, 0.3], 0.7);
+    const nonlinearDe = buildSurfaceDE4(nonlinear);
+    for (let i = 0; i < 30; i++) {
+      const group = GROUPS4[Math.floor(rng() * GROUPS4.length)];
+      const plain = resolveTiling({ group })!;
+      const clipped = resolveTiling({ group, clip })!;
+      const q: Vec4 = [
+        (rng() * 2 - 1) * 2,
+        (rng() * 2 - 1) * 2,
+        (rng() * 2 - 1) * 2,
+        (rng() * 2 - 1) * 2,
+      ];
+      const ext: Vec4 = [rng() * 0.3, rng() * 0.3, rng() * 0.3, rng() * 0.3];
+      const without = estimateDistance4RefinedTiled(
+        plain,
+        nonlinearDe,
+        q,
+        0,
+        ext,
+      );
+      const withClip = estimateDistance4RefinedTiled(
+        clipped,
+        nonlinearDe,
+        q,
+        0,
+        ext,
+      );
+      expect(withClip).toBeGreaterThanOrEqual(without - 1e-12);
+      const sample = estimateDistance4RefinedSampleTiled(
+        clipped,
+        nonlinearDe,
+        q,
+        0,
+        ext,
+      );
+      expect(sample.d).toBeCloseTo(withClip, 12);
+      expect(sample.stride).toBeGreaterThanOrEqual(0);
+      expect(sample.stride).toBeLessThanOrEqual(sample.d + 1e-12);
+    }
+  });
+
+  it("the core-wide refusals still hold under a finite group", () => {
+    // A swirl final lens: the core has no slab certificate in this
+    // coordinate frame, and tiling composes none for it.
+    const swirlFinalDe = buildSurfaceDE4(
+      pentatope().map((t, id) => ({ ...t, id })),
+      swirlFinal4(),
+    );
+    const halfExtent: Vec4 = [0.1, 0, 0, 0];
+    expect(() =>
+      estimateDistance4Tiled(t, swirlFinalDe, p, halfExtent),
+    ).toThrow(/slabSupported4/);
+    expect(() =>
+      estimateDistance4RefinedTiled(t, swirlFinalDe, p, 0.05, halfExtent),
+    ).toThrow(/slabSupported4/);
+    // A condensation shape: the carried solid's set distance needs its own
+    // segment evaluator, tiled or not.
+    const condensationDe = buildSurfaceDE4([
+      {
+        id: 0,
+        position: [0.3, 0.1, 0],
+        rotation: [0.3, 0.2, 0],
+        scale: [0.3, 0.3, 0.3],
+        w: { position: 0.2 },
+        emitter: sphereClip([0, 0, 0], 0.4),
+      },
+    ]);
+    expect(() =>
+      estimateDistance4Tiled(t, condensationDe, p, halfExtent),
+    ).toThrow(/slabSupported4/);
+    expect(() =>
+      estimateDistance4RefinedTiled(t, condensationDe, p, 0.05, halfExtent),
+    ).toThrow(/slabSupported4/);
   });
 
   it("finite tiling with a segment-exact fold set answers the split", () => {
