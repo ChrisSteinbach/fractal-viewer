@@ -153,6 +153,108 @@ structural wins that hold on every machine: the edit loop is automatic and
 incremental (no manual build+preview+wait), one session serves N gates (the
 win scales with machine slowness and with WebGL-arm gates on drivers that pay
 the link cliff), a leftover preview is adopted instead of re-done, and the
-gates themselves are untouched. The BIG lever remains the frame cache
-(the epic's next child): a settled frame is a pure function of its inputs,
-and the legs that dominate these walls are exactly the work a cache skips.
+gates themselves are untouched. The BIG lever is the frame cache below: a
+settled frame is a pure function of its inputs, and the legs that dominate
+these walls are exactly the work a cache skips.
+
+## The frame cache
+
+The epic's enabling fact: byte-exact, deterministic rendering behind the
+settle latch makes a settled frame a PURE FUNCTION of its inputs, so settled
+render work is memoizable, and a failed gate's re-run can be a diff instead
+of a re-render. The store lives in `scripts/lib/frame-cache.mjs` (the
+library gates import) with a CLI at `scripts/frame-cache.mjs`
+(put/lookup/list/prune/hash-bundle; `lookup` exits 0 on a hit, 1 on a miss,
+2 on a misshapen key — the checking convention).
+
+### The keying decision
+
+**Candidate A — hash the built bundle's bytes — SHIPPED.** The key carries
+the SHA-256 of every file under `dist/app/` (walked, sorted by path, hashed
+as `<path>\n<bytes>` sequences — content only, no mtimes, so an identical
+rebuild re-hashes identically). Any source edit produces a new bundle and
+invalidates every entry; correct by construction, and the invalidation cost
+is paid once per edit cycle, because the build is re-run anyway — the cache
+never turns a stale-bundle run into a fake hit, which is the one way this
+scheme could be WRONG rather than merely coarse. Measured on this box:
+43 ms to hash the whole 3.5 MB `dist/app/` (negligible next to the 7.0 s
+build it follows).
+
+**Candidate B — per-module source closures — DECLINED, with its trigger.**
+Finer (a `surface-de.ts` edit keeps panel-contrast hits) but needs a
+module-to-bundle map and risks the subtle misses the app-side memo key
+already demonstrated. It stays a refinement ONLY IF the invalidation rate
+measurably annoys — the measurable shape: watch-mode re-verdicts dominated
+by cache misses whose bundles differ by one non-rendering module. The
+affected-gate map (a later child) is the finer instrument that would make B
+precise if ever needed; until then coarse-but-exact beats fine-but-lossy.
+
+### The key — nine required fields, enforced
+
+`deriveFrameKey(fields)` validates and canonicalizes the fields (recursive
+key-sort → stable JSON → SHA-256), REQUIRING every field and REFUSING
+unknown ones. This is the module-level enforcement of a lesson the project
+already paid on the app side: the offline-export force-frame memo key
+shipped without fog, envLight and the backdrop shape, and an atmosphere-only
+leg exported the previous leg's frame — so an absent field is STATED as
+absent (`null`/`{}`), never elided, and the list is owned here, not
+improvised by each caller:
+
+| field      | content                                                                                                                                                    |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bundle`   | `hashBundleDir(dist/app)`'s hash — the built bytes                                                                                                         |
+| `document` | the full scene document string (the `#v1=` hash; the document carries its own camera/4D pose)                                                              |
+| `pose`     | `null` when the document's own pose (or the deterministic auto-fit) governs; the gate-driven pose object when a gate moves the camera outside the document |
+| `mode`     | render mode (`surface`, `flame`, ...)                                                                                                                      |
+| `engine`   | `compute` vs `webgl` (or the flame/solid engine)                                                                                                           |
+| `viewport` | `{width, height, scale}` — the capture geometry repaints every pixel                                                                                       |
+| `raster`   | free-form: tier scale, depth, samples, budgets (the render-tier rung and antialias sample count live here)                                                 |
+| `device`   | `{software: boolean, label: string}` + extras — the probe's backend disclosure, so SwiftShader and real-driver frames never share an entry                 |
+| `env`      | flat gate env/URL flags that alter rendering (`surfacegl`, `surfacemaxrays`, `surfacesamples`, ...), `{}` when none                                        |
+
+Gate and scenario names are entry METADATA, deliberately not key fields:
+the same scene demanded by two gates is ONE entry — that is what makes the
+cache shared rather than per-gate.
+
+### The store
+
+Content-addressed under the gitignored `scripts/out/frame-cache/`
+(regenerated, never committed): `<hh>/<hash>.json` + `<hash>.png`, a
+two-character shard fan-out mirroring a git object store. The entry json
+carries the key hash, the canonical string, the fields, the verdict JSON and
+provenance (`gate`, `scenario`, `buildHash`, `createdAtMs`, optional
+`wallMs`/`notes`). Writes are atomic (tmp + rename); a re-put of an existing
+key refreshes its timestamp (LRU recency) and reports `existed`.
+
+**The eligibility boundary, enforced by shape rather than review:** the
+store only accepts entries carrying a real PNG (the magic is checked), so it
+records frame-pure verdicts — byte-exact reload, IoU, zero-thickness
+byte-for-byte, distinct-objects, export identity, settle double-screenshot
+equality — and structurally cannot record the ineligible ones (teardown,
+fence cost, watchdog, staging ceiling, machine-quiet certification,
+trusted-interaction timing), which measure the SESSION, not the frame, and
+have no frame to put. What a hit may replay — the recorded verdict
+wholesale, or only a re-diff against a fresh render — is the wiring child's
+per-gate decision; the library hands back both the png bytes and the verdict
+and takes no side.
+
+**NOT golden files.** The repo refuses golden-image fixtures; this is
+memoization keyed on exact input hashes. A hit is valid exactly while the
+key is exact; nothing here substitutes a stale frame for a fresh render the
+verdict logic could contradict. Identical bytes under two different keys
+duplicates the png (dedupe is not the goal; exact keys are).
+
+**Measured** (this box, 300 KB frame): put 0.8 ms, lookup 0.4 ms, entry
+json ~1.1 KB.
+
+### Prune — the bound
+
+`frameCachePrune` runs after gate batches (the wiring child) or by hand
+(`node scripts/frame-cache.mjs prune`): corrupt entries, orphans (png
+without json or the reverse), debris (a crashed atomicWrite's tmp files)
+and wrong-version entries are removed regardless of bounds; then everything
+older than 45 days; then, greedy
+newest-first, entries past 1 GiB of frames — the first overflow and
+everything older goes, never keeping an older entry behind a refused newer
+one. `--max-bytes`/`--max-age-days`/`--dry-run`/`--json` on the CLI;
+`dryRun` reports without unlinking. Empty shard directories are cleaned up.
