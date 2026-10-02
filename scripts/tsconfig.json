@@ -39,6 +39,7 @@
     "./frame-cache.mjs",
     "./gpu-ci-swept.mjs",
     "./lib/dist-freshness.mjs",
+    "./lib/fast-tier.mjs",
     "./lib/frame-cache.mjs",
     "./lib/gate-registry.mjs",
     "./lib/machine-quiet.mjs",
