@@ -161,10 +161,28 @@
  *
  * Usage (build + `npm run preview` first — this measures a real build):
  *   node scripts/finish.verify.mjs                       # sw, both arms
- *   node scripts/finish.verify.mjs --mode=x11::0 --arm=both
+ *   node scripts/finish.verify.mjs --mode=x11::0 --arm=both [--force]
  *   node scripts/finish.verify.mjs --arm=compute --stage=1 --settle=240000
  *   node scripts/finish.verify.mjs --scene=escape4 --stage=1
  *   node scripts/finish.verify.mjs --scene=all --arm=both --stage=1
+ *
+ * THE FRAME CACHE (wired 2026-10-02, scripts/lib/frame-cache-gate.mjs,
+ * docs/gate-velocity.md): each leg's captures are exact-key entries (the
+ * two legs' documents differ, everything else matches; the stage rides the
+ * raster field), so a FULL pair hit at a common stage reconstructs both
+ * legs without booting or settling and the verdict recomputes from the
+ * recorded bytes — the diff, the floor check, the engine tags (recorded at
+ * capture time) and the parked-canvas discipline all re-run over recorded
+ * evidence, never trusted. The verdict is recomputed on EVERY run, so a
+ * replayed FAIL is as honest as a live one and a `--floor`/`--stage`
+ * change re-verdicts from the same frames. Partial hits run the missing
+ * legs live as today. Entries are put-gated on a STABLE capture whose
+ * engine matches the arm and whose leg threw no page errors. `--force`
+ * never looks up; a store error degrades the run to uncached and is noted,
+ * never fatal. MEASURED on the AMD RX 7900 XTX (real driver x11::0,
+ * 2026-10-02): lens3 both arms 35.7s cold (`--force`) -> 0.8s warm — the
+ * full-pair replay recomputes the structural fractions identically to the
+ * live diff's.
  *
  *   --url       app origin (default https://localhost:4173)
  *   --mode      sw (default) | x11:<display>
@@ -231,6 +249,11 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
+import {
+  createFrameCache,
+  gateKeyFields,
+  readDeviceSignature,
+} from "./lib/frame-cache-gate.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUT_DIR = path.resolve(__dirname, "..", ".playwright-mcp");
@@ -322,6 +345,7 @@ function parseArgs(argv) {
     dwell: 2_000,
     floor: 0.015,
     outdir: DEFAULT_OUT_DIR,
+    force: false,
   };
   for (const raw of argv) {
     const eq = raw.indexOf("=");
@@ -330,7 +354,9 @@ function parseArgs(argv) {
     if (!raw.startsWith("--") || !(key in args)) {
       throw new Error(`unknown flag ${raw}`);
     }
-    if (["settle", "stage", "dwell", "floor"].includes(key)) {
+    if (key === "force") {
+      args.force = value !== "false";
+    } else if (["settle", "stage", "dwell", "floor"].includes(key)) {
       args[key] = Number(value);
       if (!Number.isFinite(args[key]))
         throw new Error(`--${key} wants a number`);
@@ -945,6 +971,22 @@ async function main() {
   const log = (line) => console.error(`[finish] ${line}`);
   const region = centralRegion(args.width, args.height);
 
+  // THE FRAME CACHE (docs/gate-velocity.md), wired to the paired-leg
+  // protocol's frames: each leg's captures are exact-key entries (the two
+  // legs' documents differ, everything else matches), so a FULL pair hit
+  // reconstructs both legs and the verdict recomputes from the recorded
+  // bytes — no boot, no settle. The verdict is recomputed on every run
+  // (never trusted), so a replayed FAIL is as honest as a live one and a
+  // --floor/--stage change re-verdicts from the same frames. Partial hits
+  // run the missing legs live as today. Entries are put-gated on a stable
+  // capture whose engine matches the arm and whose leg threw no page
+  // errors, so a broken session never seeds the store. `--force` never
+  // looks up; a store error degrades to uncached.
+  const cache = createFrameCache({ gate: "finish", force: args.force, log });
+  const bundleHash = await cache.bundleHash(
+    path.resolve(__dirname, "..", "dist", "app"),
+  );
+
   log(
     `scenes=${args.scene}, ${args.width}x${args.height}, mode=${args.mode}, routes=${jobs.map((j) => j.label).join("+")}, ` +
       `target stage ${stageName(args.stage)}, budget ${args.settle / 1000}s/leg, floor ${(args.floor * 100).toFixed(2)}% ` +
@@ -972,6 +1014,111 @@ async function main() {
     process.exit(2);
   }
 
+  // The key's device field asks the BROWSER which adapter it renders with,
+  // on a page at the app's origin (WebGPU is secure-context-only, and the
+  // diff page's about:blank is not one — and the app origin refuses the
+  // blob decode the diff page exists for, so they cannot be one page).
+  let probeContext = null;
+  let probePage = null;
+  const deviceSigs = new Map();
+  const deviceFor = async (wanted) => {
+    if (!deviceSigs.has(wanted)) {
+      probeContext ??= await browser.newContext({
+        ignoreHTTPSErrors: true,
+        viewport: { width: args.width, height: args.height },
+        deviceScaleFactor: 1,
+        reducedMotion: "reduce",
+      });
+      probePage ??= await probeContext.newPage();
+      if (probePage.url() === "about:blank") {
+        await probePage.goto(`${args.url.replace(/\/+$/, "")}/`, {
+          waitUntil: "load",
+          timeout: 60_000,
+        });
+      }
+      deviceSigs.set(wanted, await readDeviceSignature(probePage, wanted));
+    }
+    return deviceSigs.get(wanted);
+  };
+  const fieldsFor = async (arm, leg, stage) =>
+    cache.disabled || bundleHash === null
+      ? null
+      : gateKeyFields({
+          bundle: bundleHash,
+          document: leg.hash,
+          engine: arm.expectEngine,
+          viewport: { width: args.width, height: args.height, scale: 1 },
+          device: await deviceFor(arm.expectEngine),
+          env: {
+            surfacestate: "1",
+            ...(arm.query ? { [arm.query]: "1" } : {}),
+          },
+          raster: { stage },
+        });
+  /** The cached PAIR: the highest stage both legs have recorded entries
+   * for, searched downward from the run's target. Both hit → the two legs
+   * reconstruct from their entries and the verdict below runs unchanged on
+   * the recorded bytes. */
+  const cachedPairFor = async (arm, legs, label) => {
+    for (let s = Math.min(args.stage, SETTLE_SAMPLES); s >= 1; s--) {
+      const fA = await fieldsFor(arm, legs[0], s);
+      const fB = await fieldsFor(arm, legs[1], s);
+      const hitA = fA
+        ? await cache.lookup(fA, `${label}/${legs[0].name}@${stageName(s)}`)
+        : null;
+      const hitB = fB
+        ? await cache.lookup(fB, `${label}/${legs[1].name}@${stageName(s)}`)
+        : null;
+      const shapeOk = (hit) => {
+        const v = hit?.entry.verdict;
+        return (
+          v &&
+          v.stable === true &&
+          typeof v.engine === "string" &&
+          v.geometry &&
+          Array.isArray(v.geometry.overlays)
+        );
+      };
+      if (!shapeOk(hitA) || !shapeOk(hitB)) continue;
+      const toResult = (hit, leg) => {
+        const v = hit.entry.verdict;
+        return {
+          arm: arm.name,
+          leg: leg.name,
+          captures: new Map([
+            [
+              s,
+              {
+                buffer: hit.png,
+                geometry: v.geometry,
+                stable: v.stable,
+                engine: v.engine,
+                rowText: v.rowText ?? "",
+                stage: s,
+                elapsedMs: hit.entry.meta.wallMs ?? 0,
+              },
+            ],
+          ]),
+          consoleLines: [],
+          pageErrors: [],
+          engine: v.engine,
+          labels: null,
+          final: null,
+          stopReason:
+            v.stopReason ??
+            (s >= SETTLE_SAMPLES ? "settled" : `reached stage ${s}`),
+          elapsedMs: hit.entry.meta.wallMs ?? 0,
+        };
+      };
+      return {
+        stage: s,
+        recordedAt: new Date(hitA.entry.meta.createdAtMs).toISOString(),
+        results: [toResult(hitA, legs[0]), toResult(hitB, legs[1])],
+      };
+    }
+    return null;
+  };
+
   const verdicts = [];
   let failures = 0;
   let inconclusive = 0;
@@ -985,45 +1132,83 @@ async function main() {
       log(
         `=== ${label} (${arm.query ? `?${arm.query}` : "default routing"}) ===`,
       );
-      const results = [];
+      const cachedPair = cache.disabled
+        ? null
+        : await cachedPairFor(arm, legs, label);
+      let results;
       let stopAt = args.stage;
       let budget = args.settle;
-      for (const leg of legs) {
+      if (cachedPair) {
+        results = cachedPair.results;
         log(
-          `  leg ${leg.name}: stop at ${stageName(stopAt)}, budget ${(budget / 1000).toFixed(0)}s`,
+          `  cached pair at ${stageName(cachedPair.stage)} (frames recorded ${cachedPair.recordedAt}); verdict recomputed from the recorded bytes`,
         );
-        let r;
-        try {
-          r = await runLeg(browser, args, arm, leg, stopAt, budget, log);
-        } catch (err) {
-          log(`  CHECKING FAILURE on ${label}/${leg.name}: ${err.message}`);
-          inconclusive++;
-          verdicts.push(
-            `${label}: INCONCLUSIVE — ${leg.name} leg threw before a capture (${err.message})`,
+      } else {
+        results = [];
+        for (const leg of legs) {
+          log(
+            `  leg ${leg.name}: stop at ${stageName(stopAt)}, budget ${(budget / 1000).toFixed(0)}s`,
           );
-          results.length = 0;
-          break;
+          let r;
+          try {
+            r = await runLeg(browser, args, arm, leg, stopAt, budget, log);
+          } catch (err) {
+            log(`  CHECKING FAILURE on ${label}/${leg.name}: ${err.message}`);
+            inconclusive++;
+            verdicts.push(
+              `${label}: INCONCLUSIVE — ${leg.name} leg threw before a capture (${err.message})`,
+            );
+            results.length = 0;
+            break;
+          }
+          log(`  leg ${leg.name}: ${describeLeg(r)}`);
+          log(`    WebGL renderer: ${r.labels?.webgl ?? "?"}`);
+          log(`    WebGPU adapter: ${r.labels?.webgpu ?? "?"}`);
+          for (const line of interestingConsole(r.consoleLines))
+            log(`    console: ${line}`);
+          for (const e of r.pageErrors) log(`    PAGE ERROR: ${e}`);
+          for (const [stage, cap] of r.captures) {
+            const file = path.join(
+              args.outdir,
+              `${fileStem}-${leg.name}-s${stage}.png`,
+            );
+            await writeFile(file, cap.buffer);
+            // Put-gated: a stable capture whose engine matches the arm and
+            // whose leg threw no page errors. Each stage is its own entry
+            // (the raster field carries it), so a partial rerun can mix.
+            const captureFields = await fieldsFor(arm, leg, stage);
+            if (
+              captureFields &&
+              cap.stable &&
+              cap.engine === arm.expectEngine &&
+              r.pageErrors.length === 0
+            ) {
+              await cache.record(captureFields, {
+                scenario: `${label}/${leg.name}@${stageName(stage)}`,
+                png: cap.buffer,
+                verdict: {
+                  stable: cap.stable,
+                  engine: cap.engine,
+                  geometry: cap.geometry,
+                  rowText: cap.rowText,
+                  stopReason:
+                    stage >= SETTLE_SAMPLES
+                      ? "settled"
+                      : `reached stage ${stage}`,
+                  elapsedMs: cap.elapsedMs,
+                },
+                wallMs: cap.elapsedMs,
+              });
+            }
+          }
+          results.push(r);
+          // The authored leg only needs to reach the unauthored leg's best
+          // stage, and gets at least twice the time that stage cost there.
+          const best = Math.max(0, ...r.captures.keys());
+          if (best === 0) break;
+          stopAt = best;
+          budget = Math.max(args.settle, 2 * r.captures.get(best).elapsedMs);
         }
-        log(`  leg ${leg.name}: ${describeLeg(r)}`);
-        log(`    WebGL renderer: ${r.labels?.webgl ?? "?"}`);
-        log(`    WebGPU adapter: ${r.labels?.webgpu ?? "?"}`);
-        for (const line of interestingConsole(r.consoleLines))
-          log(`    console: ${line}`);
-        for (const e of r.pageErrors) log(`    PAGE ERROR: ${e}`);
-        for (const [stage, cap] of r.captures) {
-          const file = path.join(
-            args.outdir,
-            `${fileStem}-${leg.name}-s${stage}.png`,
-          );
-          await writeFile(file, cap.buffer);
-        }
-        results.push(r);
-        // The authored leg only needs to reach the unauthored leg's best
-        // stage, and gets at least twice the time that stage cost there.
-        const best = Math.max(0, ...r.captures.keys());
-        if (best === 0) break;
-        stopAt = best;
-        budget = Math.max(args.settle, 2 * r.captures.get(best).elapsedMs);
       }
       if (results.length === 0) continue;
 
@@ -1149,6 +1334,8 @@ async function main() {
       }
     }
   } finally {
+    if (probeContext) await probeContext.close().catch(() => {});
+    await cache.prune();
     log("===== VERDICTS =====");
     for (const v of verdicts) log(v);
     log(
