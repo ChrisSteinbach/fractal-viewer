@@ -13,12 +13,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
-import { Worker } from "node:worker_threads";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { encodePng } from "./de-preview.ts";
+import { WorkerPool } from "./lib/worker-pool.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = path.join(root, "scripts/out/transmission-readable");
@@ -179,73 +179,6 @@ function assertComplete(size, counts) {
       throw new Error(
         `${reason} terminated ${counts.termination[reason]} rays`,
       );
-}
-
-class WorkerPool {
-  constructor(file, count) {
-    this.workers = [];
-    this.idle = [];
-    this.pending = new Map();
-    this.queued = [];
-    this.failed = new Set();
-    this.closing = false;
-    for (let index = 0; index < count; index++) {
-      const worker = new Worker(file, { type: "module" });
-      worker.on("message", (message) => this.done(worker, message));
-      worker.on("error", (error) => this.fail(worker, error));
-      worker.on("exit", (code) => {
-        if (!this.closing)
-          this.fail(worker, new Error(`Worker exited with code ${code}`));
-      });
-      this.workers.push(worker);
-      this.idle.push(worker);
-    }
-  }
-
-  dispatch(task) {
-    return new Promise((resolve, reject) => {
-      this.queued.push({ task, resolve, reject });
-      this.pump();
-    });
-  }
-
-  pump() {
-    if (this.failed.size) return;
-    while (this.idle.length && this.queued.length) {
-      const worker = this.idle.pop();
-      const item = this.queued.shift();
-      this.pending.set(item.task.id, { ...item, worker });
-      worker.postMessage(item.task);
-    }
-  }
-
-  done(worker, message) {
-    const item = this.pending.get(message.id);
-    if (!item) return;
-    this.pending.delete(message.id);
-    this.idle.push(worker);
-    if (message.error) item.reject(new Error(message.error));
-    else item.resolve(message);
-    this.pump();
-  }
-
-  fail(worker, error) {
-    if (this.failed.has(worker)) return;
-    this.failed.add(worker);
-    this.idle = this.idle.filter((candidate) => candidate !== worker);
-    for (const [id, item] of this.pending) {
-      if (item.worker === worker) {
-        this.pending.delete(id);
-        item.reject(error);
-      }
-    }
-    for (const item of this.queued.splice(0)) item.reject(error);
-  }
-
-  async close() {
-    this.closing = true;
-    await Promise.all(this.workers.map((worker) => worker.terminate()));
-  }
 }
 
 function jobList(sizes, fixtureData) {
