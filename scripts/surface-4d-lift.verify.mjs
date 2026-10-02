@@ -6,7 +6,31 @@
  * the three no unit test reaches.
  *
  *   npm run build && npm run preview &
- *   node scripts/surface-4d-lift.verify.mjs [--display=:0] [--url=…] [--settle=ms]
+ *   node scripts/surface-4d-lift.verify.mjs [--display=:0] [--url=…] [--settle=ms] [--force]
+ *
+ * THE FRAME CACHE (wired 2026-10-02): the thickness scenes' THICK frame —
+ * the completed cover settle at h=0.2 that dominates this gate's wall — is
+ * memoized under the exact key (bundle, document, driven thickness as the
+ * pose, samples, device, engine; scripts/lib/frame-cache-gate.mjs,
+ * docs/gate-velocity.md). On a hit the drive machinery STILL runs live —
+ * the row-availability read, the `landed` commit, the latch-clear
+ * observation, the drive back to zero and its completed h=0 settle — and
+ * the zero-thickness identity stays a FRESH entry-vs-reset byte compare
+ * (the cached frame never stands in for either side, so the claim cannot
+ * become a cached frame agreeing with itself). What the hit skips is only
+ * the expensive h=0.2 settle itself; the reset drive's latch-clear, which a
+ * skipped h=0.2 settle would make a vacuous poll, is carried by the
+ * completed h=0 settle plus the identity check (which fails if the capture
+ * were the h=0.2 frame). Entry frames and the preset phase are deliberately
+ * NOT cached — their settles are ~2s class on this box, and keeping them
+ * live is what makes the thick drive's latch-clear observation meaningful.
+ * `--force` never looks up; a store error degrades the run to uncached and
+ * is noted, never fatal. The frame is recorded only from a completed settle
+ * whose engine matches the key's, never from a timed-out one. MEASURED
+ * (AMD RX 7900 XTX, real driver --display=:0, 2026-10-02): 87.5s cold ->
+ * 83.7s warm on THIS box — the cover settles it caches are 0.5-1.3s here,
+ * so the wiring pays on the Iris-class machines the header documents
+ * (~60 s/sample), where the hit skips the run's dominant term.
  *
  * TWO PHASES: the hash-borne SCENES (minimal documents, no preset table
  * involved, so the gate survives one changing under it), then the three
@@ -79,8 +103,16 @@
  * Chrome's new headless mode still exposes WebGPU on some stacks and falls
  * back on others, so the engine column is reported rather than gated.
  */
+import path from "node:path";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
+import {
+  createFrameCache,
+  gateKeyFields,
+  readDeviceSignature,
+} from "./lib/frame-cache-gate.mjs";
 import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 import { COVER4_POSED_HASH } from "./lib/surface-cover-scene.mjs";
 
@@ -169,12 +201,15 @@ function parseArgs(argv) {
     url: "https://localhost:4173",
     display: undefined,
     settleMs: 120000,
+    force: false,
   };
   for (const raw of argv) {
     const [key, value] = raw.replace(/^--/, "").split("=");
     if (key === "url" && value) out.url = value.replace(/\/+$/, "");
     else if (key === "display") out.display = value ?? ":0";
     else if (key === "settle" && value) out.settleMs = Number(value);
+    else if (key === "force")
+      out.force = value === undefined || value !== "false";
   }
   return out;
 }
@@ -311,6 +346,32 @@ async function imageDiff(page, aPng, bPng) {
 async function run() {
   const args = parseArgs(process.argv.slice(2));
   await guardFreshDist({ url: args.url });
+  // The frame cache (docs/gate-velocity.md), wired to the THICK frame of the
+  // thickness scenes only — the one settle that dominates this gate's wall
+  // (the cover's h=0.2 work; entry and reset settles are ~2s class). The
+  // drive machinery stays live in both paths: the slider row's availability,
+  // the `landed` commit and the latch-clear observation all still run, and
+  // the zero-thickness identity stays a FRESH entry-vs-reset byte compare.
+  // What a hit skips is only the expensive completed settle at h=0.2 — the
+  // frame it would produce is memoized evidence under the exact key
+  // (document + driven thickness + samples + device + engine). The reset
+  // drive's latch-clear, which a skipped h=0.2 settle would make a vacuous
+  // poll, is on the cached path implied by its completed h=0 settle plus the
+  // identity check backstopping that the capture is the h=0 frame.
+  // `--force` never looks up; a store error degrades to uncached.
+  const cache = createFrameCache({
+    gate: "surface-4d-lift",
+    force: args.force,
+    log: (line) => console.error(line),
+  });
+  const bundleHash = await cache.bundleHash(
+    path.resolve(
+      fileURLToPath(new URL(".", import.meta.url)),
+      "..",
+      "dist",
+      "app",
+    ),
+  );
   const flags = [
     "--enable-unsafe-webgpu",
     "--enable-features=Vulkan",
@@ -346,6 +407,35 @@ async function run() {
     page.on("pageerror", (e) => {
       process.stderr.write(`[page:uncaught] ${e.message}\n`);
     });
+    // The key's device field asks the BROWSER which adapter it renders
+    // with — the page is on the app's origin after its first goto (a
+    // secure context, which about:blank is not), and the probe is memoized
+    // per engine.
+    const deviceSigs = new Map();
+    const deviceFor = async (wanted) => {
+      if (!deviceSigs.has(wanted)) {
+        deviceSigs.set(wanted, await readDeviceSignature(page, wanted));
+      }
+      return deviceSigs.get(wanted);
+    };
+    const envFor = (scene) => ({
+      surfacestate: "1",
+      ...(scene.samples !== undefined
+        ? { surfacesamples: String(scene.samples) }
+        : {}),
+    });
+    const keyFieldsFor = async (scene, pose) =>
+      cache.disabled || bundleHash === null
+        ? null
+        : gateKeyFields({
+            bundle: bundleHash,
+            document: scene.hash,
+            ...(pose === undefined ? {} : { pose }),
+            engine: scene.engine,
+            viewport: { width: 1024, height: 640, scale: 1 },
+            device: await deviceFor(scene.engine),
+            env: envFor(scene),
+          });
     for (const scene of SCENES) {
       // A unique query per scene, because navigating to a URL that differs
       // only in its FRAGMENT does not reload — and this app reads the
@@ -410,10 +500,11 @@ async function run() {
           const el = document.getElementById("fourDSliceThicknessSlider");
           return el instanceof HTMLInputElement && !el.disabled;
         });
-        // Drive the panel's own live-edit pair to a value and wait for the
-        // latch to clear and then complete. One helper for both directions:
-        // the thickened view and the return to zero are the same controls,
-        // the same listener pair and the same question.
+        // Drive the panel's own live-edit pair to a value and observe the
+        // settle latch CLEAR — a latch that never clears means nothing new
+        // was asked for (a vacuous pass). The completed settle that follows
+        // is the caller's business, so the cached path can skip exactly
+        // that while the drive's own observations stay live.
         const driveThickness = async (value) => {
           const landed = await page.evaluate((value) => {
             const el = document.getElementById("fourDSliceThicknessSlider");
@@ -442,35 +533,103 @@ async function run() {
             });
             if (!invalidated) await page.waitForTimeout(100);
           }
-          let next = null;
-          const deadline = Date.now() + settleBudget;
+          return { landed, invalidated };
+        };
+        const awaitSettle = async (budgetMs) => {
           const settleStart = Date.now();
+          const deadline = Date.now() + budgetMs;
+          let next = null;
           while (Date.now() < deadline) {
             next = await page.evaluate(() => window.__surfaceState?.() ?? null);
             if (next && next.settled) break;
             await page.waitForTimeout(250);
           }
           return {
-            landed,
-            invalidated,
             settled: Boolean(next && next.settled),
+            engine: next ? next.engine : null,
             settleMs: Date.now() - settleStart,
           };
         };
-        const thick = await driveThickness(scene.thickness);
-        const thickShot = thick.settled ? await canvasShot(page) : null;
-        const thickDrawn = thickShot
-          ? await frameCoverage(page, thickShot)
+        // The thick frame's key states the gate-driven thickness as the
+        // pose (the drive persists it into the session's fourD pose — the
+        // slab gate's share-link payload is the proof).
+        const thickFields = await keyFieldsFor(scene, {
+          sliceThickness: scene.thickness,
+        });
+        const thickHit = thickFields
+          ? await cache.lookup(thickFields, `${scene.name}@thick`)
           : null;
+        if (thickHit) {
+          console.error(
+            `[frame-cache] ${scene.name}: thick settle skipped — frame recorded ${new Date(thickHit.entry.meta.createdAtMs).toISOString()}`,
+          );
+        }
+        const thick = await driveThickness(scene.thickness);
+        let thickShot = null;
+        let thickDrawn = null;
+        let thickSettled = false;
+        let thickSettleMs = null;
+        let thickEngine = null;
+        let thickCached = false;
+        if (thick.landed && thick.invalidated && thickHit) {
+          // The cached path: the h=0.2 cover settle — this gate's wall —
+          // is skipped; the recorded frame answers DRAW, and the engine it
+          // was rendered by is the key's own (verified against the live
+          // session at record time).
+          thickCached = true;
+          thickShot = thickHit.png;
+          thickSettled = true;
+          thickEngine =
+            (thickHit.entry.verdict && thickHit.entry.verdict.engine) ||
+            scene.engine;
+        } else if (thick.landed && thick.invalidated) {
+          const settle020 = await awaitSettle(settleBudget);
+          thickSettled = settle020.settled;
+          thickSettleMs = settle020.settleMs;
+          thickEngine = settle020.engine;
+          if (thickSettled) {
+            thickShot = await canvasShot(page);
+            if (thickShot && thickFields && thickEngine === scene.engine) {
+              thickDrawn = await frameCoverage(page, thickShot);
+              await cache.record(thickFields, {
+                scenario: `${scene.name}@thick`,
+                png: thickShot,
+                verdict: { engine: thickEngine, drawn: thickDrawn },
+                wallMs: settle020.settleMs,
+              });
+            }
+          }
+        }
+        if (
+          thick.landed &&
+          thick.invalidated &&
+          thickShot &&
+          thickDrawn === null
+        ) {
+          thickDrawn = await frameCoverage(page, thickShot);
+        }
         // ZERO THICKNESS IS THE IDENTITY, measured as PIXELS: back to 0 on
         // the same slider, then a full-resolution diff of the fresh settle
         // against the pre-thickness frame. The compute renderer is
         // bit-reproducible once settled and the h=0 path is the point
         // kernel by construction, so the bar is exact equality — the one
-        // form of this claim a shading difference cannot sneak past.
+        // form of this claim a shading difference cannot sneak past. Both
+        // sides stay FRESH renders in both paths (the cached thick frame
+        // never stands in for either side), so the identity claim is never
+        // a cached frame agreeing with itself.
         const reset = await driveThickness(0);
+        const settleZero = await awaitSettle(settleBudget);
+        // On the cached-thick path the h=0.2 settle never completed, so the
+        // reset drive's own latch-clear poll would be vacuous; the
+        // completed h=0 settle plus the identity check below — which fails
+        // if the capture were the h=0.2 frame — carry that observation.
+        const resetInvalidated = thickCached
+          ? settleZero.settled
+          : reset.invalidated;
         const resetShot =
-          reset.invalidated && reset.settled ? await canvasShot(page) : null;
+          resetInvalidated && settleZero.settled
+            ? await canvasShot(page)
+            : null;
         const identity =
           entryShot && resetShot
             ? await imageDiff(page, entryShot, resetShot)
@@ -479,22 +638,22 @@ async function run() {
           rowEnabled &&
           thick.landed &&
           thick.invalidated &&
-          thick.settled &&
+          thickSettled &&
           thickDrawn !== null &&
           thickDrawn > 0.005 &&
-          reset.invalidated &&
-          reset.settled &&
+          resetInvalidated &&
+          settleZero.settled &&
           identity !== null &&
           identity.maxDelta === 0;
         thicknessNote =
           `  thickness=${scene.thickness} samples=${scene.samples ?? "default"} ` +
           `rowEnabled=${String(rowEnabled).padEnd(5)} ` +
           `invalidated=${String(thick.invalidated).padEnd(5)} ` +
-          `reSettled=${String(thick.settled).padEnd(5)} ` +
-          `thick=${(thick.settleMs / 1000).toFixed(1)}s ` +
+          `reSettled=${String(thickSettled).padEnd(5)}${thickCached ? "(cached)" : ""} ` +
+          `thick=${thickCached ? "cached" : ((thickSettleMs ?? 0) / 1000).toFixed(1) + "s"} ` +
           `reDrawn=${thickDrawn === null ? "n/a" : (thickDrawn * 100).toFixed(1) + "%"} ` +
-          `zeroReset=${String(reset.settled).padEnd(5)} ` +
-          `reset=${(reset.settleMs / 1000).toFixed(1)}s ` +
+          `zeroReset=${String(settleZero.settled).padEnd(5)} ` +
+          `reset=${(settleZero.settleMs / 1000).toFixed(1)}s ` +
           `identity=${
             identity === null
               ? "n/a"
@@ -576,6 +735,7 @@ async function run() {
       await page.click("#modePointsBtn").catch(() => {});
     }
   } finally {
+    await cache.prune();
     await browser.close();
   }
   process.exit(failed ? 3 : 0);
