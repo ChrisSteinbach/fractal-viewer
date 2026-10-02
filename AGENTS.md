@@ -142,8 +142,8 @@ npm run bench:gpu     # Headless WebGPU flame agreement/bench (real Chrome) — 
 npm run bench:surface # WebGPU fold-DE kernel agreement/timing — pins surface-de-gpu.ts (all seven cores) to its CPU oracles; add --display=:0 for real-driver timing. Run it QUIET (below), never beside the test suite: a contended software device corrupts mid-run readbacks; the canary reports verdict=device-unreliable (exit 2, rerun). JUDGE THE ESCAPE ROWS ON --display=:0 — escChainKaleido carries a known SwiftShader-only false failure and the flip cap must NOT be raised to make it green. Fixtures, caps and measured rows: docs/gpu-bench-surface.md
 npm run gpu:scratch   # Seconds-scale kernel-edit loop (docs/gate-velocity.md): one scene, one production frame + eval probe; never a gate
 npm run bench:mesh-sdf # 64³ trefoil cold-bake vs its 2s budget, BVH-vs-exact agreement
-npm run verify:pattern-release # Production-browser owner gate: drives the built app (preflight calibration, 128-cell machine matrix) -> blinded owner deck
-npm run verify:pattern-release-review # Scores a frozen blinded owner review; only an explicit "approve" passes
+npm run verify:pattern-release # Owner gate: drives the built app -> blinded owner deck; verify:pattern-release-review scores it, only "approve" passes
+npm run gate:affected # Map a dirty tree or base diff onto the gates and sheets that exercise it (docs/gate-velocity.md)
 ```
 
 **`--display=:0` NEEDS AN X COOKIE, and without it every gate that offers it

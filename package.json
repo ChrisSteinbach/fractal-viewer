@@ -13,6 +13,7 @@
     "gpu:scratch": "node scripts/gpu-scratch.mjs",
     "bench:mesh-sdf": "node scripts/mesh-sdf-bench.ts",
     "verify": "node scripts/verify.mjs",
+    "gate:affected": "node scripts/gate-affected.mjs",
     "verify:pattern-release": "npm run build && node scripts/pattern-release.verify.mjs",
     "verify:pattern-release-review": "node scripts/pattern-release-review-score.ts",
     "test": "vitest run",
