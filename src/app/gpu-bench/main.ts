@@ -62,6 +62,17 @@ import {
   surfaceScheduleMarchAcceptance,
 } from "./schedule";
 import { applyScenarioShard } from "./shard";
+import {
+  deriveScratchRoute,
+  resolveScratchCore,
+  scratchCoreProbes,
+  scratchDocScene,
+  scratchPresetScene,
+  type ScratchCore,
+  type ScratchRoute,
+  type ScratchScene,
+} from "./scratch-scene";
+import type { SurfaceRouteKind } from "../surface-eligibility";
 import { finiteEnvelopeEvidenceFailures } from "./surface-transport-envelope";
 import {
   finiteTransportChunkFailures,
@@ -27012,6 +27023,681 @@ function renderAdapterBanner(
   }
 }
 
+// ---------------------------------------------------------------------------
+// ?scratch=1 — the gpu:scratch authoring loop
+// ---------------------------------------------------------------------------
+
+/**
+ * ONE scenario, a small raster, seconds not minutes: the edit-loop companion
+ * to the agreement gates, NOT a second one. `?scratch=1&scene=<preset-or-doc>`
+ * routes the scene through `deriveSurfaceEligibility` + the DE builders (the
+ * one gate, no re-classification), renders ONE frame at `?res=` through the
+ * PRODUCTION `SurfaceComputeRenderer` (its own kernels, its own packers —
+ * zero scratch-side wire), and — for the seven descent/forward cores —
+ * dispatches ONE eval pass over the bench's own query mixes
+ * (`surfaceQueries`/`escapeQueries`/`bulbQueries`/`affine4Queries`/
+ * `escape4Queries`) through the bench's own plumbing (`acquireSurfaceDevice`,
+ * `buildSurfacePipeline`, the `ensure*EvalBuffers` helpers, the existing
+ * packers), printing distance stats plus an INFORMATIONAL max |gpu−cpu| —
+ * no threshold, no verdict: `bench:surface` keeps that role, pinned and
+ * CI-gated. The frame's ray-status census and hit fraction ride
+ * `SurfaceComputeFrame.counts`; the runner saves the canvas PNG.
+ *
+ * What the scratch deliberately does NOT do: no pass/fail verdicts, no CI
+ * workflow references it (grep the workflows), no agreement thresholds, no
+ * scene wiring the app would not do — a document feature the scratch cannot
+ * faithfully render (tiling's clip pose, the shape-trap block, the balloon
+ * echo, a general word-tree solid) is DISCLOSED in `refusals` beside the
+ * verdict rather than silently dropped, and `--core` mismatching the scene's
+ * route refuses loudly (scratch-scene.ts).
+ *
+ * Publishes `window.__SCRATCH__` (JSON), then `__SCRATCH_DONE__`; a thrown
+ * error publishes `__SCRATCH_ERROR__` — the runner's two exits.
+ */
+
+interface ScratchProbe {
+  queries: number;
+  min: number;
+  max: number;
+  mean: number;
+  nan: number;
+  /** Informational GPU-vs-CPU oracle delta over the finite pairs. The
+   * agreement gates own the thresholds; this number only says whether a
+   * kernel edit moved the DE field. */
+  maxAbsGpuMinusCpu: number;
+  p99AbsGpuMinusCpu: number;
+  compileMs: number;
+  dispatchMs: number;
+}
+
+interface ScratchResult {
+  core: ScratchCore;
+  kind: SurfaceRouteKind;
+  source: string;
+  /** Document features the scratch does not render — disclosed, never
+   * silently dropped. */
+  refusals: string[];
+  /** Descent-core map count (incl. schedule suffix); null for the
+   * bindingless cores. */
+  maps: number | null;
+  /** A shaped finite-solid block's displayed level (the `finite` targets'
+   * whole wire); null for every other core. */
+  finiteLevel: number | null;
+  boundingRadius: number | null;
+  probe: ScratchProbe | string | null;
+  frame: {
+    width: number;
+    height: number;
+    wallMs: number;
+    gpuMs: number;
+    marchMs: number;
+    shadeMs: number;
+    passes: number;
+    truncated: boolean;
+    counts: SurfaceComputeFrame["counts"];
+    hitFraction: number;
+    adapterLabel: string | undefined;
+    software: boolean;
+  };
+  notes: string[];
+  timings: { rendererCreateMs: number; totalMs: number };
+}
+
+declare global {
+  interface Window {
+    __SCRATCH__?: ScratchResult;
+    __SCRATCH_DONE__?: boolean;
+    __SCRATCH_ERROR__?: string;
+  }
+}
+
+/** Scratch raster bounds — small is the point, but a 32px floor keeps the
+ * picture readable and a 1024 ceiling keeps the SwiftShader-class runs
+ * bounded. */
+const SCRATCH_MIN_RES = 32;
+const SCRATCH_MAX_RES = 1024;
+const SCRATCH_DEFAULT_RES = 256;
+/** The frame leg's wall budget — generous, because a truncated frame is a
+ * census with holes, and the scratch is not racing anything. */
+const SCRATCH_FRAME_BUDGET_MS = 20_000;
+/** The probe query mixes' seed — the bench's own fixtures use per-system
+ * seeds; one constant keeps a scratch run's probe cloud reproducible. */
+const SCRATCH_PROBE_SEED = 7;
+
+function scratchDom(): { pre: HTMLPreElement; canvas: HTMLCanvasElement } {
+  const root = document.createElement("div");
+  root.id = "scratchRoot";
+  const pre = document.createElement("pre");
+  pre.id = "scratchOut";
+  pre.textContent = "scratch: building scene…";
+  const canvas = document.createElement("canvas");
+  canvas.id = "scratchFrame";
+  canvas.dataset.benchLabel = "scratch-frame";
+  const caption = document.createElement("span");
+  caption.textContent = "SurfaceComputeRenderer frame (march + shade)";
+  const row = document.createElement("div");
+  row.className = "canvases";
+  const block = document.createElement("div");
+  block.className = "canvas-block";
+  block.appendChild(canvas);
+  block.appendChild(caption);
+  row.appendChild(block);
+  document.body.appendChild(row);
+  document.body.appendChild(pre);
+  return { pre, canvas };
+}
+
+function scratchNumberParam(
+  params: URLSearchParams,
+  key: string,
+  fallback: number,
+): number {
+  const raw = params.get(key);
+  if (raw === null || raw === "") return fallback;
+  const v = Number(raw);
+  if (!Number.isFinite(v)) {
+    throw new Error(`?${key}=${raw} is not a number`);
+  }
+  return v;
+}
+
+/** The probe leg's kernel source for the DESCENT cores — the DE's own
+ * variant flags derived exactly as the march-unproject leg does ("the app
+ * renderer's exact derivation"); the forward cores take their fixed shape
+ * from their agreement legs. Eval mode, one dispatch. */
+function scratchEvalKernelOpts(
+  core: "fold" | "affine" | "fold4" | "affine4",
+  de: SurfaceDE | SurfaceDE4,
+  workgroupSize: number,
+): Parameters<typeof surfaceDeKernelWgsl>[0] {
+  return {
+    mode: "eval",
+    core,
+    lens: de.foldFinal !== null,
+    lensPost: (de.foldFinal?.postInvM ?? null) !== null,
+    ...(de.condensation
+      ? { condensation: surfaceCondensationKernelSpec(de) }
+      : {}),
+    ...(de.schedule ? { schedule: surfaceScheduleKernelSpec(de) } : {}),
+    ...(de.chaos ? { chaos: surfaceChaosKernelSpec(de) } : {}),
+    stateBounds: surfaceChaosStateBounds(de),
+    ...(core === "fold4" || core === "affine4" ? { slabExt: false } : {}),
+    width:
+      core === "fold" || core === "fold4"
+        ? SURFACE_FOLD_BEAM_WIDTH
+        : SURFACE_AFFINE_LADDER_WIDTH,
+    workgroupSize,
+    sharedFrontier: false,
+    bnbStage2: false,
+  };
+}
+
+/** The probe leg: one eval dispatch over the bench's own query mix, read
+ * back, summarized against the CPU oracle at the same points. Returns a
+ * skip reason when the core has no probe (frame-only families) or the
+ * device is unavailable. */
+async function runScratchProbe(
+  core: ScratchCore,
+  de: NonNullable<ScratchRoute["de"]>,
+  view4: SurfaceGpu4View,
+  transforms: Transform[],
+  finalTransform: Transform | null,
+  symmetry: SymmetryParams,
+  schedule: HybridSchedule | null,
+  activity: ActivityBadge,
+): Promise<ScratchProbe | string> {
+  if (!scratchCoreProbes(core)) {
+    return `skipped — core ${core} has no eval-probe leg (frame-only family)`;
+  }
+  activity.setState("gpu", `gpu:scratch probe — ${core}`);
+  const deviceHandle = await acquireSurfaceDevice(
+    SURFACE_DEFAULT_WORKGROUP_STORAGE,
+  );
+  if ("skipped" in deviceHandle) {
+    return `skipped — ${deviceHandle.skipped}`;
+  }
+  const { device } = deviceHandle;
+  try {
+    const wg = SURFACE_COMPUTE_WORKGROUP_SIZE;
+    const queries: Vec3[] =
+      core === "escape"
+        ? escapeQueries(de as EscapeDE, SCRATCH_PROBE_SEED)
+        : core === "bulb"
+          ? bulbQueries(de as BulbDE, SCRATCH_PROBE_SEED)
+          : core === "escape4"
+            ? escape4Queries(de as EscapeDE4, view4, SCRATCH_PROBE_SEED)
+            : core === "affine4" || core === "fold4"
+              ? affine4Queries(
+                  de as SurfaceDE4,
+                  view4,
+                  SCRATCH_PROBE_SEED,
+                  core === "affine4",
+                )
+              : surfaceQueries(
+                  transforms,
+                  (de as SurfaceDE).foldFinal
+                    ? (de as SurfaceDE).visibleBoundingRadius
+                    : (de as SurfaceDE).boundingRadius,
+                  finalTransform,
+                  symmetry,
+                  schedule ?? undefined,
+                );
+    const n = queries.length;
+    // CPU oracle at the same points — informational, per-core form.
+    const cpu: number[] = queries.map((q) => {
+      switch (core) {
+        case "fold":
+          return estimateDistance(de as SurfaceDE, q, 0);
+        case "affine":
+          return estimateDistanceRefined(de as SurfaceDE, q, 0);
+        case "escape":
+          return estimateEscapeDistance(de as EscapeDE, q);
+        case "bulb":
+          return estimateBulbDistance(de as BulbDE, q);
+        case "affine4":
+          return estimateSurface4Composed(de as SurfaceDE4, view4, q, true);
+        case "fold4":
+          return estimateSurface4Composed(de as SurfaceDE4, view4, q, false);
+        case "escape4":
+          return estimateEscape4Composed(de as EscapeDE4, view4, q);
+        default:
+          throw new Error("unreachable");
+      }
+    });
+    const isForward =
+      core === "escape" || core === "bulb" || core === "escape4";
+    const is4DDescent = core === "affine4" || core === "fold4";
+    const layout = isForward
+      ? surfaceForwardBindGroupLayout(device)
+      : surfaceBindGroupLayout(device);
+    const pipelineLayout = device.createPipelineLayout({
+      bindGroupLayouts: [layout],
+    });
+    const code = isForward
+      ? surfaceDeKernelWgsl({
+          mode: "eval",
+          core,
+          width: SURFACE_FOLD_BEAM_WIDTH,
+          workgroupSize: wg,
+          sharedFrontier: false,
+          bnbStage2: false,
+        })
+      : surfaceDeKernelWgsl(
+          scratchEvalKernelOpts(
+            core as "fold" | "affine" | "fold4" | "affine4",
+            de as SurfaceDE | SurfaceDE4,
+            wg,
+          ),
+        );
+    const { pipeline, compileMs } = await buildSurfacePipeline(
+      device,
+      pipelineLayout,
+      code,
+      "evalQueries",
+      `scratch eval ${core}`,
+    );
+    // Buffers through the bench's own helpers — the packers stay theirs.
+    let dispatchSys: {
+      queries: Vec3[];
+      buffers?: {
+        output: GPUBuffer;
+        staging: GPUBuffer;
+        bindGroup: GPUBindGroup;
+      };
+    };
+    if (is4DDescent) {
+      const sys: Surface4SystemState = {
+        name: "scratch",
+        de: de as SurfaceDE4,
+        view4,
+        transforms,
+        queries,
+        cpu,
+        stable: queries.map(() => true),
+      };
+      await ensureSurface4EvalBuffers(device, layout, sys);
+      dispatchSys = sys;
+    } else if (isForward) {
+      const sys: SurfaceEscapeSystemState = {
+        name: "scratch",
+        de: de as EscapeDE,
+        queries,
+        cpu64: cpu,
+        cpu32: cpu,
+        stable: queries.map(() => true),
+      };
+      const paramsData =
+        core === "escape"
+          ? packEscapeGpuParams(de as EscapeDE, { itemCount: n, cutoff: 0 })
+          : core === "bulb"
+            ? packBulbGpuParams(de as BulbDE, { itemCount: n, cutoff: 0 })
+            : packEscape4GpuParams(de as EscapeDE4, view4, {
+                itemCount: n,
+                cutoff: 0,
+              });
+      const mapsData =
+        core === "escape"
+          ? packEscapeGpuMaps(de as EscapeDE)
+          : core === "escape4"
+            ? packEscape4GpuMaps(de as EscapeDE4)
+            : new Float32Array(SURFACE_GPU_MAP_VEC4 * 4);
+      await ensureSurfaceForwardEvalBuffers(
+        device,
+        layout,
+        sys,
+        paramsData,
+        mapsData,
+      );
+      dispatchSys = sys;
+    } else {
+      const sys: SurfaceSystemState = {
+        name: "scratch",
+        core: core === "fold" ? "fold" : "affine",
+        de: de as SurfaceDE,
+        transforms,
+        queries,
+        cpu,
+      };
+      await ensureSurfaceEvalBuffers(device, layout, sys);
+      dispatchSys = sys;
+    }
+    const t1 = performance.now();
+    const gpu = await runSurfaceEvalDispatch(device, pipeline, dispatchSys, wg);
+    const dispatchMs = performance.now() - t1;
+    // Destroy the probe's own buffers — the page stays alive and this run
+    // will not reuse them.
+    if (dispatchSys.buffers) {
+      dispatchSys.buffers.output.destroy();
+      dispatchSys.buffers.staging.destroy();
+    }
+    // Stats.
+    let min = Infinity;
+    let max = -Infinity;
+    let sum = 0;
+    let nan = 0;
+    let maxAbsDelta = 0;
+    const deltas: number[] = [];
+    for (let i = 0; i < n; i++) {
+      const g = gpu[i];
+      if (Number.isNaN(g)) {
+        nan++;
+        continue;
+      }
+      min = Math.min(min, g);
+      max = Math.max(max, g);
+      sum += g;
+      const d = Math.abs(g - cpu[i]);
+      if (Number.isFinite(d)) {
+        deltas.push(d);
+        maxAbsDelta = Math.max(maxAbsDelta, d);
+      }
+    }
+    deltas.sort((a, b) => a - b);
+    const p99 =
+      deltas.length > 0
+        ? deltas[Math.min(deltas.length - 1, Math.floor(deltas.length * 0.99))]
+        : 0;
+    void pipeline;
+    return {
+      queries: n,
+      min: Number.isFinite(min) ? min : 0,
+      max: Number.isFinite(max) ? max : 0,
+      mean: n - nan > 0 ? sum / (n - nan) : 0,
+      nan,
+      maxAbsGpuMinusCpu: maxAbsDelta,
+      p99AbsGpuMinusCpu: p99,
+      compileMs,
+      dispatchMs,
+    };
+  } finally {
+    device.destroy();
+  }
+}
+
+/** The frame leg: the production renderer, one renderFrame call, the census
+ * + PNG. Throws on create failure or a null frame — those ARE the answer. */
+async function runScratchFrame(
+  route: ScratchRoute,
+  scene: ScratchScene,
+  view4: SurfaceGpu4View,
+  res: number,
+  budgetMs: number,
+  activity: ActivityBadge,
+): Promise<{
+  frame: ScratchResult["frame"];
+  rendererCreateMs: number;
+  canvas: HTMLCanvasElement;
+}> {
+  const de = route.de;
+  const target: SurfaceComputeAnyTarget =
+    route.kind === "ifs"
+      ? { kind: "ifs", de: de as SurfaceDE }
+      : route.kind === "ifs4"
+        ? { kind: "ifs4", de: de as SurfaceDE4 }
+        : route.kind === "escape"
+          ? { kind: "escape", de: de as EscapeDE }
+          : route.kind === "bulb"
+            ? { kind: "bulb", de: de as BulbDE }
+            : route.kind === "escape4"
+              ? { kind: "escape4", de: de as EscapeDE4 }
+              : route.kind === "sphereInversion"
+                ? { kind: "sphereInversion", de: de as SphereInversionDE }
+                : route.kind === "sphereInversion4"
+                  ? { kind: "sphereInversion4", de: de as SphereInversionDE }
+                  : route.kind === "finiteSolid"
+                    ? { kind: "finite", level: route.finiteLevel ?? 2 }
+                    : {
+                        kind: "finite4",
+                        level: route.finiteLevel ?? 2,
+                      };
+  const colors: Vec3[] =
+    route.kind === "sphereInversion" || route.kind === "sphereInversion4"
+      ? sphereInversionShadeSlots(
+          sphereInversionGenerationSlots((de as SphereInversionDE).depth),
+          scene.sphereInversion ?? undefined,
+          (de as SphereInversionDE).boundingRadius,
+          false,
+        ).colors
+      : route.kind === "escape" ||
+          route.kind === "bulb" ||
+          route.kind === "escape4" ||
+          route.kind === "finiteSolid" ||
+          route.kind === "finiteSolid4"
+        ? [[0.8, 0.5, 0.2]]
+        : surfaceSlotColors(scene.transforms, (de as SurfaceDE).maps);
+  const trapIndices: number[] =
+    route.kind === "sphereInversion" || route.kind === "sphereInversion4"
+      ? sphereInversionShadeSlots(
+          sphereInversionGenerationSlots((de as SphereInversionDE).depth),
+          scene.sphereInversion ?? undefined,
+          (de as SphereInversionDE).boundingRadius,
+          false,
+        ).trapIndices
+      : route.kind === "escape" ||
+          route.kind === "bulb" ||
+          route.kind === "escape4" ||
+          route.kind === "finiteSolid" ||
+          route.kind === "finiteSolid4"
+        ? [0]
+        : surfaceTrapIndices(scene.transforms, (de as SurfaceDE).maps);
+  const R =
+    route.kind === "finiteSolid" || route.kind === "finiteSolid4"
+      ? finiteSolidBoundingRadius(route.kind === "finiteSolid4" ? 4 : 3)
+      : ((de as { boundingRadius?: number }).boundingRadius ?? 1);
+  const visR =
+    route.kind === "ifs" && (de as SurfaceDE).foldFinal
+      ? (de as SurfaceDE).visibleBoundingRadius
+      : R;
+  const pose = buildSurfacePose({ visibleBoundingRadius: visR }, res, res);
+  const invProjView = surfaceInvProjView({ boundingRadius: R }, pose);
+  activity.setState("gpu", `gpu:scratch frame — ${route.core}`);
+  const t0 = performance.now();
+  const renderer = await SurfaceComputeRenderer.create(
+    target,
+    colors,
+    trapIndices,
+  );
+  const rendererCreateMs = performance.now() - t0;
+  try {
+    const maxDepth =
+      route.kind === "escape" ||
+      route.kind === "bulb" ||
+      route.kind === "escape4"
+        ? ESCAPE_TIME_ITERATIONS
+        : route.kind === "sphereInversion" || route.kind === "sphereInversion4"
+          ? (de as SphereInversionDE).depth
+          : route.kind === "finiteSolid" || route.kind === "finiteSolid4"
+            ? 2
+            : (de as SurfaceDE).maxDepth;
+    const spec: SurfaceComputeFrameSpec = {
+      width: res,
+      height: res,
+      invProjView,
+      camPos: pose.ro,
+      camForward: pose.fwd,
+      focusDepth: surfaceCameraDepth(pose),
+      acceptPixelEps: SURFACE_PIXEL_EPS,
+      tracePixelEps:
+        (2 * Math.tan((SURFACE_POSE_FOV_DEG * Math.PI) / 360)) / res,
+      maxDepth,
+      marchSteps: SURFACE_MARCH_STEPS,
+      shadowSteps: SURFACE_FRAME_SHADOW_STEPS,
+      aoTaps: SURFACE_FRAME_AO_TAPS,
+      hitFloor: SURFACE_GPU_HIT_FLOOR,
+      lightDir: surfaceNormalize([0.5, 0.8, 0.3]),
+      ambient: 0.25,
+      // The bench legs' convention: black backdrop, hit rates and census are
+      // what this frame is for.
+      bgTop: [0, 0, 0],
+      bgBottom: [0, 0, 0],
+      colorSource: 0,
+      colorSpeed: 0.5,
+      lut: null,
+      lutVersion: 0,
+      dither: true,
+      ...(route.kind === "ifs4" ||
+      route.kind === "escape4" ||
+      route.kind === "sphereInversion4" ||
+      route.kind === "finiteSolid4"
+        ? { view4 }
+        : {}),
+    };
+    const canvas = requireElement<HTMLCanvasElement>("scratchFrame");
+    canvas.width = res;
+    canvas.height = res;
+    const frame = await renderer.renderFrame(spec, {
+      budgetMs,
+      onProgress: (pixels) => {
+        drawSurfaceComputeFrame(canvas, pixels, res, res);
+      },
+    });
+    if (!frame) {
+      throw new Error(
+        "renderFrame resolved null — the scratch produced no frame",
+      );
+    }
+    drawSurfaceComputeFrame(canvas, frame.pixels, res, res);
+    return {
+      frame: {
+        width: frame.width,
+        height: frame.height,
+        wallMs: frame.wallMs,
+        gpuMs: frame.gpuMs,
+        marchMs: frame.marchMs,
+        shadeMs: frame.shadeMs,
+        passes: frame.passes,
+        truncated: frame.truncated,
+        counts: frame.counts,
+        hitFraction: frame.counts.hit / (frame.width * frame.height),
+        adapterLabel: renderer.adapterLabel,
+        software: renderer.software,
+      },
+      rendererCreateMs,
+      canvas,
+    };
+  } finally {
+    renderer.destroy();
+  }
+}
+
+async function runScratch(
+  params: URLSearchParams,
+  activity: ActivityBadge,
+): Promise<void> {
+  const t0 = performance.now();
+  const { pre } = scratchDom();
+  const fail = (message: string): void => {
+    window.__SCRATCH_ERROR__ = message;
+    pre.textContent = `SCRATCH ERROR:\n${message}`;
+    pre.classList.add("bad");
+    console.error("[scratch]", message);
+  };
+  try {
+    const sceneParam = params.get("scene");
+    const docParam = params.get("doc");
+    const scene = docParam
+      ? scratchDocScene(docParam)
+      : sceneParam
+        ? scratchPresetScene(sceneParam)
+        : null;
+    if (!scene) {
+      throw new Error(
+        docParam
+          ? "the --doc payload did not decode as a scene document"
+          : sceneParam
+            ? `unknown preset "${sceneParam}" — pass a preset name or a #v1= document (--doc)`
+            : "pass ?scene=<preset> or ?doc=<v1 payload>",
+      );
+    }
+    const route = deriveScratchRoute(scene);
+    const core = resolveScratchCore(params.get("core"), route.core);
+    const res = Math.max(
+      SCRATCH_MIN_RES,
+      Math.min(
+        SCRATCH_MAX_RES,
+        Math.round(scratchNumberParam(params, "res", SCRATCH_DEFAULT_RES)),
+      ),
+    );
+    const w0 = scratchNumberParam(params, "w0", route.view4.w0);
+    const slab = scratchNumberParam(params, "slab", 0);
+    const view4: SurfaceGpu4View = {
+      rotor: route.view4.rotor,
+      w0,
+      sliceHalfW: slab,
+    };
+    activity.setState("cpu", `gpu:scratch — ${core}`);
+    pre.textContent = `scratch: ${scene.source} → ${route.kind} / core ${core}…`;
+    const notes: string[] = [];
+    for (const refusal of scene.refusals) notes.push(refusal);
+    if (slab > 0) {
+      notes.push(
+        `slab ${String(slab)} — the slab half-extent is a scratch parameter, not document state`,
+      );
+    }
+    const probe = route.de
+      ? await runScratchProbe(
+          core,
+          route.de,
+          view4,
+          scene.transforms,
+          scene.finalTransform,
+          scene.symmetry,
+          scene.schedule,
+          activity,
+        )
+      : ("skipped — the routed core carries no DE" as string);
+    if (typeof probe === "string") notes.push(`probe: ${probe}`);
+    const { frame, rendererCreateMs } = await runScratchFrame(
+      route,
+      scene,
+      view4,
+      res,
+      scratchNumberParam(params, "budget", SCRATCH_FRAME_BUDGET_MS),
+      activity,
+    );
+    const result: ScratchResult = {
+      core,
+      kind: route.kind,
+      source: scene.source,
+      refusals: scene.refusals,
+      maps:
+        route.de && "maps" in route.de
+          ? ((route.de as SurfaceDE).maps.length ?? null)
+          : null,
+      finiteLevel: route.finiteLevel ?? null,
+      boundingRadius:
+        (route.de as { boundingRadius?: number } | null)?.boundingRadius ??
+        null,
+      probe: typeof probe === "string" ? probe : probe,
+      frame,
+      notes,
+      timings: {
+        rendererCreateMs,
+        totalMs: performance.now() - t0,
+      },
+    };
+    window.__SCRATCH__ = result;
+    window.__SCRATCH_DONE__ = true;
+    activity.setState("idle", "Scratch done");
+    pre.textContent = JSON.stringify(result, null, 2);
+    console.info(
+      `[scratch] ${core} ${scene.source} res=${String(res)}: ` +
+        `frame wall=${frame.wallMs.toFixed(0)}ms gpu=${frame.gpuMs.toFixed(0)}ms ` +
+        `hit=${String(frame.counts.hit)} miss=${String(frame.counts.miss)} ` +
+        `exh=${String(frame.counts.exhausted)} (${(frame.hitFraction * 100).toFixed(1)}%)` +
+        (frame.truncated ? " TRUNCATED" : "") +
+        (typeof probe === "object"
+          ? ` | probe n=${String(probe.queries)} ` +
+            `[${probe.min.toExponential(2)}, ${probe.max.toExponential(2)}] ` +
+            `mean ${probe.mean.toExponential(2)} nan=${String(probe.nan)} ` +
+            `max|gpu-cpu| ${probe.maxAbsGpuMinusCpu.toExponential(2)}`
+          : ` | probe ${probe}`),
+    );
+  } catch (e) {
+    fail(describeError(e));
+  }
+}
+
 async function main(): Promise<void> {
   const banner = requireElement<HTMLDivElement>("adapterBanner");
   const durationInput = requireElement<HTMLInputElement>("durationInput");
@@ -27026,6 +27712,13 @@ async function main(): Promise<void> {
   activity.setState("idle", "Idle");
 
   const params = new URLSearchParams(window.location.search);
+  // The scratch authoring loop REPLACES the bench's whole page flow — one
+  // scenario, one frame, one eval dispatch, published on its own window
+  // fields. Every DOM element the bench flow needs below stays untouched.
+  if (params.get("scratch") === "1") {
+    await runScratch(params, activity);
+    return;
+  }
   const autorun = params.get("autorun") === "1";
   // `surface=1` runs the surface-DE section AFTER the flame
   // scenarios; `surface=only` runs it INSTEAD of them. Absent (the CI
