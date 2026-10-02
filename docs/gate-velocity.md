@@ -358,3 +358,114 @@ backdrop-premise rename (2026-09-27): the constant was named
 `BACKDROP_PREMISE_MAX` (undefined), so every gl-leg run threw a
 ReferenceError into the phase's own catch and failed. Fixed in the same
 change as the wiring (the wiring is what ran the leg again).
+
+## The fast tier
+
+`--tier=fast` on the three heaviest gates (`surface-4d-lift`,
+`surface-slab-4d`, `sphere-inversion-family`): the development loop asserts
+the gates' frame-pure contracts at a reduced raster, with the full pass
+byte-unchanged as the record. The shared vocabulary is
+`scripts/lib/fast-tier.mjs` (unit-tested in `scripts/fast-tier.test.ts`):
+`parseTierArg` (absent means full; a typo throws rather than silently
+running full), `tierUrlParams`, `tierExportScale`, `tierLabel`, and
+`tierCorrespondence` — the pilot's compare.
+
+### The knobs are the app's own page-load overrides
+
+The fast tier changes only what the app already lets a page ask for, never
+new app code:
+
+- **The raster: `?surfacemaxrays=163840`** (`FAST_TIER_MAXRAYS`), the app's
+  own device-ceiling stand-in. The live pane FITS under the cap
+  (`fitSurfaceComputeRaster` — the preview tier's own mechanism) and blits
+  up to an unchanged canvas, so the render raster shrinks while the page,
+  the panel and every DOM interaction stay exactly the full tier's. A
+  quarter of the lift-class viewport's rays, so the fit scale is exactly
+  0.5 there (512x320 under a 1024x640 canvas — verified live: the app's
+  own console note names the trace size) and ~8.8x on the 1600x900 shared
+  viewport. **A half-size viewport was measured and REJECTED**: the app's
+  MOBILE_BREAKPOINT (640px, `src/app/constants.ts`) collapses the panel
+  behind its ☰ toggle below it, and the lift gate's `#modeSurfaceBtn`
+  click timed out with "element is not visible" at 512x320 — the fast
+  tier must not fork the gates' UI choreography.
+- **The samples: `?surfacesamples=1`** — the app's own page-load override,
+  governing the settle AND the Save-PNG (the app spends the same effective
+  count on both; the persisted detent, default 8, stays untouched). The
+  tier's params ride EVERY page a fast gate boots, including the link
+  hops, whose frames must share the menu frame's raster for the
+  byte-for-byte compares.
+- **The export scale: 1** — the export is the pane's own size, banded
+  under the same cap; the export content checks are relative.
+
+What fast does NOT change: the settle latch (a completed settle, never
+"pixels stopped moving"), the byte-exactness bars between two same-tier
+frames (both sides get the same treatment, so `maxDelta === 0` means what
+it always meant), and every relative bar (coverage shares, discrimination
+factors, IoU) — ratios, tier-free by construction. The measured slab
+numbers are the proof: the fast run's gray64 discrimination distances are
+IDENTICAL to the full run's (0.1046/0.5093 both tiers — the 64px
+downscale erases the raster difference), and both tiers' scene-region
+reload identities read maxDelta 0.
+
+### THE ENV-KEY RULE the fast tier paid for
+
+The tier's URL params are RENDERING-ALTERING FLAGS and MUST ride the frame
+cache's `env` key field. The first fast si-family run shipped with the
+tier params on the pages but NOT in the key's env — the fast menu frames
+were recorded under the full-tier keys (env `{surfacestate:"1"}`), where
+they were indistinguishable from full-tier frames until the link hops
+compared across rasters (mean 1.97/255, max 162, 9.6% over8 — the cached
+fast frame vs a fresh fast hop) and the pilot's full-tier put silently
+overwrote a fast entry under the shared key. Nineteen poisoned entries
+(fast bytes under env-less keys), deleted by hand; the fix is structural —
+every frame-key site merges `tierUrlParams(tier)` into `env`, so a fast
+entry and a full entry are separate by key and a fast frame can never
+replay into a full run. This is the force-frame memo key's lesson
+(`surface-force-frame-key.ts`: a key that misses a repaint-relevant field
+fails SILENTLY) landed a second time, one layer out.
+
+### Full-res reservations, named per leg
+
+Some legs are reserved for the full pass, named in each gate header and
+disclosed in a fast run's output as skipped, never quietly absent:
+
+- `sphere-inversion-family`'s **tiled** leg — export-scale tile
+  byte-exactness; the untiled export guarantees its device-ceiling tiling
+  only at export scale.
+- `sphere-inversion-family`'s **gl** leg — the cross-engine IoU needs BOTH
+  engines at one raster, and the ray cap is a compute-only knob, so a fast
+  pair is a capped-compute-vs-uncapped-webgl compare, which measures the
+  raster difference, not the engines (measured: IoU 0.969/0.977 at fast
+  against the recorded full-tier 0.9997/1.0000).
+
+### The pilot — the fast tier's one full-resolution sample
+
+Every fast run renders ONE named scenario at full tier (no tier URL
+params) asserting the same frame-pure predicates its fast pass asserted,
+and `tierCorrespondence` compares the two verdicts: agreement is disclosed
+in the verdict line (`pilot <scenario>: tier=fast vs tier=full agree`); a
+divergence FAILS the run with the predicates named, because a fast tier
+that stopped tracking the full one is a lying green line. Where the gate
+caches menu frames, the pilot's frame is recorded under its FULL-tier key
+(the env field separates the tiers), re-anchoring the cache's fast-vs-full
+correspondence each fast run; where the gate's cache is specialized (the
+lift gate's thick-frames-only contract) or absent (the slab gate), the
+pilot is live-only and the gate header says so. The per-assertion tier
+disclosure is the honesty rule: every PASS/FAIL line carries
+`tier=<label>`, and the run header states the raster knobs — a green fast
+line is never mistakable for a full-quality pass.
+
+### Measured (AMD RX 7900 XTX, real driver `--display=:0`, production
+
+build, 2026-10-02; machine-quiet per the per-process baseline)
+
+| gate                      | full                                               | fast                           | note                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------- | -------------------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `surface-4d-lift`         | 87.9s                                              | 62.6s (`--force`)              | 1.4x HERE: the box's settles are ~1s, so per-scene navigation overhead dominates; the cap is verified engaged (512x320 for a 1024x640 raster). The leverage is the Iris-class machines the gate header documents (~60 s/sample cover settles), where the raster × samples cut reaches ~32x on the settle term. All predicates held on both tiers; the pilot agreed.                            |
+| `surface-slab-4d`         | 12.1s                                              | 14.0s                          | A small LOSS here — the gate's full pass is already cheap on this box, and the pilot's anchor costs ~2s. The fast tier is for the settle/export-dominated machines (the Iris-class walls the gate's 300s budgets were sized against), not for already-cheap gates; it does not pretend to win everywhere. The measured discrimination numbers are byte-identical across tiers (0.1046/0.5093). |
+| `sphere-inversion-family` | 9m51s (presets cold, recorded by the wiring child) | 2m0.6s (presets+gl+tiled cold) | ~5x on this box with the tiled and gl legs reserved to full; every settle 1.5-2.7s (the recorded full-tier settles were the cold run's dominant term), hops 1.8-2.7s each, exports 1.6-3.0s banded. The pilot's full-tier sample (7.0s settle) agreed and refreshed the full-tier entry.                                                                                                       |
+
+Not measured here and disclosed rather than claimed: the Iris-class
+figures — the box that shipped the ~60 s/sample cover settle and the
+documented multi-minute slab walls — are where the tier's multiply
+actually bites; this box's numbers are beside them, never substituted.
