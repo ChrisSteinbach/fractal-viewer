@@ -80,13 +80,48 @@
  *
  * USAGE (a production build served first):
  *   npm run build && npm run preview &
- *   node scripts/sphere-inversion-family.verify.mjs --mode=x11::0 [--force]
+ *   node scripts/sphere-inversion-family.verify.mjs --mode=x11::0 [--force] [--tier=fast]
  *   node scripts/sphere-inversion-family.verify.mjs --mode=sw
  *   node scripts/sphere-inversion-family.verify.mjs --phases=toast,refusal
  *
  * `--mode=sw` runs the SwiftShader subset: menu entry, engine and document
  * per preset (no settle, frames or exports: a software settle of the
  * 600-cell takes far too long to gate on), plus `toast` and `refusal`.
+ *
+ * THE FAST TIER (`--tier=fast`, scripts/lib/fast-tier.mjs,
+ * docs/gate-velocity.md): the development loop runs the presets and gl
+ * phases under the app's own `?surfacemaxrays` device-ceiling stand-in
+ * (the live pane FITS under the cap and blits up to an unchanged 1600x900
+ * canvas — the page, the panel and every DOM interaction stay exactly the
+ * full tier's) with `?surfacesamples=1` on every page INCLUDING the link
+ * hops (the hop frames must share the menu frame's raster for the
+ * byte-for-byte compares — the override governs the settle on both
+ * engines), and pins the export scale to 1 (the export content checks are
+ * relative; the export bands under the same cap). The frame-pure
+ * contracts — census share, pairwise distinct, link fixed points, the gl
+ * leg's IoU — are tier-free ratios or same-tier compares. THE TILED PHASE
+ * IS A FULL-RESERVATION LEG and is SKIPPED at fast: the export-scale tile
+ * byte-exactness it asserts is the named full-res leg (the untiled export
+ * guarantees its device-ceiling tiling only at export scale), disclosed
+ * in the output rather than quietly absent. THE GL LEG JOINS IT: the
+ * cross-engine IoU needs both engines at one raster and the ray cap is a
+ * compute-only knob, so a fast pair would measure the raster difference,
+ * not the engines — skipped, disclosed. THE PILOT: one
+ * full-resolution sample — the first preset re-rendered with no tier
+ * params after the presets phase, asserting the same frame-pure
+ * predicates its fast pass asserted, and its full-tier frame recorded
+ * under its full-tier cache key (the store's env field separates the
+ * tiers) so the cache's fast-vs-full correspondence is re-anchored each
+ * fast run. A divergence fails the run with the predicates named. Every
+ * verdict line carries `tier=<label>`; a green fast line is never
+ * mistakable for a full-quality pass. MEASURED (AMD RX 7900 XTX, real
+ * driver x11::0, 2026-10-02): presets+gl+tiled cold 2m0.6s at fast against
+ * the recorded full-tier presets cold 9m51s (~5x, with tiled and gl
+ * reserved to full); settles 1.5-2.7s, hops 1.8-2.7s, exports 1.6-3.0s
+ * banded; the pilot's full-tier sample (7.0s settle) agreed and refreshed
+ * the full-tier entry. The fast tier's first run also paid the env-key
+ * lesson (fast frames recorded under full-tier keys until the tier params
+ * rode the key's env — docs/gate-velocity.md's THE ENV-KEY RULE).
  *
  * THE FRAME CACHE (wired 2026-10-02, scripts/lib/frame-cache-gate.mjs,
  * docs/gate-velocity.md): the presets/tiled/gl phases' FRAME-PURE products
@@ -120,6 +155,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
+import {
+  parseTierArg,
+  tierCorrespondence,
+  tierExportScale,
+  tierLabel,
+  tierUrlParams,
+} from "./lib/fast-tier.mjs";
 import {
   createFrameCache,
   gateKeyFields,
@@ -205,6 +247,7 @@ function parseArgs(argv) {
     gl: "inversionPearls,inversionCubePearls",
     outdir: path.join(HERE, "out"),
     force: false,
+    tier: "full",
   };
   for (const raw of argv) {
     const eq = raw.indexOf("=");
@@ -212,6 +255,7 @@ function parseArgs(argv) {
     if (!(key in args)) throw new Error(`unknown flag --${key}`);
     const value = eq === -1 ? "" : raw.slice(eq + 1);
     if (key === "force") args.force = value !== "false";
+    else if (key === "tier") args.tier = parseTierArg([raw]);
     else args[key] = typeof args[key] === "number" ? Number(value) : value;
   }
   return args;
@@ -222,9 +266,11 @@ const secs = (ms) => `${(ms / 1000).toFixed(1)}s`;
 
 /** One link hop: boot `link` fresh, settle, capture the frame as
  * `si-qual-<key>-reload[2].png`, and copy the link the reloaded session
- * builds. Resolves null (after failing) when the hop cannot settle. */
-async function settleLinkHop(browser, args, link, preset, hop) {
-  const reload = await settleFromLink(browser, args, link);
+ * builds. `query` rides the boot URL (the fast tier's samples pin — the
+ * hop frame must share the menu frame's raster). Resolves null (after
+ * failing) when the hop cannot settle. */
+async function settleLinkHop(browser, args, link, preset, hop, query = "") {
+  const reload = await settleFromLink(browser, args, link, query);
   try {
     if (!reload.settled.ok) {
       failHook(`${preset.key}: link hop ${hop} never settled`);
@@ -287,6 +333,24 @@ async function recorderSeesCopyToast(page) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  const fast = args.tier === "fast";
+  const sw = args.mode === "sw";
+  // The tier's URL params and export scale (scripts/lib/fast-tier.mjs):
+  // one antialiasing pass plus the ray cap at fast — the app's own
+  // page-load overrides, so the settle AND the Save-PNG both trace them —
+  // and scale 1 for the export. The viewport is deliberately UNCHANGED:
+  // the canvas geometry, panel layout and every DOM interaction stay
+  // exactly the full tier's (a half-size viewport was measured and
+  // rejected — the app's panel collapses behind its ☰ toggle below its
+  // 640px breakpoint), and the tier's cache entries are separated by the
+  // env field instead.
+  const exportScale = tierExportScale(args.tier, Number(args.scale));
+  // The tier's URL params on every page load, INCLUDING the link hops (the
+  // hop frames must share the menu frame's raster for the byte-for-byte
+  // compares).
+  const tierQuery = new URLSearchParams(tierUrlParams(args.tier)).toString();
+  const withTierQuery = (q) =>
+    tierQuery ? (q ? `${q}&${tierQuery}` : tierQuery) : q;
   await guardFreshDist({ url: args.url });
   // The frame cache (docs/gate-velocity.md), wired to the four FRAME-PURE
   // products of the presets/tiled/gl phases: the settled menu frame, its
@@ -314,7 +378,6 @@ async function main() {
   fs.mkdirSync(args.outdir, { recursive: true });
   const out = (name) => path.join(args.outdir, name);
   const phases = new Set(args.phases.split(",").filter(Boolean));
-  const sw = args.mode === "sw";
   if (sw) {
     phases.delete("tiled");
     phases.delete("gl");
@@ -337,7 +400,8 @@ async function main() {
     startedAt: new Date().toISOString(),
     mode: args.mode,
     url: args.url,
-    scale: Number(args.scale),
+    tier: args.tier,
+    scale: exportScale,
     viewport: "1600x900",
     quiet: browser.gpuQuiet ?? null,
     presets: {},
@@ -346,6 +410,16 @@ async function main() {
     toast: {},
     refusal: {},
   };
+  log(
+    `tier=${tierLabel(args.tier)} viewport=1600x900 exportScale=${exportScale} ` +
+      (fast
+        ? `samples=1 maxrays=${tierUrlParams("fast").surfacemaxrays} `
+        : "") +
+      `phases=${[...phases].join(",")}` +
+      (fast
+        ? " (the tiled and gl legs are full-res reservations and are skipped)"
+        : ""),
+  );
   // Diff/decoder page: the app's isolation headers refuse the blob decode.
   const diffContext = await browser.newContext();
   const diffPage = await diffContext.newPage();
@@ -366,7 +440,7 @@ async function main() {
   };
   /** The nine key fields for one frame family. `document` is the settled
    * document's hash string; the export scale rides `raster`, the URL flags
-   * ride `env`. */
+   * (including the fast tier's overrides) ride `env`. */
   const fieldsForFrame = async (documentHash, engine, env, raster = {}) =>
     cache.disabled || bundleHash === null
       ? null
@@ -420,7 +494,10 @@ async function main() {
     if (phases.has("presets")) {
       for (const preset of wanted) {
         const r = (results.presets[preset.key] = { dim: preset.dim });
-        const app = await openApp(browser, { url: args.url });
+        const app = await openApp(browser, {
+          url: args.url,
+          query: withTierQuery(""),
+        });
         const { context, page, errors, consoleLines } = app;
         await context.addInitScript(CLIPBOARD_STUB);
         await page.evaluate(CLIPBOARD_STUB);
@@ -481,6 +558,13 @@ async function main() {
           // re-runs the same predicates over recorded evidence).
           const fields = await fieldsForFrame(docHash, "compute", {
             surfacestate: "1",
+            // The tier's params ride the key's env: the fast raster IS part
+            // of what the frame is a function of, and a fast frame recorded
+            // under a full-tier key would replay as a full-tier hit (the
+            // silent-key bug class the force-frame memo key shipped this
+            // lesson for). At full the tier params are {} and the key is
+            // byte-identical to the recorded full-tier keys.
+            ...tierUrlParams(args.tier),
           });
           const hit = fields ? await cache.lookup(fields, preset.key) : null;
           const cachedVerdict =
@@ -574,7 +658,8 @@ async function main() {
           frames.set(preset.key, frameFile);
           sheet.push({ label: `${preset.key} (menu)`, file: frameFile });
           log(
-            `${preset.key}: settled ${r.cachedSettle ? "(cached)" : secs(r.settleMs)} from the menu, engine=${r.engine}` +
+            `${preset.key}: settled ${r.cachedSettle ? "(cached)" : secs(r.settleMs)} from the menu, ` +
+              `tier=${tierLabel(args.tier)} engine=${r.engine}` +
               ` backend=${r.backend?.label} software=${r.backend?.software}` +
               ` covered=${((100 * r.census.covered) / r.census.rays).toFixed(1)}% exhausted=${r.census.exhausted}`,
           );
@@ -614,8 +699,13 @@ async function main() {
           const exportFields = await fieldsForFrame(
             docHash,
             "compute",
-            { surfacestate: "1" },
-            { exportScale: Number(args.scale) },
+            {
+              surfacestate: "1",
+              // The export bands under the same cap, so the tier rides the
+              // key's env here too.
+              ...tierUrlParams(args.tier),
+            },
+            { exportScale },
           );
           const exportHit = exportFields
             ? await cache.lookup(exportFields, `${preset.key}@export`)
@@ -640,7 +730,7 @@ async function main() {
             png = await savePng(
               page,
               consoleLines,
-              args.scale,
+              String(exportScale),
               args.exportTimeout,
             );
           }
@@ -648,7 +738,7 @@ async function main() {
           fs.writeFileSync(exportFile, png.bytes);
           exports.set(preset.key, exportFile);
           sheet.push({
-            label: `${preset.key} export ${args.scale}x`,
+            label: `${preset.key} export ${exportScale}x`,
             file: exportFile,
           });
           const content = await imageContent(diffPage, png.bytes);
@@ -665,8 +755,8 @@ async function main() {
             `${preset.key}: export ${content.width}x${content.height} in ${cachedExport ? "(cached)" : secs(png.ms)},` +
               ` ${png.tileCount} tile(s), ${content.distinctColors} colours, luma sd ${content.lumaStd.toFixed(1)}`,
           );
-          const expectW = 1600 * Number(args.scale);
-          const expectH = 900 * Number(args.scale);
+          const expectW = 1600 * exportScale;
+          const expectH = 900 * exportScale;
           if (content.width !== expectW || content.height !== expectH)
             fail(
               `${preset.key}: export is ${content.width}x${content.height}, expected ${expectW}x${expectH}`,
@@ -704,10 +794,24 @@ async function main() {
           // the menu's, and the link it copies boots a second one, which must
           // reproduce the first byte for byte (a link is a fixed point).
           if (link) {
-            const hop1 = await settleLinkHop(browser, args, link, preset, 1);
+            const hop1 = await settleLinkHop(
+              browser,
+              args,
+              link,
+              preset,
+              1,
+              tierQuery,
+            );
             const hop2 =
               hop1?.link && hop1.frameFile
-                ? await settleLinkHop(browser, args, hop1.link, preset, 2)
+                ? await settleLinkHop(
+                    browser,
+                    args,
+                    hop1.link,
+                    preset,
+                    2,
+                    tierQuery,
+                  )
                 : null;
             if (hop1?.frameFile) {
               sheet.push({
@@ -797,13 +901,145 @@ async function main() {
       }
     }
 
+    // ------------------------------------------------- THE PILOT (fast runs)
+    // One full-resolution sample — the FIRST preset, re-rendered at the
+    // shared viewport with the default samples — asserting the same
+    // frame-pure predicates its fast pass asserted. This is the run's
+    // fast-vs-full correspondence (scripts/lib/fast-tier.mjs): a divergence
+    // fails the run with the predicates named. The sample's frame is
+    // recorded under its FULL-tier cache key when its checks pass — the
+    // key's viewport/env fields separate the tiers' entries, so this
+    // refresh is the store's fast-vs-full anchor. A full run has no pilot;
+    // the sw subset settles nothing and has none either.
+    if (phases.has("presets") && fast && !sw) {
+      const pilot = wanted[0];
+      const fastRecord = results.presets[pilot.key] ?? null;
+      const fastCensus = fastRecord?.census ?? null;
+      const fastPredicates = {
+        blockMatches: fastRecord?.blockMatches === true,
+        engineOk: fastRecord?.engine === "compute",
+        coveredOk: fastCensus
+          ? fastCensus.covered / fastCensus.rays >= MIN_COVERED
+          : false,
+        exhaustedOk: !!fastCensus && fastCensus.exhausted === 0,
+        blankOk: !(
+          fastRecord?.toastAtSettle &&
+          BLANK_TOAST.test(fastRecord.toastAtSettle)
+        ),
+      };
+      results.pilot = { key: pilot.key, tier: "full" };
+      const app = await openApp(browser, { url: args.url });
+      try {
+        const t0 = Date.now();
+        await loadPreset(app.page, pilot.key);
+        const doc = await waitDocument(
+          app.page,
+          (d) => !!d.sphereInversion && !!d.camera,
+        );
+        const pilotHash = await stableDocumentHash(app.page);
+        const settled = await waitSettled(app.page, args.settle);
+        results.pilot.ms = Date.now() - t0;
+        if (!settled.ok) {
+          fail(`pilot ${pilot.key}: the full-tier sample never settled`);
+        }
+        const st = settled.state ?? {};
+        const covered = st.census ? st.census.covered / st.census.rays : 0;
+        const toast = await toastText(app.page);
+        const pilotPredicates = {
+          blockMatches: sameJson(doc?.sphereInversion, pilot.block),
+          engineOk: st.engine === "compute",
+          coveredOk: covered >= MIN_COVERED,
+          exhaustedOk: !!st.census && st.census.exhausted === 0,
+          blankOk: !(toast && BLANK_TOAST.test(toast)),
+        };
+        results.pilot.predicates = pilotPredicates;
+        const corr = tierCorrespondence(fastPredicates, pilotPredicates);
+        results.pilot.correspondence = corr;
+        if (!pilotPredicates.engineOk)
+          fail(
+            `pilot ${pilot.key}: engine=${String(st.engine)}, expected compute`,
+          );
+        if (!pilotPredicates.coveredOk)
+          fail(
+            `pilot ${pilot.key}: covered ${(100 * covered).toFixed(1)}% of the pane at full tier`,
+          );
+        if (!pilotPredicates.exhaustedOk)
+          fail(
+            `pilot ${pilot.key}: ${st.census?.exhausted ?? "?"} rays exhausted at full tier`,
+          );
+        if (!pilotPredicates.blankOk)
+          fail(`pilot ${pilot.key}: raised the blank-frame toast at full tier`);
+        if (!corr.agree)
+          fail(
+            `pilot ${pilot.key}: the fast and full tiers disagree on ${corr.diverged.join(", ")} — the fast tier no longer tracks the full one`,
+          );
+        const pilotOk = settled.ok && corr.agree;
+        const pilotFile = out(`si-qual-${pilot.key}-pilot-full.png`);
+        if (pilotOk) {
+          const png = await captureScene(app.page, pilotFile);
+          sheet.push({
+            label: `${pilot.key} (pilot, full tier)`,
+            file: pilotFile,
+          });
+          // The full-tier entry: recorded under the key a full run's
+          // presets phase would derive (no tier URL params — the default
+          // samples and the device's own raster cap), put-gated on this
+          // sample's checks passing.
+          const pilotFields = await fieldsForFrame(pilotHash, "compute", {
+            surfacestate: "1",
+          });
+          if (pilotFields) {
+            await cache.record(pilotFields, {
+              scenario: `${pilot.key}@pilot-full`,
+              png,
+              verdict: {
+                engine: st.engine,
+                backend: st.backend,
+                census: st.census
+                  ? {
+                      rays: st.census.rays,
+                      covered: st.census.covered,
+                      miss: st.census.miss,
+                      exhausted: st.census.exhausted,
+                    }
+                  : null,
+                toastAtSettle: toast,
+              },
+              wallMs: results.pilot.ms,
+            });
+          }
+        }
+        log(
+          `pilot ${pilot.key}: tier=fast vs tier=full ` +
+            `${corr.agree ? "agree" : `DIVERGED ${corr.diverged.join(",")}`}, ` +
+            `settled ${secs(results.pilot.ms)}, covered ${(100 * covered || 0).toFixed(1)}%` +
+            ` exhausted=${st.census?.exhausted ?? "?"} engine=${String(st.engine)}`,
+        );
+      } catch (error) {
+        fail(`pilot ${pilot.key}: ${String(error).split("\n")[0]}`);
+      } finally {
+        await app.context.close().catch(() => {});
+      }
+    }
+
     // --------------------------------------------------------- tiled export
     if (phases.has("tiled")) {
-      for (const key of args.tiled.split(",").filter(Boolean)) {
+      if (fast) {
+        // THE FULL-RESERVATION LEG: the export-scale tile byte-exactness
+        // this phase asserts is one of the legs reserved for the full pass
+        // (the untiled export only guarantees its device-ceiling tiling at
+        // export scale). A fast run discloses the skip rather than
+        // quietly running a reduced form of it; the full run owns the
+        // contract.
+        results.tiled.skipped =
+          "--tier=fast: export-scale tile byte-exactness is a full-res leg; the full run owns it";
+        log(`tiled: SKIPPED (${results.tiled.skipped})`);
+      }
+      for (const key of fast ? [] : args.tiled.split(",").filter(Boolean)) {
         const r = (results.tiled[key] = {});
         const app = await openApp(browser, {
           url: args.url,
-          query: `surfacemaxrays=${args.maxrays}`,
+          query: withTierQuery(`surfacemaxrays=${args.maxrays}`),
         });
         try {
           await loadPreset(app.page, key);
@@ -818,7 +1054,7 @@ async function main() {
             tiledHash,
             "compute",
             { surfacestate: "1", surfacemaxrays: String(args.maxrays) },
-            { exportScale: Number(args.scale) },
+            { exportScale },
           );
           const tiledHit = tiledFields
             ? await cache.lookup(tiledFields, `${key}@tiled`)
@@ -848,14 +1084,14 @@ async function main() {
             png = await savePng(
               app.page,
               app.consoleLines,
-              args.scale,
+              String(exportScale),
               args.exportTimeout,
             );
           }
           const file = out(`si-qual-${key}-export-tiled.png`);
           fs.writeFileSync(file, png.bytes);
           sheet.push({
-            label: `${key} export ${args.scale}x tiled (${png.tileCount})`,
+            label: `${key} export ${exportScale}x tiled (${png.tileCount})`,
             file,
           });
           r.ms = png.ms;
@@ -923,7 +1159,19 @@ async function main() {
 
     // ---------------------------------------------------- WebGL vs compute
     if (phases.has("gl")) {
-      for (const key of args.gl.split(",").filter(Boolean)) {
+      if (fast) {
+        // THE SECOND FULL-RESERVATION LEG: the cross-engine IoU needs BOTH
+        // engines at one raster, and the ray cap is a compute-only knob —
+        // the WebGL arm has no raster cap to pin the same fast raster — so
+        // a fast pair is a capped-compute-vs-uncapped-webgl compare, which
+        // measures the raster difference, not the engines (measured: IoU
+        // 0.969/0.977 at fast against the recorded full-tier 0.9997/1.0000).
+        // Disclosed, skipped; the full run owns the contract.
+        results.gl.skipped =
+          "--tier=fast: the cross-engine IoU needs both engines at one raster and the ray cap is compute-only";
+        log(`gl: SKIPPED (${results.gl.skipped})`);
+      }
+      for (const key of fast ? [] : args.gl.split(",").filter(Boolean)) {
         const r = (results.gl[key] = {
           previewExhaustion:
             "unreadable: the WebGL arm decodes its ray census off the settle target only",
@@ -1031,7 +1279,7 @@ async function main() {
                 ` ${(100 * BACKDROP_PREMISE_MAX_COVERED).toFixed(0)}% — the per-row backdrop mask cannot calibrate a nearly fully covered frame;` +
                 ` the engines' censuses and the IoU carry the check`;
             log(
-              `gl ${key}: settled ${r.cached ? "(cached)" : secs(r.settleMs)} on ${r.backend?.label}, IoU ${cov.iou?.toFixed(4)}` +
+              `gl ${key}: settled ${r.cached ? "(cached)" : secs(r.settleMs)} on ${r.backend?.label}, tier=${tierLabel(args.tier)}, IoU ${cov.iou?.toFixed(4)}` +
                 ` (covered ${(100 * cov.coveredA).toFixed(2)}% compute / ${(100 * cov.coveredB).toFixed(2)}% webgl),` +
                 ` mean diff on covered ${cov.meanDiffCovered?.toFixed(3)}/255,` +
                 ` census covered ${(100 * (censusA ?? NaN)).toFixed(2)}% compute / ${(100 * (censusB ?? NaN)).toFixed(2)}% webgl` +
@@ -1205,7 +1453,7 @@ async function main() {
           const r = (results.toast[`${mode}-undo`] = {});
           const app = await openApp(browser, {
             url: args.url,
-            initScripts: [[TOAST_RECORDER]],
+            query: "surfacegl",
           });
           const { page } = app;
           try {
@@ -1371,7 +1619,9 @@ async function main() {
     for (const f of failures) log(`  - ${f}`);
     process.exit(1);
   }
-  log("verdict=pass");
+  log(
+    `verdict=${failures.length > 0 ? "fail" : "pass"} tier=${tierLabel(args.tier)}`,
+  );
 }
 
 main().catch((error) => {

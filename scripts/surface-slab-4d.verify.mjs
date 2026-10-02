@@ -6,7 +6,7 @@
  * construction).
  *
  *   npm run build && npm run preview &
- *   node scripts/surface-slab-4d.verify.mjs [--display=:0] [--url=…]
+ *   node scripts/surface-slab-4d.verify.mjs [--display=:0] [--url=…] [--tier=fast]
  *
  * ONE FIXTURE: the posed recursive spherefold pair with AUTHORED fold radii
  * and a map post under a pinned camera — the same document the lift gate's
@@ -68,10 +68,46 @@
  *
  * Exit 0 = every assertion held. Exit 1 = harness/setup failure. Exit 3 = a
  * real failure (the numbers are printed either way).
+ *
+ * THE FAST TIER (`--tier=fast`, scripts/lib/fast-tier.mjs,
+ * docs/gate-velocity.md): the development loop renders the fixture under
+ * the app's own `?surfacemaxrays` device-ceiling stand-in (the live pane
+ * FITS under the cap and blits up to an unchanged 1024x640 canvas — the
+ * page, the panel and the capture/export choreography stay exactly the
+ * full tier's) and keeps this gate's own `surfacesamples=1` pin at both
+ * tiers, so every assertion — reload pose/thickness, the scene-region byte
+ * identity, the capture discrimination, engine, row availability — is
+ * asked of fast frames compared against fast frames of the same build (the
+ * three exports band under the same cap, all three alike). The identity
+ * bar (`maxDelta === 0`) compares two same-tier renders, and the capture
+ * comparisons are 64px-grayscale distances and a RATIO — tier-free by
+ * construction; the settle latch is untouched. THE PILOT: one
+ * full-resolution sample, the fixture's ENTRY phase re-run with no tier
+ * params after the fast pass, asserting the same entry predicates its fast
+ * pass asserted — the run's fast-vs-full correspondence
+ * (scripts/lib/fast-tier.mjs), disclosed in the verdict line and FAILING
+ * the run on a divergence. The gate's own full pass stays exactly as
+ * recorded and remains the capture-row record; every verdict line carries
+ * `tier=<label>`. Not frame-cache-wired (see docs/gate-velocity.md's
+ * unwired list), so the pilot touches no store here. MEASURED (AMD RX
+ * 7900 XTX, real driver --display=:0, 2026-10-02): full 12.1s -> fast
+ * 14.0s — a small LOSS on this box (the full pass is already cheap here
+ * and the pilot's anchor costs ~2s); the fast tier is for the
+ * settle/export-dominated machines the 300s budgets were sized against,
+ * and it does not pretend to win everywhere. The measured discrimination
+ * numbers are byte-identical across tiers (0.1046/0.5093 — the 64px
+ * downscale erases the raster difference), both tiers' reload identities
+ * read maxDelta 0, and the pilot agreed.
  */
 import { readFile } from "node:fs/promises";
 import { chromium } from "playwright-core";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
+import {
+  parseTierArg,
+  tierCorrespondence,
+  tierLabel,
+  tierUrlParams,
+} from "./lib/fast-tier.mjs";
 import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 import { COVER4_POSED_HASH } from "./lib/surface-cover-scene.mjs";
 
@@ -88,6 +124,7 @@ function parseArgs(argv) {
     display: undefined,
     settleMs: DEFAULT_SETTLE_MS,
     captureMs: DEFAULT_CAPTURE_MS,
+    tier: parseTierArg(argv),
   };
   for (const raw of argv) {
     const [key, value] = raw.replace(/^--/, "").split("=");
@@ -333,6 +370,13 @@ async function enterSurface(page) {
 
 async function run() {
   const args = parseArgs(process.argv.slice(2));
+  const fast = args.tier === "fast";
+  // The fast tier's raster rides the app's own `?surfacemaxrays` device
+  // ceiling stand-in (scripts/lib/fast-tier.mjs): the live pane FITS under
+  // the cap and blits up to an UNCHANGED 1024x640 canvas — the page, the
+  // panel and the capture/export choreography stay exactly the full
+  // tier's. The samples pin stays the gate's own (surfacesamples=1) at
+  // both tiers; the cap also bands the three exports, all three alike.
   await guardFreshDist({ url: args.url });
   const sceneHash = gateSceneHash();
   const flags = [
@@ -361,6 +405,14 @@ async function run() {
       : {}),
   });
   let failed = false;
+  const tierQueryString = Object.entries(tierUrlParams(args.tier))
+    .map(([k, v]) => `&${k}=${v}`)
+    .join("");
+  process.stdout.write(
+    `tier=${tierLabel(args.tier)} samples=1` +
+      (fast ? ` maxrays=${tierUrlParams("fast").surfacemaxrays}` : "") +
+      "\n",
+  );
   try {
     const page = await browser.newPage({
       ignoreHTTPSErrors: true,
@@ -386,9 +438,10 @@ async function run() {
         },
       });
     });
-    await page.goto(`${args.url}/?surfacestate&surfacesamples=1#${sceneHash}`, {
-      waitUntil: "load",
-    });
+    await page.goto(
+      `${args.url}/?surfacestate&surfacesamples=1${tierQueryString}#${sceneHash}`,
+      { waitUntil: "load" },
+    );
     await waitLatch(page);
     // The explorer's own capture, same export pipeline, same camera — the
     // wrong-subject reference.
@@ -431,7 +484,7 @@ async function run() {
     // app never re-reads the scene (the lift gate's own unique-query rule).
     const reloadUrl = shareLink.replace(
       /#/,
-      "?surfacestate&surfacesamples=1&slabreload=1#",
+      `?surfacestate&surfacesamples=1${tierQueryString}&slabreload=1#`,
     );
     await page.goto(reloadUrl, { waitUntil: "load" });
     await waitLatch(page);
@@ -488,8 +541,16 @@ async function run() {
     const ok =
       rowEnabled && entryOk && thickOk && captureOk && reloadOk && engineOk;
     if (!ok) failed = true;
+    // The fast tier's pilot compare needs the entry predicates its
+    // full-resolution counterpart will re-assert below.
+    const entryPredicates = {
+      entered: entry.entered,
+      settled: entry.settled,
+      engineCompute: args.display === undefined || entryEngine === "compute",
+    };
     process.stdout.write(
       `${ok ? "PASS" : "FAIL"}  slab4d ` +
+        `tier=${tierLabel(args.tier)} ` +
         `entry=${String(entryOk).padEnd(5)} thick=${String(thickOk).padEnd(5)} ` +
         `capture=${String(captureOk).padEnd(5)} reload=${String(reloadOk).padEnd(5)} ` +
         `rowEnabled=${String(rowEnabled).padEnd(5)} ` +
@@ -504,6 +565,52 @@ async function run() {
         `identity=changed ${(identity.changedFraction * 100).toFixed(4)}% max ${identity.maxDelta} ` +
         `(crop ${identity.width}px) settle=${String(reload.settled)}\n`,
     );
+
+    // THE PILOT (fast runs only): one full-resolution sample — the
+    // fixture's ENTRY phase at the full viewport, this gate's own
+    // surfacesamples=1 convention at both tiers — asserting the same entry
+    // predicates its fast pass asserted. The run's fast-vs-full
+    // correspondence (scripts/lib/fast-tier.mjs): a divergence fails the
+    // run with the predicates named. A full run has no pilot — the whole
+    // run is the anchor.
+    if (fast) {
+      const pilotPage = await browser.newPage({
+        ignoreHTTPSErrors: true,
+        viewport: { width: 1024, height: 640 },
+      });
+      await pilotPage.emulateMedia({ reducedMotion: "reduce" });
+      pilotPage.on("pageerror", (e) => {
+        process.stderr.write(`[page:uncaught] ${e.message}\n`);
+      });
+      try {
+        await pilotPage.goto(
+          `${args.url}/?surfacestate&surfacesamples=1#${sceneHash}`,
+          { waitUntil: "load" },
+        );
+        await waitLatch(pilotPage);
+        await enterSurface(pilotPage);
+        const pilot = await waitSettle(pilotPage, args.settleMs);
+        const pilotEngine = pilot.state ? pilot.state.engine : null;
+        const pilotPredicates = {
+          entered: pilot.entered,
+          settled: pilot.settled,
+          engineCompute:
+            args.display === undefined || pilotEngine === "compute",
+        };
+        const corr = tierCorrespondence(entryPredicates, pilotPredicates);
+        const pilotOk = pilot.settled && pilotEngine !== null && corr.agree;
+        if (!pilotOk) failed = true;
+        process.stdout.write(
+          `${pilotOk ? "PASS" : "FAIL"}  pilot:entry ` +
+            `tier=fast vs tier=full ` +
+            `${corr.agree ? "agree" : `DIVERGED ${corr.diverged.join(",")}`} ` +
+            `settled=${String(pilot.settled).padEnd(5)} ` +
+            `engine=${String(pilotEngine).padEnd(8)}(want compute)\n`,
+        );
+      } finally {
+        await pilotPage.close().catch(() => {});
+      }
+    }
   } finally {
     await browser.close();
   }
