@@ -258,3 +258,99 @@ newest-first, entries past 1 GiB of frames — the first overflow and
 everything older goes, never keeping an older entry behind a refused newer
 one. `--max-bytes`/`--max-age-days`/`--dry-run`/`--json` on the CLI;
 `dryRun` reports without unlinking. Empty shard directories are cleaned up.
+
+## Wiring the gates (the third child)
+
+The wiring layer is ONE shared helper,
+`scripts/lib/frame-cache-gate.mjs` (unit-tested in
+`scripts/frame-cache-gate.test.ts`), so wiring gate N+1 is a lookup at its
+frame-capture site and a record beside it — the de-preview lesson (five
+sheets once grew the same wrong thing in five copies) applied to the cache.
+What the helper owns:
+
+- **The degradation contract** (borrowed from the warm runner's): a store
+  error sets `disabled`, is noted ONCE, and every later lookup misses /
+  record no-ops — the gate runs exactly as before the cache existed. The
+  cache is an optimization, never a contract a gate enforces with an exit
+  code.
+- **`--force`** on every wired gate: lookups never hit; renders always
+  record.
+- **`readDeviceSignature(page, engine)`** — the key's `device` field asks
+  the BROWSER (not the app) which adapter it renders with, from a page at
+  the app's ORIGIN (WebGPU is secure-context-only, so `about:blank` has no
+  `navigator.gpu`; the diff pages that must stay on `about:blank` for the
+  blob decode get a separate probe page). Same sources as the app, same
+  `requestAdapter({ powerPreference: "high-performance" })`, the same label
+  construction as `webgpuAdapterStatus` and the same software regex — so
+  the key derived pre-boot is the key the settled session would derive.
+- **`gateKeyFields(...)`** — the nine-field builder with the
+  stated-absence defaults (`pose: null`, `raster: {}`).
+- **The put-gating rule**: entries carry frames of settled, stable captures
+  only, and each wired gate records only when its scenario's checks passed
+  — a failed scenario never replays as a pass.
+
+### Per-gate hit semantics — what a hit may stand in for
+
+The store deliberately takes no side on what a hit replays; the wired gates
+choose, and the choices are the interesting part:
+
+| gate                      | cached product(s)                                     | hit semantics                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `surface-repro`           | one settled frame per scenario (pinned pose only)     | RE-DIFF: a hit renders ONE fresh load and byte-diffs it against the recorded frame — cross-session determinism, stronger than the original within-run pairs. A collision (fresh ≠ cached under an exact key) is a miss: full runs, re-record.                                                                                                          |
+| `finish`                  | both legs' captures per stage (stage rides `raster`)  | FULL REPLAY: both legs hit at a common stage → no boot, no settle; the verdict recomputes from the recorded bytes every run, so a replayed FAIL is as honest as a live one and `--floor`/`--stage` changes re-verdict from the same frames.                                                                                                            |
+| `sphere-inversion-family` | menu frame, export, tiled export, gl frame per preset | REPLAY + LIVE MIX: the frame and the probe-derived metadata (engine, census, tile counts) replay; the menu/boot interactions, document checks, LINK HOPS' settles and toast/refusal phases stay live. The hops' byte-for-byte claims are fresh-hop-vs-recorded-menu compares, never cached-vs-cached.                                                  |
+| `surface-4d-lift`         | the THICK frame of the three cover scenes             | SKIP ONE SETTLE: the drive machinery (row availability, landed, latch-clear) and the zero-thickness identity (fresh entry vs fresh reset) stay live; only the expensive h=0.2 cover settle is skipped. The reset drive's latch-clear, which a skipped h=0.2 settle would make vacuous, is carried by its completed h=0 settle plus the identity check. |
+
+The self-consistency rule the table encodes: a verdict that compares two
+renders of the SAME key (repro's determinism, the lift's zero-thickness
+identity, si's link fixed-point) must keep at least one side FRESH — two
+cached copies of one key compared to each other are a tautology, not a
+verdict. Verdicts comparing DIFFERENT keys (finish's authored-vs-unauthored
+floor, si's pairwise distinct, the tiled-vs-untiled export identity) are
+sound recomputed entirely from cached bytes, because the keys are what make
+the bytes comparable.
+
+### Measured (AMD RX 7900 XTX, Chromium 153, real driver `x11::0`, production build, 2026-10-02; all runs machine-quiet)
+
+- `surface-repro --scenario=all` (5 scenarios, `--runs=3`): cold 92.8s →
+  warm 31.7s (2.9×). The warm run's verdict is the stronger cross-session
+  claim. `--force` verified: full renders, re-records. A deliberately
+  poisoned entry (sierpinski bytes under the boxfold3 key) was detected as
+  a collision, fell through to the full 3-run pass, and re-recorded —
+  16.7s, verdict DETERMINISTIC.
+- `sphere-inversion-family --phases=presets` (10 presets): cold
+  (`--force`) 9m51s → warm 3m31s (2.8×). The warm run's remaining wall is
+  the 20 live link hops (two settles each, byte-identity max 0 on every
+  one) — lifecycle the cache deliberately does not touch. One-preset smoke
+  including tiled and gl legs: 47.8s cold → 21.2s warm; the gl leg's IoU
+  recomputed identically (1.0000) from cached bytes.
+- `finish --mode=x11::0 --arm=both` (lens3): cold 35.7s → warm **0.8s**
+  (44×) — full-pair replay, the recomputed structural fractions identical
+  to the live diff's (8.764%/8.776%). The documented ~20 min SwiftShader
+  full run would collapse the same way on a warm store.
+- `surface-4d-lift --display=:0`: cold 87.5s → warm 83.7s on THIS box —
+  the honest number is that the cover settles it caches are 0.5–1.3s here;
+  the wiring pays on the Iris-class machines the gate header documents
+  (~60 s/sample), where the same hit skips the run's dominant term.
+- `capture-drain` is REFUSED, on the eligibility boundary: its contract
+  fields are timings measured against the live session (`settleMs`,
+  `captureMs`, the drain outcome) and it is explicitly a measurement
+  harness, not a pass/fail gate — there is no frame-pure verdict to
+  record, and fabricating one would be the misuse the store's PNG-magic
+  gate exists to prevent.
+
+Not wired yet, with their hazards named: `surface-export-tile` (its arms
+mutate live state — DoF and the background shape — before Save-PNG, so the
+key must read the mutated document or encode the edits; the recon called
+this the single most likely silent-key bug) and `surface-slab-4d` (its
+share-link reload dance mixes lifecycle with byte-identity; wireable with
+the repro shape). The helper makes either a focused follow-up.
+
+### The stale-gate fix the wiring surfaced
+
+`sphere-inversion-family.verify.mjs`'s gl leg had been failing since the
+backdrop-premise rename (2026-09-27): the constant was named
+`BACKDROP_PREMISE_MAX_COVERED` but the premise check still read
+`BACKDROP_PREMISE_MAX` (undefined), so every gl-leg run threw a
+ReferenceError into the phase's own catch and failed. Fixed in the same
+change as the wiring (the wiring is what ran the leg again).
