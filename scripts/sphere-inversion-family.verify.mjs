@@ -80,7 +80,7 @@
  *
  * USAGE (a production build served first):
  *   npm run build && npm run preview &
- *   node scripts/sphere-inversion-family.verify.mjs --mode=x11::0
+ *   node scripts/sphere-inversion-family.verify.mjs --mode=x11::0 [--force]
  *   node scripts/sphere-inversion-family.verify.mjs --mode=sw
  *   node scripts/sphere-inversion-family.verify.mjs --phases=toast,refusal
  *
@@ -88,12 +88,43 @@
  * per preset (no settle, frames or exports: a software settle of the
  * 600-cell takes far too long to gate on), plus `toast` and `refusal`.
  *
+ * THE FRAME CACHE (wired 2026-10-02, scripts/lib/frame-cache-gate.mjs,
+ * docs/gate-velocity.md): the presets/tiled/gl phases' FRAME-PURE products
+ * are memoized under exact keys — the settled menu frame, its Save-PNG
+ * export (the scale rides the raster field), the tiled export
+ * (`surfacemaxrays` rides env), and the WebGL arm's frame — each a pure
+ * function of (bundle, settled document, engine, viewport, device, env).
+ * The key's document is read from a STABILIZED hash (preset writes, then
+ * the boot auto-fit's camera write) BEFORE the settle, because a hit skips
+ * the settle and the key must name the settled document either way. A hit
+ * replays the recorded bytes AND the probe-derived metadata that bytes
+ * cannot re-derive (engine routing, ray census, tile counts — the same
+ * predicates re-run over recorded evidence), while everything live stays
+ * live: the menu/boot interactions, the document checks, the LINK HOPS'
+ * settle waits (their byte-for-byte claims are fresh-hop-vs-recorded-menu
+ * comparisons, never cached-vs-cached, so a link's fixed-point property is
+ * re-verified on every run), the toast/refusal phases wholesale, and the
+ * machine-quiet certification. Every entry is put-GATED on its scenario's
+ * checks passing, so a failed scenario never replays as a pass — a
+ * same-build rerun skips the passing presets and re-renders exactly the
+ * failed ones. `--force` never looks up; a store error degrades the run to
+ * uncached and is noted, never fatal. MEASURED (AMD RX 7900 XTX, real
+ * driver x11::0, 2026-10-02): `--phases=presets` 9m51s cold (`--force`) ->
+ * 3m31s warm (2.8x) — the warm wall is the 20 live link hops; one-preset
+ * smoke with tiled+gl legs 47.8s -> 21.2s, the gl leg's IoU recomputed
+ * identically (1.0000) from cached bytes.
+ *
  * Exit 0 = pass, 1 = a check failed, 2 = the checking side broke.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
+import {
+  createFrameCache,
+  gateKeyFields,
+  readDeviceSignature,
+} from "./lib/frame-cache-gate.mjs";
 import {
   CLIPBOARD_STUB,
   READ_DOCUMENT,
@@ -173,13 +204,15 @@ function parseArgs(argv) {
     tiled: "inversionPearls,inversionMedallions4",
     gl: "inversionPearls,inversionCubePearls",
     outdir: path.join(HERE, "out"),
+    force: false,
   };
   for (const raw of argv) {
     const eq = raw.indexOf("=");
     const key = raw.slice(2, eq === -1 ? undefined : eq);
     if (!(key in args)) throw new Error(`unknown flag --${key}`);
     const value = eq === -1 ? "" : raw.slice(eq + 1);
-    args[key] = typeof args[key] === "number" ? Number(value) : value;
+    if (key === "force") args.force = value !== "false";
+    else args[key] = typeof args[key] === "number" ? Number(value) : value;
   }
   return args;
 }
@@ -255,6 +288,29 @@ async function recorderSeesCopyToast(page) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   await guardFreshDist({ url: args.url });
+  // The frame cache (docs/gate-velocity.md), wired to the four FRAME-PURE
+  // products of the presets/tiled/gl phases: the settled menu frame, its
+  // Save-PNG export, the tiled export, and the WebGL arm's frame. Each is a
+  // pure function of (bundle, settled document, engine, viewport, device,
+  // export scale / URL flags), so a same-key rerun replays the recorded
+  // bytes and the probe-derived metadata that bytes cannot re-derive
+  // (engine routing, ray census, tile counts — recorded at put time, and
+  // every entry is put-GATED on its scenario's checks passing, so a failed
+  // scenario never replays). What stays live on every path: the menu/boot
+  // interactions, the settled-latch waits of the LINK HOPS (lifecycle, and
+  // their byte-for-byte claims are fresh-hop-vs-recorded-menu comparisons,
+  // never cached-vs-cached), the document checks, the toast/refusal phases
+  // wholesale, and the machine-quiet certification. The export scale rides
+  // the raster field; `surfacemaxrays`/`surfacegl` ride env.
+  // `--force` never looks up; a store error degrades to uncached.
+  const cache = createFrameCache({
+    gate: "sphere-inversion-family",
+    force: args.force,
+    log,
+  });
+  const bundleHash = await cache.bundleHash(
+    path.join(HERE, "..", "dist", "app"),
+  );
   fs.mkdirSync(args.outdir, { recursive: true });
   const out = (name) => path.join(args.outdir, name);
   const phases = new Set(args.phases.split(",").filter(Boolean));
@@ -294,6 +350,50 @@ async function main() {
   const diffContext = await browser.newContext();
   const diffPage = await diffContext.newPage();
   await diffPage.goto("about:blank");
+  // The key's device field asks the BROWSER which adapter it renders with —
+  // on a page at the app's origin, because WebGPU is only exposed on a
+  // secure context and the diff page's about:blank is not one (and the app
+  // origin refuses the blob decode the diff page exists for, so they cannot
+  // be one page). Memoized per engine; the throwaway app boot is harmless.
+  let probeApp = null;
+  const deviceSigs = new Map();
+  const deviceFor = async (wanted) => {
+    if (!deviceSigs.has(wanted)) {
+      probeApp ??= await openApp(browser, { url: args.url });
+      deviceSigs.set(wanted, await readDeviceSignature(probeApp.page, wanted));
+    }
+    return deviceSigs.get(wanted);
+  };
+  /** The nine key fields for one frame family. `document` is the settled
+   * document's hash string; the export scale rides `raster`, the URL flags
+   * ride `env`. */
+  const fieldsForFrame = async (documentHash, engine, env, raster = {}) =>
+    cache.disabled || bundleHash === null
+      ? null
+      : gateKeyFields({
+          bundle: bundleHash,
+          document: documentHash,
+          engine,
+          viewport: { width: 1600, height: 900, scale: 1 },
+          device: await deviceFor(engine),
+          env,
+          raster,
+        });
+  /** The menu-loaded document's hash, STABLE: the preset writes land, then
+   * the boot auto-fit writes the camera — the settled document the frame
+   * was rendered from is the one the key must name, and reading it before
+   * the settle (which a hit skips) needs the writes to have landed. Poll
+   * until the hash repeats, bounded. */
+  const stableDocumentHash = async (page) => {
+    let hash = await page.evaluate(() => location.hash);
+    for (let i = 0; i < 10; i++) {
+      await page.waitForTimeout(300);
+      const next = await page.evaluate(() => location.hash);
+      if (next === hash) return hash;
+      hash = next;
+    }
+    return hash;
+  };
   // The menu group must be the table: a preset added to one and not the
   // other would be silently skipped by every leg below.
   {
@@ -327,6 +427,21 @@ async function main() {
         try {
           const t0 = Date.now();
           await loadPreset(page, preset.key);
+          // (5) the document carries the block — read BEFORE the settle and
+          // on both paths (sw included), because a frame-cache hit skips
+          // the settle and the key's document must be the settled document
+          // either way. The hash is waited stable (preset writes, then the
+          // boot auto-fit's camera write) before it keys anything.
+          const doc = await waitDocument(
+            page,
+            (d) => !!d.sphereInversion && !!d.camera,
+          );
+          const docHash = await stableDocumentHash(page);
+          r.blockMatches = sameJson(doc?.sphereInversion, preset.block);
+          if (!r.blockMatches)
+            fail(
+              `${preset.key}: document block ${JSON.stringify(doc?.sphereInversion)} != table ${JSON.stringify(preset.block)}`,
+            );
           if (sw) {
             // The SwiftShader subset: entry and engine, no settle.
             const entered = await page
@@ -349,57 +464,6 @@ async function main() {
               fail(`${preset.key}: never entered Surface from the menu`);
             else if (entered.engine !== "compute")
               fail(`${preset.key}: engine=${entered.engine}, expected compute`);
-          } else {
-            // (1) settle on the latch, (2) engine, (3) not blank.
-            const settled = await waitSettled(page, args.settle);
-            r.settleMs = Date.now() - t0;
-            if (!settled.ok) {
-              fail(
-                `${preset.key}: never settled (state=${JSON.stringify(settled.state)})`,
-              );
-              continue;
-            }
-            const st = settled.state;
-            r.engine = st.engine;
-            r.backend = st.backend;
-            r.census = st.census
-              ? {
-                  rays: st.census.rays,
-                  covered: st.census.covered,
-                  miss: st.census.miss,
-                  exhausted: st.census.exhausted,
-                }
-              : null;
-            if (st.engine !== "compute")
-              fail(`${preset.key}: engine=${st.engine}, expected compute`);
-            if (args.mode.startsWith("x11:") && st.backend?.software !== false)
-              fail(
-                `${preset.key}: backend ${JSON.stringify(st.backend)} is not a real adapter`,
-              );
-            const covered = st.census ? st.census.covered / st.census.rays : 0;
-            if (covered < MIN_COVERED)
-              fail(
-                `${preset.key}: covered ${(100 * covered).toFixed(1)}% of the pane`,
-              );
-            if (!st.census || st.census.exhausted > 0)
-              fail(
-                `${preset.key}: ${st.census?.exhausted ?? "?"} rays exhausted`,
-              );
-            const toast = await toastText(page);
-            r.toastAtSettle = toast;
-            if (toast && BLANK_TOAST.test(toast))
-              fail(
-                `${preset.key}: raised the blank-frame toast (${JSON.stringify(toast)})`,
-              );
-          }
-          // (5) the document carries the block.
-          const doc = await waitDocument(page, (d) => !!d.sphereInversion);
-          r.blockMatches = sameJson(doc?.sphereInversion, preset.block);
-          if (!r.blockMatches)
-            fail(
-              `${preset.key}: document block ${JSON.stringify(doc?.sphereInversion)} != table ${JSON.stringify(preset.block)}`,
-            );
-          if (sw) {
             log(
               `${preset.key}: entered engine=${r.engine} block=${r.blockMatches ? "ok" : "MISMATCH"}`,
             );
@@ -409,12 +473,108 @@ async function main() {
               );
             continue;
           }
+          const failsBefore = failures.length;
+          // (1) settle on the latch, (2) engine, (3) not blank — the
+          // settle itself is the hit's skip; the probe-derived facts it
+          // would read replay from the recorded verdict (entries are put
+          // only when these checks passed on the same key, so the replay
+          // re-runs the same predicates over recorded evidence).
+          const fields = await fieldsForFrame(docHash, "compute", {
+            surfacestate: "1",
+          });
+          const hit = fields ? await cache.lookup(fields, preset.key) : null;
+          const cachedVerdict =
+            hit?.entry.verdict &&
+            typeof hit.entry.verdict.engine === "string" &&
+            hit.entry.verdict.census &&
+            // toastText returns null when no toast is showing — the normal
+            // case — so the recorded absence is null, not a string.
+            (typeof hit.entry.verdict.toastAtSettle === "string" ||
+              hit.entry.verdict.toastAtSettle === null)
+              ? hit.entry.verdict
+              : null;
+          let st;
+          let toast;
+          if (cachedVerdict) {
+            r.settleMs = null;
+            r.cachedSettle = true;
+            st = {
+              engine: cachedVerdict.engine,
+              backend: cachedVerdict.backend,
+              census: cachedVerdict.census,
+            };
+            toast = cachedVerdict.toastAtSettle;
+          } else {
+            const settled = await waitSettled(page, args.settle);
+            r.settleMs = Date.now() - t0;
+            if (!settled.ok) {
+              fail(
+                `${preset.key}: never settled (state=${JSON.stringify(settled.state)})`,
+              );
+              continue;
+            }
+            st = settled.state;
+            toast = await toastText(page);
+          }
+          r.engine = st.engine;
+          r.backend = st.backend;
+          r.census = st.census
+            ? {
+                rays: st.census.rays,
+                covered: st.census.covered,
+                miss: st.census.miss,
+                exhausted: st.census.exhausted,
+              }
+            : null;
+          if (st.engine !== "compute")
+            fail(`${preset.key}: engine=${st.engine}, expected compute`);
+          if (args.mode.startsWith("x11:") && st.backend?.software !== false)
+            fail(
+              `${preset.key}: backend ${JSON.stringify(st.backend)} is not a real adapter`,
+            );
+          const covered = st.census ? st.census.covered / st.census.rays : 0;
+          if (covered < MIN_COVERED)
+            fail(
+              `${preset.key}: covered ${(100 * covered).toFixed(1)}% of the pane`,
+            );
+          if (!st.census || st.census.exhausted > 0)
+            fail(
+              `${preset.key}: ${st.census?.exhausted ?? "?"} rays exhausted`,
+            );
+          r.toastAtSettle = toast;
+          if (toast && BLANK_TOAST.test(toast))
+            fail(
+              `${preset.key}: raised the blank-frame toast (${JSON.stringify(toast)})`,
+            );
+          // The menu frame: rendered and captured on a miss, replayed from
+          // the recorded bytes on a hit — downstream comparisons read the
+          // same file either way.
           const frameFile = out(`si-qual-${preset.key}.png`);
-          await captureScene(page, frameFile);
+          if (cachedVerdict) {
+            fs.writeFileSync(frameFile, hit.png);
+          } else {
+            const frameBytes = await captureScene(page, frameFile);
+            // Put-gated: only a scenario whose checks all passed and whose
+            // document matched records its frame, so a failed preset never
+            // replays as a pass.
+            if (fields && failures.length === failsBefore && r.blockMatches) {
+              await cache.record(fields, {
+                scenario: preset.key,
+                png: frameBytes,
+                verdict: {
+                  engine: r.engine,
+                  backend: r.backend,
+                  census: r.census,
+                  toastAtSettle: toast,
+                },
+                wallMs: r.settleMs,
+              });
+            }
+          }
           frames.set(preset.key, frameFile);
           sheet.push({ label: `${preset.key} (menu)`, file: frameFile });
           log(
-            `${preset.key}: settled ${secs(r.settleMs)} from the menu, engine=${r.engine}` +
+            `${preset.key}: settled ${r.cachedSettle ? "(cached)" : secs(r.settleMs)} from the menu, engine=${r.engine}` +
               ` backend=${r.backend?.label} software=${r.backend?.software}` +
               ` covered=${((100 * r.census.covered) / r.census.rays).toFixed(1)}% exhausted=${r.census.exhausted}`,
           );
@@ -446,13 +606,44 @@ async function main() {
             );
           }
 
-          // (7) Save PNG at the requested scale.
-          const png = await savePng(
-            page,
-            consoleLines,
-            args.scale,
-            args.exportTimeout,
+          // (7) Save PNG at the requested scale — the export's bytes are frame-pure
+          // under the same key family (the scale rides the raster field), so
+          // a hit replays them and recomputes the content checks from bytes;
+          // the tile count is a session observable, recorded at put and
+          // replayed as metadata.
+          const exportFields = await fieldsForFrame(
+            docHash,
+            "compute",
+            { surfacestate: "1" },
+            { exportScale: Number(args.scale) },
           );
+          const exportHit = exportFields
+            ? await cache.lookup(exportFields, `${preset.key}@export`)
+            : null;
+          const cachedExport =
+            exportHit?.entry.verdict &&
+            Number.isFinite(exportHit.entry.verdict.tileCount) &&
+            Number.isFinite(exportHit.entry.verdict.tileLines)
+              ? exportHit
+              : null;
+          const failsBeforeExport = failures.length;
+          let png;
+          if (cachedExport) {
+            png = {
+              bytes: exportHit.png,
+              ms: exportHit.entry.verdict.ms ?? 0,
+              tileCount: exportHit.entry.verdict.tileCount,
+              tileLines: exportHit.entry.verdict.tileLines,
+            };
+            r.exportCached = true;
+          } else {
+            png = await savePng(
+              page,
+              consoleLines,
+              args.scale,
+              args.exportTimeout,
+            );
+          }
           const exportFile = out(`si-qual-${preset.key}-export.png`);
           fs.writeFileSync(exportFile, png.bytes);
           exports.set(preset.key, exportFile);
@@ -471,7 +662,7 @@ async function main() {
             bytes: png.bytes.length,
           };
           log(
-            `${preset.key}: export ${content.width}x${content.height} in ${secs(png.ms)},` +
+            `${preset.key}: export ${content.width}x${content.height} in ${cachedExport ? "(cached)" : secs(png.ms)},` +
               ` ${png.tileCount} tile(s), ${content.distinctColors} colours, luma sd ${content.lumaStd.toFixed(1)}`,
           );
           const expectW = 1600 * Number(args.scale);
@@ -487,6 +678,22 @@ async function main() {
             fail(
               `${preset.key}: export looks blank (${JSON.stringify(content)})`,
             );
+          if (
+            exportFields &&
+            !cachedExport &&
+            failures.length === failsBeforeExport
+          ) {
+            await cache.record(exportFields, {
+              scenario: `${preset.key}@export`,
+              png: png.bytes,
+              verdict: {
+                ms: png.ms,
+                tileCount: png.tileCount,
+                tileLines: png.tileLines,
+              },
+              wallMs: png.ms,
+            });
+          }
           if (errors.length)
             fail(
               `${preset.key}: console errors: ${errors.slice(0, 3).join(" | ")}`,
@@ -600,17 +807,51 @@ async function main() {
         });
         try {
           await loadPreset(app.page, key);
-          const settled = await waitSettled(app.page, args.settle);
-          if (!settled.ok) {
-            fail(`tiled ${key}: never settled under surfacemaxrays`);
-            continue;
-          }
-          const png = await savePng(
+          // The document must be stable before it keys anything (same
+          // reason as the presets phase); the forced ceiling rides env.
+          await waitDocument(
             app.page,
-            app.consoleLines,
-            args.scale,
-            args.exportTimeout,
+            (d) => !!d.sphereInversion && !!d.camera,
           );
+          const tiledHash = await stableDocumentHash(app.page);
+          const tiledFields = await fieldsForFrame(
+            tiledHash,
+            "compute",
+            { surfacestate: "1", surfacemaxrays: String(args.maxrays) },
+            { exportScale: Number(args.scale) },
+          );
+          const tiledHit = tiledFields
+            ? await cache.lookup(tiledFields, `${key}@tiled`)
+            : null;
+          const cachedTiled =
+            tiledHit?.entry.verdict &&
+            Number.isFinite(tiledHit.entry.verdict.tileCount) &&
+            Number.isFinite(tiledHit.entry.verdict.tileLines)
+              ? tiledHit
+              : null;
+          const failsBeforeTiled = failures.length;
+          let png;
+          if (cachedTiled) {
+            png = {
+              bytes: tiledHit.png,
+              ms: tiledHit.entry.verdict.ms ?? 0,
+              tileCount: tiledHit.entry.verdict.tileCount,
+              tileLines: tiledHit.entry.verdict.tileLines,
+            };
+            r.cached = true;
+          } else {
+            const settled = await waitSettled(app.page, args.settle);
+            if (!settled.ok) {
+              fail(`tiled ${key}: never settled under surfacemaxrays`);
+              continue;
+            }
+            png = await savePng(
+              app.page,
+              app.consoleLines,
+              args.scale,
+              args.exportTimeout,
+            );
+          }
           const file = out(`si-qual-${key}-export-tiled.png`);
           fs.writeFileSync(file, png.bytes);
           sheet.push({
@@ -653,6 +894,25 @@ async function main() {
             fail(
               `tiled ${key}: console errors: ${app.errors.slice(0, 3).join(" | ")}`,
             );
+          // Put-gated on the phase's own checks (tile assertions and the
+          // untiled-identity compare included), so a failed tiled leg
+          // re-renders on the next run.
+          if (
+            tiledFields &&
+            !cachedTiled &&
+            failures.length === failsBeforeTiled
+          ) {
+            await cache.record(tiledFields, {
+              scenario: `${key}@tiled`,
+              png: png.bytes,
+              verdict: {
+                ms: png.ms,
+                tileCount: png.tileCount,
+                tileLines: png.tileLines,
+              },
+              wallMs: png.ms,
+            });
+          }
         } catch (error) {
           fail(`tiled ${key}: ${String(error).split("\n")[0]}`);
         } finally {
@@ -673,27 +933,59 @@ async function main() {
           query: "surfacegl",
         });
         try {
-          const t0 = Date.now();
           await loadPreset(app.page, key);
-          const settled = await waitSettled(app.page, args.settle);
-          r.settleMs = Date.now() - t0;
-          if (!settled.ok) {
-            fail(`gl ${key}: never settled on WebGL`);
-            continue;
-          }
-          r.engine = settled.state.engine;
-          r.backend = settled.state.backend;
-          r.census = settled.state.census
-            ? {
-                rays: settled.state.census.rays,
-                covered: settled.state.census.covered,
-                exhausted: settled.state.census.exhausted,
-              }
+          await waitDocument(
+            app.page,
+            (d) => !!d.sphereInversion && !!d.camera,
+          );
+          const glHash = await stableDocumentHash(app.page);
+          const glFields = await fieldsForFrame(glHash, "webgl", {
+            surfacestate: "1",
+            surfacegl: "1",
+          });
+          const glHit = glFields
+            ? await cache.lookup(glFields, `${key}@gl`)
             : null;
+          const cachedGl =
+            glHit?.entry.verdict &&
+            glHit.entry.verdict.engine === "webgl" &&
+            glHit.entry.verdict.census
+              ? glHit.entry.verdict
+              : null;
+          const failsBeforeGl = failures.length;
+          if (cachedGl) {
+            r.settleMs = null;
+            r.cached = true;
+            r.engine = cachedGl.engine;
+            r.backend = cachedGl.backend;
+            r.census = cachedGl.census;
+          } else {
+            const t0 = Date.now();
+            const settled = await waitSettled(app.page, args.settle);
+            r.settleMs = Date.now() - t0;
+            if (!settled.ok) {
+              fail(`gl ${key}: never settled on WebGL`);
+              continue;
+            }
+            r.engine = settled.state.engine;
+            r.backend = settled.state.backend;
+            r.census = settled.state.census
+              ? {
+                  rays: settled.state.census.rays,
+                  covered: settled.state.census.covered,
+                  exhausted: settled.state.census.exhausted,
+                }
+              : null;
+          }
           if (r.engine !== "webgl")
             fail(`gl ${key}: engine=${r.engine}, expected webgl`);
           const file = out(`si-qual-${key}-glsl.png`);
-          await captureScene(app.page, file);
+          let glFrameBytes = null;
+          if (cachedGl) {
+            fs.writeFileSync(file, glHit.png);
+          } else {
+            glFrameBytes = await captureScene(app.page, file);
+          }
           sheet.push({ label: `${key} (?surfacegl)`, file });
           const base = frames.get(key);
           if (!base) {
@@ -717,7 +1009,7 @@ async function main() {
             // vertical backdrop ramp off each row's first column, so a
             // pixel counts as covered when it departs from that row's edge
             // sample. The premise only a frame with true backdrop can
-            // admit: past BACKDROP_PREMISE_MAX covered fraction (both
+            // admit: past BACKDROP_PREMISE_MAX_COVERED covered fraction (both
             // engines' own ray censuses agree the frame is nearly all
             // geometry) the mask's absolute fraction is no longer a
             // coverage measurement — an interior camera whose frame is
@@ -730,16 +1022,16 @@ async function main() {
             // engines' silhouette agreement against each other); the mask
             // numbers stay in the record as informational.
             const backdropPremise =
-              (censusA ?? 1) <= BACKDROP_PREMISE_MAX &&
-              (censusB ?? 1) <= BACKDROP_PREMISE_MAX;
+              (censusA ?? 1) <= BACKDROP_PREMISE_MAX_COVERED &&
+              (censusB ?? 1) <= BACKDROP_PREMISE_MAX_COVERED;
             if (!backdropPremise)
               r.backdropPremiseWaived =
                 `census coverage ${(100 * (censusA ?? NaN)).toFixed(2)}% compute /` +
                 ` ${(100 * (censusB ?? NaN)).toFixed(2)}% webgl exceeds` +
-                ` ${(100 * BACKDROP_PREMISE_MAX).toFixed(0)}% — the per-row backdrop mask cannot calibrate a nearly fully covered frame;` +
+                ` ${(100 * BACKDROP_PREMISE_MAX_COVERED).toFixed(0)}% — the per-row backdrop mask cannot calibrate a nearly fully covered frame;` +
                 ` the engines' censuses and the IoU carry the check`;
             log(
-              `gl ${key}: settled ${secs(r.settleMs)} on ${r.backend?.label}, IoU ${cov.iou?.toFixed(4)}` +
+              `gl ${key}: settled ${r.cached ? "(cached)" : secs(r.settleMs)} on ${r.backend?.label}, IoU ${cov.iou?.toFixed(4)}` +
                 ` (covered ${(100 * cov.coveredA).toFixed(2)}% compute / ${(100 * cov.coveredB).toFixed(2)}% webgl),` +
                 ` mean diff on covered ${cov.meanDiffCovered?.toFixed(3)}/255,` +
                 ` census covered ${(100 * (censusA ?? NaN)).toFixed(2)}% compute / ${(100 * (censusB ?? NaN)).toFixed(2)}% webgl` +
@@ -785,6 +1077,21 @@ async function main() {
             fail(
               `gl ${key}: console errors: ${app.errors.slice(0, 3).join(" | ")}`,
             );
+          // Put-gated on the phase's own checks (engine, mask-vs-census
+          // agreement and the IoU bar included), so a failed gl leg
+          // re-renders on the next run.
+          if (glFields && !cachedGl && failures.length === failsBeforeGl) {
+            await cache.record(glFields, {
+              scenario: `${key}@gl`,
+              png: glFrameBytes,
+              verdict: {
+                engine: r.engine,
+                backend: r.backend,
+                census: r.census,
+              },
+              wallMs: r.settleMs,
+            });
+          }
         } catch (error) {
           fail(`gl ${key}: ${String(error).split("\n")[0]}`);
         } finally {
@@ -1048,7 +1355,9 @@ async function main() {
       log(`contact sheet -> ${out("si-qual-sheet.png")}`);
     }
   } finally {
+    if (probeApp) await probeApp.context.close().catch(() => {});
     await diffContext.close().catch(() => {});
+    await cache.prune();
     await browser.close();
     results.failures = failures;
     results.finishedAt = new Date().toISOString();
