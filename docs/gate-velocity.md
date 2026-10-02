@@ -644,3 +644,93 @@ rather than forking it, so a kernel edit's first verdict arrives before the
 bench would even finish booting. It replaces nothing: a scratch number is a
 diagnostic with its conditions printed, and every claim this repo ships still
 goes out through the pinned gates.
+
+## gate:affected — the local roster
+
+The seventh child answers the local question the CI selector answers for CI:
+"which gates and sheets does my dirty tree actually affect?" — so an edit
+cycle runs the ten entries that can flip instead of the hundred and forty
+that exist. `npm run gate:affected` (scripts/gate-affected.mjs, dry-run by
+default; `--run` hands the affected GATES to `npm run verify --` and prints
+the sheets' vitest commands) diffs the working tree against its base's
+merge-base (committed + uncommitted + untracked — what will land in the PR;
+`--base`/`--head` diff two commits instead, which is how the validation
+below was run), computes the per-entry import closures, and maps.
+
+### The mapping's two halves
+
+The import graph cannot see a browser gate's coverage — a gate imports none
+of `src/`, its verdict lives or dies on modules the BUILT APP loads at
+runtime — so the mapping is deliberately two halves
+(`scripts/gate-map.ts`, pure and unit-tested):
+
+- **GATE_MAP**, the hand table: one entry per gate and sheet, each with the
+  modules whose change can flip its verdict (its drives, its asserts, the
+  renderers its scenarios run), errs INCLUSIVE within that. The UPDATE RULE
+  is the preset side tables' discipline, enforced by test
+  (`gate-map.test.ts` fails naming any on-disk script without an entry):
+  **adding a gate or sheet means adding its entry in the same change**, and
+  a gate wired to the frame cache or given a fast tier graduates to
+  `cache-eligible` in the wiring commit. An on-disk script that is somehow
+  missing from the table is reported as an `unmapped` warning and counts as
+  affected whenever any code changed — conservative by construction, never a
+  silent skip.
+- **The import closure**, computed per entry over the diff's head tree with
+  the CI selector's own walker (`gpu-ci-impact.ts`), memoized to one TS
+  parse per file: scripts-side helpers (frame-cache-gate, machine-quiet,
+  surface-browser-runner) and the sheets' `src/fractal/*` reach come free,
+  so the table only carries what closures cannot see. A closure that cannot
+  be computed falls to TABLE-ONLY for that entry — an unparseable helper
+  must never read as "no script-side dependency". The walker's
+  parse-validity guard moved from a transpileModule pass to the parse's own
+  diagnostics in this change — verified equivalent across all 689
+  module-shaped files (zero verdict differences), ~3x cheaper, and it stops
+  transpileModule's outright crash on `.d.mts` declaration inputs.
+
+Two rules make the whole answer conservative in the direction of MORE
+affected: a change to the map's or runner's own MACHINERY
+(`gate-map.ts`, `gate-affected.mjs`, `verify.mjs`, the registry) marks every
+entry, and a change to the APP SPINE (`main.ts`, `scene.ts`, `state.ts`,
+`persist.ts`, `register-sw.ts`, `render-backend.ts`, `constants.ts`,
+`render-session.ts`, `interactions.ts`, `sw/sw.ts`, `index.html`,
+`style.css`) marks every GATE — every browser gate boots the app through
+those, which a per-entry `src/app/` prefix would otherwise state sixty-five
+times. Docs/markdown/beads paths are inert. The roster's namespace is
+(kind, name): three names are legitimately both a gate and a sheet
+(cinematic-lighting, sphere-inversion-glass, tiling-symmetry).
+
+Each entry carries a COST CLASS the runner conventions consume:
+`cache-eligible` (the frame cache's wired gates and the fast tier's — the
+class a background pre-warm could legally take, CPU/SwiftShader-class work
+only), `full-render`, and `lifecycle` (timings, teardown, trusted
+interaction, the deployed origin — never cached, never backgrounded; the
+machine-quiet rule's own class). `live-site` is deliberately mapped to
+nothing: its subject is the deployed origin, not this tree, and no local
+module flips its verdict. Because the frame cache keys on bundle bytes, an
+"affected" answer does NOT promise a cache hit on any of it — every `src/`
+edit re-renders every gate's frames, which is the cache's invalidation
+cadence, not this roster's question; the roster answers "whose VERDICT can
+my tree flip".
+
+### The validation — three past commits
+
+| commit                               | diff                                 | roster                                                                                                                                                                                                                                                |
+| ------------------------------------ | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `09d82687` (the state-ball fallback) | `surface-de.ts` + `surface-de-4d.ts` | the 4D gates (`surface-4d`, `surface-4d-lift`, `surface-slab-4d`, `surface-tiled-slab`…) BESIDE the 3D descent gates and the surface sheets — both dimensions, the shared algebra's real shape (2.3s)                                                 |
+| `51d7d938` (panel copy discipline)   | `ui.ts`, `control-spec.ts`, spine    | the panel gates (`panel-contrast`, `panel-numeric-control`, `panel-touch-scroll`, `pattern-ui`, `tiling-ui`, `surface-lighting-ui`) plus every other gate honestly — the commit touched `main.ts`/`index.html`/`style.css`, which IS the spine (2.3s) |
+| `51b9cff3` (the fast-tier record)    | `docs/gate-velocity.md` only         | 0 affected — docs are inert (2.2s)                                                                                                                                                                                                                    |
+
+Runs measure 1.3s dirty-tree (memoized closures over the working tree) to
+2.3s commit-diff (two `git ls-tree` reads); the <5s budget holds with room
+for slower machines.
+
+### The deliberately-guarded stretch, not shipped
+
+The bead's stretch — a background pre-warm daemon running CPU/SwiftShader-class
+affected gates while you edit — stays unshipped, with its reason on record:
+on an interactive box it competes with the editing session for CPU (the
+sheets' own 4.1x came from 16 workers), and the real-driver measurement
+gates it must exclude are exactly the ones whose exclusions need per-gate
+knowledge that the quiet-machine rule already polices by hand. The cost
+classes are the hook it would consume; `UNKNOWN NEVER READS AS QUIET` is the
+rule it would have to obey.
