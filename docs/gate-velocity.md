@@ -178,7 +178,11 @@ is paid once per edit cycle, because the build is re-run anyway — the cache
 never turns a stale-bundle run into a fake hit, which is the one way this
 scheme could be WRONG rather than merely coarse. Measured on this box:
 43 ms to hash the whole 3.5 MB `dist/app/` (negligible next to the 7.0 s
-build it follows).
+build it follows). One measured refinement: the build embeds `__BUILD_ID__`
+(the git short SHA plus the date), so the granularity in practice is the
+COMMIT — two rebuilds of one commit hash identically (verified byte for
+byte), and every commit is a new key. That is the invalidation cadence the
+decision expected, not a divergence from it.
 
 **Candidate B — per-module source closures — DECLINED, with its trigger.**
 Finer (a `surface-de.ts` edit keeps panel-contrast hits) but needs a
