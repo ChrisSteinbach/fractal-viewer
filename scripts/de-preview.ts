@@ -43,7 +43,9 @@
  * `qjulia-beauty.harness.ts`, `qjulia-preview.harness.ts` and
  * `finish-pattern.harness.ts` take the whole thing; `julia-flame.harness.ts`
  * takes `encodePng` alone and assembles its own sheet (its panel stats do
- * not fit `writeContactSheet`'s shape).
+ * not fit `writeContactSheet`'s shape). `de-preview-parallel.ts` schedules
+ * this SAME renderer across worker threads — it is machinery, not a sheet,
+ * and it introduces no second marcher.
  *
  * KEEPING THAT LIST HONEST IS PART OF THE POINT, and it was wrong once:
  * `qjulia-preview.harness.ts` predates this module and had hand-rolled both
@@ -331,6 +333,31 @@ function softShadow(
   return res;
 }
 
+/** Validate `size` and the optional capture region, returning the normalized
+ * crop — the ONE region contract, shared by the serial renderer below and
+ * the worker-scheduled one (`de-preview-parallel.ts`), so a caller cannot
+ * plan against one and render against another. */
+export function validatePreviewRegion(
+  size: number,
+  region?: PreviewRegion,
+): PreviewRegion {
+  const crop = region ?? { x: 0, y: 0, width: size, height: size };
+  if (
+    !Number.isInteger(size) ||
+    size < 1 ||
+    !Object.values(crop).every(Number.isInteger) ||
+    crop.x < 0 ||
+    crop.y < 0 ||
+    crop.width < 1 ||
+    crop.height < 1 ||
+    crop.x + crop.width > size ||
+    crop.y + crop.height > size
+  ) {
+    throw new Error("Preview region must lie inside the full image");
+  }
+  return crop;
+}
+
 /** Render one square panel of a scene. */
 export function renderPreview(
   scene: PreviewScene,
@@ -350,20 +377,7 @@ export function renderPreview(
   ) {
     throw new Error("Linear preview requires finite positive march damping");
   }
-  const crop = region ?? { x: 0, y: 0, width: size, height: size };
-  if (
-    !Number.isInteger(size) ||
-    size < 1 ||
-    !Object.values(crop).every(Number.isInteger) ||
-    crop.x < 0 ||
-    crop.y < 0 ||
-    crop.width < 1 ||
-    crop.height < 1 ||
-    crop.x + crop.width > size ||
-    crop.y + crop.height > size
-  ) {
-    throw new Error("Preview region must lie inside the full image");
-  }
+  const crop = validatePreviewRegion(size, region);
   const target = scene.target ?? [0, 0, 0];
   const center = scene.boundingCenter ?? target;
   const R = scene.boundingRadius;
