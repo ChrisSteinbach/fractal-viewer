@@ -575,3 +575,72 @@ that is never CPU-rendered becomes plausibly renderable), and shrinks
 toward 1× wherever the caller is single-panel and cold. Sheets adopt by
 extracting a deterministic scene factory and swapping call sites — the
 per-sheet cost is the factory, not the machinery.
+
+## gpu:scratch — the seconds-scale authoring loop
+
+The sixth child answers the iterate-on-a-kernel moment, where the unit of time
+should be seconds, not gates: WGSL pipeline creation measures 0.1-0.3s
+(docs/surface-gpu-kernels.md) and the device is idle during authoring — the
+cost is the harness around the render, not the GPU. Gates stay the final
+verification; `npm run gpu:scratch` answers "did my kernel change the frame"
+while the edit is still in the editor.
+
+`npm run gpu:scratch -- --scene=<preset-or-doc> [--core=<id>] [--res=256]`
+drives the bench page's `?scratch=1` mode — THERE IS NO SECOND WIRE: the page
+is `src/app/gpu-bench/index.html` itself (dev-only, like the bench; never a
+build input, never in the PWA precache, never a gate), the frame is the
+PRODUCTION `SurfaceComputeRenderer` (its own kernels, its own packers), and
+the probe is ONE eval dispatch through the bench's own plumbing —
+`acquireSurfaceDevice`, `buildSurfacePipeline`, the `ensure*EvalBuffers`
+helpers, `runSurfaceEvalDispatch`, and the bench's query mixes
+(`surfaceQueries`/`escapeQueries`/`bulbQueries`/`affine4Queries`/
+`escape4Queries`). The scene half is pure and unit-tested
+(`src/app/gpu-bench/scratch-scene.ts`): a preset name (the preset side tables
+main.ts's handler consumes) or a decoded `#v1=` document, routed through
+`deriveSurfaceEligibility` — the ONE gate, with `computeAvailable: true`
+because the scratch has no fragment fallback — plus the DE builders, so the
+routing is the app's, not a re-derivation. `--core` mismatching the scene's
+route REFUSES, naming both (a scratch that renders a different core than the
+scene routes to would answer a different question than the one asked).
+
+What one run prints: the route (`kind`, core, map/link count, bounding
+radius), the probe's distance stats (min/max/mean over the bench's query mix,
+NaN count, compile/dispatch ms) with an INFORMATIONAL max |gpu−cpu| against
+the f64 oracle at the same points — no threshold, no verdict; the agreement
+gates keep that role — and the frame's ray-status census + hit fraction from
+`SurfaceComputeFrame.counts` plus the PNG under `scripts/out/gpu-scratch/`.
+4D pose overrides ride `--w0`/`--slab` (world units); `--swiftshader` forces
+the software adapter; `--url` reuses a running dev server (the authoring
+loop's natural state) instead of spawning one.
+
+**What the scratch refuses, disclosed rather than dropped:** a document
+feature it cannot faithfully render — Space tiling (the session's clip-pose
+fit is app machinery; an unposed clip trims nothing and would misrepresent the
+document), the shape trap, the balloon echo, a general word-tree finite solid
+(its media/composite routing is the app's) — is listed in the result's
+`refusals` beside the verdict, and the render goes on without it. The
+sphere-inversion and shaped finite-solid families render the frame leg only
+(their eval agreement machinery lives in the dedicated bench legs); a
+refused/no-probe leg prints as the skip reason, never as silence.
+
+**Measured** (AMD RX 7900 XTX, Chromium 153, real driver `--display=:0`,
+2026-10-02): cold run INCLUDING the spawned dev server, browser launch and
+the machine-quiet baseline — 3.6s end-to-end for `--scene=mandelboxKifs
+--core=fold --res=256` (probe: 700 queries, max |gpu−cpu| 4.6e-6, p99 2e-7;
+frame: 22.4% hits, 1.2s wall); warm against a running dev server — 1.0-1.2s
+per run (escape/bulb/escape4/affine4 probes all under 1.5s). The `<5s`
+acceptance holds cold, not just warm. SwiftShader (`--swiftshader`) renders
+honestly truncated at the frame budget and the result carries
+`truncated: true` — the tool never pretends a partial frame settled. The
+scratch printed a BLANK frame for the `tesseract` dust preset at w0 = 0
+(0/65536 hits) while the probe DE stayed healthy (min 0.15) — correct: a
+4D Cantor dust has no surface for a slice to catch, and `--w0=0.6` renders
+13.4% of rays, which is the tool's own demonstration that the pose override
+is live and the census means what it says.
+
+HONEST VERDICT: the scratch is the edit-loop instrument the bench cannot be —
+one scenario, seconds, no thresholds — and it inherits the bench's plumbing
+rather than forking it, so a kernel edit's first verdict arrives before the
+bench would even finish booting. It replaces nothing: a scratch number is a
+diagnostic with its conditions printed, and every claim this repo ships still
+goes out through the pinned gates.
