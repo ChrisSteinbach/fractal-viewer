@@ -469,3 +469,109 @@ Not measured here and disclosed rather than claimed: the Iris-class
 figures — the box that shipped the ~60 s/sample cover settle and the
 documented multi-minute slab walls — are where the tier's multiply
 actually bites; this box's numbers are beside them, never substituted.
+
+## Parallel de-preview
+
+The fourth child attacks the harness sheets' wall: `scripts/de-preview.ts`
+is the ONE shared CPU sphere-marcher 31 of the 75 harness sheets import,
+single-threaded, 3-5 min per sheet typical — which is why the hyperkifs
+class is deliberately never CPU-rendered at all. The march is
+embarrassingly parallel per pixel, and the serial renderer already had the
+two-pass shape the plan anticipated: there is NO per-image normalization
+pass anywhere in `renderPreview` (color is quantized per pixel at the
+write), so nothing needed restructuring. What crosses a pixel boundary is
+exactly three things, all partition-safe by construction: the counters are
+integer sums (order-free), the optional `status`/`hitPos`/`stepCount`
+arrays are per-pixel (tiles stitch by coordinates), and `ms` is a timing,
+not a byte. AO and the cone shadow are per-pixel too, as the plan expected.
+The property the parallel path rides is the one `de-preview.test.ts`
+already pins — a region render is byte-identical to the same pixels of the
+full render — so 64px tiles schedule the IDENTICAL per-pixel arithmetic the
+serial call would run.
+
+### What cannot cross `worker_threads` is code
+
+A `PreviewScene` is full of closures (`de`, `shade`, `rayLinear`), and a
+worker cannot receive one — this is the design's whole constraint.
+`scripts/de-preview-parallel.ts` therefore takes a FACTORY, not a scene:
+`{ module, factory, args }`, where `module` is a specifier exactly as the
+calling sheet would import it (relative paths resolve against `scripts/`)
+and `factory` names an export `(…args) => PreviewScene` that is a pure
+function of structured-cloneable data. Each worker rebuilds the scene from
+that data and renders its tiles through the SAME `renderPreview` —
+byte-identity holds by construction, and the determinism obligation is
+per-call-site (no `Math.random`, no clock, no divergent import-time state),
+pinned where it is used. It is NOT a ninth marcher: the shared marcher's
+definition is untouched, and its consumers list now names the parallel
+scheduler as machinery, not a sheet.
+
+The worker bundle is an esbuild build of a generated wrapper (factory
+specifier inlined, so the import is static) at a process-unique path in the
+OS temp dir, cached per process — bundle and pool are reused across a
+sheet's panels, idle workers are unref'd so the persistent pool never holds
+the host event loop, and a fresh process re-bundles. That last point is the
+staleness guarantee, not a waste: re-bundling re-reads the transitive
+closure every run (~0.4s measured, bundle + spawn), so an edit to the
+factory module, to `de-preview.ts` or to `src/fractal/` can never leave a
+stale worker rendering old math.
+
+Two supporting pieces landed with it, both following the repo's one-
+definition rule: the pool class was EXTRACTED from
+`scripts/transmission-readable.mjs` into `scripts/lib/worker-pool.mjs`
+(+ `.d.mts`), adding only ref-while-busy/unref-when-idle (a no-op for
+transmission-readable's usage, verified by A/B scratch drivers on all three
+of its dispatch shapes); and `validatePreviewRegion` moved out of
+`renderPreview` as the one region contract both paths validate against.
+
+### The contract's edges
+
+- **`PARALLEL_MIN_PIXELS` = 256²** — below it the call renders in-thread.
+  The measured basis (AMD box, 16 workers, 64px tiles): a warm 256px panel
+  of the escape-chain fixtures renders 0.1s vs 0.2-0.3s serial (parallel
+  wins), while the one-time bundle+spawn is ~0.4s per process — visible
+  only in a process's FIRST 256px panel (0.6s vs 0.2s serial) and amortized
+  across a real sheet's 40+ panels. Smaller previews fall back where the
+  pool has nothing to amortize. `DE_PREVIEW_PARALLEL=off` (`0`/`false`/
+  `serial`) forces the serial path everywhere — the operational fallback
+  for environments where worker spawning is unavailable, and the serial
+  arm of the A/B below.
+- **Per-panel `ms` stays honest**: a parallel panel's `ms` is that
+  render's own wall time (dispatch included), so a sheet's printed
+  per-panel costs remain comparable across the two paths.
+- **Errors cross as messages**: a factory throw, a render throw, or a
+  worker exit rejects the whole call with the worker's message — a
+  misbehaving scene cannot half-render silently. Non-cloneable factory
+  args throw before any worker is involved.
+
+### Measured (AMD RX 7900 XTX box, 16 workers, 64px tiles, 2026-10-02)
+
+`scripts/chain-speckle.harness.ts`, the documented heavy sheet, whole file
+five tests; serial arm = `DE_PREVIEW_PARALLEL=off`, parallel arm = default:
+
+| test                                    | serial     | parallel         |
+| --------------------------------------- | ---------- | ---------------- |
+| splits the speckle (first; pays cold)   | 7.7s       | 4.7s             |
+| sweeps the march budget (15×256px)      | 4.4s       | 1.1s             |
+| colour coordinate (3×256px + 3×1024px)  | 16.3s      | 6.1s             |
+| resolution scaling (512-2048px renders) | 64.3s      | 12.6s            |
+| **whole file**                          | **104.0s** | **25.5s (4.1×)** |
+
+Byte-identity, checked rather than assumed: all three contact-sheet PNGs
+(`chain-speckle.png`, `chain-speckle-budget.png`,
+`chain-speckle-trap.png`) are hash-identical across the two arms, and every
+printed statistic — partial coverage 8.13/2.86/1.33%, mean |dL| 22.9/29.4/
+34.0, the impulse ladder, exhausted 0.00% — is identical to both arms and
+to the header's recorded verdicts, which is what certifies the factory
+wiring (both arms build scenes through it, so arm-vs-arm equality alone
+would not). The unit suite carries the rest: `de-preview-parallel.test.ts`
+pins byte-identity (rgb, per-pixel arrays, counters, and PNG buffers) on a
+plain scene, a `collect` scene, and a scene whose closures the factory
+rebuilds in the worker, plus region identity, concurrent calls through one
+pool, the threshold plan, the kill switch, and error propagation.
+
+Disclosed, not claimed: the 4.1× is this box's number at 16 workers; the
+win scales with core count and with per-pixel cost (the hyperkifs class
+that is never CPU-rendered becomes plausibly renderable), and shrinks
+toward 1× wherever the caller is single-panel and cold. Sheets adopt by
+extracting a deterministic scene factory and swapping call sites — the
+per-sheet cost is the factory, not the machinery.

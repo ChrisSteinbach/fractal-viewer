@@ -246,15 +246,15 @@ them import (`renderPreview`, `writeContactSheet`, `encodePng`, and the
 `DistanceEstimator`/`PanelStats` vocabulary): a CPU sphere-marcher with
 AO/shadow switches, a settable step budget and an always-counted
 `exhausted`, so a new sheet writes its estimator and its panel list, NEVER
-a ninth marcher. `scripts/set-extent.ts` is the other: the ONE
+a ninth marcher. `de-preview-parallel.ts` schedules that SAME marcher
+across worker threads behind a data factory — byte-identical tiles pinned
+per adoption, 4.1x measured on chain-speckle (`docs/gate-velocity.md`) —
+still not a marcher. `scripts/set-extent.ts` is the other: the ONE
 definition of "how much of a ball does this set fill, and how far out does
 it reach", against a MEMBERSHIP oracle the caller supplies and never a
-threshold on a distance, volume-uniform for fill and a shell walk from the
-outside in for reach. It exists because five sheets had each grown their
-own copy and all five were wrong the same two ways — a grid aliases
-against a fold's walls, and `de(p) < eps` is not membership in either
-direction — which corrected figures in four module docs and cost two
-standing claims. Output lands under `scripts/out/`, which is gitignored —
+threshold on a distance — the fill/reach mechanics and the five-copies
+story they corrected are `docs/harness-sheets.md`'s. Output lands under
+`scripts/out/`, which is gitignored —
 regenerate rather than commit megabytes of PNG.
 
 The catalogue of sheets and what each one's verdict was is in

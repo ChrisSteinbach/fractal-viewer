@@ -29,7 +29,13 @@ but a human review cannot be reconstructed from its prose summary.
 `DistanceEstimator`/`PanelStats` vocabulary): a CPU sphere-marcher with
 AO/shadow switches, a settable step budget and an always-counted `exhausted`,
 so a new sheet writes its estimator and its panel list, never a ninth
-marcher.
+marcher. `scripts/de-preview-parallel.ts` schedules that SAME marcher across
+worker threads behind a deterministic data factory — a sheet extracts its
+scene construction into a module the workers rebuild from data, then swaps
+call sites to `renderPreviewParallel`; tiles are byte-identical to the
+serial path, adoption is pinned per sheet, and the measured walls (4.1x on
+chain-speckle, the threshold and kill-switch contract) are in
+`docs/gate-velocity.md`'s parallel-de-preview section.
 
 `scripts/set-extent.ts` is the other shared instrument: the ONE
 definition of "how much of a ball does this set fill, and how far out does
