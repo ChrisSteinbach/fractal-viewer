@@ -24,10 +24,10 @@
     "allowImportingTsExtensions": true,
     // allowJs (with checkJs left off) so a .ts test can import the pure
     // functions out of a plain-JavaScript CLI: without it the import is
-    // TS7016. The include list below admits exactly ONE .mjs rather than the
-    // directory, because a bare "." glob would pull all ~70 of scripts/'s
-    // .mjs gates into this program and cost `npm run lint` 4.5s (12.8s ->
-    // 17.3s measured) to type nothing anyone reads.
+    // TS7016. The include list below admits .mjs files ONE BY ONE rather
+    // than the directory, because a bare "." glob would pull all ~70 of
+    // scripts/'s .mjs gates into this program and cost `npm run lint` 4.5s
+    // (12.8s -> 17.3s measured) to type nothing anyone reads.
     "allowJs": true,
     "noEmit": true,
     "rootDir": "..",
@@ -36,8 +36,10 @@
   "include": [
     "../src",
     "./**/*.ts",
+    "./frame-cache.mjs",
     "./gpu-ci-swept.mjs",
     "./lib/dist-freshness.mjs",
+    "./lib/frame-cache.mjs",
     "./lib/gate-registry.mjs",
     "./lib/machine-quiet.mjs",
     "./lib/verify-plan.mjs",
