@@ -300,20 +300,34 @@
  * — `chain-speckle.png`'s fourth column is what it looks like resolved,
  * and it is worth looking at.
  *
+ * HOW THE PANELS RENDER NOW: through `de-preview-parallel.ts`'s
+ * worker-scheduled path (`speckleRender` below) — every panel is
+ * `chainSpeckleScene` over data, so the workers rebuild their own scenes
+ * and tile the SAME marcher across 16 threads; it is not a second marcher
+ * and the verdicts above are unaffected. Measured on the adoption run
+ * (2026-10-02, 16 workers, 64px tiles, AMD box): the whole file 104.0s
+ * serial (`DE_PREVIEW_PARALLEL=off`) -> 25.5s parallel (4.1x), with the
+ * resolution-scaling test 64.3s -> 12.6s and the two 1024px supersample
+ * arms 2.9-3.9s -> 0.4-0.6s each; all three contact-sheet PNGs byte-ident
+ * ical across the arms and every printed statistic unchanged (the header's
+ * recorded numbers above were re-checked against both runs). The one-time
+ * cost is the worker bundle + spawn, ~0.4s per process, visible only in
+ * the sheet's first 256px panel (0.6s vs 0.2s serial); every later panel
+ * is warm and a 256px panel then renders 0.1s vs 0.2-0.3s serial — which
+ * is the measured basis for `PARALLEL_MIN_PIXELS` = 256²: small previews
+ * fall back to in-thread rendering where the pool has nothing to amortize.
+ *
  * Run: npx vitest run --config scripts/vitest.harness.config.ts \
  *        scripts/chain-speckle.harness.ts
  * Writes: `scripts/out/chain-speckle.png` (the four arms),
  *         `scripts/out/chain-speckle-budget.png` (the sweep),
  *         `scripts/out/chain-speckle-trap.png` (the colour coordinate).
- * Takes 3-5 min; the resolution-scaling test is most of it.
+ * Takes 3-5 min on the Iris-class box that named this figure, ~30s with
+ * the worker-scheduled panels on the AMD box that measured the A/B above.
  */
 import {
   ESCAPE_STEP_SCALE,
   ESCAPE_TIME_ITERATIONS,
-  ESCAPE_TIME_RADIUS,
-  buildEscapeDE,
-  escapeSetContains,
-  estimateEscapeDistance,
   foldQueryIntoSector,
 } from "../src/fractal/escape-de";
 import type { EscapeDE } from "../src/fractal/escape-de";
@@ -322,15 +336,19 @@ import {
   SURFACE_FOLD_BOXFOLD,
   SURFACE_FOLD_SPHEREFOLD,
 } from "../src/fractal/surface-de";
-import type { Transform, VariationType } from "../src/fractal/types";
 import {
   DEFAULT_MAX_STEPS,
   PREVIEW_HIT,
-  renderPreview,
   writeContactSheet,
 } from "./de-preview";
-import type { DistanceEstimator, PanelStats, Vec3 } from "./de-preview";
-import { sampleSetExtent } from "./set-extent";
+import type { PanelStats, Vec3 } from "./de-preview";
+import { renderPreviewParallel } from "./de-preview-parallel";
+import {
+  chainSpeckleRows,
+  EYE,
+  SPHERE_LABEL,
+  type ChainSpeckleSceneSpec,
+} from "./chain-speckle-scenes";
 
 /** Panel size for the four-arm sheet. The 4x arm marches this squared times
  * sixteen rays at a quarter of the acceptance epsilon, so it is the term
@@ -339,11 +357,6 @@ const SIZE = 256;
 /** Linear supersample factor — 16 samples per pixel, the box the survival
  * statistic is defined over. */
 const SS = 4;
-
-/** `escape-chain.harness.ts`'s pose, verbatim, so these panels are the ones
- * the question was asked about rather than a second framing. */
-const EYE: Vec3 = [1.348, 0.957, 1.565];
-const ZOOM = 0.52;
 
 /** The generous march: enough budget that exhaustion cannot be the story,
  * and damping well past the knee `escape-de.ts`'s step-scale sweep found. */
@@ -372,77 +385,23 @@ const CONFETTI_THRESHOLD = 0.12;
 const PARTIAL_LO = 0.1;
 const PARTIAL_HI = 0.9;
 
-// ------------------------------------------------------------- fixtures
+// ---------------------------------------------------------- parallel panels
 
-/** `escape-chain.harness.ts`'s `foldMap`, duplicated rather than imported:
- * importing a `*.harness.ts` file would register its whole suite here. */
-function foldMap(
-  id: number,
-  type: VariationType,
-  weight: number,
-  opts: { position?: Vec3; rotation?: Vec3; scale?: Vec3 } = {},
-): Transform {
-  return {
-    id,
-    position: opts.position ?? [0, 0, 0],
-    rotation: opts.rotation ?? [0, 0, 0],
-    scale: opts.scale ?? [1, 1, 1],
-    variations: [{ type, weight }],
-  };
-}
+/** Every panel of this sheet is `chainSpeckleScene` over data — row index
+ * plus the arm's march knobs — so the worker-scheduled renderer can rebuild
+ * any of them from that data, and the renders below ride it. The serial
+ * `renderPreview` path stays reachable through `DE_PREVIEW_PARALLEL=off`
+ * (the module's kill switch), which is also this file's serial A/B arm. */
+const SPECKLE_FACTORY = {
+  module: "./chain-speckle-scenes",
+  factory: "chainSpeckleScene",
+} as const;
 
-const rot = (deg: number): Vec3 => [0, (deg * Math.PI) / 180, 0];
-
-/** The three lengths the question is about: the single map that already
- * ships (so every reading has the accepted baseline beside it), a two-link
- * chain, and the six-link one. `escape-chain.harness.ts`'s fixtures 1, 2
- * and 8, unchanged. */
-const FIXTURES: [string, Transform[]][] = [
-  ["CONTROL single mbox2", [foldMap(1, "mandelbox", 2)]],
-  [
-    "TWO mbox2 -> boxfold1.6",
-    [foldMap(1, "mandelbox", 2), foldMap(2, "boxfold", 1.6)],
-  ],
-  [
-    "SIX mbox2 -> mbox2r20 -> box1.6 -> sph1.2 -> mbox-1.5 -> box1r25",
-    [
-      foldMap(1, "mandelbox", 2),
-      foldMap(2, "mandelbox", 2, { rotation: rot(20) }),
-      foldMap(3, "boxfold", 1.6),
-      foldMap(4, "spherefold", 1.2),
-      foldMap(5, "mandelbox", -1.5),
-      foldMap(6, "boxfold", 1, { rotation: rot(25) }),
-    ],
-  ],
-];
-
-/** The anchor row: a unit sphere through the identical marcher, shading and
- * pose. Whatever speckle a SMOOTH solid measures here is the floor every
- * fold reading has to be read against — it is what the instrument itself
- * contributes. */
-const SPHERE: DistanceEstimator = (p) => Math.hypot(p[0], p[1], p[2]) - 1;
-const SPHERE_R = 1.12;
-const SPHERE_LABEL = "ANCHOR unit sphere (a smooth solid)";
+/** Render one of the sheet's panels through the worker-scheduled path. */
+const speckleRender = (spec: ChainSpeckleSceneSpec, size: number) =>
+  renderPreviewParallel({ ...SPECKLE_FACTORY, args: [spec] }, size);
 
 // -------------------------------------------------------- field statistics
-
-/** `escape-chain.harness.ts`'s `fitMarchRadius`, verbatim in effect, so a
- * panel here frames what the sheet in question framed.
- *
- * Reach was a grid over the marching box thresholding the estimate at
- * `1e-3` until the set-extent correction, which is the wrong instrument
- * twice over (`scripts/set-extent.ts` carries both arguments). It asks
- * {@link escapeSetContains} over a seeded uniform sample now, exactly as
- * the sheet it mirrors does — the fitted radii moved by under 1% and no
- * reading in this file depends on which one is used, but a framing
- * quantity computed the wrong way is still a wrong number in a record. */
-function fitMarchRadius(member: (p: Vec3) => boolean): number {
-  const { reachAbs } = sampleSetExtent(member, {
-    fillRadius: ESCAPE_TIME_RADIUS,
-  });
-  if (reachAbs <= 0) return ESCAPE_TIME_RADIUS;
-  return Math.min(ESCAPE_TIME_RADIUS, Math.max(1.15, reachAbs * 1.06));
-}
 
 /** Rec.709 luminance of a rendered panel, 0..255. Post-gamma on purpose:
  * the question is what the picture LOOKS like. */
@@ -953,57 +912,40 @@ describe("is the escape-chain speckle undersampling or the object?", () => {
     );
   });
 
-  it("splits the speckle: march budget vs shading proxy vs sub-pixel structure", () => {
+  it("splits the speckle: march budget vs shading proxy vs sub-pixel structure", async () => {
     const panels: PanelStats[] = [];
     const partials = new Map<string, number>();
     /** Share of pixels whose luminance MOVES between the 1-sample and the
      * 16-sample render — the framing-robust half of the SUB-PIXEL line. */
     const moves = new Map<string, number>();
-    const rows: [string, DistanceEstimator, number][] = [
-      ...FIXTURES.map(
-        ([label, transforms]): [string, DistanceEstimator, number] => {
-          const de = buildEscapeDE(transforms);
-          const est: DistanceEstimator = (p) => estimateEscapeDistance(de, p);
-          return [label, est, fitMarchRadius((p) => escapeSetContains(de, p))];
-        },
-      ),
-      [SPHERE_LABEL, SPHERE, SPHERE_R],
-    ];
+    const rows = chainSpeckleRows();
 
-    for (const [label, de, marchR] of rows) {
-      const base = { de, boundingRadius: marchR, eyeOffset: EYE, zoom: ZOOM };
-      const a = renderPreview(
-        { ...base, stepScale: ESCAPE_STEP_SCALE, collect: true },
+    for (const [row, { label, marchR }] of rows.entries()) {
+      const a = await speckleRender(
+        { row, stepScale: ESCAPE_STEP_SCALE },
         SIZE,
       );
-      const b = renderPreview(
-        {
-          ...base,
-          stepScale: GENEROUS_SCALE,
-          maxSteps: GENEROUS_STEPS,
-          collect: true,
-        },
+      const b = await speckleRender(
+        { row, stepScale: GENEROUS_SCALE, maxSteps: GENEROUS_STEPS },
         SIZE,
       );
-      const c = renderPreview(
+      const c = await speckleRender(
         {
-          ...base,
+          row,
           stepScale: GENEROUS_SCALE,
           maxSteps: GENEROUS_STEPS,
           ao: false,
           shadow: false,
-          collect: true,
         },
         SIZE,
       );
-      const d = renderPreview(
+      const d = await speckleRender(
         {
-          ...base,
+          row,
           stepScale: GENEROUS_SCALE,
           maxSteps: GENEROUS_STEPS,
           ao: false,
           shadow: false,
-          collect: true,
         },
         SIZE * SS,
       );
@@ -1107,14 +1049,14 @@ describe("is the escape-chain speckle undersampling or the object?", () => {
     }
   });
 
-  it("sweeps the march budget, so (A) is bounded by measurement", () => {
+  it("sweeps the march budget, so (A) is bounded by measurement", async () => {
     // If the speckle were starvation, these columns would fall as the budget
     // rises and the steps shrink. `exhausted` is the direct fingerprint.
     const panels: PanelStats[] = [];
-    for (const [label, transforms] of FIXTURES) {
-      const de = buildEscapeDE(transforms);
-      const est: DistanceEstimator = (p) => estimateEscapeDistance(de, p);
-      const marchR = fitMarchRadius((p) => escapeSetContains(de, p));
+    // The FIXTURES rows only, exactly as today — the sphere anchor has no
+    // DE and never rendered here.
+    for (const [row, { label, de }] of chainSpeckleRows().entries()) {
+      if (!de) continue;
       const arms: [number, number][] = [
         [DEFAULT_MAX_STEPS, 0.7],
         [DEFAULT_MAX_STEPS, ESCAPE_STEP_SCALE],
@@ -1124,18 +1066,7 @@ describe("is the escape-chain speckle undersampling or the object?", () => {
       ];
       console.log(`  ${label}`);
       for (const [maxSteps, stepScale] of arms) {
-        const panel = renderPreview(
-          {
-            de: est,
-            boundingRadius: marchR,
-            stepScale,
-            maxSteps,
-            eyeOffset: EYE,
-            zoom: ZOOM,
-            collect: true,
-          },
-          SIZE,
-        );
+        const panel = await speckleRender({ row, stepScale, maxSteps }, SIZE);
         const s = scorePanel(panel);
         console.log(
           `      ${String(maxSteps).padStart(6)} steps / scale ${String(stepScale).padEnd(5)}  ` +
@@ -1154,30 +1085,26 @@ describe("is the escape-chain speckle undersampling or the object?", () => {
     );
   });
 
-  it("measures the escape-count colour coordinate's spatial coherence", () => {
+  it("measures the escape-count colour coordinate's spatial coherence", async () => {
     // Would a palette paint bands, or confetti? Three fields over the SAME
     // hit pixels: the shipped continuous count, the raw integer count it
     // replaced, and the hit DEPTH — the smoothest quantity this
     // surface can carry, so it is the ceiling any colour source could reach.
     const panels: PanelStats[] = [];
-    for (const [label, transforms] of FIXTURES) {
-      const de = buildEscapeDE(transforms);
-      const est: DistanceEstimator = (p) => estimateEscapeDistance(de, p);
-      const marchR = fitMarchRadius((p) => escapeSetContains(de, p));
+    // Fixture rows only, exactly as today — each carries its raw DE (the
+    // sphere anchor has none and is excluded from the loop).
+    for (const [row, { label, de, marchR }] of chainSpeckleRows().entries()) {
+      if (!de) continue;
       const eye: Vec3 = [EYE[0] * marchR, EYE[1] * marchR, EYE[2] * marchR];
 
-      const sample = (size: number) => {
-        const panel = renderPreview(
+      const sample = async (size: number) => {
+        const panel = await speckleRender(
           {
-            de: est,
-            boundingRadius: marchR,
+            row,
             stepScale: GENEROUS_SCALE,
             maxSteps: GENEROUS_STEPS,
-            eyeOffset: EYE,
-            zoom: ZOOM,
             ao: false,
             shadow: false,
-            collect: true,
           },
           size,
         );
@@ -1209,8 +1136,8 @@ describe("is the escape-chain speckle undersampling or the object?", () => {
         return { panel, hit, trap, raw, depth, size };
       };
 
-      const one = sample(SIZE);
-      const four = sample(SIZE * SS);
+      const one = await sample(SIZE);
+      const four = await sample(SIZE * SS);
       // The 4x fields, box-averaged over each pixel's own hit samples: the
       // coordinate a 16x-sampled render would actually paint.
       const cover = boxDown(
@@ -1262,7 +1189,7 @@ describe("is the escape-chain speckle undersampling or the object?", () => {
     );
   });
 
-  it("asks whether MORE PIXELS help, or the object keeps yielding structure", () => {
+  it("asks whether MORE PIXELS help, or the object keeps yielding structure", async () => {
     // The one thing left between "the app cannot fix this" and "look at it
     // bigger": this harness frames the whole object in ~250px, where the app
     // gives it ~700 of a 1280-wide pane. So how does the partial-coverage
@@ -1278,32 +1205,22 @@ describe("is the escape-chain speckle undersampling or the object?", () => {
     // the coverage estimator is identical across the row and only the pixel
     // size changes.
     const SIZES = [128, 256, 512];
-    const rows: [string, DistanceEstimator, number][] = [
-      ...[FIXTURES[0], FIXTURES[2]].map(
-        ([label, transforms]): [string, DistanceEstimator, number] => {
-          const de = buildEscapeDE(transforms);
-          const est: DistanceEstimator = (p) => estimateEscapeDistance(de, p);
-          return [label, est, fitMarchRadius((p) => escapeSetContains(de, p))];
-        },
-      ),
-      [SPHERE_LABEL, SPHERE, SPHERE_R],
-    ];
-    for (const [label, de, marchR] of rows) {
+    const all = chainSpeckleRows();
+    // The control, the six-link chain and the sphere anchor, keeping their
+    // ORIGINAL row indices — the factory keys scenes by row index.
+    const rows = [0, 2, 3].map((row) => ({ row, ...all[row] }));
+    for (const { label, row } of rows) {
       console.log(`  ${label}`);
       const logN: number[] = [];
       const logP: number[] = [];
       for (const size of SIZES) {
-        const panel = renderPreview(
+        const panel = await speckleRender(
           {
-            de,
-            boundingRadius: marchR,
+            row,
             stepScale: GENEROUS_SCALE,
             maxSteps: GENEROUS_STEPS,
-            eyeOffset: EYE,
-            zoom: ZOOM,
             ao: false,
             shadow: false,
-            collect: true,
           },
           size * SS,
         );
