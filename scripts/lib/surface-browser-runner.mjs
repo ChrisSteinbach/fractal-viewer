@@ -269,9 +269,10 @@ export async function mintPersistedSurfacePose(browser, options) {
   }
 }
 
-function diagnosticQuery(engine) {
-  if (engine === "compute") return "?surfacestate&surfacecompute";
-  if (engine === "webgl") return "?surfacestate&surfacegl";
+function diagnosticQuery(engine, samples) {
+  const base = `?surfacestate${samples ? `&surfacesamples=${samples}` : ""}`;
+  if (engine === "compute") return `${base}&surfacecompute`;
+  if (engine === "webgl") return `${base}&surfacegl`;
   throw new Error(`unknown surface engine ${engine}`);
 }
 
@@ -457,8 +458,12 @@ function validateCaptureProbe(probe, expectedEngine, release) {
 
 /**
  * Run one persisted document through the production app and capture only the
- * true eight-pass settled latch. Every call uses a fresh, reduced-motion,
- * DSF-1 browser context; the caller keeps GPU work serial.
+ * true settled latch. Every call uses a fresh, reduced-motion, DSF-1 browser
+ * context; the caller keeps GPU work serial. `samples` pins the
+ * `?surfacesamples` diagnostic override for BOTH engines (the
+ * surface-chaos/schedule shape, which keeps a SwiftShader compute settle
+ * inside a gate budget); absent means the document's authored choice, the
+ * release-capture default.
  */
 export async function captureSettledSurface(browser, options) {
   const {
@@ -468,6 +473,7 @@ export async function captureSettledSurface(browser, options) {
     timeoutMs,
     dwellMs = 2_000,
     release = false,
+    samples = null,
     log = () => {},
   } = options;
   const context = await browser.newContext({
@@ -489,7 +495,7 @@ export async function captureSettledSurface(browser, options) {
     });
     page.on("pageerror", (error) => pageErrors.push(error.message));
     const base = url.replace(/\/+$/, "");
-    await bootScene(page, `${base}/${diagnosticQuery(engine)}${hash}`);
+    await bootScene(page, `${base}/${diagnosticQuery(engine, samples)}${hash}`);
     const button = await enterSurface(page);
     if (!button?.present || button.disabled) {
       throw new SurfaceBrowserCheckingError(

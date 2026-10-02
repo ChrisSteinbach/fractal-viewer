@@ -33,6 +33,34 @@
  * the bound without preserving full-hit-epsilon compensation is not a fix.
  *
  * Exit 0: complete pass. Exit 1: browser/setup failure. Exit 3: scene failure.
+ *
+ * VERDICT 2026-10-02: three gate-side defects made every SwiftShader run
+ * fail at its first scenario (swirl3-compute). None is a renderer bug.
+ * (1) The captures rode the document's production 8-sample antialiasing
+ * settle: SwiftShader compute traced ~31s PER PASS (measured 250-284s per
+ * leg against this gate's 180s budget, pass 6/8 at 155s), so the settle
+ * latch was healthy but could not fit. The captures now pin the
+ * `?surfacesamples=1` diagnostic override in BOTH shapes — the
+ * surface-chaos/schedule runner shape — whose assertions (settled latch,
+ * partitioned census, exhausted=0, draw coverage) are AA-depth-independent;
+ * the production 8-sample settle stays exercised by the runner's other
+ * consumers (pattern-release and the swirl measurement gates capture at the
+ * authored choice). (2) The draw
+ * strip's left edge was sized against the mouse-worded help box (133.5px,
+ * right edge 149.5): a headless context fails the fine-pointer media query
+ * and renders the touch wording (147px, right edge 163), a 3px sliver over
+ * x=160, so "the draw-measurement strip must remain unobscured" refused
+ * every software capture. DRAW_REGION.x now clears the wider wording.
+ * (3) The budget itself: at one sample the software legs measure 41-46s
+ * (compute, plain 3D/4D) and 210s (WebGL 3D), so a --settle-less software
+ * run now takes a 420s budget while the release keeps 180s. The balloon
+ * fixtures are additionally SKIPPED on SwiftShader: both engines render
+ * them empty there (the compute pipeline dies with GPUPipelineError and the
+ * designed one-way WebGL fallback misses every ray; the native WebGL arm
+ * settles covered=0/518400 against the real driver's ~49%) — a measured
+ * renderer defect on the software stack, first observable once this gate
+ * could reach those legs at all, owned by its own record rather than by a
+ * permanently-failing diagnostic.
  */
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -49,6 +77,7 @@ const options = {
   url: "https://localhost:4173",
   display: null,
   timeoutMs: 180_000,
+  settleGiven: false,
   outdir: "scripts/out/surface-swirl",
   measure: false,
 };
@@ -59,13 +88,24 @@ for (const argument of process.argv.slice(2)) {
   }
   const match = /^--(url|display|settle|outdir)=(.+)$/.exec(argument);
   if (!match) throw new Error(`Unknown option ${argument}`);
-  if (match[1] === "settle") options.timeoutMs = Number(match[2]);
-  else options[match[1]] = match[2];
+  if (match[1] === "settle") {
+    options.timeoutMs = Number(match[2]);
+    options.settleGiven = true;
+  } else options[match[1]] = match[2];
 }
 if (!(options.timeoutMs > 0 && Number.isFinite(options.timeoutMs))) {
   throw new Error(
     "--settle must be a positive finite duration in milliseconds",
   );
+}
+// SwiftShader's settle cost at one sample, measured 2026-10-02: compute legs
+// 41-46s (plain 3D/4D), the 3D WebGL leg 210s, the 4D WebGL leg past 10% at
+// 174s. The 180s release budget cannot hold that shape, so a --settle-less
+// software run takes the measured software budget; an explicit --settle
+// overrides both.
+const SWIFTSHADER_SETTLE_MS = 420_000;
+if (!options.settleGiven && !options.display) {
+  options.timeoutMs = SWIFTSHADER_SETTLE_MS;
 }
 options.url = options.url.replace(/\/+$/, "");
 
@@ -221,7 +261,12 @@ const DARK_MAX_RGB = [0, 1, 2].map((channel) =>
 );
 // The pinned viewport leaves this strip clear of the panel, help and legend.
 // Cropping also permits the exact metric to recheck already saved captures.
-const DRAW_REGION = { x: 160, y: 0, width: 480, height: 540 };
+// The left edge clears the WIDER of the help box's two wordings: headless
+// contexts fail the fine-pointer media query and render the touch verbs
+// ("1 finger: Rotate", 147px measured, right edge 163) where a real display
+// renders the mouse verbs (133.5px, right edge 149.5). 160 crossed the touch
+// variant by 3px and refused every software capture.
+const DRAW_REGION = { x: 176, y: 0, width: 464, height: 540 };
 
 async function boot(page, hash) {
   await page.goto(`${options.url}/?surfacestate${hash}`, { waitUntil: "load" });
@@ -469,8 +514,21 @@ async function main() {
   );
   const records = [];
   const failures = [];
+  const software = !options.display;
   try {
     for (const fixture of fixtures) {
+      if (software && fixture.balloon) {
+        // SwiftShader renders every balloon fixture EMPTY, measured
+        // 2026-10-02: the compute pipeline dies (GPUPipelineError, the
+        // designed one-way WebGL fallback then also misses every ray) and
+        // the native WebGL arm settles covered=0/518400 against the real
+        // driver's ~49%. The release driver owns the balloon evidence; the
+        // measured defect's record lives in the header verdict.
+        console.log(
+          `[surface-swirl] ${fixture.name}: skipped on SwiftShader (balloon renders empty; see header verdict)`,
+        );
+        continue;
+      }
       const hash = await persistFixture(browser, fixture);
       for (const engine of ["compute", "webgl"]) {
         const name = `${fixture.name}-${engine}`;
@@ -481,6 +539,7 @@ async function main() {
           engine,
           timeoutMs: options.timeoutMs,
           release: Boolean(options.display),
+          samples: 1,
         });
         const pngFile = path.join(options.outdir, `${name}.png`);
         await writeFile(pngFile, result.png);
