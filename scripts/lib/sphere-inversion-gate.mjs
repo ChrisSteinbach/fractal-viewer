@@ -591,8 +591,8 @@ export async function savePng(page, consoleLines, scale, timeoutMs) {
 }
 
 /** Boot a document from a link in a fresh context and settle it. `args`
- * carries the gate's `url` and `settle` timeout; `contextOptions` is
- * {@link openApp}'s. */
+ * carries the gate's `url` and `settle` timeout; `query` and
+ * `contextOptions` are {@link openApp}'s. */
 export async function settleFromLink(
   browser,
   args,

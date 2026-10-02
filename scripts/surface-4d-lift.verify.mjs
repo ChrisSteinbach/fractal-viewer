@@ -6,7 +6,7 @@
  * the three no unit test reaches.
  *
  *   npm run build && npm run preview &
- *   node scripts/surface-4d-lift.verify.mjs [--display=:0] [--url=…] [--settle=ms] [--force]
+ *   node scripts/surface-4d-lift.verify.mjs [--display=:0] [--url=…] [--settle=ms] [--force] [--tier=fast]
  *
  * THE FRAME CACHE (wired 2026-10-02): the thickness scenes' THICK frame —
  * the completed cover settle at h=0.2 that dominates this gate's wall — is
@@ -31,6 +31,37 @@
  * 83.7s warm on THIS box — the cover settles it caches are 0.5-1.3s here,
  * so the wiring pays on the Iris-class machines the header documents
  * (~60 s/sample), where the hit skips the run's dominant term.
+ *
+ * THE FAST TIER (`--tier=fast`, scripts/lib/fast-tier.mjs,
+ * docs/gate-velocity.md): the development loop renders every scene under
+ * the app's own `?surfacemaxrays` device-ceiling stand-in (the live pane
+ * FITS under the cap and blits up to an unchanged 1024x640 canvas — the
+ * page, the panel and every DOM interaction stay exactly the full tier's;
+ * a half-size viewport was measured and rejected, the app's panel
+ * collapsing behind its ☰ toggle below its 640px breakpoint) with
+ * `?surfacesamples=1` on EVERY scene (the app's own page-load override;
+ * full keeps its own per-scene conventions, cover scenes included), so
+ * every question — enter, settle, draw, engine, the thickness row, the
+ * thick settle and the zero-thickness identity — is asked of fast frames
+ * compared against fast frames of the same build. The byte-exact identity
+ * bar and the relative coverage bar are tier-free by construction; the
+ * settle latch is untouched. The frame cache keys the tier (the env
+ * field), so a fast entry never replays into a full run. THE
+ * PILOT: one full-resolution sample, the `escape4` scene re-rendered with
+ * no tier params after the fast loop, asserting the same predicates its
+ * fast pass asserted — the run's fast-vs-full correspondence, disclosed
+ * in the verdict line and FAILING the run on a divergence (fast passed
+ * where full failed, or the reverse). This gate's pilot is live-only: the
+ * cache deliberately holds thick frames only, so there is no full-tier
+ * entry to refresh. Every PASS/FAIL line carries
+ * `tier=<label>` — a green fast line is never mistakable for a
+ * full-quality pass. MEASURED (AMD RX 7900 XTX, real driver --display=:0,
+ * 2026-10-02): full 87.9s -> fast 62.6s (--force) — 1.4x HERE, where the
+ * settles are ~1s and per-scene navigation overhead dominates; the cap is
+ * verified engaged (the app traces 512x320 for a 1024x640 raster). The
+ * leverage is the Iris-class machines above (~60 s/sample cover settles),
+ * where the raster x samples cut reaches ~32x on the settle term. All
+ * predicates held on both tiers; the pilot agreed.
  *
  * TWO PHASES: the hash-borne SCENES (minimal documents, no preset table
  * involved, so the gate survives one changing under it), then the three
@@ -115,6 +146,12 @@ import {
 } from "./lib/frame-cache-gate.mjs";
 import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 import { COVER4_POSED_HASH } from "./lib/surface-cover-scene.mjs";
+import {
+  parseTierArg,
+  tierCorrespondence,
+  tierLabel,
+  tierUrlParams,
+} from "./lib/fast-tier.mjs";
 
 /** Scene documents, `#v1=` payloads from `persist.ts`'s encoder. Each is a
  * MINIMAL document for one lift — no preset, no side table. */
@@ -202,6 +239,7 @@ function parseArgs(argv) {
     display: undefined,
     settleMs: 120000,
     force: false,
+    tier: parseTierArg(argv),
   };
   for (const raw of argv) {
     const [key, value] = raw.replace(/^--/, "").split("=");
@@ -345,6 +383,13 @@ async function imageDiff(page, aPng, bPng) {
 
 async function run() {
   const args = parseArgs(process.argv.slice(2));
+  const fast = args.tier === "fast";
+  // The fast tier's raster rides the app's own `?surfacemaxrays` device
+  // ceiling stand-in (scripts/lib/fast-tier.mjs): the live pane FITS under
+  // the cap and blits up to an UNCHANGED 1024x640 canvas, so the page, the
+  // panel and every DOM interaction stay exactly the full tier's. A
+  // half-size viewport was measured and rejected — the app's panel
+  // collapses behind its ☰ toggle below its 640px breakpoint.
   await guardFreshDist({ url: args.url });
   // The frame cache (docs/gate-velocity.md), wired to the THICK frame of the
   // thickness scenes only — the one settle that dominates this gate's wall
@@ -399,6 +444,13 @@ async function run() {
       : {}),
   });
   let failed = false;
+  process.stdout.write(
+    `tier=${tierLabel(args.tier)}` +
+      (fast
+        ? ` samples=1 maxrays=${tierUrlParams("fast").surfacemaxrays}`
+        : "") +
+      "\n",
+  );
   try {
     const page = await browser.newPage({
       ignoreHTTPSErrors: true,
@@ -420,6 +472,11 @@ async function run() {
     };
     const envFor = (scene) => ({
       surfacestate: "1",
+      // The fast tier's URL params (one antialiasing pass + the ray cap)
+      // are the key's env — the tiers' cache entries are separate by it.
+      ...tierUrlParams(args.tier),
+      // The cover scenes pin 1 at every tier; the fast tier pins 1 on
+      // every scene. They agree at 1 either way.
       ...(scene.samples !== undefined
         ? { surfacesamples: String(scene.samples) }
         : {}),
@@ -436,6 +493,10 @@ async function run() {
             device: await deviceFor(scene.engine),
             env: envFor(scene),
           });
+    // Per-scene frame-pure predicates, for the fast tier's pilot compare
+    // (the pilot re-asserts the same predicates of the FIRST scene at full
+    // resolution and the run fails if the two tiers disagree).
+    const scenePredicates = new Map();
     for (const scene of SCENES) {
       // A unique query per scene, because navigating to a URL that differs
       // only in its FRAGMENT does not reload — and this app reads the
@@ -444,7 +505,13 @@ async function run() {
       // three identical hit counts).
       const url =
         `${args.url}/?surfacestate&scene=${scene.name}` +
-        `${scene.samples !== undefined ? `&surfacesamples=${scene.samples}` : ""}` +
+        // The cover scenes pin 1 at every tier; the fast tier pins 1 on
+        // every scene. One param either way.
+        `${scene.samples !== undefined || fast ? `&surfacesamples=${String(scene.samples ?? 1)}` : ""}` +
+        // The tier's own params (the ray cap at fast) ride every page.
+        Object.entries(tierUrlParams(args.tier))
+          .map(([k, v]) => `&${k}=${v}`)
+          .join("") +
         `#${scene.hash}`;
       await page.goto(url, { waitUntil: "load" });
       // Mutter only sends frame callbacks to VISIBLE surfaces, and the
@@ -646,7 +713,8 @@ async function run() {
           identity !== null &&
           identity.maxDelta === 0;
         thicknessNote =
-          `  thickness=${scene.thickness} samples=${scene.samples ?? "default"} ` +
+          `  tier=${tierLabel(args.tier)} ` +
+          `thickness=${scene.thickness} samples=${scene.samples ?? (fast ? 1 : "default")} ` +
           `rowEnabled=${String(rowEnabled).padEnd(5)} ` +
           `invalidated=${String(thick.invalidated).padEnd(5)} ` +
           `reSettled=${String(thickSettled).padEnd(5)}${thickCached ? "(cached)" : ""} ` +
@@ -667,6 +735,12 @@ async function run() {
         drawn > 0.005 &&
         engine !== null &&
         thicknessOk;
+      scenePredicates.set(scene.name, {
+        entered,
+        settled,
+        drew: drawn !== null && drawn > 0.005,
+        engineOk: args.display === undefined || engine === scene.engine,
+      });
       if (!ok) failed = true;
       const enginePass =
         args.display === undefined || engine === scene.engine
@@ -674,6 +748,7 @@ async function run() {
           : "  ENGINE MISMATCH";
       process.stdout.write(
         `${ok ? "PASS" : "FAIL"}  ${scene.name.padEnd(20)} ` +
+          `tier=${tierLabel(args.tier)} ` +
           `entered=${String(entered).padEnd(5)} settled=${String(settled).padEnd(5)} ` +
           `settle=${(entrySettleMs / 1000).toFixed(1)}s ` +
           `engine=${String(engine).padEnd(8)} (want ${scene.engine}) ` +
@@ -727,12 +802,88 @@ async function run() {
       if (args.display !== undefined && engine !== "compute") failed = true;
       process.stdout.write(
         `${ok ? "PASS" : "FAIL"}  preset:${preset.value.padEnd(13)} ` +
+          `tier=${tierLabel(args.tier)} ` +
           `entered=${String(entered).padEnd(5)} settled=${String(settled).padEnd(5)} ` +
           `engine=${String(engine).padEnd(8)} (want compute) ` +
           `drawn=${drawn === null ? "n/a" : (drawn * 100).toFixed(1) + "%"}` +
           `\n  ${preset.what}\n`,
       );
       await page.click("#modePointsBtn").catch(() => {});
+    }
+
+    // THE PILOT (fast runs only): one full-resolution sample — the FIRST
+    // scene, re-rendered at the full viewport with the default samples —
+    // asserting the same predicates its fast pass asserted. This is the
+    // run's fast-vs-full correspondence (scripts/lib/fast-tier.mjs): a
+    // divergence fails the run with the predicates named, because a fast
+    // tier that stopped tracking the full one is a lying green line. This
+    // gate's pilot is deliberately live-only: the cache holds thick frames
+    // only, so there is no full-tier entry to refresh here. A full run has
+    // no pilot — the whole run is the anchor.
+    if (fast) {
+      const pilotScene = SCENES[0];
+      const fastPredicates = scenePredicates.get(pilotScene.name);
+      const pilotPage = await browser.newPage({
+        ignoreHTTPSErrors: true,
+        viewport: { width: 1024, height: 640 },
+      });
+      pilotPage.on("pageerror", (e) => {
+        process.stderr.write(`[page:uncaught] ${e.message}\n`);
+      });
+      try {
+        // The full tier's own URL convention for this scene: no samples
+        // override (the scene carries none, so the persisted detent rules).
+        const pilotUrl =
+          `${args.url}/?surfacestate&scene=${pilotScene.name}` +
+          `#${pilotScene.hash}`;
+        await pilotPage.goto(pilotUrl, { waitUntil: "load" });
+        await pilotPage.bringToFront();
+        await pilotPage.waitForFunction(
+          () => typeof window.__surfaceState === "function",
+          { timeout: 30000 },
+        );
+        await pilotPage.click("#modeSurfaceBtn");
+        let state = null;
+        const deadline = Date.now() + args.settleMs;
+        let entered = false;
+        while (Date.now() < deadline) {
+          state = await pilotPage.evaluate(
+            () => window.__surfaceState?.() ?? null,
+          );
+          if (state && state.mode !== "surface") break;
+          if (state && state.firstFrame) entered = true;
+          if (state && state.settled) break;
+          await pilotPage.waitForTimeout(250);
+        }
+        const settled = Boolean(state && state.settled);
+        const engine = state ? state.engine : null;
+        const shot = await canvasShot(pilotPage);
+        const drawn = shot ? await frameCoverage(pilotPage, shot) : null;
+        const pilotPredicates = {
+          entered,
+          settled,
+          drew: drawn !== null && drawn > 0.005,
+          engineOk: args.display === undefined || engine === pilotScene.engine,
+        };
+        const corr = tierCorrespondence(fastPredicates ?? {}, pilotPredicates);
+        const pilotOk =
+          settled &&
+          engine !== null &&
+          corr.agree &&
+          Object.values(pilotPredicates).every(Boolean);
+        if (!pilotOk) failed = true;
+        process.stdout.write(
+          `${pilotOk ? "PASS" : "FAIL"}  pilot:${pilotScene.name.padEnd(13)} ` +
+            `tier=fast vs tier=full ` +
+            `${corr.agree ? "agree" : `DIVERGED ${corr.diverged.join(",")}`} ` +
+            `settled=${String(settled).padEnd(5)} ` +
+            `engine=${String(engine).padEnd(8)} (want ${pilotScene.engine}) ` +
+            `drawn=${drawn === null ? "n/a" : (drawn * 100).toFixed(1) + "%"}\n` +
+            `  ${pilotScene.what}\n`,
+        );
+      } finally {
+        await pilotPage.close().catch(() => {});
+      }
     }
   } finally {
     await cache.prune();
