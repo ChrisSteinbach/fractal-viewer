@@ -17,13 +17,23 @@
  * foreground and background, and become byte-stable. The gate also requires
  * a material within-engine chaos effect and cross-engine image/effect
  * agreement. Real X11 is the release gate; software is diagnostic exit 2.
+ *
+ * VERDICT 2026-10-02: the CHECKING failure "chaos-off control differs from
+ * chaos-on by more than transform chaos fields" was the DERIVATION's fault,
+ * not a document leak. The app's v1 wire now writes the camera and 4D poses
+ * unrounded (persist.ts's camera paragraph — byte-exact share links), so the
+ * four-decimal fixture re-encode no longer round-trips an app-minted hash:
+ * the off control's pose was rounded where the on document's was not. The
+ * off document is now derived with deriveSceneHashVerbatim, which preserves
+ * every app-minted number verbatim, so the two documents differ exactly by
+ * the deleted chaos fields again.
  */
 
 import process from "node:process";
 
 import {
   decodeSceneHash,
-  deriveSceneHash,
+  deriveSceneHashVerbatim,
 } from "./pattern-release-fixtures.mjs";
 import { decodePng } from "./lib/pattern-release-artifacts.mjs";
 import {
@@ -616,7 +626,7 @@ async function main() {
       "[surface-chaos] selecting fernSponge and minting one shared camera pose\n",
     );
     const onHash = await mintShippedPresetPose(browser, args);
-    const offHash = deriveSceneHash(onHash, (document) => {
+    const offHash = deriveSceneHashVerbatim(onHash, (document) => {
       for (const transform of document.transforms) delete transform.chaos;
     });
     const rows = assertOnlyChaosDiffers(onHash, offHash);

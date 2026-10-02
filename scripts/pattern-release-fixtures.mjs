@@ -125,6 +125,29 @@ export function deriveSceneHash(source, edit) {
   return encodeSceneHash(deriveSceneDocument(source, edit));
 }
 
+/**
+ * Derive from a document MINTED BY THE LIVE APP without canonicalizing its
+ * numbers. The app's v1 wire writes the camera and 4D poses UNROUNDED (a pose
+ * rounded on the wire re-rendered a 4D preset's share link to different
+ * pixels — persist.ts's camera paragraph), so {@link encodeSceneHash}'s
+ * four-decimal canonical form no longer round-trips an app-minted hash: it
+ * rounded the pose, and a control derived from it differed from its source
+ * by exactly the pose the derivation was never allowed to touch (the
+ * assert-only-differs gates' CHECKING failure). This encoder emits JSON's
+ * shortest round-trip form for every number — the app's own writer — so the
+ * derived document differs from its source by the edit and nothing else.
+ * Synthetic fixture documents keep {@link encodeSceneHash}'s canonical form.
+ */
+export function deriveSceneHashVerbatim(source, edit) {
+  return (
+    "#v1=" +
+    Buffer.from(
+      JSON.stringify(deriveSceneDocument(source, edit)),
+      "utf8",
+    ).toString("base64url")
+  );
+}
+
 export function withGroundPlaneDisabled(source) {
   return deriveSceneHash(source, (document) => {
     document.groundPlane = false;

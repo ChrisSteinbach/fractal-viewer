@@ -30,13 +30,23 @@
  *
  * Exit 0 is a real-driver pass. Exit 2 is either a checking failure or a
  * successful software-only diagnostic; exit 1 is an unexpected script error.
+ *
+ * VERDICT 2026-10-02: the CHECKING failure "schedule-off control differs from
+ * schedule-on by more than the schedule field" was the DERIVATION's fault,
+ * not a document leak. The app's v1 wire now writes the camera and 4D poses
+ * unrounded (persist.ts's camera paragraph — byte-exact share links), so the
+ * four-decimal fixture re-encode no longer round-trips an app-minted hash:
+ * the off control's pose was rounded where the on document's was not. The
+ * off document is now derived with deriveSceneHashVerbatim, which preserves
+ * every app-minted number verbatim, so the two documents differ exactly by
+ * the deleted schedule block again.
  */
 
 import process from "node:process";
 
 import {
   decodeSceneHash,
-  deriveSceneHash,
+  deriveSceneHashVerbatim,
 } from "./pattern-release-fixtures.mjs";
 import { decodePng } from "./lib/pattern-release-artifacts.mjs";
 import {
@@ -606,7 +616,7 @@ async function main() {
       `[surface-schedule] selecting spongeOfFerns and minting one shared camera pose\n`,
     );
     const onHash = await mintShippedPresetPose(browser, args);
-    const offHash = deriveSceneHash(onHash, (document) => {
+    const offHash = deriveSceneHashVerbatim(onHash, (document) => {
       delete document.schedule;
     });
     const schedule = assertOnlyScheduleDiffers(onHash, offHash);
