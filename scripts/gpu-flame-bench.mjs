@@ -25,6 +25,7 @@
  *     [--surface-force=1] [--surface-shade-width=1,4]
  *     [--surface-aff4-sweep=1] [--surface-plane-frame=1]
  *     [--surface-canary-trip=N] [--surface-sphere-inversion-only=1]
+ *     [--surface-transport-only=<backend>] [--surface-envelope-only=1]
  *
  * `--surface` runs the page's surface-DE kernel section AFTER the
  * flame scenarios (`?surface=1`); `--surface-only` runs it INSTEAD of them
@@ -141,6 +142,10 @@ const SURFACE_PASSTHROUGH_FLAGS = {
   // Run only one backend's transport agreement legs (estimator,
   // closedSolid or finiteSolid); verdict "fail" or "skipped", never "pass".
   "surface-transport-only": "surfaceTransportOnly",
+  // Run only the optical-transport renderer envelope leg (the delegated
+  // feasibility lines' settle-line measurement path); verdict "fail" or
+  // "skipped", never "pass".
+  "surface-envelope-only": "surfaceEnvelopeOnly",
   // With --surface-sphere-inversion-only: the curved-glass starters'
   // renderer envelope and depth curve (measured, not gated; minutes of
   // settles, so it rides the heavy-leg wait cap below).
