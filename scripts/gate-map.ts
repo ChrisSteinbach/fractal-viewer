@@ -266,7 +266,7 @@ export const GATE_MAP: GateMapEntry[] = [
   {
     name: "surface-export-tile",
     kind: "gate",
-    cost: "full-render",
+    cost: "cache-eligible",
     modules: [
       "src/fractal/surface-de-gpu.ts",
       "src/app/surface-compute.ts",
