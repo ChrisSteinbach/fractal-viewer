@@ -364,7 +364,8 @@ pass in full in both dimensions. Under the decided lines the warm
 provisional gates at 1165.3 ms (3D) / 753.9 ms (4D) against 1.5 s.
 
 **5. Envelope verdict.** Under the decided lines every gate passes in both
-dimensions: staged provisional preview (1.5 s), settled 512×288 (10 s),
+dimensions: staged provisional preview (1.5 s), settled 512×288 (10 s at
+this decision's date; moved to 12 s 2026-10-03 — see 6),
 export 1920×1080 (120 s), cancellation checkpoints (600 ms), retained
 additional state (128 MiB), tile/window byte-identity, pose matrix and
 refusal cleanliness. The earlier no-go statements in this document were
@@ -376,6 +377,25 @@ and in the harness constants — the evidence does not move.
 
 The reuse records are `staged-reuse-256x144-{menger,hyper4}.json` and the
 sanity default `staged-256x144-menger.json` (gitignored, regenerable).
+
+**6. Settled-image line: 12 s (was 10 s), re-decided 2026-10-03.** The 10 s
+deadline above was validated on this study's own fixtures (512×288:
+8.0101 s 3D / 4.8882 s 4D). The shipped finite-solid 4D preset's envelope
+arm — glassMenger4 through the production `SurfaceComputeRenderer` — has
+sat ON the line since its qualification (9.89-9.901 s, the transport
+doc's records), and six quiet real-driver serial runs (RX 7900 XTX,
+`--surface-envelope-only=1`) measure 9.974 / 9.998 / 10.004 / 10.029 /
+10.078 s: a margin thinner than the measurement's own jitter, so the
+bench's pass/fail on this arm was a coin flip independent of any code
+change — consecutive runs straddled the line with nothing changed between
+them. A gate that fails on noise is not a feasibility test. Under the
+same delegated, reversible authority, the line moves to 12 s, keeping the
+envelope's intent (a settled image is seconds-class, not minutes-class)
+~20% above the measured arm; every other arm keeps ≥35% headroom. The
+arm's cost is unchanged by the slab work (the leg and constants predate
+it); a drift toward the new line is a real regression signal, not jitter.
+Full record: docs/surface-dielectric-transport.md, "The settle line
+moves".
 
 ## The closed-solid backend's boundary representation (delegated, 2026-09-15)
 

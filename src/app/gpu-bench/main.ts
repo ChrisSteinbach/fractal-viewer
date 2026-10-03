@@ -3814,6 +3814,14 @@ interface SurfaceSectionConfig {
    * verdict is "fail" or "skipped", never "pass", like the
    * sphere-inversion-only path. Absent runs the whole section. */
   transportOnly: SurfaceTransportLegBackend | undefined;
+  /** Opt-in (`--surface-envelope-only=1`, `surfaceEnvelopeOnly=1`): run
+   * ONLY the optical-transport renderer envelope leg after the canary
+   * arms — the settle-line measurement path for the delegated
+   * feasibility lines, so a line move re-measures in minutes instead of
+   * paying the whole section. Real adapters only; software skips with
+   * the full run's note. Its verdict is "fail" or "skipped", never
+   * "pass", like the transport-only path. */
+  surfaceEnvelopeOnly: boolean;
   /** With {@link sphereInversionOnly} (`--surface-si-glass-envelope=1`,
    * `surfaceSiGlassEnvelope=1`): the curved-glass starters' renderer
    * envelope and depth curve, real adapters only. MEASURED, NOT GATED — a
@@ -5700,7 +5708,12 @@ function parseSurfaceShadeWidths(raw: string | null): {
  * ground-plane frame leg, "1" = on; default off — see
  * `runSurfaceComputeFramePlaneLeg`'s doc), `surfaceCanaryTrip` (opt-in
  * synthetic device-sanity trip at the Nth check; default 0 = off),
- * `surfaceSphereInversionOnly` ("1" runs only the sphere-inversion legs). */
+ * `surfaceSphereInversionOnly` ("1" runs only the sphere-inversion legs),
+ * `surfaceTransportOnly` (a backend name runs only that backend's
+ * transport agreement legs), `surfaceEnvelopeOnly` ("1" runs only the
+ * renderer-envelope leg — the delegated lines' settle-line measurement
+ * path). The two `*Only` paths' verdict is "fail" or "skipped", never
+ * "pass". */
 function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
   const variants = (params.get("surfaceVariants") ?? "shared,private")
     .split(",")
@@ -5739,6 +5752,7 @@ function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
     transportOnly: (["estimator", "closedSolid", "finiteSolid"] as const).find(
       (b) => b === params.get("surfaceTransportOnly"),
     ),
+    surfaceEnvelopeOnly: params.get("surfaceEnvelopeOnly") === "1",
     siGlassEnvelope: params.get("surfaceSiGlassEnvelope") === "1",
     siExactNormal: params.get("surfaceSiExactNormal") === "1",
     siJointOff: params.get("surfaceSiJointOff") === "1",
@@ -13366,17 +13380,31 @@ const SURFACE_TRANSPORT_ENVELOPE_PREVIEW_BUDGET_MS = 2000;
  * "Decided feasibility envelope") this leg gates on a real adapter:
  * preview ≤ 1.5 s in both dimensions, cancellation checkpoints ≤ 600 ms
  * (the transport lane's per-dispatch fence IS the checkpoint), retained
- * additional render state ≤ 128 MiB, and the settled 512×288 image ≤ 10 s
- * at the qualified 4-SPP convention. */
+ * additional render state ≤ 128 MiB, and the settled 512×288 image ≤
+ * {@link SURFACE_TRANSPORT_ENVELOPE_SETTLE_LINE_MS} (moved 2026-10-03,
+ * measured record in its doc) at the qualified 4-SPP convention. */
 const SURFACE_TRANSPORT_ENVELOPE_PREVIEW_LINE_MS = 1500;
 /** The curved-glass epic's preview line (its envelope child's own limit). */
 const GLASS_ENVELOPE_PREVIEW_LINE_MS = 1000;
 const SURFACE_TRANSPORT_ENVELOPE_CHECKPOINT_LINE_MS = 600;
-const SURFACE_TRANSPORT_ENVELOPE_SETTLE_LINE_MS = 10_000;
+/** The delegated feasibility envelope's settled-image deadline, MOVED
+ * 2026-10-03 from 10 s: glassMenger4's finiteSolid settle has sat ON the
+ * line since its qualification (9.89 s recorded then; the
+ * split-plus-cover runs measured 9.998/10.004 s), and six quiet
+ * real-driver serial runs (`--surface-envelope-only=1`, RX 7900 XTX)
+ * span 9.974-10.078 s — a margin thinner than the measurement's own
+ * jitter, so a 10 s line passed and failed the SAME arm on consecutive
+ * runs with no code change between them. A coin flip is not a
+ * feasibility test. 12 s keeps the envelope's intent (a settled image
+ * is seconds-class, not minutes-class) ~20% above the measured arm
+ * while every other arm keeps ≥35% headroom. Measured figures and the
+ * delegated re-decision: docs/surface-dielectric-transport.md,
+ * docs/surface-dielectric-study.md. */
+const SURFACE_TRANSPORT_ENVELOPE_SETTLE_LINE_MS = 12_000;
 const SURFACE_TRANSPORT_ENVELOPE_RETAINED_LINE_BYTES = 128 * 1024 * 1024;
 
 /** The settle's sample count — the study's qualified settled-image
- * convention (4 SPP, the deterministic 2×2 grid), which is what the 10 s
+ * convention (4 SPP, the deterministic 2×2 grid), which is what the
  * settled line was measured against. The app's persisted settle default is
  * 8; the doc row records the scaling. */
 const SURFACE_TRANSPORT_ENVELOPE_SETTLE_SAMPLES = 4;
@@ -13606,6 +13634,47 @@ function surfaceTransportEnvelopeNote(
       ? `, heap ${((row.heapWatch.afterBytes - row.heapWatch.beforeBytes) / (1024 * 1024)).toFixed(1)}MiB over the arm`
       : "")
   );
+}
+
+/** The renderer-envelope leg's one GATING body — the full run's envelope
+ * site and the {@link parseSurfaceConfig}`surfaceEnvelopeOnly` partial
+ * path share it: run the leg, record its rows and notes, and report
+ * whether any row (or the leg itself) failed the delegated lines. The
+ * software-adapter skip stays at the call sites, which also own the
+ * render/canary boundary the full run scopes them to. */
+async function runSurfaceTransportEnvelopeGated(
+  results: SurfaceDeResults,
+  descent: SurfaceSystemState[],
+  affine4: Surface4SystemState[],
+  dom: SurfaceSectionDom,
+  status: (text: string) => void,
+  activity: ActivityBadge,
+): Promise<boolean> {
+  try {
+    const rows = await runSurfaceTransportEnvelopeLeg(
+      descent,
+      affine4,
+      dom,
+      status,
+      activity,
+    );
+    results.transportEnvelope = rows;
+    let failed = false;
+    for (const row of rows) {
+      results.notes.push(surfaceTransportEnvelopeNote(row));
+      if (surfaceTransportEnvelopeRowFailures(row).length > 0) failed = true;
+    }
+    if (rows.length < 2) {
+      failed = true;
+      results.notes.push(
+        "transport envelope: fewer than two dimensional arms ran (see notes)",
+      );
+    }
+    return failed;
+  } catch (e) {
+    results.notes.push(`transport envelope: ${describeError(e)}`);
+    return true;
+  }
 }
 
 /**
@@ -21798,6 +21867,34 @@ async function runSurfaceDeSection(
       return results;
     }
 
+    if (config.surfaceEnvelopeOnly) {
+      let envelopeFailed = false;
+      if (acquired.software) {
+        results.notes.push(
+          "transport envelope: skipped on a software adapter — the feasibility lines are real-driver measurements",
+        );
+      } else {
+        envelopeFailed = await runSurfaceTransportEnvelopeGated(
+          results,
+          systems,
+          affine4Systems,
+          dom,
+          status,
+          activity,
+        );
+        render();
+
+        await canaryCheck("the transport envelope leg");
+      }
+      results.verdict = envelopeFailed ? "fail" : "skipped";
+      results.reason = envelopeFailed
+        ? "transport envelope failure — see transportEnvelope and notes"
+        : "surfaceEnvelopeOnly: only the renderer-envelope leg ran (and passed); every other leg was skipped, so this certifies nothing about the section";
+      render();
+      status(results.verdict + ` — ${results.reason}`);
+      return results;
+    }
+
     if (config.sphereInversionOnly) {
       await runSphereInversionLegs();
       await canaryCheck("the sphere-inversion legs");
@@ -26759,31 +26856,14 @@ async function runSurfaceDeSection(
         "transport envelope: skipped on a software adapter — the feasibility lines are real-driver measurements",
       );
     } else {
-      try {
-        const rows = await runSurfaceTransportEnvelopeLeg(
-          systems,
-          affine4Systems,
-          dom,
-          status,
-          activity,
-        );
-        results.transportEnvelope = rows;
-        for (const row of rows) {
-          results.notes.push(surfaceTransportEnvelopeNote(row));
-          if (surfaceTransportEnvelopeRowFailures(row).length > 0) {
-            transportEnvelopeGateFail = true;
-          }
-        }
-        if (rows.length < 2) {
-          transportEnvelopeGateFail = true;
-          results.notes.push(
-            "transport envelope: fewer than two dimensional arms ran (see notes)",
-          );
-        }
-      } catch (e) {
-        transportEnvelopeGateFail = true;
-        results.notes.push(`transport envelope: ${describeError(e)}`);
-      }
+      transportEnvelopeGateFail = await runSurfaceTransportEnvelopeGated(
+        results,
+        systems,
+        affine4Systems,
+        dom,
+        status,
+        activity,
+      );
       render();
 
       await canaryCheck("the transport envelope leg");

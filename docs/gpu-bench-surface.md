@@ -142,6 +142,14 @@ plausible numeric fails.
 iteration path for a transport backend. Like the sphere-inversion-only path,
 its verdict is `fail` or `skipped`, never `pass`.
 
+`--surface-envelope-only=1` runs only the optical-transport renderer
+envelope leg after the canary arms — the delegated feasibility lines'
+settle-line measurement path, so a line move re-measures in minutes
+instead of paying the whole section (the 2026-10-03 settle-line record:
+`docs/surface-dielectric-transport.md`, "The settle line moves"). Real
+adapters only; software skips with the full run's note. Its verdict is
+`fail` or `skipped`, never `pass`.
+
 Judge the escape rows on `--display=:0` — this is already this file's
 standing advice, and the reason is the known SwiftShader false failure
 documented below. Do not raise the escape agreement cap to make a
