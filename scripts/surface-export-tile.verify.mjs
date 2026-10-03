@@ -151,23 +151,62 @@
  *
  * Usage: node scripts/surface-export-tile.verify.mjs [--url=...]
  *          [--display=:0] [--maxrays=60000] [--out=/tmp]
+ *          [--settle=ms] (the settle budget; default 300000)
+ *          [--capture=ms] (the Save-PNG download budget; default 300000)
  *          [--scene=boxfold|transmission|finite|all]
  *          [--viewport=1920x1080] [--samples=4] (finite leg only)
  *          [--cancel-only] (finite cancellation only; --scene defaults finite)
  *          [--memory-only] (finite memory only; explicit Full HD4AA required)
+ *          [--force] (frame cache: lookups never hit, renders always record)
  * (url defaults to https://localhost:4173 — `npm run build && npm run
  * preview` first. --display runs headed against a real X display / real
  * driver instead of headless SwiftShader; --out keeps both exports as
  * PNGs to eyeball, which is how a failing diff gets read.)
+ *
+ * THE FRAME CACHE (wired 2026-10-03, scripts/lib/frame-cache-gate.mjs,
+ * docs/gate-velocity.md): each saved-png arm is memoized WHOLESALE — a hit
+ * skips boot, settle, DoF dance and Save-PNG together, the finish gate's
+ * FULL REPLAY shape. The key is built OFFLINE so a hit needs no booted
+ * page: `document` is the boot scene string, and the arm's presentation
+ * edits (DoF on, haze, radial shape) are STATED in `raster` rather than
+ * re-encoded into the document — persist.ts's encoder is the app's, not
+ * this gate's. That statement IS the recon hazard's fix ("the key must
+ * read the mutated document or encode the edits"): the record path decodes
+ * the app's own post-edit hash and asserts it against the model
+ * (olderLegEditsMatchModel / authoredDocumentMatchesLive) before putting —
+ * a divergence refuses the record loudly, every run, and can never seed a
+ * key that does not name the rendered document. What a hit replays: the
+ * export bytes, the session observables recorded at put time (settled,
+ * compute-active, fitted, tile counts, the DoF dance's numbers, the
+ * finite leg's settled state, band accounting and transport checkpoints),
+ * and every check re-runs over the replayed values — a replayed FAIL is as
+ * honest as a live one. The gate's central verdict — the paired tiled vs
+ * untiled byte identity — compares DIFFERENT keys' bytes, so it recomputes
+ * soundly from cached bytes alone. NOT WIRED, on the eligibility boundary:
+ * --cancel-only (its verdict is a trusted-click timing over a live export
+ * — no frame to put), --memory-only (its exports are part of a measured
+ * RSS/GPU-census sequence; skipping one corrupts the phases around it),
+ * and the finite leg's Full HD qualification run (--viewport=1920x1080
+ * --samples=4), whose gated click-to-download and transport-checkpoint
+ * limits are timings measured against the live export. `--force` never
+ * looks up; a store error degrades the run to uncached and is noted once,
+ * never fatal.
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createWriteStream } from "node:fs";
 import { finished } from "node:stream/promises";
 import { createHash } from "node:crypto";
+import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
 import { completionFailures, traceFrames } from "./lib/finite-glass-trace.mjs";
+import {
+  createFrameCache,
+  gateKeyFields,
+  readDeviceSignature,
+} from "./lib/frame-cache-gate.mjs";
 import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 import { sampleProcessTreeRss } from "./lib/process-tree-memory.mjs";
 
@@ -179,6 +218,8 @@ const args = Object.fromEntries(
 );
 const BASE = (args.url ?? "https://localhost:4173").replace(/\/+$/, "");
 const DISPLAY = args.display;
+/** The frame cache's `--force`: lookups never hit, renders always record. */
+const FORCE = args.force !== undefined && args.force !== "false";
 /** Pretended per-frame ray ceiling for arm B. 60k rays over a 900px-wide
  * export is a 66-row band, so the 560-row export tiles into 9. */
 const MAX_RAYS = Number(args.maxrays ?? 60_000);
@@ -288,6 +329,14 @@ const TRANSMISSION_SCENES = [
  * slow, not that the gate needs a longer bound. */
 const SETTLE_TIMEOUT_MS = 300_000;
 const SETTLE_POLL_MS = 2_000;
+/** The settle budget, overridable like the sibling gates' `--settle`: the
+ * shipped default is the generous bound the recorded box measured; a box
+ * slower than it can pass a larger one instead of failing spuriously. */
+const SETTLE_BUDGET_ARG_MS =
+  args.settle === undefined ? null : Number(args.settle);
+/** The Save-PNG download budget, the same sibling convention as `--capture`. */
+const CAPTURE_BUDGET_ARG_MS =
+  args.capture === undefined ? null : Number(args.capture);
 const EXPORT_TIMEOUT_MS = 300_000;
 
 /** Tiling is a pixel-exact operation, full stop — see THE BAR IS NOW
@@ -473,9 +522,10 @@ async function authorFiniteDocument(ctx, preset, dimension) {
   }
 }
 
-/** Each tile's completion line closes its own full antialias job. Keeping
- * those boundaries prevents borrowing a good sample from another tile. */
-function finiteExportBands(lines, samples, label) {
+/** The parse half of the export-band accounting: trace lines in, the per-band
+ * frame summaries out. Kept separate from the checks so a frame-cache hit can
+ * re-run the SAME predicates over the recorded band objects it replays. */
+function parseFiniteBands(lines, samples) {
   const bands = [];
   let pending = [];
   for (const line of lines) {
@@ -486,17 +536,25 @@ function finiteExportBands(lines, samples, label) {
       pending.push(line);
       continue;
     }
-    const band = {
+    bands.push({
       index: Number(tile[1]),
       count: Number(tile[2]),
       width: Number(tile[3]),
       height: Number(tile[4]),
       frames: traceFrames(pending),
-    };
+    });
     pending = [];
-    bands.push(band);
+  }
+  return bands;
+}
+
+/** The check half: the same predicates over parsed band objects, live or
+ * replayed from a frame-cache entry (checked at put time, re-run here so a
+ * replayed FAIL stays a FAIL). */
+function checkFiniteBands(bands, samples, label) {
+  for (const [bandAt, band] of bands.entries()) {
     const prefix = `${label} band ${band.index}`;
-    check(band.index === bands.length, `${prefix}: contiguous band order`);
+    check(band.index === bandAt + 1, `${prefix}: contiguous band order`);
     check(
       band.frames.length === samples,
       `${prefix}: all ${samples} antialias samples`,
@@ -553,6 +611,13 @@ function finiteExportBands(lines, samples, label) {
     ),
     `${label}: the saved image contains resolved finite glass`,
   );
+}
+
+/** Each tile's completion line closes its own full antialias job. Keeping
+ * those boundaries prevents borrowing a good sample from another tile. */
+function finiteExportBands(lines, samples, label) {
+  const bands = parseFiniteBands(lines, samples);
+  checkFiniteBands(bands, samples, label);
   return bands;
 }
 
@@ -1701,8 +1766,72 @@ async function runFiniteMemoryArm(ctx, label, authored, optics, evidence) {
   return evidence;
 }
 
+/** Decode a `#v1=` scene string to its payload JSON, or null. */
+function decodeHashDocument(hash) {
+  const at = hash.indexOf("v1=");
+  if (at < 0) return null;
+  try {
+    return JSON.parse(
+      Buffer.from(hash.slice(at + 3), "base64url").toString("utf8"),
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** The OLDER filter legs' record-path check: the arm's modeled edits LANDED
+ * in the app's own post-edit document (DoF on, haze, radial shape). The
+ * boot document is deliberately NOT compared beyond them: any edit
+ * regenerates the cloud (fresh seed — the fit is deterministic-in-practice
+ * and persist rounds the radius) and materializes decoder defaults into
+ * the persisted hash, so the app's post-edit document is textually wider
+ * than boot+edits BY DESIGN. The key still names the render inputs exactly
+ * (boot document + the edit plan this bundle applies); the byte identity
+ * re-derives itself from the recorded exports every run, so run-to-run
+ * nondeterminism fails honestly. A landed-edits failure refuses the put
+ * loudly (every run) instead of seeding a key that lies about the
+ * choreography. */
+function olderLegEditsLanded(liveHash) {
+  const live = decodeHashDocument(liveHash);
+  if (!live) {
+    return { ok: false, why: "the post-edit document would not decode" };
+  }
+  if (
+    live.surface?.depthOfField !== true ||
+    live.background?.mode !== "haze" ||
+    live.background?.shape !== "radial"
+  ) {
+    return {
+      ok: false,
+      why: `the arm's edits are not in the persisted document (dof=${JSON.stringify(live.surface?.depthOfField)}, bg=${JSON.stringify(live.background?.mode)}, shape=${JSON.stringify(live.background?.shape)})`,
+    };
+  }
+  return { ok: true };
+}
+
+/** The finite leg authors no edits after the menu; its record-path check is
+ * the construction's own invariant: the persisted document is still the
+ * authored finite Glass document. */
+function authoredFiniteInvariantsHold(liveHash, dimension) {
+  const live = decodeHashDocument(liveHash);
+  if (!live) {
+    return { ok: false, why: "the post-boot document would not decode" };
+  }
+  const wantShape = dimension === 4 ? "hyperMenger" : "menger";
+  if (live.finiteSolid?.shape !== wantShape || live.finiteSolid?.level !== 2) {
+    return {
+      ok: false,
+      why: `the persisted document is not the authored finite construction (shape=${JSON.stringify(live.finiteSolid?.shape)}, level=${JSON.stringify(live.finiteSolid?.level)})`,
+    };
+  }
+  return { ok: true };
+}
+
 /** One arm: load the pinned scene, enter Surface, settle, Save PNG.
- * Resolves the PNG bytes plus what the run disclosed about itself. */
+ * Resolves the PNG bytes plus what the run disclosed about itself.
+ * `cacheCtx` ({cache, bundleHash, keyFor, deviceFor} | null) is the
+ * frame-cache wiring; null unwires the arm (the cancellation and memory
+ * arms pass null — the eligibility boundary). */
 async function runArm(
   ctx,
   label,
@@ -1710,7 +1839,124 @@ async function runArm(
   scene = SCENE,
   watchTransport = false,
   finite = null,
+  cacheCtx = null,
 ) {
+  const armStart = failures.length;
+  // THE FRAME-CACHE LOOKUP, before the arm boots anything. The key is built
+  // OFFLINE — `document` is the boot scene string, the arm's presentation
+  // edits (DoF on, haze, radial shape) are stated in `raster`, `env` the
+  // arm's URL flags — so a warm hit skips boot, settle, DoF dance and
+  // Save-PNG together. The record path (below) asserts the app's own
+  // post-edit hash decodes to exactly that model before anything is put,
+  // so a drifted edit model is a loud no-record, never a false hit.
+  let cacheKey = null;
+  let exportHit = null;
+  if (cacheCtx && !(finite && QUALIFY_FULL_HD)) {
+    cacheKey = cacheCtx.keyFor(scene, maxRays, watchTransport, finite);
+    if (cacheKey) exportHit = await cacheCtx.cache.lookup(cacheKey, label);
+  }
+  if (exportHit) {
+    const v = exportHit.entry.verdict ?? {};
+    const bytes = Buffer.from(exportHit.png);
+    const actualPngDimensions = pngDimensions(bytes);
+    console.error(
+      `[export-tile] ${label}: arm replayed from the frame cache — recorded ` +
+        `${new Date(exportHit.entry.meta.createdAtMs).toISOString()}`,
+    );
+    check(v.settled === true, `${label}: settled (replayed)`);
+    check(
+      v.computeActive === true,
+      `${label}: ran the WebGPU compute tracer (replayed)`,
+    );
+    if (finite) {
+      check(
+        v.settledState?.engine === "compute" &&
+          v.settledState?.opticsBackend === "finiteSolid",
+        `${label}: actual compute / finiteSolid route (replayed)`,
+      );
+      if (DISPLAY) {
+        check(
+          namedHardware(v.settledState?.backend),
+          `${label}: named hardware adapter (replayed, ${v.settledState?.backend?.label ?? "missing"})`,
+        );
+      }
+    }
+    if (v.dof) {
+      check(
+        v.dof.settledAfterDof === true,
+        `${label}: enabling DoF did not restart the settled trace (replayed)`,
+      );
+      check(
+        v.dof.changedMeanDiff > 0.01,
+        `${label}: DoF changed retained pixels (replayed mean ${v.dof.changedMeanDiff?.toFixed(4) ?? "n/a"}/255)`,
+      );
+      check(
+        v.dof.restoredMeanDiff < 0.02,
+        `${label}: disabling DoF restored the legacy frame (replayed mean ${v.dof.restoredMeanDiff?.toFixed(4) ?? "n/a"}/255)`,
+      );
+      check(
+        v.dof.settledAfterBackground === true,
+        `${label}: radial background edit with DoF did not retrace (replayed)`,
+      );
+    }
+    let bands = [];
+    if (finite) {
+      bands = Array.isArray(v.bands) ? v.bands : [];
+      checkFiniteBands(bands, finite.samples, label);
+      const checkpoints = v.transportCheckpoints;
+      if (checkpoints) {
+        finite.evidence.transportCheckpoints = {
+          ...checkpoints,
+          replayed: true,
+          scope: `${checkpoints.scope ?? ""} (replayed from the frame cache)`,
+        };
+        check(
+          Number.isSafeInteger(checkpoints.count) &&
+            checkpoints.count > 0 &&
+            Number.isFinite(checkpoints.maxWallMs) &&
+            checkpoints.maxWallMs >= 0,
+          `${label}: complete finite transport checkpoint timings (replayed from the frame cache)`,
+        );
+      }
+      finite.evidence.settledState = v.settledState ?? null;
+      finite.evidence.captureRaster = v.captureRaster ?? null;
+      finite.evidence.bands = bands;
+    }
+    const exportTiming = {
+      complete: true,
+      replayed: true,
+      clickToDownloadMs: null,
+      observedMs: null,
+      limitMs: null,
+      scope:
+        "replayed from the frame cache; this run measured no export timing",
+      forcedMaxRays: maxRays,
+      watchdogMs: EXPORT_TIMEOUT_MS,
+    };
+    if (finite)
+      Object.assign(finite.evidence, { exportTiming, actualPngDimensions });
+    check(
+      bytes !== null,
+      `${label}: export replayed from the frame cache (${(bytes.length / 1024).toFixed(0)}KB)`,
+    );
+    return {
+      bytes,
+      fitted: v.fitted === true,
+      tiles: v.tiles,
+      tileLines: v.tileLines,
+      transportLines: v.transportLines ?? 0,
+      ...(finite
+        ? {
+            settledState: v.settledState ?? null,
+            bands,
+            exportTrace: [],
+            exportTiming,
+            actualPngDimensions,
+            replayed: true,
+          }
+        : {}),
+    };
+  }
   const page = await ctx.newPage();
   try {
     if (finite) await page.setViewportSize(FINITE_VIEWPORT);
@@ -1722,6 +1968,7 @@ async function runArm(
     let transportLines = 0;
     let latestFrameToken = null;
     let exporting = false;
+    let liveDofEvidence = null;
     const exportTrace = [];
     if (finite) finite.evidence.exportTrace = exportTrace;
     page.on("console", (m) => {
@@ -1759,9 +2006,10 @@ async function runArm(
     await page.waitForTimeout(2_000);
 
     await page.click("#modeSurfaceBtn");
+    const settleBudgetMs = SETTLE_BUDGET_ARG_MS ?? SETTLE_TIMEOUT_MS;
     const t0 = Date.now();
     let settled = false;
-    while (Date.now() - t0 < SETTLE_TIMEOUT_MS) {
+    while (Date.now() - t0 < settleBudgetMs) {
       await page.waitForTimeout(SETTLE_POLL_MS);
       settled = await page.evaluate(
         () => window.__surfaceState?.().settled === true,
@@ -1810,19 +2058,32 @@ async function runArm(
       // Presentation-only DoF must change the retained frame without disturbing
       // the settled trace, and disabling it must recover the legacy image. This
       // runs before Save PNG so both tiling arms export the feature under test.
+      // The four outcomes are ALSO the frame-cache entry's replayed premises
+      // (liveDofEvidence): a warm arm re-asserts them over the recorded values.
       const canvas = page.locator("canvas").first();
       const dofOff = await canvas.screenshot({ type: "png" });
+      liveDofEvidence = {
+        settledAfterDof: false,
+        changedMeanDiff: null,
+        restoredMeanDiff: null,
+        settledAfterBackground: false,
+      };
       await page.$eval("#surfaceDepthOfFieldCheckbox", (input) => {
         input.checked = true;
         input.dispatchEvent(new Event("change", { bubbles: true }));
       });
       await page.waitForTimeout(500);
+      const settledAfterDof = await page.evaluate(
+        () => window.__surfaceState?.().settled === true,
+      );
+      liveDofEvidence.settledAfterDof = settledAfterDof;
       check(
-        await page.evaluate(() => window.__surfaceState?.().settled === true),
+        settledAfterDof,
         `${label}: enabling DoF did not restart the settled trace`,
       );
       const dofOn = await canvas.screenshot({ type: "png" });
       const dofDiff = await comparePngs(page, dofOff, dofOn);
+      liveDofEvidence.changedMeanDiff = dofDiff.other ? null : dofDiff.meanDiff;
       check(
         !dofDiff.other && dofDiff.meanDiff > 0.01,
         `${label}: DoF changed retained pixels (mean ${dofDiff.meanDiff?.toFixed(4) ?? "n/a"}/255)`,
@@ -1835,6 +2096,9 @@ async function runArm(
       await page.waitForTimeout(250);
       const dofOffAgain = await canvas.screenshot({ type: "png" });
       const identityDiff = await comparePngs(page, dofOff, dofOffAgain);
+      liveDofEvidence.restoredMeanDiff = identityDiff.other
+        ? null
+        : identityDiff.meanDiff;
       check(
         !identityDiff.other && identityDiff.meanDiff < 0.02,
         `${label}: disabling DoF restored the legacy frame (mean ${identityDiff.meanDiff?.toFixed(4) ?? "n/a"}/255)`,
@@ -1855,8 +2119,12 @@ async function runArm(
         select.dispatchEvent(new Event("change", { bubbles: true }));
       });
       await page.waitForTimeout(500);
+      const settledAfterBackground = await page.evaluate(
+        () => window.__surfaceState?.().settled === true,
+      );
+      liveDofEvidence.settledAfterBackground = settledAfterBackground;
       check(
-        await page.evaluate(() => window.__surfaceState?.().settled === true),
+        settledAfterBackground,
         `${label}: radial background edit with DoF did not retrace`,
       );
     }
@@ -1879,11 +2147,12 @@ async function runArm(
       }));
     }
     await page.locator("#savePngBtn").scrollIntoViewIfNeeded();
-    const dl = page.waitForEvent("download", { timeout: EXPORT_TIMEOUT_MS });
-    const c0 = performance.now();
-    exporting = true;
     let bytes = null;
     let clickToDownloadMs = null;
+    const exportBudgetMs = CAPTURE_BUDGET_ARG_MS ?? EXPORT_TIMEOUT_MS;
+    const dl = page.waitForEvent("download", { timeout: exportBudgetMs });
+    const c0 = performance.now();
+    exporting = true;
     try {
       const [, download] = await Promise.all([page.click("#savePngBtn"), dl]);
       const file = await download.path();
@@ -1903,7 +2172,7 @@ async function runArm(
       scope:
         maxRays === null ? "normal default export" : "artificial-band stress",
       forcedMaxRays: maxRays,
-      watchdogMs: EXPORT_TIMEOUT_MS,
+      watchdogMs: exportBudgetMs,
       clock:
         "monotonic; immediately before trusted click to completed download.path()",
     };
@@ -1934,10 +2203,9 @@ async function runArm(
         `${bytes === null ? "no file" : `${(bytes.length / 1024).toFixed(0)}KB`})`,
     );
     exporting = false;
-    const bands = finite
-      ? finiteExportBands(exportTrace, finite.samples, label)
-      : [];
+    let bands = [];
     if (finite) {
+      bands = finiteExportBands(exportTrace, finite.samples, label);
       finite.evidence.bands = bands;
       const batches = exportTrace
         .filter((line) => line.includes("transport pass="))
@@ -1965,6 +2233,51 @@ async function runArm(
           maxWallMs !== null && maxWallMs <= EXPORT_CANCEL_LIMIT_MS,
           `${label}: default Full HD transport checkpoint ${maxWallMs ?? "missing"}ms <= ${EXPORT_CANCEL_LIMIT_MS}ms`,
         );
+    }
+    // THE RECORD, beside the lookup: only from an arm whose own checks all
+    // passed (a failed scenario never replays as a pass), only a completed
+    // Save-PNG's bytes, and — for the legs whose arms edit the persisted
+    // document — only after the app's own post-edit hash has been asserted
+    // against the offline edit model the key was built from. The verdict
+    // carries what a replayed arm cannot re-derive live: the session
+    // observables (settled/compute-active/fitted/tiles) and the finite
+    // band accounting; the next run re-asserts the checks over these.
+    if (cacheCtx && cacheKey && bytes && failures.length === armStart) {
+      const modelOk = finite
+        ? authoredFiniteInvariantsHold(
+            await page.evaluate(() => location.hash),
+            finite.dimension,
+          )
+        : olderLegEditsLanded(await page.evaluate(() => location.hash));
+      if (!modelOk.ok) {
+        console.error(
+          `[export-tile] ${label}: NO RECORD — the app's post-edit document ` +
+            `diverged from the gate's edit model (${modelOk.why}); the cache ` +
+            "will keep missing this arm until the model is fixed.",
+        );
+      } else {
+        await cacheCtx.cache.record(cacheKey, {
+          scenario: label,
+          png: bytes,
+          verdict: {
+            settled: true,
+            computeActive,
+            fitted,
+            tiles: tiles.length === 0 ? 0 : tiles[0],
+            tileLines: tiles.length,
+            transportLines,
+            ...(finite
+              ? {
+                  settledState,
+                  captureRaster: finite.evidence.captureRaster,
+                  bands,
+                  transportCheckpoints: finite.evidence.transportCheckpoints,
+                }
+              : { dof: liveDofEvidence }),
+          },
+          wallMs: clickToDownloadMs ?? undefined,
+        });
+      }
     }
     return {
       bytes,
@@ -2134,7 +2447,17 @@ async function main() {
       reducedMotion: "reduce",
       acceptDownloads: true,
     });
+  // The frame-cache handle (docs/gate-velocity.md): one store, one bundle
+  // hash and one device-signature memo per run; the device probe asks the
+  // BROWSER, from any arm's page (the app's origin, a secure context).
+  // Declared beside `browser` so the run's finally can prune the store.
+  const cache = createFrameCache({
+    gate: "surface-export-tile",
+    force: FORCE,
+    log: (line) => console.error(line),
+  });
   let browser = null;
+  let decodePage = null;
   try {
     finiteReport.freshDist = await guardFreshDist({ url: BASE });
     finiteReport.quietBaseline = await quietBaseline(console.error);
@@ -2142,8 +2465,72 @@ async function main() {
     if (contended) {
       console.error(`[export-tile] UNCERTIFIED timing: ${contended}`);
     }
+    const bundleHash = await cache.bundleHash(
+      path.resolve(
+        fileURLToPath(new URL(".", import.meta.url)),
+        "..",
+        "dist",
+        "app",
+      ),
+    );
+    const deviceSigs = new Map();
+    const deviceFor = async (page, wanted) => {
+      if (!deviceSigs.has(wanted)) {
+        deviceSigs.set(wanted, await readDeviceSignature(page, wanted));
+      }
+      return deviceSigs.get(wanted);
+    };
     browser = await launchBrowser();
     let ctx = await createContext(browser);
+    // The decode/diff page: booted once on the app's origin, used for the
+    // device probe (the key's device field) and every PNG byte-compare.
+    decodePage = await ctx.newPage();
+    await decodePage.goto(`${BASE}/?surfacegl`, { waitUntil: "load" });
+    await deviceFor(decodePage, "compute");
+    // The offline key builder: every field is a gate constant or the arm's
+    // own parameters, so the lookup needs no booted page. The edits the
+    // older legs apply after boot are STATED in `raster` (not re-encoded
+    // into the document — persist.ts's encoder is the app's, not this
+    // gate's); the record path asserts the app's own post-edit hash
+    // against that model before putting.
+    const keyFor = (scene, maxRays, watchTransport, finite) => {
+      if (cache.disabled || bundleHash === null) return null;
+      const device = deviceSigs.get("compute");
+      if (!device) return null;
+      return gateKeyFields({
+        bundle: bundleHash,
+        document: scene,
+        pose: null,
+        mode: "surface",
+        engine: "compute",
+        viewport: finite
+          ? {
+              width: FINITE_VIEWPORT.width,
+              height: FINITE_VIEWPORT.height,
+              scale: 1,
+            }
+          : {
+              width: DEFAULT_VIEWPORT.width,
+              height: DEFAULT_VIEWPORT.height,
+              scale: 1,
+            },
+        device,
+        env: {
+          surfacestate: "1",
+          ...(maxRays !== null ? { surfacemaxrays: String(maxRays) } : {}),
+          ...(watchTransport ? { surfacetrace: "1" } : {}),
+        },
+        raster: finite
+          ? { exportScale: 1, samples: finite.samples }
+          : {
+              exportScale: 1,
+              dof: true,
+              background: "haze",
+              backgroundShape: "radial",
+            },
+      });
+    };
+    const cacheCtx = { cache, bundleHash, deviceFor, keyFor };
     check(
       runBoxfold || runTransmission || runFinite,
       `scene selector understood (${scene})`,
@@ -2153,8 +2540,24 @@ async function main() {
       "viewport/sample overrides apply only to an enabled finite leg",
     );
     if (runBoxfold) {
-      const untiled = await runArm(ctx, "untiled", null);
-      const tiled = await runArm(ctx, "tiled", MAX_RAYS);
+      const untiled = await runArm(
+        ctx,
+        "untiled",
+        null,
+        SCENE,
+        false,
+        null,
+        cacheCtx,
+      );
+      const tiled = await runArm(
+        ctx,
+        "tiled",
+        MAX_RAYS,
+        SCENE,
+        false,
+        null,
+        cacheCtx,
+      );
       if (args.out !== undefined && untiled.bytes && tiled.bytes) {
         await mkdir(args.out, { recursive: true });
         await writeFile(`${args.out}/export-untiled.png`, untiled.bytes);
@@ -2173,10 +2576,7 @@ async function main() {
       check(tiled.fitted, "tiled: the live pane fitted under the ceiling");
       check(!untiled.fitted, "untiled: the live pane traced its full raster");
       if (untiled.bytes && tiled.bytes) {
-        const page = await ctx.newPage();
-        await page.goto(`${BASE}/?surfacegl`, { waitUntil: "load" });
-        const diff = await comparePngs(page, untiled.bytes, tiled.bytes);
-        await page.close();
+        const diff = await comparePngs(decodePage, untiled.bytes, tiled.bytes);
         if (diff.other) {
           check(
             false,
@@ -2212,6 +2612,8 @@ async function main() {
           null,
           leg.hash,
           true,
+          null,
+          cacheCtx,
         );
         const tiled = await runArm(
           ctx,
@@ -2219,6 +2621,8 @@ async function main() {
           MAX_RAYS,
           leg.hash,
           true,
+          null,
+          cacheCtx,
         );
         if (args.out !== undefined && untiled.bytes && tiled.bytes) {
           await mkdir(args.out, { recursive: true });
@@ -2245,10 +2649,11 @@ async function main() {
             `(${untiled.transportLines}/${tiled.transportLines} passes)`,
         );
         if (untiled.bytes && tiled.bytes) {
-          const page = await ctx.newPage();
-          await page.goto(`${BASE}/?surfacegl`, { waitUntil: "load" });
-          const diff = await comparePngs(page, untiled.bytes, tiled.bytes);
-          await page.close();
+          const diff = await comparePngs(
+            decodePage,
+            untiled.bytes,
+            tiled.bytes,
+          );
           if (diff.other) {
             check(
               false,
@@ -2386,6 +2791,7 @@ async function main() {
                 authored.hash,
                 true,
                 { ...authored, evidence },
+                cacheCtx,
               );
             } catch (error) {
               evidence.error = error.stack ?? error.message;
@@ -2418,33 +2824,26 @@ async function main() {
           }
           if (CANCEL_ONLY) continue;
           if (images.untiled && images.tiled) {
-            const page = await ctx.newPage();
-            try {
-              const diff = await comparePngs(
-                page,
-                images.untiled,
-                images.tiled,
-              );
-              leg.diff = diff;
+            const diff = await comparePngs(
+              decodePage,
+              images.untiled,
+              images.tiled,
+            );
+            leg.diff = diff;
+            check(
+              !diff.other &&
+                diff.meanDiff === 0 &&
+                diff.maxDiff === 0 &&
+                diff.alphaDifferences === 0,
+              `${preset}: saved tiled/untiled PNG pixels are byte-identical (${JSON.stringify(diff)})`,
+            );
+            for (const [arm, evidence] of Object.entries(leg.arms)) {
               check(
-                !diff.other &&
-                  diff.meanDiff === 0 &&
-                  diff.maxDiff === 0 &&
-                  diff.alphaDifferences === 0,
-                `${preset}: saved tiled/untiled PNG pixels are byte-identical (${JSON.stringify(diff)})`,
+                evidence.bands.every((band) => band.width === diff.width) &&
+                  evidence.bands.reduce((sum, band) => sum + band.height, 0) ===
+                    diff.height,
+                `${preset} ${arm}: completed bands cover the entire downloaded PNG`,
               );
-              for (const [arm, evidence] of Object.entries(leg.arms)) {
-                check(
-                  evidence.bands.every((band) => band.width === diff.width) &&
-                    evidence.bands.reduce(
-                      (sum, band) => sum + band.height,
-                      0,
-                    ) === diff.height,
-                  `${preset} ${arm}: completed bands cover the entire downloaded PNG`,
-                );
-              }
-            } finally {
-              await page.close();
             }
           } else {
             check(false, `${preset}: both Save-PNG arms produced images`);
@@ -2459,6 +2858,8 @@ async function main() {
     finiteReport.checkingErrors.push(error.stack ?? error.message);
     check(false, `checking failure: ${error.message}`);
   } finally {
+    await decodePage?.close().catch(() => {});
+    await cache.prune();
     try {
       await browser?.close();
     } catch (error) {
