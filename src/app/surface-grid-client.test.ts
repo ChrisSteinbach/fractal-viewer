@@ -114,8 +114,24 @@ describe("SurfaceGridClient request()", () => {
     expect(h.posted).toHaveLength(1);
     expect(h.posted[0].id).toBe(1);
     expect(h.posted[0].resolution).toBe(SURFACE_GRID_RESOLUTION); // default
+    expect(h.posted[0].explicit).toBeUndefined(); // measured flow, not a pin
     expect(h.client.busy).toBe(true);
     expect(h.grids).toHaveLength(0);
+  });
+
+  it("threads an explicit pin to the posted request and survives the pending slot", () => {
+    const h = harness();
+
+    // Parked behind a first physical request: the pin must survive the
+    // latest-wins handoff, not just the immediate post.
+    h.client.request(de);
+    h.client.request(de, 48, [], [], { explicit: true });
+
+    expect(h.posted.map((request) => request.id)).toEqual([1]);
+    h.deliverResult(fakeResult(1));
+    expect(h.posted.map((request) => request.id)).toEqual([1, 2]);
+    expect(h.posted[1].resolution).toBe(48);
+    expect(h.posted[1].explicit).toBe(true);
   });
 
   it("delivers the built grid to onGrid with the result's fields intact", () => {

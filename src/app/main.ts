@@ -295,6 +295,7 @@ import {
   effectiveSurfaceSamples,
   parseSurfaceSamplesOverride,
 } from "./surface-sampling";
+import { parseSurfaceGridOverride } from "./surface-grid-pin";
 import { bundledEmitterShape } from "./bundled-shapes";
 import { defaultAuthoredShape } from "./authored-shape";
 import {
@@ -851,6 +852,10 @@ async function main(): Promise<void> {
   const surfaceSamplesOverride = parseSurfaceSamplesOverride(
     window.location.search,
   );
+  // The empty-space grid's diagnostics levers (?surfacegrid=0 refuses the
+  // grid; ?surfacegridres=N pins the build's resolution explicit), consumed
+  // at the one request site below.
+  const surfaceGridOverride = parseSurfaceGridOverride(window.location.search);
   const effectiveSurfaceSettleSamples = (): number =>
     effectiveSurfaceSamples(
       state.surface.antialiasSamples,
@@ -7254,15 +7259,22 @@ async function main(): Promise<void> {
                   buildBalloon(de, state.balloonRadius),
                   surfaceGridSpec(de).halfExtent,
                 ));
-            if (gridValidAtEntry) {
+            if (gridValidAtEntry && !surfaceGridOverride.refuse) {
               const document = currentDocument();
               const meshAssets = customMeshWires(document);
               const meshBakes = customMeshBakeWires(document);
               surfaceGrid.request(
                 de,
-                undefined,
+                surfaceGridOverride.resolution ?? undefined,
                 meshAssets.length > 0 ? meshAssets : undefined,
                 meshBakes.length > 0 ? meshBakes : undefined,
+                // A pinned resolution is explicit: the worker skips its
+                // measured pilot slab and builds exactly this grid, so the
+                // pin holds across boots instead of being re-downshifted
+                // from wall-clock jitter.
+                surfaceGridOverride.resolution !== null
+                  ? { explicit: true }
+                  : undefined,
               );
             } else {
               surfaceGrid.cancel();
@@ -13202,6 +13214,12 @@ async function main(): Promise<void> {
         firstFrame: surfaceSession.hasFirstFrame,
         settled: completed,
         settlePending: surfaceSettlePending,
+        // The installed empty-space grid's identity (resolution, halfExtent,
+        // live enabled flag) — which grid was actually built is the fact a
+        // boot-to-boot determinism investigation reads, and the worker's
+        // pilot may deliver a resolution the request only named as a
+        // ceiling. Null while none is installed (gridless marching).
+        grid: inSurface ? scene.surfaceGridInfo : null,
         previewActive:
           compute !== null
             ? surfaceComputePreviewFlight || surfaceComputePreviewPending

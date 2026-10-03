@@ -93,6 +93,7 @@ interface PendingSurfaceGridRequest {
   readonly id: number;
   readonly de: SurfaceDE;
   readonly resolution: number;
+  readonly explicit: boolean;
   readonly meshAssets?: readonly SerializedPreparedMeshAsset[];
   readonly meshBakes?: readonly SerializedMeshSdfBake[];
 }
@@ -150,18 +151,31 @@ export class SurfaceGridClient {
    * `resolution`/`halfExtent` (see {@link SurfaceGridClientDeps.onGrid})
    * reflect what was actually built and are the authoritative values —
    * never the `resolution` passed here.
+   *
+   * `opts.explicit` lifts the ceiling to a promise: the worker skips the
+   * pilot and builds exactly at `resolution`. A caller that already sized
+   * its build — the `?surfacegridres` diagnostics pin — does not want the
+   * pilot's wall-clock jitter deciding for it.
    */
   request(
     de: SurfaceDE,
     resolution: number = SURFACE_GRID_RESOLUTION,
     meshAssets?: readonly SerializedPreparedMeshAsset[],
     meshBakes?: readonly SerializedMeshSdfBake[],
+    opts?: { explicit?: boolean },
   ): void {
     if (this.worker === null) this.worker = this.spawnWorker();
     if (this.worker === null) return;
     const id = this.nextId++;
     this.outstandingId = id;
-    const request = { id, de, resolution, meshAssets, meshBakes };
+    const request = {
+      id,
+      de,
+      resolution,
+      explicit: opts?.explicit === true,
+      meshAssets,
+      meshBakes,
+    };
     if (this.inFlightId !== null) {
       this.pending = request;
       return;
@@ -211,6 +225,7 @@ export class SurfaceGridClient {
       id: request.id,
       de: request.de,
       resolution: request.resolution,
+      ...(request.explicit ? { explicit: true } : {}),
       ...(activeIds.length === 0 ? {} : { meshAssetIds: activeIds }),
       ...(postedAssets === undefined || postedAssets.length === 0
         ? {}

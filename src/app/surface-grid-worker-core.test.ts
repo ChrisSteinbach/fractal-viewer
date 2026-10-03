@@ -327,7 +327,27 @@ describe("the pilot slab and downshift ladder", () => {
     // Not pinning an exact call count — that would over-fit the
     // implementation's internal timing calls — only that the injected
     // clock is genuinely consulted at least twice (before and after the
-    // pilot slab).
+    // pilot), which is what distinguishes "measured" from "guessed".
     expect(calls).toBeGreaterThanOrEqual(2);
+  });
+
+  it("an explicit request builds exactly at the resolution and never consults the pilot", () => {
+    const de = buildSurfaceDE(sierpinskiTetrahedron());
+    const req = request({ de, resolution: 48, explicit: true });
+    // The same huge clock that forces the measured flow down to 32: an
+    // explicit request must ignore it, both in the timing calls it makes
+    // (none — the pilot is skipped entirely) and in the resolution it
+    // delivers (48, matching a one-shot build bit-for-bit).
+    let calls = 0;
+    const now = () => {
+      calls += 1;
+      return calls === 1 ? 0 : 10_000_000;
+    };
+
+    const result = buildSurfaceGridResult(req, now);
+
+    expect(result.resolution).toBe(48);
+    expect(result.values).toEqual(buildSurfaceGrid(de, 48).values);
+    expect(calls).toBe(0);
   });
 });
