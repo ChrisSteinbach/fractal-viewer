@@ -298,12 +298,14 @@ What the helper owns:
 The store deliberately takes no side on what a hit replays; the wired gates
 choose, and the choices are the interesting part:
 
-| gate                      | cached product(s)                                     | hit semantics                                                                                                                                                                                                                                                                                                                                          |
-| ------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `surface-repro`           | one settled frame per scenario (pinned pose only)     | RE-DIFF: a hit renders ONE fresh load and byte-diffs it against the recorded frame — cross-session determinism, stronger than the original within-run pairs. A collision (fresh ≠ cached under an exact key) is a miss: full runs, re-record.                                                                                                          |
-| `finish`                  | both legs' captures per stage (stage rides `raster`)  | FULL REPLAY: both legs hit at a common stage → no boot, no settle; the verdict recomputes from the recorded bytes every run, so a replayed FAIL is as honest as a live one and `--floor`/`--stage` changes re-verdict from the same frames.                                                                                                            |
-| `sphere-inversion-family` | menu frame, export, tiled export, gl frame per preset | REPLAY + LIVE MIX: the frame and the probe-derived metadata (engine, census, tile counts) replay; the menu/boot interactions, document checks, LINK HOPS' settles and toast/refusal phases stay live. The hops' byte-for-byte claims are fresh-hop-vs-recorded-menu compares, never cached-vs-cached.                                                  |
-| `surface-4d-lift`         | the THICK frame of the three cover scenes             | SKIP ONE SETTLE: the drive machinery (row availability, landed, latch-clear) and the zero-thickness identity (fresh entry vs fresh reset) stay live; only the expensive h=0.2 cover settle is skipped. The reset drive's latch-clear, which a skipped h=0.2 settle would make vacuous, is carried by its completed h=0 settle plus the identity check. |
+| gate                      | cached product(s)                                     | hit semantics                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `surface-repro`           | one settled frame per scenario (pinned pose only)     | RE-DIFF: a hit renders ONE fresh load and byte-diffs it against the recorded frame — cross-session determinism, stronger than the original within-run pairs. A collision (fresh ≠ cached under an exact key) is a miss: full runs, re-record.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `finish`                  | both legs' captures per stage (stage rides `raster`)  | FULL REPLAY: both legs hit at a common stage → no boot, no settle; the verdict recomputes from the recorded bytes every run, so a replayed FAIL is as honest as a live one and `--floor`/`--stage` changes re-verdict from the same frames.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `sphere-inversion-family` | menu frame, export, tiled export, gl frame per preset | REPLAY + LIVE MIX: the frame and the probe-derived metadata (engine, census, tile counts) replay; the menu/boot interactions, document checks, LINK HOPS' settles and toast/refusal phases stay live. The hops' byte-for-byte claims are fresh-hop-vs-recorded-menu compares, never cached-vs-cached.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `surface-4d-lift`         | the THICK frame of the three cover scenes             | SKIP ONE SETTLE: the drive machinery (row availability, landed, latch-clear) and the zero-thickness identity (fresh entry vs fresh reset) stay live; only the expensive h=0.2 cover settle is skipped. The reset drive's latch-clear, which a skipped h=0.2 settle would make vacuous, is carried by its completed h=0 settle plus the identity check.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `surface-export-tile`     | each saved-png arm's export, whole arm                | FULL-ARM REPLAY: a hit skips boot, settle, DoF dance and Save-PNG together. The key is built OFFLINE (the boot scene string; the arm's presentation edits stated in `raster` — the arms mutate the persisted document after boot, the recon's named hazard — and the record path asserts the app's own post-edit hash against that model before putting, so a drifted model is a loud no-record, never a false hit). Every check re-runs over the recorded session observables; the paired tiled-vs-untiled identity compares DIFFERENT keys' bytes, so it recomputes soundly from cached bytes alone. The cancellation/memory arms and the finite leg's Full HD timing qualification stay unwired (the eligibility boundary: timings measured against the live session). The finite leg's 4D preset re-authors per run — its `fourD.sliceCenter` is a cloud-derived fraction that drifts with the menu authoring's fresh seed — so glassMenger4's arms re-render cold most runs while glassMenger (3D, no such field) replays. |
+| `surface-slab-4d`         | the THICK frame + the THICK export of the one fixture | REPRO SHAPE: a hit skips the h=0.2 cover settle AND its Save-PNG (a live save's awaitReady would wait the skipped settle right back, so the export entry is what makes the collapse pay) — the two h=0.2 settles become one. The drive machinery and the share-link reload dance stay live; the identity is FRESH-reload-vs-RECORDED-thick (one side fresh; a hit-path identity failure is a FAIL naming the collision suspect, `--force` re-records); the capture row's discrimination recomputes from the different-key bytes. capZero and the explorer's capPoints stay live — the row's live anchors.                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 The self-consistency rule the table encodes: a verdict that compares two
 renders of the SAME key (repro's determinism, the lift's zero-thickness
@@ -343,12 +345,49 @@ the bytes comparable.
   record, and fabricating one would be the misuse the store's PNG-magic
   gate exists to prevent.
 
-Not wired yet, with their hazards named: `surface-export-tile` (its arms
-mutate live state — DoF and the background shape — before Save-PNG, so the
-key must read the mutated document or encode the edits; the recon called
-this the single most likely silent-key bug) and `surface-slab-4d` (its
-share-link reload dance mixes lifecycle with byte-identity; wireable with
-the repro shape). The helper makes either a focused follow-up.
+- `surface-export-tile --scene=boxfold` (headless SwiftShader, the gate's
+  default mode, 2026-10-03): cold 18.8 min → warm **2.8s** (both arms
+  replayed, every check re-asserted, the paired identity recomputed from
+  cached bytes at mean 0.0000/max 0). The honest composition of the cold
+  wall on THIS box: untiled settle 395.4s + export 324.7s, tiled settle
+  48.3s + export 325.0s — this box's SwiftShader runs the recorded box's
+  111s untiled settle at ~3.5x, which is why the gate grew `--settle`/
+  `--capture` overrides (the slab gate's sibling convention) rather than
+  a silently raised constant. The wiring's own hazards were exercised:
+  the first wiring run's model assertion REFUSED both puts (the
+  app's post-edit document materializes decoder defaults and refits the
+  camera on the cloud regeneration any edit triggers — textually wider
+  than boot+edits by design), the key's raster-stated edit model stayed,
+  and the second cold run recorded both arms and replayed them whole.
+  Poisoned-entry note: the slab gate's corrupted-PNG probe also applies
+  here — a corrupt cached PNG fails in the page's decoder (exit 1,
+  harness class) rather than as a verdict; only decodable collisions
+  reach the verdict path.
+
+- `surface-export-tile --scene=finite --display=:0` (real driver,
+  2026-10-03): cold ≈ 5.5 min → warm 4m0s — the honest split: glassMenger
+  (3D) replayed both arms (its authored document is stable); glassMenger4
+  re-authored per run (its `fourD.sliceCenter` fraction drifts with the
+  menu authoring's fresh cloud seed — the app's own documented behavior,
+  not the wiring's) and re-rendered (exports 58s/94s live). The finite
+  leg's band accounting and transport checkpoints replayed for
+  glassMenger, re-checked over the recorded band objects.
+
+- `surface-slab-4d --display=:0` (real driver, 2026-10-03): full 12.5s
+  cold → 11.3s warm (both hits, the fresh-reload-vs-recorded-thick
+  identity at max 0 — cross-session byte-exactness, the stronger form);
+  the capture row's discrimination read 0.1046/0.5093 on every run, live
+  and replayed alike; fast tier 14.3s cold → 12.7s warm with its OWN
+  entries (the tier params in env separate them — the env-key rule held)
+  and the pilot agreeing both runs; `--force` re-recorded under the same
+  key hashes. The collapse pays on the Iris-class machines the gate's
+  300s budgets were sized against (~60 s/sample cover settles), where the
+  skipped h=0.2 settle + export is the run's dominant term.
+
+- The transmission legs (`--scene=transmission`) run the same shared
+  runArm path as boxfold (their only deltas are the `surfacetrace` env
+  flag and the transportLines metadata) and were left unmeasured —
+  disclosed, not claimed.
 
 ### The stale-gate fix the wiring surfaced
 
@@ -449,8 +488,8 @@ that stopped tracking the full one is a lying green line. Where the gate
 caches menu frames, the pilot's frame is recorded under its FULL-tier key
 (the env field separates the tiers), re-anchoring the cache's fast-vs-full
 correspondence each fast run; where the gate's cache is specialized (the
-lift gate's thick-frames-only contract) or absent (the slab gate), the
-pilot is live-only and the gate header says so. The per-assertion tier
+lift and slab gates' thick-frames-only contracts), the pilot is live-only
+and the gate header says so. The per-assertion tier
 disclosure is the honesty rule: every PASS/FAIL line carries
 `tier=<label>`, and the run header states the raster knobs — a green fast
 line is never mistakable for a full-quality pass.
