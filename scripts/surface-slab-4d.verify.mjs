@@ -88,18 +88,55 @@
  * (scripts/lib/fast-tier.mjs), disclosed in the verdict line and FAILING
  * the run on a divergence. The gate's own full pass stays exactly as
  * recorded and remains the capture-row record; every verdict line carries
- * `tier=<label>`. Not frame-cache-wired (see docs/gate-velocity.md's
- * unwired list), so the pilot touches no store here. MEASURED (AMD RX
- * 7900 XTX, real driver --display=:0, 2026-10-02): full 12.1s -> fast
- * 14.0s — a small LOSS on this box (the full pass is already cheap here
- * and the pilot's anchor costs ~2s); the fast tier is for the
- * settle/export-dominated machines the 300s budgets were sized against,
- * and it does not pretend to win everywhere. The measured discrimination
- * numbers are byte-identical across tiers (0.1046/0.5093 — the 64px
- * downscale erases the raster difference), both tiers' reload identities
- * read maxDelta 0, and the pilot agreed.
+ * `tier=<label>`. The pilot is LIVE-ONLY (it records no frame-cache entry
+ * — its full-tier entry phase is the correspondence anchor, not cached
+ * evidence). MEASURED (AMD RX 7900 XTX, real driver --display=:0,
+ * 2026-10-02): full 12.1s -> fast 14.0s — a small LOSS on this box (the
+ * full pass is already cheap here and the pilot's anchor costs ~2s); the
+ * fast tier is for the settle/export-dominated machines the 300s budgets
+ * were sized against, and it does not pretend to win everywhere. The
+ * measured discrimination numbers are byte-identical across tiers
+ * (0.1046/0.5093 — the 64px downscale erases the raster difference), both
+ * tiers' reload identities read maxDelta 0, and the pilot agreed.
+ *
+ * THE FRAME CACHE (wired 2026-10-03, scripts/lib/frame-cache-gate.mjs,
+ * docs/gate-velocity.md): the REPRO SHAPE the unwired-list note projected.
+ * Two products per run, one settle collapsed. (1) The THICK FRAME — the
+ * completed h=0.2 cover settle's canvas shot — is memoized under the exact
+ * key (bundle, the gate's re-framed fixture hash as the document, the
+ * driven thickness as the pose, samples + tier params in env, device,
+ * engine). (2) The THICK EXPORT — the h=0.2 Save-PNG — is memoized under
+ * the same key but a `save-png` raster product, because a cached canvas
+ * frame alone cannot skip the settle: the Save-PNG's awaitReady would wait
+ * the settle it skipped right back. On a hit the DRIVE machinery stays
+ * live in both paths (the drive itself, the invalidation poll, the
+ * share-link copy, the real reload, the slider reads, boot mode) and the
+ * identity becomes FRESH-reload-vs-RECORDED-thick — one side fresh, per
+ * the self-consistency rule — which is also what collapses the two h=0.2
+ * settles to one: the live thick settle is skipped, the reload settle
+ * runs. The capture row's discrimination recomputes from the (different
+ * key) bytes; capZero and the explorer's capPoints stay live — they are
+ * the row's live anchors and cheap at h=0. A hit-path identity failure is
+ * a FAIL naming the cached side (`--force` re-records); the compute
+ * renderer is bit-reproducible once settled, so a fresh-vs-recorded
+ * disagreement under an exact key is a real defect or a poisoned entry,
+ * both worth the red line. The frame is recorded only from a completed
+ * settle whose engine matches the key's. `--force` never looks up; a
+ * store error degrades the run to uncached and is noted once, never
+ * fatal. MEASURED (AMD RX 7900 XTX, real driver --display=:0, 2026-10-03,
+ * machine-quiet): full 12.5s cold -> 11.3s warm (both hits, identity max 0
+ * against the recorded frame); fast 14.3s cold -> 12.7s warm (its own
+ * entries — the tier params in env separate them; the pilot agreed both
+ * runs); --force re-records under the same key hashes. The capture row's
+ * discrimination read 0.1046/0.5093 on every run, live and replayed
+ * alike. The settle collapse pays on the Iris-class machines the 300s
+ * budgets were sized against (~60 s/sample cover settles), where the hit
+ * skips the run's dominant term.
  */
 import { readFile } from "node:fs/promises";
+import path from "node:path";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
 import {
@@ -108,6 +145,11 @@ import {
   tierLabel,
   tierUrlParams,
 } from "./lib/fast-tier.mjs";
+import {
+  createFrameCache,
+  gateKeyFields,
+  readDeviceSignature,
+} from "./lib/frame-cache-gate.mjs";
 import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
 import { COVER4_POSED_HASH } from "./lib/surface-cover-scene.mjs";
 
@@ -125,6 +167,7 @@ function parseArgs(argv) {
     settleMs: DEFAULT_SETTLE_MS,
     captureMs: DEFAULT_CAPTURE_MS,
     tier: parseTierArg(argv),
+    force: false,
   };
   for (const raw of argv) {
     const [key, value] = raw.replace(/^--/, "").split("=");
@@ -132,6 +175,8 @@ function parseArgs(argv) {
     else if (key === "display") out.display = value ?? ":0";
     else if (key === "settle" && value) out.settleMs = Number(value);
     else if (key === "capture" && value) out.captureMs = Number(value);
+    else if (key === "force")
+      out.force = value === undefined || value !== "false";
   }
   return out;
 }
@@ -379,6 +424,23 @@ async function run() {
   // both tiers; the cap also bands the three exports, all three alike.
   await guardFreshDist({ url: args.url });
   const sceneHash = gateSceneHash();
+  // The frame cache (docs/gate-velocity.md): declared beside the browser so
+  // the run's finally can prune; one bundle hash and one device-signature
+  // memo per run. The device probe asks the BROWSER from the session page
+  // (the app's origin — a secure context — after its first goto).
+  const cache = createFrameCache({
+    gate: "surface-slab-4d",
+    force: args.force,
+    log: (line) => console.error(line),
+  });
+  const bundleHash = await cache.bundleHash(
+    path.resolve(
+      fileURLToPath(new URL(".", import.meta.url)),
+      "..",
+      "dist",
+      "app",
+    ),
+  );
   const flags = [
     "--enable-unsafe-webgpu",
     "--enable-features=Vulkan",
@@ -443,6 +505,41 @@ async function run() {
       { waitUntil: "load" },
     );
     await waitLatch(page);
+    // The key's device field asks the BROWSER which adapter it renders
+    // with — probed once per engine, memoized for the run.
+    const deviceSigs = new Map();
+    const deviceFor = async (wanted) => {
+      if (!deviceSigs.has(wanted)) {
+        deviceSigs.set(wanted, await readDeviceSignature(page, wanted));
+      }
+      return deviceSigs.get(wanted);
+    };
+    // The thick products' key, built in ONE construction used by lookup and
+    // record both: the gate's re-framed fixture hash as the document (the
+    // page booted it; the drive persists the thickness into the session's
+    // fourD pose — the share-link payload is the proof — so the driven
+    // thickness rides the pose field), samples and tier params in env (the
+    // env-key rule), and the product (settled canvas vs its Save-PNG
+    // export, whose DoF comes from the capture pipeline, not the document)
+    // in raster.
+    const envFor = {
+      surfacestate: "1",
+      surfacesamples: "1",
+      ...tierUrlParams(args.tier),
+    };
+    const keyFieldsFor = async (pose, raster) =>
+      cache.disabled || bundleHash === null
+        ? null
+        : gateKeyFields({
+            bundle: bundleHash,
+            document: sceneHash,
+            pose,
+            engine: "compute",
+            viewport: { width: 1024, height: 640, scale: 1 },
+            device: await deviceFor("compute"),
+            env: envFor,
+            raster,
+          });
     // The explorer's own capture, same export pipeline, same camera — the
     // wrong-subject reference.
     const capPoints = await savePng(page, args.captureMs);
@@ -460,10 +557,104 @@ async function run() {
 
     const drove = await driveThickness(page, 0.2);
     const invalidated = await waitInvalidation(page);
-    const thick = await waitSettle(page, args.settleMs);
-    const thickEngine = thick.state ? thick.state.engine : null;
-    const thickShot = await canvasShot(page);
-    const capThick = await savePng(page, args.captureMs);
+    // THE FRAME CACHE, the repro shape: the thick canvas frame's lookup
+    // runs before the settle it stands in for; on a hit the h=0.2 settle
+    // is SKIPPED (this collapse is the wiring's whole point) and the
+    // recorded frame answers DRAW and the identity's recorded side. The
+    // drive's own observations (landed, invalidated) stay live in both
+    // paths, and the reload settle below stays live — the fresh side of
+    // the fresh-vs-recorded identity compare.
+    const thickFields = await keyFieldsFor(
+      { sliceThickness: 0.2 },
+      { product: "canvas", dof: false },
+    );
+    const thickHit =
+      drove && invalidated && thickFields
+        ? await cache.lookup(thickFields, "thick@0.2")
+        : null;
+    let thickShot = null;
+    let thickSettled = false;
+    let thickEngine = null;
+    let thickCached = false;
+    if (thickHit) {
+      thickCached = true;
+      thickShot = thickHit.png;
+      thickSettled = true;
+      thickEngine =
+        (thickHit.entry.verdict && thickHit.entry.verdict.engine) || null;
+      console.error(
+        `[frame-cache] thick@0.2: settle skipped — frame recorded ` +
+          `${new Date(thickHit.entry.meta.createdAtMs).toISOString()}`,
+      );
+    } else {
+      const thick = await waitSettle(page, args.settleMs);
+      thickSettled = thick.settled;
+      thickEngine = thick.state ? thick.state.engine : null;
+      if (thickSettled) thickShot = await canvasShot(page);
+      // Recorded only from a completed settle whose engine matches the
+      // key's (fold-4D is compute-only, so anything else is a session
+      // the run's own engine column already fails).
+      if (
+        thickSettled &&
+        thickShot &&
+        thickFields &&
+        thickEngine === "compute"
+      ) {
+        await cache.record(thickFields, {
+          scenario: "thick@0.2",
+          png: thickShot,
+          verdict: { engine: thickEngine },
+          wallMs: thick.ms,
+        });
+      }
+    }
+    // The THICK EXPORT is memoized too, under the same document/pose but a
+    // save-png raster product: on a thick-frame hit a LIVE Save-PNG would
+    // wait the skipped settle right back through the app's own awaitReady,
+    // so the settle collapse only pays if this save replays as well. The
+    // cached-path miss still saves live (the app's awaitReady completes
+    // the settle inside the save) and records, so the store fills over a
+    // run or two of --force-free reruns.
+    const capThickScale = await page.evaluate(() =>
+      Number(document.getElementById("exportScale")?.value),
+    );
+    const capThickFields = await keyFieldsFor(
+      { sliceThickness: 0.2 },
+      { product: "save-png", dof: true, exportScale: capThickScale },
+    );
+    const capThickHit = capThickFields
+      ? await cache.lookup(capThickFields, "thick@0.2 export")
+      : null;
+    let capThick = null;
+    let capThickCached = false;
+    if (capThickHit) {
+      capThickCached = true;
+      capThick = capThickHit.png;
+      console.error(
+        `[frame-cache] thick@0.2 export: Save-PNG skipped — recorded ` +
+          `${new Date(capThickHit.entry.meta.createdAtMs).toISOString()}`,
+      );
+    } else if (drove && invalidated) {
+      capThick = await savePng(page, args.captureMs);
+      if (capThick && capThickFields) {
+        // The put gate is the save's own contract, not this gate's wait:
+        // Save-PNG's awaitReady completed (the bytes exist), and the
+        // session's engine — read after the save — matches the key's.
+        const settledState = await page.evaluate(
+          () => window.__surfaceState?.() ?? null,
+        );
+        if (settledState && settledState.engine === "compute") {
+          await cache.record(capThickFields, {
+            scenario: "thick@0.2 export",
+            png: capThick,
+            verdict: { engine: settledState.engine },
+            notes: thickCached
+              ? "canvas frame was cached; settle completed inside the save"
+              : undefined,
+          });
+        }
+      }
+    }
 
     // ── The share link, then a REAL reload ─────────────────────────────
     await page.evaluate(() => {
@@ -519,7 +710,7 @@ async function run() {
     const identity = await sceneDiff(page, thickShot, reloadShot);
 
     const entryOk = entry.entered && entry.settled;
-    const thickOk = drove && invalidated && thick.settled;
+    const thickOk = drove && invalidated && thickSettled;
     const captureOk =
       capThickVsZero !== null &&
       capThickVsPoints !== null &&
@@ -563,7 +754,16 @@ async function run() {
         `modeAfterReload=${String(reloadMode)} ` +
         `slider=${String(sliderBefore)}->${String(sliderAfter)} ` +
         `identity=changed ${(identity.changedFraction * 100).toFixed(4)}% max ${identity.maxDelta} ` +
-        `(crop ${identity.width}px) settle=${String(reload.settled)}\n`,
+        `(crop ${identity.width}px) settle=${String(reload.settled)} ` +
+        `thickFrame=${thickCached ? "CACHED" : "live"} ` +
+        `thickExport=${capThickCached ? "CACHED" : "live"}` +
+        // On a cached thick side an identity failure is a fresh-vs-recorded
+        // collision under an exact key — a real defect or a poisoned entry;
+        // the marker tells the operator which --force re-records.
+        (thickCached && identity.maxDelta !== 0
+          ? " <-- collision suspect"
+          : "") +
+        "\n",
     );
 
     // THE PILOT (fast runs only): one full-resolution sample — the
@@ -612,6 +812,7 @@ async function run() {
       }
     }
   } finally {
+    await cache.prune();
     await browser.close();
   }
   process.exit(failed ? 3 : 0);
