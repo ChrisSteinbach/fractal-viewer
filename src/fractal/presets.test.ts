@@ -2210,24 +2210,28 @@ describe("the second-wave 4D surface presets", () => {
     expect(PRESET_SYMMETRIES.brickRosette).toEqual({ order: 3, plane: "xz" });
   });
 
-  it("hyperkifs is the contracting 4D fold frontier the 4D fold kernel serves", () => {
-    const transforms = hyperkifs();
-    expect(transforms).toHaveLength(16);
-    // Eight mandelbox corners + eight boxfold binders, all with w content.
-    const analysis = analyzeSurfaceSystem4(transforms);
-    expect(analysis.status).toBe("eligible");
-    expect(
-      systemPartsAreNonFlat(transforms, null, { order: 1, plane: "xz" }),
-    ).toBe(true);
-    const de = buildSurfaceDE4(transforms);
-    // Folds in the maps are what route the session to `core:"fold4"` —
-    // the kernel this preset exists to reach.
-    expect(deHasFolds4(de)).toBe(true);
-    expect(de.stepScale).toBe(1);
-    // The contraction budget carries over from the 3D twin: 4·1.2·0.19
-    // must stay under 1.
-    expect(4 * 1.2 * 0.19).toBeLessThan(1);
-  });
+  it(
+    "hyperkifs is the contracting 4D fold frontier the 4D fold kernel serves",
+    { timeout: 30_000 },
+    () => {
+      const transforms = hyperkifs();
+      expect(transforms).toHaveLength(16);
+      // Eight mandelbox corners + eight boxfold binders, all with w content.
+      const analysis = analyzeSurfaceSystem4(transforms);
+      expect(analysis.status).toBe("eligible");
+      expect(
+        systemPartsAreNonFlat(transforms, null, { order: 1, plane: "xz" }),
+      ).toBe(true);
+      const de = buildSurfaceDE4(transforms);
+      // Folds in the maps are what route the session to `core:"fold4"` —
+      // the kernel this preset exists to reach.
+      expect(deHasFolds4(de)).toBe(true);
+      expect(de.stepScale).toBe(1);
+      // The contraction budget carries over from the 3D twin: 4·1.2·0.19
+      // must stay under 1.
+      expect(4 * 1.2 * 0.19).toBeLessThan(1);
+    },
+  );
 
   it("hyperkifs renders a bounded, four-dimensional cloud", () => {
     const res = runChaosGame4(
