@@ -29,6 +29,25 @@ import type { Vec3 } from "./types";
  * pilot slab ({@link pickSurfaceGridResolution}) instead of trusting the
  * default resolution to be affordable.
  *
+ * DIAGNOSTICS LEVERS (`surface-grid-pin.ts`, parsed in `main.ts`): the
+ * pilot's decision is a WALL-CLOCK measurement taken while the main thread
+ * is hot at session enter, so which rung a boot lands on is load-sensitive
+ * — measured in the wild at res 32 on one boot and 48 on another of the
+ * same request (Iris Xe), and every rung changes the march's skip regime
+ * near creases, so the settled frame's grain follows it. Two URL levers
+ * exist for holding the grid constant across boots in a determinism
+ * investigation: `?surfacegrid=0` refuses the grid outright (the A/B arm
+ * that separates skip-regime variance from everything else), and
+ * `?surfacegridres=N` pins the build's resolution `explicit`, so the
+ * worker skips the pilot and builds exactly that grid. The built grid's
+ * `{resolution, halfExtent, enabled}` rides the `?surfacestate` probe
+ * (`scene.ts`'s `surfaceGridInfo`) so a run's report records which grid
+ * was actually traced. The pilot's flip window is narrow on a quiet
+ * machine — a serial A/B at every regime measured byte-identical
+ * cross-boot on the RX 7900 XTX — but the levers stay, because a
+ * boot-to-boot trace difference that is NOT the grid has to be split from
+ * one that is.
+ *
  * VALIDITY. Every cell `C` stores a lower bound on `dist(p, A)` good for
  * EVERY point `p` inside `C`, not just its center `c` — a marcher may step
  * by the stored value from anywhere in the cell without crossing the

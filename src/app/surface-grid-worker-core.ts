@@ -161,6 +161,14 @@ export interface SurfaceGridRequest {
    * it downshifts (see the module doc); the result's `resolution` is the
    * one actually built. */
   resolution: number;
+  /** Build exactly at `resolution`, skipping the measured pilot slab —
+   * an explicit resolution is never second-guessed. The pilot exists to
+   * price an UNMEASURED build; a caller that already sized its own build
+   * (the `?surfacegridres` diagnostics pin) does not want the pilot's
+   * wall-clock jitter deciding for it. Absent means the default
+   * measure-and-downshift flow, byte-identical to every request that
+   * predates the field. */
+  explicit?: boolean;
 }
 
 /** Worker -> main thread: the built grid, tagged with the request's id. */
@@ -173,7 +181,9 @@ export interface SurfaceGridResult {
 
 /**
  * Build one grid — the pure request -> result function both the real worker
- * (`surface-grid-worker.ts`) and tests run. The module doc's pilot flow:
+ * (`surface-grid-worker.ts`) and tests run. An `explicit` request skips the
+ * pilot entirely and one-shots `buildSurfaceGrid` at the requested
+ * resolution. Otherwise the module doc's pilot flow:
  * mid z-layer of the requested cube first, timed with `now` (injected for
  * tests; defaults to `performance.now`, which Workers have), then either
  * finish the same array (no downshift — the pilot layer is kept) or run
@@ -193,6 +203,9 @@ export function buildSurfaceGridResult(
   );
 
   const { de, resolution } = request;
+  if (request.explicit === true) {
+    return { id: request.id, ...buildSurfaceGrid(de, resolution) };
+  }
   const spec = surfaceGridSpec(de, resolution);
   const values = new Float32Array(resolution * resolution * resolution);
   const pilotZ = resolution >> 1;

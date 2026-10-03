@@ -312,6 +312,45 @@ renders the collection thumbnail through the sync drain in 2.5s (main:
 `scripts/capture-export.verify.mjs` is the gate for this behavior;
 `scripts/capture-drain.verify.mjs` is the measurement harness beside it.
 
+## The thumbnail re-presents the settled mean (WebGL arm)
+
+Since the settle supersamples, the pane shows an N-pass mean while the
+thumbnail's synchronous full-frame re-trace draws a 1-SAMPLE frame — visibly
+grainier — and presents it over the pane. With the centered wrapper a no-op
+(inset 0: any phone-class or gate viewport) there is no invalidation to heal
+it, so the pane stayed degraded until the next edit; with an in-flight settle
+the re-trace's abandon trio killed it outright. Measured on the RX 7900 XTX
+(256px, 8 samples): after every ★ save the canvas read 2.035/255 mean over
+22.5% of pixels against the settled frame it had shown a second earlier —
+the cinematic-lighting gate's `hashRestore` pair is exactly one of these
+saves, and its compute-row control measured exactly 0 because the compute
+thumbnail path already re-presented (see `captureThumbnail`'s compute
+branch).
+
+The diagnosis ladder is on record because it refuted two plausible suspects
+before landing: the settle latch reporting settled mid-AA was refuted twice
+(instrumented: settled fires once at 8/8, byte-stable +5s; and a
+same-document cross-boot A/B measured byte-identical in every grid regime);
+the grid pilot's wall-clock downshift does flip boot-to-boot under load
+(res 32 vs 48 on Iris, the wild observation that motivated the levers) but
+was NOT this failure's seed — the failing pair traced identical res-48
+grids with identical covered censuses. The trigger was isolated by
+replicating the gate flow and moving ONE step: the gate screenshots the
+restored session AFTER its save, and the save was the thing that repainted
+the pane.
+
+The fix: the WebGL surface thumbnail re-presents the settled mean — the
+compute arm's own discipline one engine over — gated on the settled census
+being current (non-null exactly until a superseding invalidation abandons
+it) and on no capture owning the tracer; the pre-supersampling trace stays
+the fallback for a pose the mean doesn't cover (a save taken mid-preview or
+before pass 0 folded). Unit tests: `scene-surface-thumbnail.test.ts`. The
+bisect levers this investigation added — `?surfacegrid=0` (refuse the grid),
+`?surfacegridres=N` (pin the build's resolution explicit, skipping the
+pilot) and the built grid's `{resolution, halfExtent, enabled}` on the
+`?surfacestate` probe — are the grid's own, documented in
+`fractal/surface-grid.ts`'s module doc.
+
 ## Cost ceilings, and why the interactive path has none
 
 Cost ceilings belong to the SYNCHRONOUS drain alone — offline export and

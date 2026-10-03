@@ -1267,6 +1267,12 @@ export class FractalScene {
    * predicate against it at every balloon change — the grid itself never
    * moves, only `R` does. `null` exactly when no grid is installed. */
   private surfaceGridHalfExtent: number | null = null;
+  /** The installed grid's per-axis cell count, kept beside the texture for
+   * {@link surfaceGridInfo} — the worker may deliver a downshifted
+   * resolution the request only named as a ceiling, and which grid was
+   * actually built is the fact a boot-to-boot determinism investigation
+   * reads. `null` exactly when no grid is installed. */
+  private surfaceGridResolution: number | null = null;
   /** The surface balloon: the DE ball of the INSTALLED surface system —
    * balloonBall(de) for IFS systems, the origin-centered bailout ball for
    * escape systems — recorded by {@link setSurfaceSystem} and {@link
@@ -4261,6 +4267,35 @@ export class FractalScene {
         );
       });
     }
+    if (
+      mode === "surface" &&
+      !this.surfaceCaptureBusy &&
+      this.surfaceRayCensus !== null
+    ) {
+      // A settled WebGL session's thumbnail is the SETTLED MEAN
+      // re-presented, never a fresh one-pass drain. The synchronous
+      // re-trace below predates the supersampled settle: it re-presents a
+      // 1-sample frame over the pane's N-sample mean — visibly grainier,
+      // with no invalidation to heal it when the centered wrapper is a
+      // no-op (inset 0) — and its begin-frame abandon trio would kill an
+      // in-flight settle outright. This is the compute arm's own
+      // discipline one engine over (see its branch above): a
+      // projection-independent blit of the frame the pane already shows,
+      // so the canvas stays byte-identical across a ★ save and no phantom
+      // re-settle is handed to the tier. The census is the currency gate:
+      // non-null exactly while the pane's settled evidence is current
+      // (every superseding invalidation lands in abandonSurfaceSettle),
+      // so a stale mean — a save taken mid-preview or before pass 0 has
+      // folded — falls through to the trace, which still draws the pose
+      // the mean doesn't cover.
+      this.presentSettledSurface();
+      return thumbnailFrom(
+        this.renderer.domElement,
+        maxDim,
+        this.backdrop,
+        this.backdropShape,
+      );
+    }
     return this.withCenteredProjection(() => {
       if (mode === "solid") this.renderSolid();
       else if (mode === "surface") {
@@ -5256,6 +5291,7 @@ export class FractalScene {
     configureSurfaceGridTexture(texture);
     this.surfaceGridTexture = texture;
     this.surfaceGridHalfExtent = grid.halfExtent;
+    this.surfaceGridResolution = grid.resolution;
     packSurfaceGrid(this.surfaceMaterial, texture, grid.halfExtent);
     // packSurfaceGrid enables the reads; the balloon gate may take them
     // straight back off — a grid that arrives mid-inflation is
@@ -5273,6 +5309,34 @@ export class FractalScene {
     // No grid installed, so nothing for the balloon gate to re-enable —
     // packSurfaceGrid already dropped the flag.
     this.surfaceGridHalfExtent = null;
+    this.surfaceGridResolution = null;
+  }
+
+  /**
+   * The installed empty-space grid's identity for the `?surfacestate`
+   * diagnostics probe, or null while none is installed. `enabled` is the
+   * march's LIVE answer — a balloon session whose shell does not clear the
+   * cube (or a balloon grid refused at entry) marches gridless over an
+   * installed grid, so `resolution` alone would lie about which regime the
+   * settled frame actually traced.
+   */
+  get surfaceGridInfo(): {
+    resolution: number;
+    halfExtent: number;
+    enabled: boolean;
+  } | null {
+    if (
+      !this.surfaceGridTexture ||
+      this.surfaceGridResolution === null ||
+      this.surfaceGridHalfExtent === null
+    )
+      return null;
+    return {
+      resolution: this.surfaceGridResolution,
+      halfExtent: this.surfaceGridHalfExtent,
+      enabled:
+        (this.surfaceMaterial.uniforms.uGridEnabled.value as number) > 0.5,
+    };
   }
 
   /**

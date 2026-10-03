@@ -78,6 +78,12 @@ const report = {
   verdict: "running",
   cases: [],
 };
+// Per-settle diagnostics recorded by settled(): the built grid's identity
+// and the covered census at every settle of the run. A boot-to-boot
+// nondeterminism investigation reads WHICH grid was actually built (the
+// worker's pilot may downshift the requested ceiling) and whether the
+// TRACES differed, per settle stage, without re-running with a debugger.
+let settleProbes = [];
 let serial = 0;
 const log = (message) => console.log(`[cinematic-browser] ${message}`);
 const encode = (document) =>
@@ -179,6 +185,12 @@ async function settled(page, engine, label) {
           0,
           `${label}: invalid visibility queries`,
         );
+      settleProbes.push({
+        label,
+        grid: state.probe.grid ?? null,
+        covered: state.probe.census?.covered ?? null,
+        wallMs: Date.now() - start,
+      });
       return { wallMs: Date.now() - start, probe: state.probe };
     }
     if (Date.now() >= nextLog) {
@@ -398,6 +410,7 @@ async function runCase(browser, scene, engine) {
     console: [],
     errors: [],
     tiles: [],
+    settles: [],
     fences: {
       surface: { count: 0, wallMs: 0, maxMs: 0 },
       march: { count: 0, wallMs: 0, maxMs: 0 },
@@ -712,6 +725,8 @@ async function runCase(browser, scene, engine) {
     log(`${label}: FAIL ${error.message}`);
   } finally {
     delete row.singleExportBytes;
+    row.settles = settleProbes;
+    settleProbes = [];
     row.wallMs = Date.now() - row.startedAt;
     await writeFile(
       path.join(args.out, `${label}.report.json`),
