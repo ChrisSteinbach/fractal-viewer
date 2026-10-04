@@ -162,6 +162,10 @@ const SURFACE_PASSTHROUGH_FLAGS = {
   // With --surface-si-glass-envelope: no speculative replay passes (the
   // pool's schedule A/B; no pixel moves).
   "surface-si-spec-off": "surfaceSiSpecOff",
+  // With --surface-si-glass-envelope: the pending chain's replay log OFF
+  // (pass k+1 re-marches pass k's queries; a pending ray's next pass
+  // queues FIFO instead of pinning). The log's A/B arm; no pixel moves.
+  "surface-si-log-off": "surfaceSiLogOff",
 };
 
 function parseArgs(argv) {
