@@ -132,6 +132,8 @@ import {
   TRANSPORT_PATH_BYTES,
   finiteTransportWorkBytes,
   transportWorkBytes,
+  transportLogIndexBytes,
+  transportLogDataBytes,
 } from "../fractal/finite-transport-work";
 import {
   FINITE_SOLID_HALF_EXTENT,
@@ -1694,6 +1696,7 @@ async function createPaletteResourceHarness(
     chunkPaths?: number;
     maxPaths?: number;
     backend?: "finiteSolid" | "sphereInversion";
+    transportLogOff?: boolean;
   },
   finiteCacheCrossings?: boolean,
 ): Promise<PaletteResourceHarness> {
@@ -1799,6 +1802,9 @@ async function createPaletteResourceHarness(
     maxPaths?: number,
     cacheCrossings?: boolean,
     siChunkPaths?: number,
+    siExactNormal?: boolean,
+    transportDump?: boolean,
+    transportLogOff?: boolean,
   ) => Promise<SurfaceComputeRenderer>;
   const siOptics = opticsOpts?.backend === "sphereInversion";
   const renderer = await build.call(
@@ -1823,6 +1829,9 @@ async function createPaletteResourceHarness(
     opticsOpts?.maxPaths,
     finiteCacheCrossings,
     siOptics ? opticsOpts.chunkPaths : undefined,
+    undefined,
+    undefined,
+    opticsOpts?.transportLogOff === true,
   );
   return {
     renderer,
@@ -4522,7 +4531,7 @@ describe("SurfaceComputeRenderer sphere-inversion glass continuation", () => {
     return { kind: "sphereInversion", de: continuationSphereInversionDE() };
   }
 
-  it("binds its continuation at 16, beside the table it leaves at 1, as the stage's tenth storage buffer", async () => {
+  it("binds its continuation at 16, the pending chain's log at 19/20, beside the table it leaves at 1", async () => {
     const h = await createPaletteResourceHarness(
       false,
       glassTarget(),
@@ -4533,11 +4542,17 @@ describe("SurfaceComputeRenderer sphere-inversion glass continuation", () => {
     const shadeLayout = Array.from(h.layoutDescriptors[1].entries);
     expect(
       shadeLayout.filter((e) => e.buffer && e.buffer.type !== "uniform"),
-    ).toHaveLength(10);
+    ).toHaveLength(12);
     expect(shadeLayout.find((e) => e.binding === 1)?.buffer?.type).toBe(
       "read-only-storage",
     );
     expect(shadeLayout.find((e) => e.binding === 16)?.buffer?.type).toBe(
+      "storage",
+    );
+    expect(shadeLayout.find((e) => e.binding === 19)?.buffer?.type).toBe(
+      "storage",
+    );
+    expect(shadeLayout.find((e) => e.binding === 20)?.buffer?.type).toBe(
       "storage",
     );
     const transport = h.shaderSources.find((src) =>
@@ -4546,6 +4561,15 @@ describe("SurfaceComputeRenderer sphere-inversion glass continuation", () => {
     expect(transport).toContain(
       "@group(0) @binding(16) var<storage, read_write> siWork: SiTransportBatch;",
     );
+    expect(transport).toContain(
+      "@group(0) @binding(19) var<storage, read_write> transportLogIndex: array<u32>;",
+    );
+    expect(transport).toContain(
+      "@group(0) @binding(20) var<storage, read_write> transportLogData: array<u32>;",
+    );
+    // The consume rule and the write, on the estimator query's site.
+    expect(transport).toContain("hitFromLog = true;");
+    expect(transport).toContain("transportLogData[outReg + 2u] = wIdx + 1u;");
     expect(transport).toContain(
       "processed - chunkStartProcessed >= siWork.quantum",
     );
@@ -4558,13 +4582,58 @@ describe("SurfaceComputeRenderer sphere-inversion glass continuation", () => {
     );
     expect(work).toHaveLength(1);
     expect(work[0].size).toBe(transportWorkBytes(17, TRANSPORT_PATH_BYTES));
+    const logIndex = h.bufferDescriptors.find(
+      (b) => b.label === "si-transport-log-index",
+    );
+    expect(logIndex?.size).toBe(transportLogIndexBytes(16384));
+    const logData = h.bufferDescriptors.find(
+      (b) => b.label === "si-transport-log-data",
+    );
+    expect(logData?.size).toBe(transportLogDataBytes());
     const entry = (group: number, binding: number) =>
       Array.from(h.bindGroups[group].entries).find((e) => e.binding === binding)
         ?.resource;
-    // The table stays the table in both groups; the work is its own slot.
+    // The table stays the table in both groups; the work and the log pair
+    // are the shade entry's own.
     expect(entry(1, 1)).toEqual(entry(0, 1));
     expect(entry(1, 16)).toBeDefined();
     expect(entry(0, 16)).toBeUndefined();
+    expect(entry(1, 19)).toBeDefined();
+    expect(entry(1, 20)).toBeDefined();
+    expect(entry(0, 19)).toBeUndefined();
+    h.renderer.destroy();
+  });
+
+  it("traces without the log when it is off: the old layout, kernel text, and buffers", async () => {
+    const h = await createPaletteResourceHarness(
+      false,
+      glassTarget(),
+      false,
+      [],
+      { backend: "sphereInversion", transportLogOff: true },
+    );
+    const shadeLayout = Array.from(h.layoutDescriptors[1].entries);
+    expect(
+      shadeLayout.filter((e) => e.buffer && e.buffer.type !== "uniform"),
+    ).toHaveLength(10);
+    expect(shadeLayout.some((e) => e.binding === 19)).toBe(false);
+    expect(shadeLayout.some((e) => e.binding === 20)).toBe(false);
+    const transport = h.shaderSources.find((src) =>
+      src.includes("fn transportRays("),
+    );
+    expect(transport).not.toContain("transportLogIndex");
+    expect(transport).not.toContain("transportLogData");
+    expect(transport).not.toContain("hitFromLog");
+    const allocate = Reflect.get(h.renderer, "allocateFrameBuffers") as (
+      rays: number,
+    ) => Promise<unknown>;
+    await allocate.call(h.renderer, 17);
+    expect(
+      h.bufferDescriptors.some((b) => b.label === "si-transport-log-index"),
+    ).toBe(false);
+    expect(
+      h.bufferDescriptors.some((b) => b.label === "si-transport-log-data"),
+    ).toBe(false);
     h.renderer.destroy();
   });
 
