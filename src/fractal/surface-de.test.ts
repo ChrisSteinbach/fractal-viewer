@@ -4456,6 +4456,149 @@ describe("analyzeSurfaceSystem shape emitters", () => {
     expect(estimateDistanceRefined(de, voidPoint)).toBeGreaterThan(0);
   });
 
+  it("expands an evicted pre-band subtree to the band's first stamps instead of folding its enclosure ball", () => {
+    // A two-cluster system — ten recursive maps against the width-4 beam,
+    // one sphere emitter per cluster — puts more than four in-ball children
+    // under a void probe between the clusters, so the pre-band evicted
+    // terminal used to fold its enclosure ball across the whole void
+    // (measured -0.131 plain/refined at the probe below, whose sampled
+    // clearance is 0.208; the reported document's own figures were -0.828
+    // against +0.176). The band's first enabled stamps sit one level below
+    // the evicted candidates, so the expansion folds their real terms
+    // instead. The probe is fixed rather than scanned: the fixture and its
+    // seed are deterministic.
+    const emitter = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.1 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const symmetry = { order: 1, plane: "xz" as const };
+    const clusterB = sierpinskiTetrahedron().map((t, i): Transform => ({
+      ...t,
+      id: 4 + i,
+      position: [t.position[0] + 3.2, t.position[1], t.position[2]],
+    }));
+    const transforms: Transform[] = [
+      ...sierpinskiTetrahedron(),
+      ...clusterB,
+      map({ id: 8, position: [3.2, 0, 0], scale: [0.4, 0.4, 0.4] }),
+      map({
+        id: 9,
+        position: [3.2, 0, 0],
+        scale: [0.35, 0.35, 0.35],
+        rotation: [0.3, 0, 0],
+      }),
+      map({ id: 10, position: [0, 0.4, 0], scale: [0.7, 0.7, 0.7], emitter }),
+      map({
+        id: 11,
+        position: [3.2, 0.4, 0],
+        scale: [0.7, 0.7, 0.7],
+        emitter,
+      }),
+    ];
+    const probe: Vec3 = [
+      2.19588296678287, -0.9541268807709805, 0.139208383806294,
+    ];
+    const cloud = runChaosGame(transforms, 20000, mulberry32(0xbead5));
+    expect(nearestDistance(cloud, probe)).toBeGreaterThan(0.15);
+    const de2 = buildSurfaceDE(transforms, null, symmetry, {
+      condensationDepthBand: { minDepth: 2, maxDepth: 24 },
+    });
+    expect(estimateDistance(de2, probe)).toBeGreaterThan(0);
+    expect(estimateDistanceRefined(de2, probe)).toBeGreaterThan(0);
+    // The fr-ihnb neighbor is untouched: first level 1 stays positive.
+    const de1 = buildSurfaceDE(transforms, null, symmetry, {
+      condensationDepthBand: { minDepth: 1, maxDepth: 24 },
+    });
+    expect(estimateDistance(de1, probe)).toBeGreaterThan(0);
+    expect(estimateDistanceRefined(de1, probe)).toBeGreaterThan(0);
+  });
+
+  it("refuses bands whose uncovered pre-band levels can evict past the beam", () => {
+    // The expansion covers exactly one level: the pre-band level whose next
+    // level opens the band. A band opening three or more levels below a
+    // pre-band candidate keeps the bare ball terminal at the shallower
+    // pre-band levels, which folds negative across a loose ball wherever
+    // that level evicts — measured -0.131/-0.408 at first levels 3 and 4 on
+    // the two-cluster fixture above. Depth 0 is where that eviction fires
+    // at full accumulated scale (one chain times the sector order times the
+    // recursive maps), so the gate refuses exactly that class and keeps
+    // beam-wider bands that open at 2 (expansion-covered) and every
+    // map count the first pre-band level cannot evict.
+    const symmetry = { order: 1, plane: "xz" as const };
+    const clusterB = sierpinskiTetrahedron().map((t, i): Transform => ({
+      ...t,
+      id: 4 + i,
+      position: [t.position[0] + 3.2, t.position[1], t.position[2]],
+    }));
+    const wide: Transform[] = [
+      ...sierpinskiTetrahedron(),
+      ...clusterB,
+      map({ id: 8, position: [3.2, 0, 0], scale: [0.4, 0.4, 0.4] }),
+      map({
+        id: 9,
+        position: [3.2, 0, 0],
+        scale: [0.35, 0.35, 0.35],
+        rotation: [0.3, 0, 0],
+      }),
+      map({
+        id: 10,
+        position: [0, 0.4, 0],
+        scale: [0.7, 0.7, 0.7],
+        emitter: {
+          parts: [
+            {
+              primitive: { kind: "sphere" as const, radius: 0.1 },
+              combine: "union" as const,
+            },
+          ],
+        },
+      }),
+      map({
+        id: 11,
+        position: [3.2, 0.4, 0],
+        scale: [0.7, 0.7, 0.7],
+        emitter: {
+          parts: [
+            {
+              primitive: { kind: "sphere" as const, radius: 0.1 },
+              combine: "union" as const,
+            },
+          ],
+        },
+      }),
+    ];
+    const refusal = analyzeSurfaceSystem(wide, null, null, symmetry, {
+      minDepth: 3,
+      maxDepth: 24,
+    });
+    expect(refusal.status).toBe("ineligible");
+    // First level 2 is expansion-covered at any map count.
+    expect(
+      analyzeSurfaceSystem(wide, null, null, symmetry, {
+        minDepth: 2,
+        maxDepth: 24,
+      }).status,
+    ).not.toBe("ineligible");
+    // Gearworks' three recursive maps never evict at depth 0, so its
+    // working first-level-3 band stays admitted.
+    expect(
+      analyzeSurfaceSystem(gearworks(), null, null, symmetry, {
+        minDepth: 3,
+        maxDepth: 24,
+      }).status,
+    ).not.toBe("ineligible");
+    // Unbounded bands and All levels never refuse on this gate.
+    expect(
+      analyzeSurfaceSystem(wide, null, null, symmetry, {
+        minDepth: 2,
+      }).status,
+    ).not.toBe("ineligible");
+  });
+
   it("does not turn Gearworks' empty rank-3/4 sentinels into a future-band sphere", () => {
     const symmetry = { order: 1, plane: "xz" as const };
     const root = buildSurfaceDE(gearworks(), null, symmetry, {

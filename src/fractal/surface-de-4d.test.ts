@@ -5415,6 +5415,50 @@ describe("emitter-only finite unions in 4D", () => {
     expect(estimateDistance4(reversedRoot, [...emitter.position, 0.3])).toBe(0);
   });
 
+  it("refuses bands opening three levels past the schedule prefix when the first pre-band level evicts", () => {
+    // The 4D half of the deep-band admission bound: the stamp expansion
+    // covers one level, so a band opening 3+ deep keeps bare ball terminals
+    // at its shallower pre-band levels, which fold negative across a loose
+    // ball wherever the level evicts past the width-4 beam.
+    const emitter = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.1 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const symmetry = { order: 1, plane: "xy" as const };
+    const wide: Transform[] = [
+      ...Array.from({ length: 10 }, (_, i) => map4({ id: i })),
+      map4({ id: 10, emitter }),
+      map4({ id: 11, emitter }),
+    ];
+    expect(
+      analyzeSurfaceSystem4(wide, null, null, symmetry, {
+        minDepth: 3,
+        maxDepth: 24,
+      }).status,
+    ).toBe("ineligible");
+    // Beam-wider bands opening at 2 are expansion-covered at any map count.
+    expect(
+      analyzeSurfaceSystem4(wide, null, null, symmetry, {
+        minDepth: 2,
+        maxDepth: 24,
+      }).status,
+    ).not.toBe("ineligible");
+    // A few-map system at the same opening never evicts at depth 0.
+    expect(
+      analyzeSurfaceSystem4(
+        [map4({ id: 0 }), map4({ id: 1 }), map4({ id: 2, emitter })],
+        null,
+        null,
+        symmetry,
+        { minDepth: 3, maxDepth: 24 },
+      ).status,
+    ).not.toBe("ineligible");
+  });
+
   it("preserves the finite root through xaos support and w-plane symmetry copies", () => {
     const shape = {
       parts: [
