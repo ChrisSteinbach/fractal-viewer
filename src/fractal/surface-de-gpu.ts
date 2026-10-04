@@ -65,6 +65,11 @@ import {
   SPHERE_INVERSION_SPEC_STORED,
   FINITE_TRANSPORT_RUNNING,
   FINITE_TRANSPORT_WORK_HEADER_BYTES,
+  SPHERE_INVERSION_TRANSPORT_LOG_CAP,
+  SPHERE_INVERSION_TRANSPORT_LOG_ENTRY_WORDS,
+  SPHERE_INVERSION_TRANSPORT_LOG_HEADER_WORDS,
+  SPHERE_INVERSION_TRANSPORT_LOG_REGION_WORDS,
+  SPHERE_INVERSION_TRANSPORT_LOG_SLOTS,
   resolveFiniteTransportChunkPaths,
   resolveSphereInversionTransportChunkPaths,
 } from "./finite-transport-work";
@@ -2058,6 +2063,24 @@ export interface SurfaceGpuKernelOptions {
    * emits as `si*`. Direct codegen defaults to uninterrupted execution
    * (undefined/0); the host supplies the resolved production quantum. */
   sphereInversionTransportChunkPaths?: number;
+  /** Sphere-inversion glass continuation only: the pending chain's replay
+   * log (`finite-transport-work.ts`'s log constants). While a pool slot
+   * traces pass k it appends each processed path's boundary-query answer
+   * to its log region, and pass k+1 — pinned to the same slot by the
+   * host, since the log rides the slot — consumes the region in order
+   * for every pop whose bound exceeds pass k's theta (exactly the pops
+   * pass k processed; the oracle's superset-in-order argument, executed
+   * and verified by the fixture's replay arm) and answers only the new
+   * band's queries itself. The radiance/residual arithmetic is untouched
+   * (same order, same values), so no pixel moves; only the skipped
+   * queries' march cost is saved — the cold pending chain's recompute,
+   * which the fixture measured at 82% of pass 1. A pass writing region
+   * parity k reads region parity k-1, whose header names the ray and
+   * pass that wrote it: a slot inherited from another trace (a promoted
+   * speculative pass) fails the check and recomputes whole. Absent/false
+   * — every other backend, the unchunked diagnostics, the bench's log-off
+   * arm — reproduces today's source BYTE FOR BYTE and allocates nothing. */
+  transportLog?: boolean;
   /** Finite DDA only: retain each axis's crossing time until its cell
    * changes, with the same division and tie order. Default true; false
    * preserves the original uncached query for diagnostic comparisons. */
@@ -5758,6 +5781,11 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
         : 0;
   const transportChunk = transportChunkPaths > 0;
   const siGlassChunk = transportChunk && opticsBackend === "sphereInversion";
+  const transportLog = siGlassChunk && opts.transportLog !== false;
+  if (opts.transportLog === true && !siGlassChunk)
+    throw new Error(
+      "surface-de-gpu: transportLog is a sphere-inversion glass continuation option",
+    );
   const siExactNormal = opts.sphereInversionExactNormal === true;
   if (siExactNormal && opticsBackend !== "sphereInversion")
     throw new Error(
@@ -10270,7 +10298,18 @@ ${
     ? `// The sphere-inversion cores read their table from binding 1, so the
 // continuation takes its own binding: the transport entry's tenth storage
 // buffer (the adapter's per-stage ceiling is requested for optics sessions).
-@group(0) @binding(16) var<storage, read_write> finiteWork: FiniteTransportBatch;`
+@group(0) @binding(16) var<storage, read_write> finiteWork: FiniteTransportBatch;${
+        transportLog
+          ? `
+// THE PENDING CHAIN'S REPLAY LOG: binding 19 is one index word per pool
+// slot (0xffffffff = this slot traces without a log), binding 20 the log
+// slots' two regions each. Both are written by the host's pool only
+// between dispatches and by the trace's own lane — one invocation per
+// slot — so no two lanes race a region.
+@group(0) @binding(19) var<storage, read_write> transportLogIndex: array<u32>;
+@group(0) @binding(20) var<storage, read_write> transportLogData: array<u32>;`
+          : ""
+      }`
     : `// Finite cores have no map buffer. Reuse its unused binding rather than
 // increasing the transport entry's storage-binding requirement.
 @group(0) @binding(1) var<storage, read_write> finiteWork: FiniteTransportBatch;`
@@ -10406,6 +10445,24 @@ const TRANSPORT_QUERY_MAX_STEPS = ${DIELECTRIC_QUERY_MAX_STEPS}u;${
         solidQuery
           ? `
 const TRANSPORT_REASON_STATE_MISMATCH = ${SURFACE_GPU_TRANSPORT_REASON_STATE_MISMATCH}u;`
+          : ""
+      }${
+        transportLog
+          ? `
+// The pending chain's replay log, word for word the fixture's replay arm's
+// rule: a pop whose bound exceeds the recorded pass's theta was processed
+// by that pass and consumes its log entry (its cursor advances either way,
+// so an exhausted or absent log just recomputes); every other pop answers
+// its own query. The writer appends each processed pop's answer
+// positionally from the base ordinal latched in its region's header —
+// arming mid-trace latches the processed count then, and a consumer
+// cursor below the base recomputes the pre-arm pops.
+const TRANSPORT_LOG_CAP = ${SPHERE_INVERSION_TRANSPORT_LOG_CAP}u;
+const TRANSPORT_LOG_HEADER_WORDS = ${SPHERE_INVERSION_TRANSPORT_LOG_HEADER_WORDS}u;
+const TRANSPORT_LOG_ENTRY_WORDS = ${SPHERE_INVERSION_TRANSPORT_LOG_ENTRY_WORDS}u;
+const TRANSPORT_LOG_REGION_WORDS = ${SPHERE_INVERSION_TRANSPORT_LOG_REGION_WORDS}u;
+const TRANSPORT_LOG_SLOTS = ${SPHERE_INVERSION_TRANSPORT_LOG_SLOTS}u;
+const TRANSPORT_LOG_UNARMED = 0xffffffffu;`
           : ""
       }
 
@@ -10853,6 +10910,22 @@ fn transportTrace(
   var processed = 0u;
   var radiance = vec3f(0.0);
   var residual = 0.0;${
+    transportLog
+      ? `
+  // THE REPLAY LOG'S SLOT STATE: armed = the host gave this pool slot a
+  // log slot; logRegion = this slot's first region's word offset. The
+  // consumer's cursor rides the slot header's spare word (pad.y): reset
+  // with everything else at a pass start, written per shared pop, and
+  // restored here on a chunk resume. The identity and pass the log
+  // header checks come from the same header — the kernel set both at
+  // reset, so a resumed chunk and a fresh one read the same words.
+  var logArmed = false;
+  var logRegion = 0u;
+  var logCursor = 0u;
+  let logRay = finiteWork.slots[workSlot].pixel;
+  let logPass = finiteWork.slots[workSlot].replayPass;`
+      : ""
+  }${
     transportChainDump
       ? `
   var chainCursor = 0u;`
@@ -10875,8 +10948,20 @@ fn transportTrace(
     residual = finiteWork.slots[workSlot].residual;
     for (var i = 0u; i < sp; i++) {
       stack[i] = finiteWork.slots[workSlot].stack[i];
+    }${
+      transportLog
+        ? `
+    logCursor = finiteWork.slots[workSlot].pad.y;`
+        : ""
     }
   } else {`
+      : ""
+  }${
+    transportLog
+      ? `
+  logArmed = transportLogIndex[workSlot] != TRANSPORT_LOG_UNARMED &&
+    transportLogIndex[workSlot] < TRANSPORT_LOG_SLOTS;
+  logRegion = transportLogIndex[workSlot] * TRANSPORT_LOG_REGION_WORDS * 2u;`
       : ""
   }
 ${
@@ -11059,9 +11144,55 @@ ${
       break;
     }
     processed = processed + 1u;
-    var hit = ${
-      finiteQuery
-        ? `transportFiniteBoundary(
+    ${
+      transportLog
+        ? `var hit = TransportBoundary();
+    var hitFromLog = false;
+    if (logArmed && logPass > 0u) {
+      // THE REPLAY LOG'S CONSUMPTION (the fixture's replay arm's rule,
+      // which verified it on every glass hit): this pop's bound exceeds
+      // the recorded pass's theta, so that pass processed it — same
+      // inputs, same world, same answer, in the same relative order.
+      // Adopt the recorded result without paying for the march. The
+      // cursor advances either way, so an exhausted or absent log just
+      // recomputes; the header's ray+pass is the identity an INHERITED
+      // slot (a promoted speculative trace) fails, recomputing whole.
+      // The cursor's ordinal IS the recorded pass's processed ordinal:
+      // its pops all carry bound > its theta, so the two sequences are
+      // one-to-one, and the base ordinal latched in the header covers
+      // mid-trace arming.
+      let prevTheta = theta * 2.0;
+      if (path.bound > prevTheta) {
+        let inReg = logRegion +
+          ((logPass + 1u) % 2u) * TRANSPORT_LOG_REGION_WORDS;
+        if (transportLogData[inReg] == logRay &&
+            (transportLogData[inReg + 1u] & 7u) == logPass - 1u) {
+          let base = transportLogData[inReg + 1u] >> 3u;
+          let count = transportLogData[inReg + 2u];
+          let idx = logCursor - base;
+          if (logCursor >= base && idx < count) {
+            let e = inReg + TRANSPORT_LOG_HEADER_WORDS +
+              idx * TRANSPORT_LOG_ENTRY_WORDS;
+            let kr = transportLogData[e];
+            hit.kind = kr & 255u;
+            hit.reason = (kr >> 8u) & 255u;
+            hit.t = bitcast<f32>(transportLogData[e + 1u]);
+            hit.normal = vec3f(
+              bitcast<f32>(transportLogData[e + 2u]),
+              bitcast<f32>(transportLogData[e + 3u]),
+              bitcast<f32>(transportLogData[e + 4u]),
+            );
+            hitFromLog = true;
+          }
+        }
+        logCursor = logCursor + 1u;
+        finiteWork.slots[workSlot].pad.y = logCursor;
+      }
+    }
+    if (!hitFromLog) {
+      hit = ${
+        finiteQuery
+          ? `transportFiniteBoundary(
         path.origin,
         path.dir,
         path.anchorPresent,
@@ -11071,10 +11202,58 @@ ${
         path.finiteCells,
         path.inside,
       )`
-        : `transportNextBoundary(path.origin, path.dir, path.anchorPresent, path.anchorPoint, ${
-            solidQuery ? "path.inside, eps, li" : "eps, li"
-          })`
-    };${
+          : `transportNextBoundary(path.origin, path.dir, path.anchorPresent, path.anchorPoint, ${
+              solidQuery ? "path.inside, eps, li" : "eps, li"
+            })`
+      };
+    }
+    if (logArmed) {
+      // THE REPLAY LOG'S WRITE: this pass's own region (the parity
+      // ping-pong), its header latched at the first armed pop — the
+      // writing ray and pass, the base ordinal this pop starts the log
+      // at, the count — then every processed pop's answer, positionally
+      // from the base, with the count kept current so the next pass's
+      // consumer reads exactly what this pass answered. A refusal rides
+      // the log like any other answer: the consuming pass fails at it
+      // bit for bit, as the oracle's failure-is-final rule says it must.
+      let outReg = logRegion + (logPass % 2u) * TRANSPORT_LOG_REGION_WORDS;
+      let wOrd = processed - 1u;
+      if (transportLogData[outReg] != logRay ||
+          (transportLogData[outReg + 1u] & 7u) != logPass) {
+        transportLogData[outReg] = logRay;
+        transportLogData[outReg + 1u] = logPass | (wOrd << 3u);
+        transportLogData[outReg + 2u] = 0u;
+      }
+      let wBase = transportLogData[outReg + 1u] >> 3u;
+      let wIdx = wOrd - wBase;
+      if (wOrd >= wBase && wIdx < TRANSPORT_LOG_CAP) {
+        let e = outReg + TRANSPORT_LOG_HEADER_WORDS +
+          wIdx * TRANSPORT_LOG_ENTRY_WORDS;
+        transportLogData[e] = (hit.reason << 8u) | hit.kind;
+        transportLogData[e + 1u] = bitcast<u32>(hit.t);
+        transportLogData[e + 2u] = bitcast<u32>(hit.normal[0]);
+        transportLogData[e + 3u] = bitcast<u32>(hit.normal[1]);
+        transportLogData[e + 4u] = bitcast<u32>(hit.normal[2]);
+        transportLogData[outReg + 2u] = wIdx + 1u;
+      }
+    }`
+        : `var hit = ${
+            finiteQuery
+              ? `transportFiniteBoundary(
+        path.origin,
+        path.dir,
+        path.anchorPresent,
+        path.finiteIntrinsic,
+        path.finiteMask,
+        path.finitePlanes,
+        path.finiteCells,
+        path.inside,
+      )`
+              : `transportNextBoundary(path.origin, path.dir, path.anchorPresent, path.anchorPoint, ${
+                  solidQuery ? "path.inside, eps, li" : "eps, li"
+                })`
+          };`
+    }${
       finiteQuery
         ? `  // The corner class, resolved the closed-solid backend's way (the
   // geometry re-anchors the split, one query deeper): the event's medium

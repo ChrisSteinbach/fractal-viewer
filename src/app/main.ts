@@ -13298,6 +13298,7 @@ async function main(): Promise<void> {
       siJointOff: params.get("surfacesijoint") === "0",
       siShapeOff: params.get("surfacesishape") === "0",
       siSpecOff: params.get("surfacesispec") === "0",
+      siTransportLogOff: params.get("surfacesilog") === "0",
       timestamps:
         params.get("surfacets") === null
           ? null

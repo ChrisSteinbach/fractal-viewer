@@ -206,3 +206,64 @@ export function sphereInversionJointStride(rays: number): number {
     SPHERE_INVERSION_JOINT_STRIDE_ALIGN
   );
 }
+
+/**
+ * THE PENDING CHAIN'S REPLAY LOG (the cold frame's lever): a pass k+1
+ * pinned to its predecessor's pool slot consumes pass k's recorded
+ * boundary-query answers instead of re-marching them. A later pass
+ * visits a superset of the earlier pass's paths in the same relative
+ * order — a path's bound never exceeds its parent's, so the pops the
+ * halved theta keeps are an ancestor-closed superset visited in the same
+ * weak-child-first order — and each shared pop's query has identical
+ * inputs, so the recompute is bit for bit. The log records what pass k
+ * answered, positionally in its own processed order, and pass k+1's
+ * shared pops are exactly that sequence, so a cursor over the shared
+ * pops indexes the log one-to-one. Measured on the CPU twin (the
+ * fixture's replay arm, which THROWS on a misaligned consume): the
+ * worst pending chain halves (196,851 -> 95,462 twin evaluations at
+ * 64 px), pass 1's recompute falls to 18% of its baseline, and outcomes
+ * are unchanged on every glass hit.
+ *
+ * Entries ride a per-slot region: a 3-word header (the writing ray, the
+ * writing pass with the log's base ordinal packed above 3 bits, the
+ * entry count) and {@link SPHERE_INVERSION_TRANSPORT_LOG_CAP} 5-word
+ * entries (kind|reason<<8, t, the three normal components, each f32 as
+ * its exact bits). Two regions per log slot ping-pong on the pass
+ * parity — a pass consumes its predecessor's region while writing its
+ * own — and the header's ray+pass is the identity a slot INHERITED from
+ * another trace (a promoted speculative pass) fails, falling back to
+ * recompute. The base ordinal is what makes arming mid-trace sound: the
+ * writer's entries cover its processed ordinals from the latch point on,
+ * and a consumer cursor below the base recomputes the pre-arm pops.
+ */
+export const SPHERE_INVERSION_TRANSPORT_LOG_CAP = 2048;
+export const SPHERE_INVERSION_TRANSPORT_LOG_ENTRY_WORDS = 5;
+export const SPHERE_INVERSION_TRANSPORT_LOG_HEADER_WORDS = 3;
+export const SPHERE_INVERSION_TRANSPORT_LOG_REGION_WORDS =
+  SPHERE_INVERSION_TRANSPORT_LOG_HEADER_WORDS +
+  SPHERE_INVERSION_TRANSPORT_LOG_CAP *
+    SPHERE_INVERSION_TRANSPORT_LOG_ENTRY_WORDS;
+/**
+ * How many pool slots carry log regions. The chains that matter are the
+ * tail's — the frame's end — and the queue drains while a few hundred
+ * long traces are still live, so 512 armed slots cover the tail with
+ * room; a slot the free list cannot arm traces exactly as today. Two
+ * regions a slot: ~40 KiB of log state over the whole pool, inside the
+ * transport lane's retained-state line.
+ */
+export const SPHERE_INVERSION_TRANSPORT_LOG_SLOTS = 512;
+/** The two log buffers' combined size: the per-slot index word (one per
+ * pool slot) and the log slots' two regions each. */
+export function transportLogIndexBytes(capacity: number): number {
+  if (!Number.isSafeInteger(capacity) || capacity < 1)
+    throw new RangeError("Transport log index: capacity must be positive");
+  return capacity * 4;
+}
+export function transportLogDataBytes(): number {
+  return (
+    SPHERE_INVERSION_TRANSPORT_LOG_SLOTS *
+    2 *
+    SPHERE_INVERSION_TRANSPORT_LOG_REGION_WORDS *
+    4
+  );
+}

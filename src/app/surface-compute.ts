@@ -124,6 +124,9 @@ import {
   FINITE_GENERAL_TRANSPORT_CHUNK_PATHS,
   resolveSphereInversionTransportChunkPaths,
   transportWorkBytes,
+  SPHERE_INVERSION_TRANSPORT_LOG_SLOTS,
+  transportLogDataBytes,
+  transportLogIndexBytes,
 } from "../fractal/finite-transport-work";
 import type {
   SurfaceGpu4View,
@@ -394,6 +397,13 @@ let surfaceComputeSiShapeOffPin = false;
  * schedule A/B only; no pixel moves. Read per frame, like the trace sink.
  */
 let surfaceComputeSiSpecOffPin = false;
+/**
+ * `?surfacesilog=0` — the pending chain's replay log OFF (`surface-de-gpu.ts`'s
+ * `transportLog`): pass k+1 re-marches every one of pass k's queries, and a
+ * pending ray's next real pass queues FIFO instead of pinning to its slot.
+ * The log's A/B arm — the byte-identity legs run both ways; no pixel moves.
+ */
+let surfaceComputeSiTransportLogOffPin = false;
 
 function positivePin(value: number | null | undefined): number | null {
   return value !== null &&
@@ -417,6 +427,7 @@ export function setSurfaceComputeSchedulePins(pins: {
   siJointOff?: boolean | null;
   siShapeOff?: boolean | null;
   siSpecOff?: boolean | null;
+  siTransportLogOff?: boolean | null;
 }): void {
   surfaceComputeTimestampsPin = pins.timestamps ?? null;
   surfaceComputeFenceGroupPin = positivePin(pins.fenceGroup);
@@ -428,6 +439,7 @@ export function setSurfaceComputeSchedulePins(pins: {
   surfaceComputeSiJointOffPin = pins.siJointOff === true;
   surfaceComputeSiShapeOffPin = pins.siShapeOff === true;
   surfaceComputeSiSpecOffPin = pins.siSpecOff === true;
+  surfaceComputeSiTransportLogOffPin = pins.siTransportLogOff === true;
 }
 
 /** Threads per workgroup — the kernel spike's measured winner (private
@@ -3048,6 +3060,11 @@ export interface SurfaceComputeRendererInit {
    * chose the quantum, so a pinned quantum stays the fixed schedule it
    * names (the A/B arm). */
   sphereInversionAdaptiveSchedule?: boolean;
+  /** The pending chain's replay log ON (si glass shade sessions only): the
+   * kernel was generated with the log, the pool arms and pins slots, and
+   * the log buffers exist. The codegen's own default is on; this field
+   * mirrors the create-time decision for the buffers and the pool. */
+  transportLogOn?: boolean;
   /** Diagnostic override of the shader's existing coupled path/interface cap. */
   transportMaxPaths?: number;
   /** The frozen `opticsMaps` lane buffer (packSurfaceGpuOpticsMaps) —
@@ -3186,6 +3203,11 @@ interface FrameBuffers extends FrameBindGroups {
    * beside the pass's status staging. */
   transportDebug?: GPUBuffer;
   stagingTransportDebug?: GPUBuffer;
+  /** The pending chain's replay log (transportLogOn gate only): binding 19
+   * is one index word per pool slot (host-written between dispatches),
+   * binding 20 the log slots' two regions each (kernel-written only). */
+  transportLogIndex?: GPUBuffer;
+  transportLogData?: GPUBuffer;
 }
 
 export class SurfaceComputeRenderer {
@@ -3294,6 +3316,12 @@ export class SurfaceComputeRenderer {
        * record through the session trace. Diagnostics only, off unless a
        * caller or URL asks; absent/false is byte-identical everywhere. */
       transportDump?: boolean;
+      /** The pending chain's replay log OFF (`surface-de-gpu.ts`'s
+       * `transportLog`): pass k+1 re-marches pass k's queries and a
+       * pending ray's next real pass queues FIFO. The log's A/B arm —
+       * the byte-identity legs run both ways; no pixel moves. Absent
+       * (on) is the production path. */
+      transportLogOff?: boolean;
     } = {},
   ): Promise<SurfaceComputeRenderer> {
     if (!SurfaceComputeRenderer.supported()) {
@@ -3373,6 +3401,7 @@ export class SurfaceComputeRenderer {
           undefined,
         surfaceComputeSiExactNormalPin,
         opts.transportDump ?? false,
+        opts.transportLogOff === true || surfaceComputeSiTransportLogOffPin,
       );
       return renderer;
     } catch (e) {
@@ -3400,6 +3429,7 @@ export class SurfaceComputeRenderer {
     sphereInversionTransportChunkPaths?: number,
     sphereInversionExactNormal = false,
     transportDump = false,
+    transportLogOff = false,
   ): Promise<SurfaceComputeRenderer> {
     // The error-scope pair (out-of-memory outside, validation inside):
     // WebGPU's createBuffer never throws on allocation failure — it
@@ -3431,6 +3461,10 @@ export class SurfaceComputeRenderer {
         : 0;
     const siAdaptiveSchedule =
       siChunkPaths > 0 && sphereInversionTransportChunkPaths === undefined;
+    // The pending chain's replay log: si-glass shade sessions, off by the
+    // pin or the create opt (the A/B arm). The kernel's own default is on
+    // for every si chunk session, so only the OFF arm passes the option.
+    const transportLogOn = siChunkPaths > 0 && !transportLogOff;
     // The inside-miss replay dump: finite optics sessions only (the WGSL
     // gate re-checks the backend), shade mode only.
     const transportDumpOn = transportDump && materials?.optics === true;
@@ -3615,6 +3649,9 @@ export class SurfaceComputeRenderer {
           ...(mode === "shade" && siChunkPaths > 0
             ? { sphereInversionTransportChunkPaths: siChunkPaths }
             : {}),
+          ...(mode === "shade" && siChunkPaths > 0 && !transportLogOn
+            ? { transportLog: false }
+            : {}),
           ...(mode === "shade" && transportDumpOn
             ? { transportDump: true }
             : {}),
@@ -3791,6 +3828,11 @@ export class SurfaceComputeRenderer {
               // its table. The tenth storage buffer, within the adapter
               // ceiling requested for optics sessions.
               ...(siChunkPaths > 0 ? [bufferEntry(16, "storage")] : []),
+              // The pending chain's replay log: index words + the log
+              // slots' regions, si-glass shade sessions with the log on.
+              ...(siChunkPaths > 0 && transportLogOn
+                ? [bufferEntry(19, "storage"), bufferEntry(20, "storage")]
+                : []),
               ...(transportDumpOn ? [bufferEntry(17, "storage")] : []),
             ]
           : []),
@@ -4292,6 +4334,7 @@ export class SurfaceComputeRenderer {
       finiteTransportChunkPaths: finiteChunkPaths,
       sphereInversionTransportChunkPaths: siChunkPaths,
       sphereInversionAdaptiveSchedule: siAdaptiveSchedule,
+      transportLogOn,
       transportMaxPaths,
       opticsMapsBuf,
       seedPipeline,
@@ -4478,6 +4521,10 @@ export class SurfaceComputeRenderer {
   private readonly transportPerSubmission: boolean;
   /** The adaptive transport schedule is live (the init field's doc). */
   private readonly transportAdaptiveSchedule: boolean;
+  /** The pending chain's replay log ON (init.transportLogOn): the pool
+   * arms log slots, pins pending chains to their slot, and binds the two
+   * log buffers the kernel's generated text expects. */
+  private readonly transportLogOn: boolean;
   private readonly transportChunkBackend:
     "finiteSolid" | "sphereInversion" | null;
   private readonly transportWorkPathBytes: number;
@@ -4542,6 +4589,8 @@ export class SurfaceComputeRenderer {
       siChunk &&
       this.transportChunkPaths > 0 &&
       init.sphereInversionAdaptiveSchedule === true;
+    this.transportLogOn =
+      siChunk && this.transportChunkPaths > 0 && init.transportLogOn === true;
     this.transportChunkBackend =
       this.transportChunkPaths === 0
         ? null
@@ -5030,6 +5079,8 @@ export class SurfaceComputeRenderer {
       this.frame.stagingTransportStatus,
       this.frame.transportWork,
       this.frame.stagingTransportRunning,
+      this.frame.transportLogIndex,
+      this.frame.transportLogData,
     ]) {
       b?.destroy();
     }
@@ -5103,6 +5154,8 @@ export class SurfaceComputeRenderer {
     let stagingTransportRunning: GPUBuffer | undefined;
     let transportDebug: GPUBuffer | undefined;
     let stagingTransportDebug: GPUBuffer | undefined;
+    let transportLogIndex: GPUBuffer | undefined;
+    let transportLogData: GPUBuffer | undefined;
     if (this.optics) {
       transportState = device.createBuffer({
         size: arenaRays * SURFACE_COMPUTE_TRANSPORT_RECORD_BYTES,
@@ -5148,6 +5201,24 @@ export class SurfaceComputeRenderer {
           usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
         });
       }
+      if (this.transportLogOn) {
+        // THE PENDING CHAIN'S REPLAY LOG: one index word per pool slot
+        // (host-written, all-unarmed until the pool arms a slot) and the
+        // log slots' two regions each (kernel-written only). The pool's
+        // arming rule is the tail: the queue drains while the frame's
+        // long traces are still live, and those are the chains the log
+        // exists for.
+        transportLogIndex = device.createBuffer({
+          label: "si-transport-log-index",
+          size: transportLogIndexBytes(SURFACE_COMPUTE_TRANSPORT_POOL_SLOTS),
+          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        });
+        transportLogData = device.createBuffer({
+          label: "si-transport-log-data",
+          size: transportLogDataBytes(),
+          usage: GPUBufferUsage.STORAGE,
+        });
+      }
       if (this.transportDump) {
         // Bounded by the widest transport dispatch, not the frame's rays:
         // the records are per DISPATCH SLOT (the readback maps slots back
@@ -5186,6 +5257,8 @@ export class SurfaceComputeRenderer {
       stagingTransportRunning,
       transportDebug,
       stagingTransportDebug,
+      transportLogIndex,
+      transportLogData,
     };
     this.frame = { ...frame, ...this.frameBindGroups(frame) };
     return this.frame;
@@ -5326,6 +5399,18 @@ export class SurfaceComputeRenderer {
               { binding: 15, resource: { buffer: transportStatus } },
               ...(siWork
                 ? [{ binding: 16, resource: { buffer: siWork } }]
+                : []),
+              ...(frame.transportLogIndex && frame.transportLogData
+                ? [
+                    {
+                      binding: 19,
+                      resource: { buffer: frame.transportLogIndex },
+                    },
+                    {
+                      binding: 20,
+                      resource: { buffer: frame.transportLogData },
+                    },
+                  ]
                 : []),
               ...(transportDebugBuf
                 ? [
@@ -7240,6 +7325,8 @@ export class SurfaceComputeRenderer {
         const work = buffers.transportWork;
         if (!work)
           throw new Error("Surface compute: transport pool buffers missing");
+        const transportLogIndex = buffers.transportLogIndex;
+        const logOn = this.transportLogOn && transportLogIndex !== undefined;
         const capacity = Math.min(
           rays,
           SURFACE_COMPUTE_TRANSPORT_POOL_SLOTS,
@@ -7285,6 +7372,10 @@ export class SurfaceComputeRenderer {
         const slotWord: number[] = [];
         const slotLive: boolean[] = [];
         const slotChunks: number[] = [];
+        // A pinned slot's next pass re-dispatches FRESH: the flag must
+        // survive to the words loop, so it is pool state, not a refill
+        // local (a refill re-arms it beside slotChunks's reset).
+        const slotFresh: boolean[] = [];
         // THE SPECULATIVE REPLAY PASSES (finite-transport-work.ts's SPEC
         // bit). A pending ray re-traces from scratch, so in order its passes
         // cost their SUM, and the few rays that go pending are a frame's
@@ -7330,6 +7421,60 @@ export class SurfaceComputeRenderer {
         let specPromoted = 0;
         let specKilled = 0;
         const keyRay = (key: number) => key & SPHERE_INVERSION_POOL_RAY_MASK;
+        // THE PENDING CHAIN'S REPLAY LOG (transportLogOn): the log rides
+        // the SLOT — a pass writes its region there and its pinned
+        // successor consumes it — so the pool assigns log slots to pool
+        // slots and keeps the assignment until the ray finals. The arming
+        // rule is the TAIL: the queue drains while the frame's long
+        // traces are still live, and those are the chains the log exists
+        // for. A slot the free list cannot arm traces exactly as today.
+        const logFree: number[] = [];
+        const slotLog: (number | undefined)[] = new Array<number | undefined>(
+          capacity,
+        );
+        const logIndexMirror = new Uint32Array(
+          transportLogIndex ? transportLogIndex.size / 4 : 0,
+        );
+        let logDirtyFrom = -1;
+        let logDirtyTo = -1;
+        let armedDrain = false;
+        const logMarkDirty = (slot: number): void => {
+          if (logDirtyFrom < 0 || slot < logDirtyFrom) logDirtyFrom = slot;
+          if (logDirtyFrom < 0 || slot > logDirtyTo) logDirtyTo = slot;
+        };
+        const logFlush = (): void => {
+          if (
+            !transportLogIndex ||
+            logDirtyFrom < 0 ||
+            logDirtyTo < logDirtyFrom
+          )
+            return;
+          device.queue.writeBuffer(
+            transportLogIndex,
+            logDirtyFrom * 4,
+            logIndexMirror.buffer,
+            logDirtyFrom * 4,
+            (logDirtyTo - logDirtyFrom + 1) * 4,
+          );
+          logDirtyFrom = -1;
+          logDirtyTo = -1;
+        };
+        const logArm = (slot: number): void => {
+          if (!transportLogIndex || slotLog[slot] !== undefined) return;
+          if (logFree.length === 0) return;
+          const log = logFree.pop() as number;
+          slotLog[slot] = log;
+          logIndexMirror[slot] = log;
+          logMarkDirty(slot);
+        };
+        const logRelease = (slot: number): void => {
+          const log = slotLog[slot];
+          if (log === undefined) return;
+          slotLog[slot] = undefined;
+          logFree.push(log);
+          logIndexMirror[slot] = 0xffffffff;
+          logMarkDirty(slot);
+        };
         const killSpecs = (ray: number): void => {
           for (const pass of specPasses.get(ray) ?? []) {
             const k = sphereInversionPoolWord(ray, pass, false);
@@ -7347,6 +7492,7 @@ export class SurfaceComputeRenderer {
             slotLive[s] = false;
             slotSpec[s] = false;
             slotWord[s] = SPHERE_INVERSION_POOL_RAY_MASK;
+            logRelease(s);
           }
           specPasses.delete(ray);
         };
@@ -7394,6 +7540,23 @@ export class SurfaceComputeRenderer {
         let maxPass = 0;
         let poolChunks = 0;
         transportPassesStarted = 1;
+        if (transportLogIndex) {
+          // Every pool slot starts UNARMED (the kernel recomputes whole),
+          // and the log slots are all free. One write per pool run: the
+          // mirror is the source of truth the flush keeps current.
+          logIndexMirror.fill(0xffffffff);
+          for (let i = 0; i < SPHERE_INVERSION_TRANSPORT_LOG_SLOTS; i++)
+            logFree.push(i);
+          device.queue.writeBuffer(
+            transportLogIndex,
+            0,
+            logIndexMirror.buffer,
+            0,
+            logIndexMirror.byteLength,
+          );
+          logDirtyFrom = -1;
+          logDirtyTo = -1;
+        }
         for (;;) {
           if (token !== this.frameToken || this.isLost || this.destroyed)
             return null;
@@ -7423,7 +7586,19 @@ export class SurfaceComputeRenderer {
             transportBatchSize(transportSizer.cost, transportSizer.cap),
             capacity,
           );
-          const fresh: boolean[] = [];
+          const queueEmpty =
+            queue.length - queueHead - queuedSpec.size - cancelled.size === 0;
+          if (logOn && !armedDrain && queueEmpty) {
+            // THE DRAIN ARM: the queue's real work is gone while live
+            // slots still trace — the tail, whose chains are the frame's
+            // end. Arm every live slot now; a pass armed mid-flight
+            // latches its log's base ordinal at its next chunk, and the
+            // pre-arm pops recompute (the header's base is the design).
+            armedDrain = true;
+            for (let i = 0; i < capacity; i++) {
+              if (slotLive[i]) logArm(i);
+            }
+          }
           for (let i = 0; i < wanted && queueHead < queue.length; i++) {
             if (slotLive[i]) continue;
             let next = queue[queueHead++];
@@ -7438,9 +7613,10 @@ export class SurfaceComputeRenderer {
             slotWord[i] = next;
             slotLive[i] = true;
             slotChunks[i] = 0;
-            fresh[i] = true;
+            slotFresh[i] = true;
             slotSpec[i] = queuedSpec.delete(next);
             if (slotSpec[i]) specSlotOf.set(next, i);
+            if (logOn && armedDrain) logArm(i);
           }
           const width = slotLive.lastIndexOf(true) + 1;
           if (width === 0) break;
@@ -7452,11 +7628,13 @@ export class SurfaceComputeRenderer {
             const word = slotSpec[i]
               ? (slotWord[i] | SPHERE_INVERSION_POOL_SPEC_BIT) >>> 0
               : slotWord[i];
-            words[i] = fresh[i]
+            words[i] = slotFresh[i]
               ? (word | SPHERE_INVERSION_POOL_FRESH_BIT) >>> 0
               : word;
+            slotFresh[i] = false;
             if (slotLive[i]) live++;
           }
+          logFlush();
           if (!(await stageDispatch(width, 0, words))) return null;
           const header = new Uint32Array([
             0,
@@ -7561,7 +7739,29 @@ export class SurfaceComputeRenderer {
                   specSlotOf.delete(nextKey);
                   slotSpec[s] = false;
                   if (heldSpec.delete(nextKey)) committing.add(nextKey);
+                } else if (logOn) {
+                  // The speculated pass never got a slot: it becomes real
+                  // HERE, in the slot that just traced its predecessor,
+                  // so its consumption reads this slot's own log.
+                  const qi = queue.indexOf(nextKey, queueHead);
+                  if (qi >= 0) queue.splice(qi, 1);
+                  slotLive[i] = true;
+                  slotWord[i] = nextKey;
+                  slotSpec[i] = false;
+                  slotFresh[i] = true;
+                  slotChunks[i] = 0;
+                  logArm(i);
                 }
+              } else if (logOn) {
+                // THE CHAIN'S SLOT: the ray's next real pass takes the
+                // slot that just traced its predecessor — the log rides
+                // the slot, and the chain starts without a FIFO wait.
+                slotLive[i] = true;
+                slotWord[i] = nextKey;
+                slotSpec[i] = false;
+                slotFresh[i] = true;
+                slotChunks[i] = 0;
+                logArm(i);
               } else {
                 queue.push(nextKey);
               }
@@ -7615,10 +7815,14 @@ export class SurfaceComputeRenderer {
             }
             // SKIPPED: a classic slot — shadeRays owns the pixel.
             // Anything but pending is the ray's last word: its speculative
-            // successors die unwritten.
-            if (st !== SURFACE_GPU_TRANSPORT_PENDING)
+            // successors die unwritten, and the slot's log assignment
+            // returns to the free list.
+            if (st !== SURFACE_GPU_TRANSPORT_PENDING) {
               killSpecs(keyRay(slotWord[i]));
+              logRelease(i);
+            }
           }
+          logFlush();
           if (running > 0) transportContinuationChunks++;
           transportPassesStarted = maxPass + 1;
           const firstPoolChunk = poolChunks === 0;
