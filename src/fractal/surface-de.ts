@@ -3857,6 +3857,295 @@ function stateRadiusOf(de: SurfaceDE, state: number, levelR: number): number {
 }
 
 /**
+ * {@link expandPreBandStamps} for the fold frontier ({@link descendFold}):
+ * the same one-level stamp expansion, through the maps' fold-BRANCH
+ * enumeration instead of a single inverse application — 27 (boxfold), 3
+ * (spherefold), 81 (mandelbox), 1 (affine map in a mixed system), decoded
+ * exactly as the frontier's own candidate loop decodes them (u-space
+ * un-weight, the sphere-branch recompute at boxfold-group boundaries, the
+ * per-axis box preimage selectors) but WITHOUT the frontier bookkeeping and
+ * the stage-2 B&B skips, which are optimizations over a fold this helper
+ * makes directly. The frontier measures its candidates against the LEVEL
+ * ball only (no per-state bounds), so the escape test reads `Rg`; the
+ * branch's region floor raises the escaped grandchild's certificate exactly
+ * as the frontier raises its own, and the spherefold mid-shell guard folds
+ * its shell bound (floor-raised, last-level-gated) instead of producing a
+ * candidate, with the mandelbox group skip. Returns the updated `best`; the
+ * caller owns the cutoff exits.
+ */
+function expandPreBandStampsFold(
+  de: SurfaceDE,
+  depth: number,
+  eX: number,
+  eY: number,
+  eZ: number,
+  eScale: number,
+  eState: number,
+  eFloor: number,
+  best: number,
+): number {
+  let acc = best;
+  const { order, plane, stepCos, stepSin } = de.symmetry;
+  const schedDepth = de.schedule?.depth ?? 0;
+  const inB = de.schedule !== undefined && depth + 1 < schedDepth;
+  const levelMaps = inB ? de.schedule!.maps : de.maps;
+  const sectorOrder = inB ? 1 : order;
+  const childBound = de.schedule
+    ? de.schedule.bounds[Math.min(depth + 2, schedDepth)]
+    : null;
+  const Rg = childBound ? childBound.radius : de.boundingRadius;
+  const gcX = childBound ? childBound.center[0] : de.boundCenter[0];
+  const gcY = childBound ? childBound.center[1] : de.boundCenter[1];
+  const gcZ = childBound ? childBound.center[2] : de.boundCenter[2];
+  const gLast = condensationLastLevel(
+    de,
+    scheduledCondensationHasFutureDepth(de, depth + 3),
+  );
+  for (let k = 0; k < sectorOrder; k++) {
+    let sX = eX;
+    let sY = eY;
+    let sZ = eZ;
+    if (k > 0) {
+      stepSector(plane, stepCos, stepSin, sX, sY, sZ, EXPANSION_SWEEP);
+      sX = EXPANSION_SWEEP[0];
+      sY = EXPANSION_SWEEP[1];
+      sZ = EXPANSION_SWEEP[2];
+    }
+    for (let j = 0; j < levelMaps.length; j++) {
+      const map = levelMaps[j];
+      if (!inB && !surfaceChaosAllows(de.chaos, eState, map.stateIndex!)) {
+        continue;
+      }
+      const childState = inB
+        ? SURFACE_CHAOS_WILDCARD
+        : (map.stateIndex ?? SURFACE_CHAOS_WILDCARD);
+      const im = map.invM;
+      const it = map.invT;
+      let pX = sX;
+      let pY = sY;
+      let pZ = sZ;
+      if (map.postInvM !== null && map.postInvT !== null) {
+        const pm = map.postInvM;
+        const pt = map.postInvT;
+        pX = pm[0] * sX + pm[1] * sY + pm[2] * sZ + pt[0];
+        pY = pm[3] * sX + pm[4] * sY + pm[5] * sZ + pt[1];
+        pZ = pm[6] * sX + pm[7] * sY + pm[8] * sZ + pt[2];
+      }
+      const kind = map.foldKind;
+      const branchCount =
+        kind === SURFACE_FOLD_NONE
+          ? 1
+          : kind === SURFACE_FOLD_BOXFOLD
+            ? 27
+            : kind === SURFACE_FOLD_SPHEREFOLD
+              ? 3
+              : 81;
+      const absW = map.foldSigma / map.sigmaMin;
+      const regionAbsW = map.postInvM === null ? absW : absW * map.postSigmaMin;
+      const fr = map.foldRadii;
+      const wall = fr.wall;
+      const wall2 = 2 * wall;
+      let ux = 0;
+      let uy = 0;
+      let uz = 0;
+      let ru = 0;
+      let px0 = 0;
+      let px1 = 0;
+      let px2 = 0;
+      let py0 = 0;
+      let py1 = 0;
+      let py2 = 0;
+      let pz0 = 0;
+      let pz1 = 0;
+      let pz2 = 0;
+      let dxUp = 0;
+      let dxDn = 0;
+      let dyUp = 0;
+      let dyDn = 0;
+      let dzUp = 0;
+      let dzDn = 0;
+      let vx = 0;
+      let vy = 0;
+      let vz = 0;
+      let sfSigma = 1;
+      let sfRd = 0;
+      if (kind !== SURFACE_FOLD_NONE) {
+        ux = pX * map.foldInvW;
+        uy = pY * map.foldInvW;
+        uz = pZ * map.foldInvW;
+        if (kind === SURFACE_FOLD_BOXFOLD) {
+          px0 = ux;
+          px1 = wall2 - ux;
+          px2 = -wall2 - ux;
+          py0 = uy;
+          py1 = wall2 - uy;
+          py2 = -wall2 - uy;
+          pz0 = uz;
+          pz1 = wall2 - uz;
+          pz2 = -wall2 - uz;
+          dxUp = ux > wall ? ux - wall : 0;
+          dxDn = ux < -wall ? -wall - ux : 0;
+          dyUp = uy > wall ? uy - wall : 0;
+          dyDn = uy < -wall ? -wall - uy : 0;
+          dzUp = uz > wall ? uz - wall : 0;
+          dzDn = uz < -wall ? -wall - uz : 0;
+        } else {
+          ru = Math.sqrt(ux * ux + uy * uy + uz * uz);
+        }
+      }
+      for (let b = 0; b < branchCount; b++) {
+        let ix: number;
+        let iy: number;
+        let iz: number;
+        let branchSigma: number;
+        let branchRd = 0;
+        if (kind === SURFACE_FOLD_NONE) {
+          ix = im[0] * pX + im[1] * pY + im[2] * pZ + it[0];
+          iy = im[3] * pX + im[4] * pY + im[5] * pZ + it[1];
+          iz = im[6] * pX + im[7] * pY + im[8] * pZ + it[2];
+          branchSigma = map.sigmaMin;
+        } else {
+          if (
+            kind === SURFACE_FOLD_SPHEREFOLD ||
+            (kind === SURFACE_FOLD_MANDELBOX && b % 27 === 0)
+          ) {
+            const s = kind === SURFACE_FOLD_SPHEREFOLD ? b : b / 27;
+            if (s === 0) {
+              vx = ux;
+              vy = uy;
+              vz = uz;
+              sfSigma = 1;
+              sfRd = ru < fr.fixedR ? fr.fixedR - ru : 0;
+            } else if (s === 1) {
+              vx = fr.innerScale * ux;
+              vy = fr.innerScale * uy;
+              vz = fr.innerScale * uz;
+              sfSigma = fr.innerSigma;
+              sfRd = ru > fr.outputR ? ru - fr.outputR : 0;
+            } else {
+              if (ru < fr.midMinR) {
+                if (!gLast) {
+                  let shellCert = eScale * regionAbsW * (fr.fixedR - ru);
+                  if (eFloor > shellCert) shellCert = eFloor;
+                  if (shellCert < acc) acc = shellCert;
+                }
+                if (kind === SURFACE_FOLD_MANDELBOX) b += 26;
+                continue;
+              }
+              const invR2 = fr.fixedR2 / (ru * ru);
+              vx = ux * invR2;
+              vy = uy * invR2;
+              vz = uz * invR2;
+              sfSigma = ru * fr.invFixedR;
+              sfRd =
+                ru < fr.fixedR
+                  ? fr.fixedR - ru
+                  : ru > fr.outputR
+                    ? ru - fr.outputR
+                    : 0;
+            }
+            if (kind === SURFACE_FOLD_MANDELBOX) {
+              px0 = vx;
+              px1 = wall2 - vx;
+              px2 = -wall2 - vx;
+              py0 = vy;
+              py1 = wall2 - vy;
+              py2 = -wall2 - vy;
+              pz0 = vz;
+              pz1 = wall2 - vz;
+              pz2 = -wall2 - vz;
+              dxUp = vx > wall ? vx - wall : 0;
+              dxDn = vx < -wall ? -wall - vx : 0;
+              dyUp = vy > wall ? vy - wall : 0;
+              dyDn = vy < -wall ? -wall - vy : 0;
+              dzUp = vz > wall ? vz - wall : 0;
+              dzDn = vz < -wall ? -wall - vz : 0;
+            }
+          }
+          let cx: number;
+          let cy: number;
+          let cz: number;
+          if (kind === SURFACE_FOLD_SPHEREFOLD) {
+            cx = vx;
+            cy = vy;
+            cz = vz;
+            branchRd = sfRd;
+          } else {
+            const bb = kind === SURFACE_FOLD_BOXFOLD ? b : b % 27;
+            const selX = bb % 3;
+            const selY = ((bb / 3) | 0) % 3;
+            const selZ = (bb / 9) | 0;
+            cx = selX === 0 ? px0 : selX === 1 ? px1 : px2;
+            cy = selY === 0 ? py0 : selY === 1 ? py1 : py2;
+            cz = selZ === 0 ? pz0 : selZ === 1 ? pz1 : pz2;
+            const ddx =
+              selX === 0
+                ? dxUp > dxDn
+                  ? dxUp
+                  : dxDn
+                : selX === 1
+                  ? dxUp
+                  : dxDn;
+            const ddy =
+              selY === 0
+                ? dyUp > dyDn
+                  ? dyUp
+                  : dyDn
+                : selY === 1
+                  ? dyUp
+                  : dyDn;
+            const ddz =
+              selZ === 0
+                ? dzUp > dzDn
+                  ? dzUp
+                  : dzDn
+                : selZ === 1
+                  ? dzUp
+                  : dzDn;
+            const boxRd2 = ddx * ddx + ddy * ddy + ddz * ddz;
+            const boxRd = boxRd2 > 0 ? Math.sqrt(boxRd2) : 0;
+            branchRd =
+              kind === SURFACE_FOLD_BOXFOLD
+                ? boxRd
+                : sfRd > sfSigma * boxRd
+                  ? sfRd
+                  : sfSigma * boxRd;
+          }
+          ix = im[0] * cx + im[1] * cy + im[2] * cz + it[0];
+          iy = im[3] * cx + im[4] * cy + im[5] * cz + it[1];
+          iz = im[6] * cx + im[7] * cy + im[8] * cz + it[2];
+          branchSigma = map.foldSigma * sfSigma;
+        }
+        const icx = ix - gcX;
+        const icy = iy - gcY;
+        const icz = iz - gcZ;
+        const r = Math.sqrt(icx * icx + icy * icy + icz * icz);
+        const gScale = eScale * branchSigma;
+        if (r > Rg) {
+          let gcert = gLast ? Infinity : gScale * (r - Rg);
+          const flr = eScale * regionAbsW * branchRd;
+          if (flr > gcert) gcert = flr;
+          const raised = eFloor > gcert ? eFloor : gcert;
+          if (raised < acc) acc = raised;
+        } else {
+          const shapeTerm = scheduledCondensationTerm3(
+            de,
+            depth + 2,
+            gScale,
+            ix,
+            iy,
+            iz,
+            childState,
+          );
+          if (shapeTerm < acc) acc = shapeTerm;
+        }
+      }
+    }
+  }
+  return acc;
+}
+
+/**
  * Is this the finite band's LAST level: recursive maps present and no
  * descendant of the level's children can hold an enabled C0? Every child's
  * own C0 term is folded as it is generated, so the subtree below holds
@@ -5767,10 +6056,27 @@ function descendFold(
                 futureCondensation &&
                 depth + 1 < firstCondensationDepth
               ) {
-                const subtree = evScale * (evR - R);
-                if (subtree < best) best = subtree;
-                if (best <= sphereBound || best * finalScale < bailBelow) {
-                  return descentValue(best, sphereBound, finalScale);
+                if (depth + 2 === firstCondensationDepth) {
+                  best = expandPreBandStampsFold(
+                    de,
+                    depth,
+                    evX,
+                    evY,
+                    evZ,
+                    evScale,
+                    evState,
+                    evFloor,
+                    best,
+                  );
+                  if (best <= sphereBound || best * finalScale < bailBelow) {
+                    return descentValue(best, sphereBound, finalScale);
+                  }
+                } else {
+                  const subtree = evScale * (evR - R);
+                  if (subtree < best) best = subtree;
+                  if (best <= sphereBound || best * finalScale < bailBelow) {
+                    return descentValue(best, sphereBound, finalScale);
+                  }
                 }
               } else if (!lastLevel && evFloor > 0 && evFloor < best) {
                 // The drop-fold rule — gated at the band's last level like
