@@ -54,13 +54,20 @@
  * (3) The budget itself: at one sample the software legs measure 41-46s
  * (compute, plain 3D/4D) and 210s (WebGL 3D), so a --settle-less software
  * run now takes a 420s budget while the release keeps 180s. The balloon
- * fixtures are additionally SKIPPED on SwiftShader: both engines render
- * them empty there (the compute pipeline dies with GPUPipelineError and the
- * designed one-way WebGL fallback misses every ray; the native WebGL arm
- * settles covered=0/518400 against the real driver's ~49%) — a measured
- * renderer defect on the software stack, first observable once this gate
- * could reach those legs at all, owned by its own record rather than by a
- * permanently-failing diagnostic.
+ * fixtures are additionally SKIPPED on SwiftShader: the session's WebGL
+ * context dies between the preview and the settle there (per-strip
+ * isContextLost telemetry 2026-10-04: the preview strips draw, every settle
+ * strip runs against a dead context with no GL error and no link failure;
+ * the compute arm's GPUPipelineError is the same environmental instability
+ * family — boot WebGL contexts die twice before compute starts). Before
+ * the pump's context-lost gate that death read as an honest-looking
+ * covered=0/518400 census through both engines; the pump now aborts the
+ * frame, the census publishes null, and the app shows the render-error
+ * banner. The release driver renders the same fixtures at ~49% coverage
+ * through the same GLSL balloon arm — a measured renderer defect on the
+ * software stack, first observable once this gate could reach those legs
+ * at all, owned by its own record rather than by a permanently-failing
+ * diagnostic.
  */
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -518,14 +525,19 @@ async function main() {
   try {
     for (const fixture of fixtures) {
       if (software && fixture.balloon) {
-        // SwiftShader renders every balloon fixture EMPTY, measured
-        // 2026-10-02: the compute pipeline dies (GPUPipelineError, the
-        // designed one-way WebGL fallback then also misses every ray) and
-        // the native WebGL arm settles covered=0/518400 against the real
-        // driver's ~49%. The release driver owns the balloon evidence; the
-        // measured defect's record lives in the header verdict.
+        // SwiftShader kills the balloon session's WebGL context between the
+        // preview and the settle (measured 2026-10-02 and re-diagnosed
+        // 2026-10-04 with per-strip isContextLost telemetry: the preview
+        // strips draw, every settle strip reports isContextLost()=true, no
+        // GL error, no link failure — the release driver renders the same
+        // fixtures at ~49% coverage). Before the pump's context-lost gate
+        // that death read as an honest-looking covered=0/518400 census; the
+        // gate now aborts the frame, publishes no census, and the app
+        // discloses the render error. The skip stands — the release driver
+        // owns the balloon evidence; the full diagnosis lives in the header
+        // verdict.
         console.log(
-          `[surface-swirl] ${fixture.name}: skipped on SwiftShader (balloon renders empty; see header verdict)`,
+          `[surface-swirl] ${fixture.name}: skipped on SwiftShader (the context dies before the settle; see header verdict)`,
         );
         continue;
       }

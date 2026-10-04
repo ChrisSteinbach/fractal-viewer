@@ -12925,6 +12925,19 @@ async function main(): Promise<void> {
           syncSurfaceProgress();
           if (scene.surfaceSettleActive) {
             if (scene.stepSurfaceSettle()) {
+              // A settle that ran against a dead context publishes nothing
+              // (no census, no present — the pump aborted at its first
+              // queueful), and the honest user-facing outcome is the render
+              // error banner, not a silent dark pane that reads as "the
+              // system rendered nothing".
+              if (scene.takeSurfaceSettleContextLost()) {
+                console.warn(
+                  "Surface render: the WebGL context was lost mid-frame.",
+                );
+                showRenderError(
+                  "WebGL context lost — the frame did not render. Try reloading.",
+                );
+              }
               // The WebGL arm's half of the blank-frame notice. Same
               // question, same units and the same five conditions as the
               // compute arm's (see runSurfaceComputeSettle): the first settle
