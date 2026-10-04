@@ -534,6 +534,10 @@ tested on an actually stalled context; and a tint-value-only shader cliff
 does not explain the first-page success or the separate palette stall.
 Removing a global random override did not remove the timeout. No strip
 scheduling or shader workaround was applied from these observations.
+Balloon stalls include untiled work: a flushed native GL fence blocks
+Chromium's readback-shadow FIFO front, and an extra flush did not rescue
+it — the native-GL observation below was built to see that mechanism
+directly.
 
 Reproduce after a production build and preview with
 `node scripts/tiling-balloon.verify.mjs --display=:0 --only=surface --dimension=4 --engine=webgl --look=true`.
@@ -852,3 +856,60 @@ to the section that carries its full context:
 | Unbudgeted completion pass, Firefox 151 WebGPU, 1920x1057, 20-map Menger + fold lens + balloon | two 2.1s truncated floor previews at 5% of 9916 rays; completion pass 13.8s, 3.9% -> 97%; settle still 48% after 179s                                                                        |
 | Preview-coalescing bug, SwiftShader, 100ms drag cadence                                        | 13/15 samples byte-identical at 0% over 6s of drag; one partial strip briefly reached 19% before re-arming reset it to 0%                                                                    |
 | Preview-coalescing fix, `surface-tier.verify.mjs` mid-drag check                               | jpeg similarity 0.99-1.00 (bug: mid-drag frame was actually the settled frame) -> 0.83 (fixed: genuinely softer mid-drag frame)                                                              |
+
+## The lost-context frame is not a census (SwiftShader balloon, 2026-10-04)
+
+Diagnosing `fr-za0f` — "SwiftShader renders the balloon Surface fixtures
+empty through both engines, WebGL 100% miss" — with per-strip
+`isContextLost()` telemetry on the gate's SwiftShader stack
+(`--use-webgpu-adapter=swiftshader --use-vulkan=swiftshader`, built app):
+
+- The balloon session's WebGL context DIES between the preview and the
+  settle. The preview's strips draw (`ctxLost=false` per strip, four of
+  them covering the whole 288x162 preview); the FIRST settle strip and
+  every one after it (`678` of them across the run) reports
+  `isContextLost() = true` on the same context, with no GL error and no
+  link failure — the tracer program (balloon+lens, ~36 KB resolved) linked
+  twice at session start. A GL-call ring buffer places the death inside the
+  preview-present path (the ring's tail is the last strip's corner
+  readback, then the canvas bind, viewport, clear and blit-program uniform
+  uploads; the blit's `drawArrays` never lands). Smaller viewports (480x270)
+  reproduce it, so it is not a simple resource-scale cliff; the plain
+  fixture (same maps, same lens, balloon off) never loses the context on
+  the same stack and settles healthy.
+- THREE's `WebGLRenderer.render()` returns immediately when its context is
+  lost, so every settle strip "renders" as a no-op, the pump's fences and
+  forced-completion readbacks "succeed" instantly, the settle latch fires,
+  and the census — read from the CLEARED settle target — reports an
+  honest-looking `covered=0/518400, exhausted=0` that is a LIE. That false
+  census is what the original record described as "the native WebGL arm
+  settles covered=0/518400". The compute arm's `GPUPipelineError: A valid
+external Instance reference no longer exists` and the boot-time double
+  WebGL context loss are the same environmental instability family, so the
+  compute leg's designed WebGL fallback inherited the same dead-context
+  empty frame.
+- Not the DE, and not the transcendentals: the CPU oracle
+  (`surface-de.ts` + `balloon-de.ts`, f64) marches the exact fixture
+  (persisted pose, `?surfacesamples=1` eps, the swirl-balloon sample march)
+  at ~37% coverage with shell hits dominating — matching the release
+  driver's ~49% shape. The echo-hit inner queries evaluate the lens at
+  `|I(p)| ≈ 0.42-0.53` (`|u|² ≈ 0.02-0.03`), far below the argument range
+  where this stack's `sin`/`cos` measurably corrupt (correct to ~1e5,
+  wrong-phase ~1e6, saturating to exactly 1.0 from ~1e7 up) — that
+  SwiftShader transcendental defect is real but never reached by this
+  fixture's march.
+
+The fix lives in the pump (`pumpStrips`): a lost context aborts the job at
+the top of the call — no further strips, no cost evidence (a dead context's
+timings are garbage in both directions), the job retired
+without publishing an observation. `stepSurfaceSettle` latches the loss,
+skips the census and the present, and main.ts discloses it through
+`showRenderError`; the census readback itself refuses a lost context;
+`drainStripsSync`/`drainStripsAsync` fail the capture ("context-lost"
+outcome, the export delivers nothing rather than an empty PNG). Measured on
+the same stack: the balloon leg settles in ~24s (the pre-fix run ground
+~678 no-op strips for ~210s), publishes `census: null`, and shows the
+error banner; the plain fixture on SwiftShader is unchanged
+(covered=33966, identical to the pre-fix run); the release driver's
+balloon census is byte-consistent with the pre-fix record (covered=253025),
+and `surface-swirl.verify.mjs --display=:0` passes end to end.

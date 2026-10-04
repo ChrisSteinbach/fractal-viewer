@@ -6992,11 +6992,19 @@ export class FractalScene {
   stepSurfacePreview(): boolean {
     const job = this.surfacePreviewJob;
     if (!job) return true;
-    const { done, present } = this.pumpStrips(
+    const { done, present, lost } = this.pumpStrips(
       job,
       this.surfacePreviewTarget,
       SURFACE_STRIP_QUEUE_MS,
     );
+    if (lost) {
+      // The context died under the preview: nothing this job drew landed.
+      // The trace is not cost evidence and the target is not a picture —
+      // stop here; the settle path owns the user-facing disclosure (see
+      // stepSurfaceSettle).
+      this.surfacePreviewJob = null;
+      return true;
+    }
     if (done) {
       this.surfacePreviewJob = null;
       this.retireStripJob(job, "completed");
@@ -7506,6 +7514,15 @@ export class FractalScene {
   private measureSurfaceRayCensus(width: number, height: number): void {
     const px = width * height;
     if (px <= 0) return;
+    // A lost context reads back its cleared attachments as all-zero — a
+    // census that would publish a false 100% miss. The pump's own gate
+    // aborts a frame whose strips ran dead, so this only fires for a loss
+    // in the exact window between the last strip and this readback.
+    if (
+      (this.renderer.getContext() as WebGL2RenderingContext).isContextLost()
+    ) {
+      return;
+    }
     const buf = new Uint8Array(px * 4);
     this.readSurfaceColor(this.surfaceSettleTarget, width, height, buf);
     this.surfaceSettledRayCensus = decodeSurfaceRayCensus(buf, width, height);
@@ -7515,6 +7532,20 @@ export class FractalScene {
    * while that pass is absent/in flight. */
   get surfaceRayCensus(): SurfaceRayCensus | null {
     return this.surfaceSettledRayCensus;
+  }
+
+  /** The active settle ran against a LOST GL context, latched by
+   * {@link stepSurfaceSettle} and consumed once by main.ts's
+   * showRenderError disclosure. Nothing about that frame is publishable:
+   * the target holds nothing the session drew, and a census read from it
+   * would report an honest-looking 100% miss that is a lie. */
+  private surfaceSettleContextLost = false;
+
+  /** Read-and-clear {@link surfaceSettleContextLost}. */
+  takeSurfaceSettleContextLost(): boolean {
+    const lost = this.surfaceSettleContextLost;
+    this.surfaceSettleContextLost = false;
+    return lost;
   }
 
   /**
@@ -7726,7 +7757,17 @@ export class FractalScene {
    */
   stepSurfaceSettle(): boolean {
     if (!this.surfaceStripJob) return true;
-    const { done, present } = this.renderSurfaceStrips(SURFACE_STRIP_QUEUE_MS);
+    const { done, present, lost } = this.renderSurfaceStrips(
+      SURFACE_STRIP_QUEUE_MS,
+    );
+    if (lost) {
+      // The context died under the settle: no census, no present, no
+      // accumulator fold — the target holds nothing this session drew, and
+      // a census read from it would publish a false 100% miss. Latched for
+      // main.ts's showRenderError disclosure; the settle sequence ends.
+      this.surfaceSettleContextLost = true;
+      return true;
+    }
     if (!done) {
       // Present into the pump's drain gap. Pass 0 shows its own strips
       // sharpening over the preview seed, exactly as this always did; a
@@ -7999,14 +8040,26 @@ export class FractalScene {
   private renderSurfaceStrips(queueBudgetMs: number): {
     done: boolean;
     present: boolean;
+    lost: boolean;
   } {
     const job = this.surfaceStripJob;
-    if (!job) return { done: true, present: false };
+    if (!job) return { done: true, present: false, lost: false };
     const result = this.pumpStrips(
       job,
       this.surfaceSettleTarget,
       queueBudgetMs,
     );
+    // The pump's own gate aborts BEFORE the strips, but a sync-collapse
+    // job completes inside the single pump call that would have caught a
+    // mid-call loss — so the completion path re-checks before publishing
+    // anything (the census readback has its own guard; this keeps the
+    // disclosure latch in step with it).
+    const lost =
+      result.lost ||
+      (this.renderer.getContext() as WebGL2RenderingContext).isContextLost();
+    if (lost) {
+      return { ...result, lost: true };
+    }
     const done = result.done;
     if (done) {
       this.retireStripJob(job, "completed");
@@ -8096,9 +8149,30 @@ export class FractalScene {
     job: SurfaceStripJob,
     target: THREE.WebGLRenderTarget,
     queueBudgetMs: number,
-  ): { done: boolean; present: boolean } {
+  ): { done: boolean; present: boolean; lost: boolean } {
     const gl = this.renderer.getContext() as WebGL2RenderingContext;
     const diagnostic = job.diagnostic;
+    if (gl.isContextLost()) {
+      // The GL context died mid-frame — a driver reset, or a software
+      // rasterizer's device loss (measured on SwiftShader: a balloon
+      // session's context dies between the preview and the settle). THREE's
+      // render() no-ops every draw against a lost context and the pump's
+      // own fences and readbacks "succeed" instantly, so without this gate
+      // the pump grinds the whole planned strip sequence to "completion"
+      // against a dead context, the settle latch fires, and the census
+      // reads the CLEARED target as an honest-looking 100% miss the app
+      // then presents and discloses. Abort instead; the caller owns the
+      // user-facing disclosure, and this frame publishes no cost evidence
+      // (a dead context's timings are garbage in both directions).
+      this.retireStripJob(job, "superseded");
+      if (this.surfaceStripJob === job) this.surfaceStripJob = null;
+      if (this.surfacePreviewJob === job) this.surfacePreviewJob = null;
+      if (diagnostic) {
+        diagnostic.lastExitReason = "context-lost";
+        diagnostic.lastPumpExitAt = performance.now();
+      }
+      return { done: true, present: false, lost: true };
+    }
     if (diagnostic) {
       diagnostic.lastPumpAt = performance.now();
       diagnostic.lastQueueBudgetMs = queueBudgetMs;
@@ -8122,7 +8196,7 @@ export class FractalScene {
           diagnostic.lastExitReason = "sync-complete";
           diagnostic.lastPumpExitAt = performance.now();
         }
-        return { done: true, present: true };
+        return { done: true, present: true, lost: false };
       }
     }
     // Pipelined regime: retire whatever the GPU has finished, then refill.
@@ -8262,7 +8336,11 @@ export class FractalScene {
     }
     this.resetScissor(target);
     if (diagnostic) diagnostic.lastPumpExitAt = performance.now();
-    return { done: job.planner.done && job.inFlight.length === 0, present };
+    return {
+      done: job.planner.done && job.inFlight.length === 0,
+      present,
+      lost: false,
+    };
   }
 
   /**
@@ -8438,7 +8516,15 @@ export class FractalScene {
   ): boolean {
     const gl = this.renderer.getContext() as WebGL2RenderingContext;
     for (;;) {
-      if (this.pumpStrips(job, target, SURFACE_STRIP_QUEUE_MS).done) {
+      const pumped = this.pumpStrips(job, target, SURFACE_STRIP_QUEUE_MS);
+      if (pumped.lost) {
+        // The context died under the synchronous capture: the drain's
+        // remaining queuefuls are no-ops and the target is empty. Fail the
+        // capture the spend-ceiling path does (the offline exporter fails
+        // the run; the thumbnail falls back to the explorer render).
+        return false;
+      }
+      if (pumped.done) {
         return true;
       }
       const abort = job.spentMs > spendCeilingMs;
@@ -8498,7 +8584,16 @@ export class FractalScene {
     },
   ): Promise<SurfaceDrainOutcome> {
     for (;;) {
-      if (this.pumpStrips(job, target, SURFACE_STRIP_QUEUE_MS).done) {
+      const pumped = this.pumpStrips(job, target, SURFACE_STRIP_QUEUE_MS);
+      if (pumped.lost) {
+        // The context died under the capture: the export-scale target
+        // holds nothing this session drew, so there is no picture to
+        // deliver and no point grinding the remaining queuefuls against a
+        // dead context. finishSurfaceFullFrame drops the evidence and the
+        // capture surfaces the failure to its caller.
+        return "context-lost";
+      }
+      if (pumped.done) {
         return "done";
       }
       hooks.onProgress?.(stripJobCoverage(job));
@@ -9010,7 +9105,9 @@ export class FractalScene {
       } finally {
         this.surfaceCaptureFlight = false;
       }
-      if (outcome === "cancelled") return null;
+      // A context-lost capture has no picture either: the target holds
+      // nothing this session drew (the pump aborted at the first queueful).
+      if (outcome === "cancelled" || outcome === "context-lost") return null;
       // A viewport resize during the drain leaves the traced target and the
       // canvas the blit lands on at different sizes — the export would be a
       // scaled, half-stale frame. Rare (the modal's scrim covers the app,
@@ -9281,7 +9378,7 @@ const SURFACE_CAPTURE_TICK_BACKSTOP_MS = 16;
 /** How a capture drain ended. "ceiling" is the measured-spend
  * backstop — a refusal the caller reports; "cancelled" is the user's own
  * choice, which is not an error at all. */
-type SurfaceDrainOutcome = "done" | "ceiling" | "cancelled";
+type SurfaceDrainOutcome = "done" | "ceiling" | "cancelled" | "context-lost";
 
 /** A full-tier frame's arming state: the strip job, plus the measured
  * evidence the arming itself discarded. */

@@ -1309,7 +1309,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
   - `strip-planner.ts` — bounds every WebGL trace, previews included (closing
     the i915 preview-hang path); compute bounds its own submissions.
     Seeds unbind destination textures from all samplers: uniform branches
-    cannot prevent feedback validation. Evidence: `docs/surface-strip-pipeline.md`.
+    cannot prevent feedback validation. A lost context ABORTS the job — a
+    dead context's draws are silent no-ops and its cleared target reads as
+    a false 100% miss (the SwiftShader balloon verdict's actual mechanism).
+    Evidence: `docs/surface-strip-pipeline.md`.
     Units are PIXELS, not rows: a strip is a
     row-major pixel interval rendered as 1-3 scissor rects under ONE fence,
     so fold strips shrink below a row's cost. The probe is sized from a
@@ -1331,7 +1334,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     fold system stays pinned at class-floor micro-strips whose readback
     overhead dissolves its settle — while partial jobs only RAISE.
     Relaxation lives exactly ONE completed-preview->settle handoff (a
-    superseded job = the pose moved on = stale evidence dies).
+    superseded job = the pose moved = stale evidence dies).
     Measurements reach the ratchet through a measurement-time
     `observe(ms, px)` door as well as `next()`'s sizing-time one (a job's
     LAST measurement otherwise never reaches a sizing call at all).
@@ -1376,13 +1379,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     Capture/offline export runs the SAME pump, differing only in
     how it WAITS between calls: the synchronous one (offline export,
     thumbnails) blocks on ONE whole-queue readback per queueful, the
-    yielding one (the Save-PNG) hands the main thread back on rAF —
-    timer-backstopped at a frame (a slow frame clock would otherwise
-    starve the queue) — and a bounded macrotask spin when the page is
-    hidden. A capture job never presents (the export-scale target must not
+    yielding one (the Save-PNG) hands the main thread back on rAF,
+    timer-backstopped at a frame; a bounded macrotask spin when hidden. A capture job never presents (the export-scale target must not
     reach the canvas), ADOPTS the fence backlog like the live jobs, and
-    winds its own queue down before returning from an abort so no export
-    leftovers outlive the export. THE SYNCHRONOUS DRAIN RETIRES FENCES
+    winds its own queue down before returning from an abort (no export
+    leftovers outlive the export). THE SYNCHRONOUS DRAIN RETIRES FENCES
     WITHOUT POLLING after its readback; WebGL forbids observing newly
     signaled fences within one task.
     COST CEILINGS ARE THE SYNCHRONOUS DRAIN'S ALONE — offline
@@ -1412,8 +1413,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     freshest camera. Pose coherence is free (`armSurfacePreview` snapshots
     the camera into uniforms, so a multi-frame job traces ONE pose).
     Fold surface sessions gate their first frame on `compileAsync` of the
-    fold tracer program (the long links happen off the critical path where
-    the driver offers `KHR_parallel_shader_compile`); THE COMPILE MESH MUST
+    fold tracer program (long links off the critical path where the driver
+    offers `KHR_parallel_shader_compile`); THE COMPILE MESH MUST
     MIRROR FullScreenQuad's position+uv triangle or the draw links a second
     program variant, and the gate defers activate()'s guide/selection
     refresh so no other re-link joins the driver's compile queue behind it.
@@ -1421,8 +1422,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `scripts/capture-drain.verify.mjs` and `scripts/surface-tier.verify.mjs`
     (whose mid-drag softness check is that rule's);
     `scripts/fold-settle-park.repro.mjs` and `?surfacetrace` sit one module
-    over. Balloon stalls include untiled work: a flushed native GL fence blocks
-    Chromium's readback-shadow FIFO front; an extra flush did not rescue it.
+    over.
     `tiling-balloon.verify.mjs` and `native-gl-trace.*.mjs` observe this without
     added GL calls. Pure, tested. Evidence and the remaining backend boundary
     are in `docs/surface-strip-pipeline.md`.
