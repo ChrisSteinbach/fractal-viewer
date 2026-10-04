@@ -64,6 +64,7 @@ import {
   buildSurfaceChaosDE,
   chaosComponentIds,
   coverageProbeWindows,
+  condensationDeepBandRefusal,
   emitterOnlySurfaceBandRefusal,
   emitterOnlySurfaceScheduleRefusal,
   surfaceChaosAllows,
@@ -955,6 +956,13 @@ export function analyzeSurfaceSystem4(
     condensationDepthBand,
   );
   if (bandRefusal) reasons.push(bandRefusal);
+  const deepBandRefusal = condensationDeepBandRefusal(
+    transforms,
+    symmetry,
+    schedule,
+    condensationDepthBand,
+  );
+  if (deepBandRefusal) reasons.push(deepBandRefusal);
 
   transforms.forEach((t, i) => {
     if (!isActive(t)) return;

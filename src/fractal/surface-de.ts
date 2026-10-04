@@ -11,6 +11,7 @@ import {
   buildChaosSelection,
   prepareSchedule,
   resolveChaosEntry,
+  resolveScheduleDepth,
   runChaosGame,
   symmetryRotation,
   systemHasChaos,
@@ -2213,6 +2214,49 @@ export function emitterOnlySurfaceBandRefusal(
 }
 
 /**
+ * A band whose first enabled level sits three or more levels past the
+ * schedule prefix leaves bare evicted-subtree ball terminals at its
+ * shallower pre-band levels: the stamp expansion
+ * ({@link expandPreBandStamps}) covers exactly the level whose next level
+ * opens the band, so a deeper opening leaves every shallower pre-band level
+ * carrying the enclosure ball — a sound lower bound that reads as a hit
+ * across a loose ball. Depth 0 is where that eviction fires at full
+ * accumulated scale, whenever the level's candidates exceed the width-4
+ * beam (one chain times the sector order times the level's maps). Such
+ * bands refuse with an actionable reason; beam-wider bands opening at 2 are
+ * expansion-covered and stay admitted, as is every map count the first
+ * pre-band level cannot evict. Shallower pre-band levels within admitted
+ * bands (a band opening 4+ deep) keep the disclosed residual risk — their
+ * folds shrink with the accumulated contraction and are masked by tight
+ * balls, but a loose ball can still read as surface.
+ */
+export function condensationDeepBandRefusal(
+  transforms: readonly Transform[],
+  symmetry: { order: number },
+  schedule: HybridSchedule | null | undefined,
+  condensationDepthBand?: CondensationDepthBand,
+): string | null {
+  const resolved = resolveCondensationDepthBand(condensationDepthBand);
+  const schedDepth = resolveScheduleDepth(schedule ?? null);
+  if (resolved.minDepth + schedDepth < 3) return null;
+  // Emitter-only systems have their own band refusal, and with no
+  // recursive maps there is no eviction to cover.
+  if (surfaceSystemIsEmitterOnly(transforms)) return null;
+  const recursiveMaps = transforms.filter(
+    (t) => isActive(t) && !transformHasEmitter(t),
+  ).length;
+  const schedMaps = schedule
+    ? schedule.transforms.filter((t) => (t.weight ?? 1) > 0).length
+    : 0;
+  const sectorOrder =
+    schedDepth > 0
+      ? 1
+      : effectiveSymmetryOrder(symmetry.order, transforms.length);
+  if (recursiveMaps * sectorOrder <= 4 && schedMaps <= 4) return null;
+  return `condensation band opens at level ${resolved.minDepth + schedDepth}+ with more maps than the march can cover; choose All levels or First shape-copy level 2`;
+}
+
+/**
  * Retain every unfinished finite B word before C0 is evaluated. The affine
  * frontier has four lanes; the final level may be wider because every
  * generated child's C0 term is folded before frontier selection. Dropping
@@ -2269,6 +2313,13 @@ export function analyzeSurfaceSystem(
     condensationDepthBand,
   );
   if (bandRefusal) reasons.push(bandRefusal);
+  const deepBandRefusal = condensationDeepBandRefusal(
+    transforms,
+    symmetry,
+    schedule,
+    condensationDepthBand,
+  );
+  if (deepBandRefusal) reasons.push(deepBandRefusal);
 
   transforms.forEach((t, i) => {
     if (!isActive(t)) return;
@@ -3666,6 +3717,145 @@ function scheduledCondensationHasFutureDepth(
   );
 }
 
+/** Module-scope sweep scratch for {@link expandPreBandStamps}, distinct from
+ * the descents' own sweep triples. Single-threaded by construction (each
+ * worker owns its module instance) and never re-entrant: every call site
+ * runs to completion inside its own candidate-loop iteration. */
+const EXPANSION_SWEEP = [0, 0, 0];
+
+/**
+ * The pre-band stamp expansion: one Hutchinson level past an evicted
+ * in-ball candidate whose level is still below the condensation band, when
+ * the band opens exactly at the level below it (`depth + 2 ===
+ * firstCondensationDepth`). The evicted-subtree ball terminal
+ * (`scale * (radius - R)`) is a sound lower bound — the invariant ball
+ * encloses the whole attractor — but not a hit signal: on a ball loose
+ * against its content (multi-cluster bounds) it folds negative over every
+ * query inside the ball and the march reads the whole enclosure as surface
+ * (measured -0.828 plain/refined at a point whose sampled clearance is
+ * +0.176). Where the band opens one level below the candidate, the
+ * expansion replaces that terminal with what the walk itself would have
+ * folded for the subtree's first enabled stamps: each (sector, map)
+ * grandchild folds its escape certificate when it leaves its ball — a
+ * positive bound covering everything below it — and the C0 term at the
+ * band's first enabled level otherwise, the same term the beam's own
+ * children fold at generation. A stamp reached through an in-ball chain
+ * lands in that C0 term and folds negative (the adversary's hit signal is
+ * preserved); the subtree's deeper levels fall to the accepted
+ * residual-drop class, exactly as they already do behind evictions at
+ * band-open levels. Deeper pre-band levels — a band opening three or more
+ * levels below a pre-band candidate — keep the bare ball terminal: the
+ * expansion is one level deep and a full tree to the band is exponential.
+ *
+ * Returns the updated `best`; the caller owns the cutoff exits. The
+ * arithmetic mirrors the caller's own child computation (post inverse, then
+ * base inverse, then the map's state ball) so the two cannot drift.
+ */
+function expandPreBandStamps(
+  de: SurfaceDE,
+  depth: number,
+  eX: number,
+  eY: number,
+  eZ: number,
+  eScale: number,
+  eState: number,
+  best: number,
+): number {
+  let acc = best;
+  const { order, plane, stepCos, stepSin } = de.symmetry;
+  const schedDepth = de.schedule?.depth ?? 0;
+  // The maps the expansion applies are the evicted candidate's own level's
+  // (depth + 1), not the caller depth's: in a scheduled hybrid the candidate
+  // can sit in the B prefix while the caller depth is still above it.
+  const inB = de.schedule !== undefined && depth + 1 < schedDepth;
+  const levelMaps = inB ? de.schedule!.maps : de.maps;
+  const sectorOrder = inB ? 1 : order;
+  const childBound = de.schedule
+    ? de.schedule.bounds[Math.min(depth + 2, schedDepth)]
+    : null;
+  const Rg = childBound ? childBound.radius : de.boundingRadius;
+  const gcX = childBound ? childBound.center[0] : de.boundCenter[0];
+  const gcY = childBound ? childBound.center[1] : de.boundCenter[1];
+  const gcZ = childBound ? childBound.center[2] : de.boundCenter[2];
+  // The grandchild's certificate carries the same last-level gate the
+  // caller's own certificates do: a level past which no enabled C0 exists
+  // must not fold the plain attractor's ball bound (the phantom the
+  // last-level rule removes).
+  const gLast = condensationLastLevel(
+    de,
+    scheduledCondensationHasFutureDepth(de, depth + 3),
+  );
+  for (let k = 0; k < sectorOrder; k++) {
+    let sX = eX;
+    let sY = eY;
+    let sZ = eZ;
+    if (k > 0) {
+      stepSector(plane, stepCos, stepSin, sX, sY, sZ, EXPANSION_SWEEP);
+      sX = EXPANSION_SWEEP[0];
+      sY = EXPANSION_SWEEP[1];
+      sZ = EXPANSION_SWEEP[2];
+    }
+    for (let j = 0; j < levelMaps.length; j++) {
+      const map = levelMaps[j];
+      if (!inB && !surfaceChaosAllows(de.chaos, eState, map.stateIndex!)) {
+        continue;
+      }
+      const childState = inB
+        ? SURFACE_CHAOS_WILDCARD
+        : (map.stateIndex ?? SURFACE_CHAOS_WILDCARD);
+      const im = map.invM;
+      const it = map.invT;
+      let pX = sX;
+      let pY = sY;
+      let pZ = sZ;
+      if (map.postInvM !== null && map.postInvT !== null) {
+        const pm = map.postInvM;
+        const pt = map.postInvT;
+        pX = pm[0] * sX + pm[1] * sY + pm[2] * sZ + pt[0];
+        pY = pm[3] * sX + pm[4] * sY + pm[5] * sZ + pt[1];
+        pZ = pm[6] * sX + pm[7] * sY + pm[8] * sZ + pt[2];
+      }
+      const ix = im[0] * pX + im[1] * pY + im[2] * pZ + it[0];
+      const iy = im[3] * pX + im[4] * pY + im[5] * pZ + it[1];
+      const iz = im[6] * pX + im[7] * pY + im[8] * pZ + it[2];
+      const mapBoundR = map.stateBoundRadius ?? Rg;
+      const mapBoundC = map.stateBoundCenter;
+      const icx = mapBoundC === undefined ? ix - gcX : ix - mapBoundC[0];
+      const icy = mapBoundC === undefined ? iy - gcY : iy - mapBoundC[1];
+      const icz = mapBoundC === undefined ? iz - gcZ : iz - mapBoundC[2];
+      const r = Math.sqrt(icx * icx + icy * icy + icz * icz);
+      const gScale = eScale * map.sigmaMin;
+      if (r > stateRadiusOf(de, childState, Rg)) {
+        const gcert = gLast ? Infinity : gScale * (r - mapBoundR);
+        if (gcert < acc) acc = gcert;
+      } else {
+        const shapeTerm = scheduledCondensationTerm3(
+          de,
+          depth + 2,
+          gScale,
+          ix,
+          iy,
+          iz,
+          childState,
+        );
+        if (shapeTerm < acc) acc = shapeTerm;
+      }
+    }
+  }
+  return acc;
+}
+
+/** The descend bodies' `stateBallRadius` closure, shared with
+ * {@link expandPreBandStamps} so the expansion's escape test reads the same
+ * ball the walk's own eviction test does. */
+function stateRadiusOf(de: SurfaceDE, state: number, levelR: number): number {
+  return state >= 0 &&
+    de.maps[state] !== undefined &&
+    de.maps[state].stateBoundRadius !== undefined
+    ? de.maps[state].stateBoundRadius
+    : levelR;
+}
+
 /**
  * Is this the finite band's LAST level: recursive maps present and no
  * descendant of the level's children can hold an enabled C0? Every child's
@@ -4067,11 +4257,7 @@ function descend(
   // read the global ball inside scheduled levels and shift the descent
   // there — the measured schedule-agreement drift).
   const stateBallRadius = (state: number, levelR: number): number =>
-    state >= 0 &&
-    de.maps[state] !== undefined &&
-    de.maps[state].stateBoundRadius !== undefined
-      ? de.maps[state].stateBoundRadius
-      : levelR;
+    stateRadiusOf(de, state, levelR);
   let best = Infinity;
 
   // Early-out threshold: the value below which the descent may
@@ -4497,13 +4683,29 @@ function descend(
             depth + 1 < firstCondensationDepth
           ) {
             // Pre-band eviction: no C0 term can speak for this subtree yet
-            // (its own level is disabled), so the invariant-ball terminal
-            // stands in for the first enabled stamps. Once the band opens
-            // at the candidate's level the immediate term above has already
-            // covered its own stamp and this terminal is suppressed — see
-            // `firstCondensationDepth`.
-            const subtree = eScale * (eR - stateBallRadius(eState, R));
-            if (subtree < best) best = subtree;
+            // (its own level is disabled). One level short of the band's
+            // opening the stamp expansion folds the first enabled stamps'
+            // real terms instead of the invariant-ball terminal (see
+            // {@link expandPreBandStamps}); deeper pre-band levels keep
+            // the ball terminal.
+            if (depth + 2 === firstCondensationDepth) {
+              best = expandPreBandStamps(
+                de,
+                depth,
+                eX,
+                eY,
+                eZ,
+                eScale,
+                eState,
+                best,
+              );
+              if (best <= sphereBound || best * finalScale < bailBelow) {
+                return descentValue(best, sphereBound, finalScale);
+              }
+            } else {
+              const subtree = eScale * (eR - stateBallRadius(eState, R));
+              if (subtree < best) best = subtree;
+            }
           }
         }
       }
@@ -4566,8 +4768,24 @@ function descend(
           c2R <= stateBallRadius(c2State, R) &&
           depth + 1 < firstCondensationDepth
         ) {
-          const subtree = c2Scale * (c2R - stateBallRadius(c2State, R));
-          if (subtree < best) best = subtree;
+          if (depth + 2 === firstCondensationDepth) {
+            best = expandPreBandStamps(
+              de,
+              depth,
+              c2X,
+              c2Y,
+              c2Z,
+              c2Scale,
+              c2State,
+              best,
+            );
+            if (best <= sphereBound || best * finalScale < bailBelow) {
+              return descentValue(best, sphereBound, finalScale);
+            }
+          } else {
+            const subtree = c2Scale * (c2R - stateBallRadius(c2State, R));
+            if (subtree < best) best = subtree;
+          }
         }
       } else if (
         c2R >
