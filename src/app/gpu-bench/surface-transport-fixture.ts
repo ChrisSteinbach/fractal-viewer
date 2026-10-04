@@ -568,6 +568,23 @@ export type TransportQueryFn = (
   eps: number,
 ) => TransportBoundaryResult;
 
+/** One replay-log entry: a processed path's boundary query, recorded by
+ * one replay pass and consumed by the next (`docs/sphere-inversion-family.md`,
+ * "The pending chain's log"). A later pass visits a superset of the earlier
+ * pass's paths in the same relative order — a path's bound never exceeds its
+ * parent's, so the pops its halved theta keeps are an ancestor-closed
+ * superset visited in the same weak-child-first order — and each shared
+ * pop's query has identical inputs, so it recomputes bit for bit. The log
+ * records what pass k answered so pass k+1 need not re-march it. */
+export interface TransportReplayEntry {
+  origin: Vec3;
+  dir: Vec3;
+  anchorPresent: boolean;
+  anchorPoint: Vec3;
+  inside: boolean;
+  result: TransportBoundaryResult;
+}
+
 // The finite-solid DDA's refusal reasons, past the shared vocabulary:
 // the DDA's own internal invariants, mapped identically by the kernel's
 // emission (surface-finite-solid-gpu.ts's literals 4/5/6).
@@ -846,6 +863,24 @@ export function transportTraceCPU(
   /** The per-map media (finite queries only): paths carry medium codes,
    * each glass medium its own material, opaque events terminate shaded. */
   media?: TransportFixtureMedia,
+  /** The replay log (non-finite queries only): pass k+1 consumes the
+   * entries pass k recorded, in order, for every pop whose bound exceeds
+   * pass k's theta — exactly the pops pass k processed — and answers the
+   * rest itself. A consumed entry's inputs are verified against the pop's
+   * own (bit-exact, f64) before its result is adopted: a mismatch throws,
+   * so the alignment argument the kernel's positional log rests on is
+   * executable here. Every processed pop — consumed or computed — is
+   * appended to `record`, so pass k+2 consumes pass k+1's log the same
+   * way. Skipped queries pay no evaluations: the caller's tally never
+   * sees them, which is how the model prices the saving. */
+  replay?: {
+    theta: number;
+    entries: TransportReplayEntry[];
+    record?: TransportReplayEntry[];
+    /** Incremented once per consumed entry — the model's consumed-count
+     * instrument (the saving in queries, beside the saving in evals). */
+    consumed?: { count: number };
+  },
 ): TransportTraceResult {
   const maxProcessed =
     caps?.maxProcessedPaths ??
@@ -858,6 +893,10 @@ export function transportTraceCPU(
       ? DIELECTRIC_MAX_INTERFACES
       : SURFACE_GPU_TRANSPORT_MAX_INTERFACES);
   const eps = DIELECTRIC_CROSSING_EPS_REL * material.radius;
+  if (replay && finiteQuery)
+    throw new Error(
+      "The replay log is the estimator query's lever; the finite DDA's query carries a full anchor and no log",
+    );
   const stack: FixturePath[] = [];
   let radiance: Vec3 = [0, 0, 0];
   let residual = 0;
@@ -952,6 +991,9 @@ export function transportTraceCPU(
   let status: TransportTraceStatus = "pending";
   let failure = 0;
   let reason = 0;
+  // The replay log's read cursor: it advances once per consumed pop, in
+  // processed order, and never on a pop the bound rule leaves to recompute.
+  let replayCursor = 0;
   loop: while (stack.length > 0) {
     if (caps?.stopResidual !== undefined && residual > caps.stopResidual) {
       status = "residual";
@@ -1021,6 +1063,35 @@ export function transportTraceCPU(
       if (finiteHit.kind === "boundary") {
         hitAnchor = finiteHit.anchor;
       }
+    } else if (replay && path.bound > replay.theta) {
+      // THE REPLAY LOG'S CONSUMPTION (the kernel's rule): this pop's bound
+      // exceeds the recorded pass's theta, so that pass processed it —
+      // same inputs, same world, same answer, in the same relative order.
+      // Adopt the recorded result without paying for the march.
+      const entry = replay.entries[replayCursor++];
+      if (entry === undefined)
+        throw new Error(
+          "replay log exhausted at a shared pop — the recorded pass truncated, so its trace was final and this pass should not run",
+        );
+      if (
+        entry.origin[0] !== path.origin[0] ||
+        entry.origin[1] !== path.origin[1] ||
+        entry.origin[2] !== path.origin[2] ||
+        entry.dir[0] !== path.dir[0] ||
+        entry.dir[1] !== path.dir[1] ||
+        entry.dir[2] !== path.dir[2] ||
+        entry.anchorPresent !== path.anchorPresent ||
+        entry.anchorPoint[0] !== path.anchorPoint[0] ||
+        entry.anchorPoint[1] !== path.anchorPoint[1] ||
+        entry.anchorPoint[2] !== path.anchorPoint[2] ||
+        entry.inside !== path.inside
+      ) {
+        throw new Error(
+          "replay log misaligned — a shared pop's inputs differ from the recorded entry's",
+        );
+      }
+      hit = entry.result;
+      if (replay.consumed) replay.consumed.count++;
     } else if (query) {
       hit = query(
         path.origin,
@@ -1039,6 +1110,23 @@ export function transportTraceCPU(
         path.anchorPoint,
         eps,
       );
+    }
+    if (replay?.record) {
+      // Every processed pop is recorded — consumed ones included, with the
+      // result just adopted (identical to the recompute it replaces) — so
+      // the next pass consumes this pass's log the same way.
+      replay.record.push({
+        origin: [path.origin[0], path.origin[1], path.origin[2]],
+        dir: [path.dir[0], path.dir[1], path.dir[2]],
+        anchorPresent: path.anchorPresent,
+        anchorPoint: [
+          path.anchorPoint[0],
+          path.anchorPoint[1],
+          path.anchorPoint[2],
+        ],
+        inside: path.inside,
+        result: hit,
+      });
     }
     if (hit.kind === "refused") {
       residual += path.bound;
