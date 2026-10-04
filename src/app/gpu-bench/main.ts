@@ -85,6 +85,8 @@ import {
   TRANSPORT_PATH_BYTES,
   finiteTransportWorkBytes,
   transportWorkBytes,
+  transportLogDataBytes,
+  transportLogIndexBytes,
 } from "../../fractal/finite-transport-work";
 import { buildSurfaceTilingSymmetryAbiSpecs } from "./tiling-symmetry";
 import {
@@ -3842,6 +3844,9 @@ interface SurfaceSectionConfig {
   /** `--surface-si-spec-off=1`: the glass envelope's renderers never
    * speculate a replay pass (`?surfacesispec=0`'s pin), that schedule's A/B. */
   siSpecOff: boolean;
+  /** The pending chain's replay log OFF for the glass envelope's
+   * session (`?surfaceSiLogOff=1`): the log's A/B arm; no pixel moves. */
+  siLogOff: boolean;
 }
 
 interface SurfaceKernelConfig {
@@ -5758,6 +5763,7 @@ function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
     siJointOff: params.get("surfaceSiJointOff") === "1",
     siShapeOff: params.get("surfaceSiShapeOff") === "1",
     siSpecOff: params.get("surfaceSiSpecOff") === "1",
+    siLogOff: params.get("surfaceSiLogOff") === "1",
     canaryTrip:
       Number.isInteger(canaryTripParsed) && canaryTripParsed >= 1
         ? canaryTripParsed
@@ -13493,6 +13499,19 @@ interface SurfaceTransportEnvelopeRow {
    * retained cost, not a per-frame accrual. */
   retainedBytes: number;
   heapWatch?: { beforeBytes: number; afterBytes: number };
+  /** Sphere-inversion arms only: the pending chain's replay log A/B.
+   * The OFF renderer (created with `transportLogOff`) re-renders the
+   * same preview raster twice — its cold frame prices the chain without
+   * the log (the asymmetry is machine-warmup only; a first-touch effect
+   * was measured absent), its warm repeat is compared BYTE FOR BYTE
+   * with the log-on renderer's warm repeat, which is the pin: the log
+   * must move no pixel. */
+  logAB?: {
+    coldOffMs: number;
+    coldOnMs: number;
+    warmOffMs: number;
+    byteIdenticalWarm: boolean | null;
+  };
 }
 
 /** The envelope leg's own byte-equality (the determinism pair). */
@@ -14095,6 +14114,7 @@ async function runSurfaceTransportEnvelopeLeg(
         (SURFACE_COMPUTE_TRANSPORT_RECORD_BYTES + 8) +
       materials.slots.length * 32 +
       (finite ? finiteTransportWorkBytes(4096) + 4 : 0) +
+      (si ? transportLogDataBytes() + transportLogIndexBytes(16384) : 0) +
       (si
         ? transportWorkBytes(
             Math.min(
@@ -14143,6 +14163,7 @@ async function runSurfaceTransportEnvelopeLeg(
       quota?: number,
       maxPaths?: number,
       cacheCrossings?: boolean,
+      logOff?: boolean,
     ) =>
       SurfaceComputeRenderer.create(
         finite
@@ -14166,6 +14187,7 @@ async function runSurfaceTransportEnvelopeLeg(
           ...(cacheCrossings !== undefined
             ? { finiteCacheCrossings: cacheCrossings }
             : {}),
+          ...(logOff ? { transportLogOff: true } : {}),
         },
       );
     const renderer = chunkAgreementRows ? null : await createRenderer();
@@ -14496,6 +14518,46 @@ async function runSurfaceTransportEnvelopeLeg(
           break;
         }
       }
+      // THE PENDING CHAIN'S REPLAY LOG A/B (sphere-inversion arms): the
+      // log must move no pixel. The OFF renderer re-renders the same
+      // preview raster twice — its cold frame prices the pending chain
+      // without the log (the asymmetry is machine warmup only; a
+      // first-touch effect was measured absent), and its warm repeat is
+      // compared byte for byte with the log-on warm repeat, which is the
+      // pin. The settle shapes are untouched.
+      let logAB: SurfaceTransportEnvelopeRow["logAB"];
+      if (si && renderer) {
+        status(`transport envelope ${core}: replay-log A/B…`);
+        const offRenderer = await createRenderer(
+          undefined,
+          undefined,
+          undefined,
+          true,
+        );
+        try {
+          const offCold = await offRenderer.renderFrame(previewSpec, {
+            budgetMs: SURFACE_TRANSPORT_ENVELOPE_PREVIEW_BUDGET_MS,
+          });
+          if (!offCold)
+            throw new Error(`transport envelope ${core}: log A/B lost`);
+          const offWarm = await offRenderer.renderFrame(previewSpec, {
+            budgetMs: SURFACE_TRANSPORT_ENVELOPE_PREVIEW_BUDGET_MS,
+          });
+          if (!offWarm)
+            throw new Error(`transport envelope ${core}: log A/B lost`);
+          logAB = {
+            coldOffMs: offCold.wallMs,
+            coldOnMs: preview.wallMs,
+            warmOffMs: offWarm.wallMs,
+            byteIdenticalWarm:
+              offWarm.truncated || repeat.truncated
+                ? null
+                : surfaceTransportBytesEqual(offWarm.pixels, repeat.pixels),
+          };
+        } finally {
+          offRenderer.destroy();
+        }
+      }
       const heapAfter = heapNow();
       const row: SurfaceTransportEnvelopeRow = {
         core,
@@ -14541,6 +14603,7 @@ async function runSurfaceTransportEnvelopeLeg(
         ...(heapBefore !== undefined && heapAfter !== undefined
           ? { heapWatch: { beforeBytes: heapBefore, afterBytes: heapAfter } }
           : {}),
+        ...(logAB ? { logAB } : {}),
       };
       rows.push(row);
 
@@ -21946,6 +22009,7 @@ async function runSurfaceDeSection(
             siJointOff: config.siJointOff,
             siShapeOff: config.siShapeOff,
             siSpecOff: config.siSpecOff,
+            siTransportLogOff: config.siLogOff,
           });
           if (config.siExactNormal)
             results.notes.push(
@@ -21962,6 +22026,10 @@ async function runSurfaceDeSection(
           if (config.siShapeOff)
             results.notes.push(
               "glass envelope: SHAPE OFF (estimator arrays at the registry maxima, the codegen A/B)",
+            );
+          if (config.siLogOff)
+            results.notes.push(
+              "glass envelope: REPLAY LOG OFF (pass k+1 re-marches pass k's queries; the schedule A/B)",
             );
           try {
             envelope.rows = await runSurfaceTransportEnvelopeLeg(
