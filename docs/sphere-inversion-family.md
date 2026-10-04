@@ -3545,6 +3545,88 @@ them from a log instead. That is a design with a memory cost (a log per
 pending trace) and a kernel change, recorded as a bead with its shape, not
 built here.
 
+### The pending chain's log: pass k+1 consumes pass k's queries (2026-10-04)
+
+The lever that section ended on, built. A pending ray's pass k+1 re-traces
+from scratch and re-marches every boundary query pass k already answered —
+the cold frame's end was the pending chains precisely because of that
+recompute. The fix records what pass k answered and has pass k+1 consume
+it, keeping every value bit for bit.
+
+THE ALIGNMENT ARGUMENT, EXECUTED. A path's bound never exceeds its
+parent's, so the pops a halved theta keeps are an ancestor-closed superset
+of the larger theta's, visited in the same weak-child-first order (the
+oracle's replay argument, `surface-dielectric.ts`'s
+`DIELECTRIC_REPLAY_PASSES`). So pass k+1's pops with bound > theta_k are
+exactly pass k's processed pops, one-to-one and in order, and each has
+identical query inputs. The f64 twin carries the rule as a REPLAY ARM
+(`surface-transport-fixture.ts`'s `replay` option): pass k+1 consumes the
+recorded entry for each shared pop and THROWS if the entry's inputs differ
+from the pop's own — over the `glassPearls` starter's 2,137 glass hits it
+never threw, and no outcome moved (`outcomes differing 0`). The kernel
+trusts that argument positionally; the fixture is its verification.
+
+THE CPU MODEL (the cost harness's third test) prices the schedule both
+ways per glass hit: in order without the log, and with it. Pass 1's
+recompute falls to 18% of its baseline (761,957 → 138,957 evaluations) and
+pass 2's to 30%; the worst in-order critical path HALVES (196,851 →
+95,462 twin evaluations) — the expected "p0 + p1 → ~p1". Where a
+consuming chain's source log exists it is consumed 100% (pass 2's 89.6%
+is its own processed cap truncating the trace, not a miss). The kernel
+does not get the model's full win at the frame, and the difference is the
+point of the numbers below.
+
+THE KERNEL (`surface-de-gpu.ts`'s `transportLog`, si glass shade sessions
+only, default on): each armed pool slot carries TWO log regions that
+ping-pong on the pass parity — pass k writes region parity k and reads
+parity k−1. A region is a 3-word header (the writing ray, the writing
+pass with the log's base ordinal packed above 3 bits, the entry count)
+and 2,048 5-word entries (kind|reason<<8, t, the normal, each f32 as its
+exact bits). The writer appends every processed pop's answer positionally
+from the base it latched at its first armed chunk — arming mid-trace is
+sound because a consumer cursor below the base recomputes the pre-arm
+pops — and the consumer's cursor is the shared-pop ordinal, which IS the
+recorded pass's processed ordinal. The identity in the header (ray+pass)
+is what a slot INHERITED from another trace fails: a promoted speculative
+pass recomputes whole instead of reading a stranger's log. The consumer's
+cursor rides the slot header's spare word (reset with the pass, written
+per shared pop). The host pool pins a pending ray's next real pass to the
+slot that just traced its predecessor — the log rides the slot, and the
+chain starts without a FIFO wait — and arms log slots when the queue
+DRAINS (the tail, whose chains are the frame's end); a slot the free
+list cannot arm traces exactly as today. Sizing: 512 log slots × two
+regions ≈ 41 MiB, inside the transport lane's retained-state line (the
+bench row's `retainedBytes` now names it: 106.1 MiB over the arm). The
+finite backends and the unchunked diagnostics emit today's source BYTE
+FOR BYTE (the digest pin sweeps it).
+
+MEASURED, RX 7900 XTX, real driver, quiet=YES, the SI bench's glass
+envelope with the new log A/B (the OFF renderer re-renders the same
+preview raster; the warm repeat is compared byte for byte):
+
+| Line                       | glassPearls (3D) off → on | glassPearls4 (4D) off → on |
+| -------------------------- | ------------------------- | -------------------------- |
+| Preview cold wall          | 1,804 → 1,676 ms          | 531 → 553 ms (noise)       |
+| Preview warm repeat        | 744 → 775 ms (noise)      | 505 → 523 ms (noise)       |
+| Byte-identical warm repeat | YES                       | YES                        |
+
+The censuses are the shipped records unchanged (the 3D settle
+111,570 / 12,062 / 0, the 4D 104,117 / 6,110 / 0), and the settle walls
+fell with them: 3D 4.2 → 3.8 s, 4D 2.0 → 1.7 s; the depth curve's 3D D3
+1.84 → 1.62 s, D4 2.41 → 2.10 s. The 4D preview row is noise because the
+4D starter's preview never goes pending — the chain never fires — which
+is exactly the design's own evidence.
+
+WHY THE FRAME GAINS LESS THAN THE CHAIN HALVES. The chain's wall is not
+its queries alone: the p0 still runs in full (the log cannot shorten it),
+the p1's tail is paced by the cold quantum's chunk round trips, and the
+frame's end is the LAST chain's finish, not the worst chain's eval count.
+The replay removes the recompute — measured at ~130-180 ms of the cold
+3D preview — not the schedule around it. The cold first preview stays an
+accepted miss of the 1 s line (the verdict above): 1.68 s, bounded below
+by the guard's traces and the chain's p0, and the per-path latency's
+accounting now closes (next section's verdict).
+
 ### The joint pool at pane size: measured, not built (2026-09-24)
 
 The joint pool engages only inside its 64 MiB arena ceiling
@@ -3570,3 +3652,36 @@ the cost is a new arena layout in the transport entry of both cores, which
 owes the real-driver agreement legs. Dense transport per glass hit is the
 pane settle's cost. That returns to the per-path latency the cold-frame
 record leaves unexplained.
+
+### The per-path latency, explained as far as it gates anything (2026-10-04)
+
+The cold-frame record's open question: a tail lane's ~0.5 ms per processed
+path (~1.5M cycles for ~60 field evaluations, ~25k cycles an evaluation).
+What the replay log's build and A/B add to the instruments already on
+record (the per-ray timings, the ISA statistics, the clock polls):
+
+- THE NUMBER IS NOT A PER-PATH COST. It is the tail chunk's wall divided
+  by its paths: 32 paths per chunk at the pinned cold quantum, and the
+  chunks the tail logs at ~20 ms read ~0.6 ms a path. The log's A/B
+  prices the GPU work the replay actually removed — ~130-180 ms for the
+  pending chains' shared queries (~63k at the preview's census scale, the
+  64 px model's consumed counts scaled by its glass hits) — which is ~2 µs
+  a query at the tail's own occupancy, three orders below the 0.5 ms.
+  The warm tail's cheaper "per-path" figure was the same amortization
+  over cheaper traces, as that record already concluded.
+- THE EVALUATION PREMISE WAS THE F64 TWIN'S, NOT THE KERNEL'S. ~20-27
+  evaluations a query is the twin's average; the kernel's f32 march near
+  a wall takes hundreds of steps (the profile's wall-crawl finding: 71%
+  of evaluations within 4·eps of a wall), so a tail path's evaluation
+  count is an order above the average and the "~25k cycles an
+  evaluation" division never described a real step.
+- WHAT REMAINS UNEXPLAINED GATES NOTHING. The single-lane microbenchmark
+  splitting estimator arithmetic from transport machinery would refine
+  the per-eval cycle count, but the levers it could justify are exactly
+  the ones now measured: the replay log (taken), the fused field +
+  membership sample and the exact normal (measured, refuted on look or
+  cost grounds), and the scheduling levers the quantum and pool records
+  cover. The bead's own instruments — per-ray timings, ISA statistics,
+  clock polls — stand in the sections above; the cold frame's floor is
+  the guard's traces and the chain's p0, and its accepted-miss verdict
+  is unchanged.
