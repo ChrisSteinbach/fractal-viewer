@@ -810,7 +810,18 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
                     }
                   }
 #if SURFACE_CONDENSATION
-                } else if (futureCondensation) {
+                } else if (
+                  futureCondensation && !condensationBandOpenAtNextDepth(depth)
+                ) {
+                  // The evicted in-ball terminal, gated like the affine
+                  // arms (fr-ihnb's rule, which this arm had missed): once
+                  // the band is open at the candidate's own level its C0
+                  // term has already been folded and the enclosure ball
+                  // must not double as a hit. The stamp expansion is not
+                  // ported to this arm — its branch decode would push the
+                  // fold+tiling+condensation program past the emitted
+                  // ceiling — so a pre-band eviction keeps the ball
+                  // terminal here, disclosed against the oracle.
                   best = min(
                     best,
 #if SURFACE_SCHEDULE
@@ -2874,6 +2885,83 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
     }
     return vec3(c * p.x + s * p.y, -s * p.x + c * p.y, p.z);
   }
+#if SURFACE_CONDENSATION
+  /** The oracle's expandPreBandStamps: one Hutchinson level past an
+   * evicted in-ball candidate whose level is still below the band, when
+   * the band opens exactly at the level below it (the caller tests
+   * condensationBandOpenAtNextDepth(depth + 1) beside its own
+   * !condensationBandOpenAtNextDepth(depth) gate). Each (sector, map)
+   * grandchild folds its escape certificate when it leaves its ball — the
+   * same last-level gate the walk's own certificates carry, one level
+   * deeper — and the C0 term at the band's first enabled level otherwise,
+   * the same term the beam's own children fold at generation. A stamp at
+   * the query through an in-ball chain folds negative; the subtree's
+   * deeper levels fall to the accepted residual-drop class, exactly as
+   * they already do behind evictions at band-open levels. Deeper pre-band
+   * levels keep the bare ball terminal (the caller's else branch). The
+   * child arithmetic mirrors the descent loop's own (sector sweep, post
+   * inverse, then base inverse), so the two cannot drift. */
+  void condensationExpandStamps(
+    vec3 eQ,
+    float eScale,
+    int eState,
+    int depth,
+    inout float best
+  ) {
+    int childDepth = depth + 2;
+#if SURFACE_SCHEDULE
+    int begin = surfaceLevelMapBegin(depth + 1);
+    int end = surfaceLevelMapEnd(depth + 1);
+    int sectors = surfaceLevelSymOrder(depth + 1);
+#else
+    int begin = 0;
+    int end = uMapCount;
+    int sectors = uSymOrder;
+#endif
+    // The grandchildren's certificate carries the same last-level gate the
+    // walk's own certificates do, one level deeper than the loop's.
+    bool gLast =
+      uMapCount > 0 && !condensationFutureAfterChild(depth + 2, uMapCount);
+    for (int k = 0; k < sectors; k++) {
+      vec3 sQ = eQ;
+      if (k > 0) {
+        sQ = stepSector(sQ);
+      }
+      for (int j = begin; j < end; j++) {
+        int childState = -1;
+#if SURFACE_CHAOS
+        childState = surfaceChaosChildState(depth + 1, j);
+        if (!surfaceChaosAllows(eState, childState)) {
+          continue;
+        }
+#endif
+#if SURFACE_POST
+        vec3 img = uInvM[j] * applyMapPost(j, sQ) + uInvT[j];
+#else
+        vec3 img = uInvM[j] * sQ + uInvT[j];
+#endif
+#if SURFACE_SCHEDULE
+        vec4 bound = surfaceLevelBound(childDepth);
+        float r = length(img - bound.xyz);
+        float ballR = bound.w;
+#else
+        float r = length(img - stateBoundCenter(childState));
+        float ballR = stateBoundRadius(childState);
+#endif
+        float childScale = eScale * uSigmaMin[j];
+        if (r > ballR) {
+          best = min(best, gLast ? 1e30 : childScale * (r - ballR));
+        } else {
+          condensationFold(img, childScale, childDepth
+#if SURFACE_CHAOS
+            , childState
+#endif
+            , best);
+        }
+      }
+    }
+  }
+#endif
 
   /** The fold's three AUTHORED lengths, re-expressed in the branch
    * algebra's own terms — surface-de.ts's surfaceFoldRadii field for
@@ -4327,10 +4415,25 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
             } else if (eKey < 1e29 && futureCondensation && eR <= stateBoundRadius(eState) &&
                        !condensationBandOpenAtNextDepth(depth)) {
 #endif
+              // One level short of the band's opening the stamp expansion
+              // folds the first enabled stamps' real terms instead of the
+              // invariant-ball terminal; deeper pre-band levels keep the
+              // ball terminal.
+              if (condensationBandOpenAtNextDepth(depth + 1)) {
+                condensationExpandStamps(eQ, eScale, eState, depth, best);
+                if (best <= sphereBound ||
+                    best * uFinalSigmaMin < bailBelow
+                ) {
+                  return max(best, sphereBound) * uFinalSigmaMin;
+                }
 #if SURFACE_SCHEDULE
-              best = min(best, eScale * (eR - childBound.w));
+              } else {
+                best = min(best, eScale * (eR - childBound.w));
+              }
 #else
-              best = min(best, eScale * (eR - stateBoundRadius(eState)));
+              } else {
+                best = min(best, eScale * (eR - stateBoundRadius(eState)));
+              }
 #endif
 #endif
             }
@@ -5251,11 +5354,23 @@ ${foldValueFormGlsl(shadeDeWidth)}
 #if SURFACE_SCHEDULE
             } else if (eKey < 1e29 && futureCondensation && eR <= childBound.w &&
                        !condensationBandOpenAtNextDepth(depth)) {
-              best = min(best, eScale * (eR - childBound.w));
+              // One level short of the band's opening the stamp expansion
+              // folds the first enabled stamps' real terms instead of the
+              // invariant-ball terminal; deeper pre-band levels keep the
+              // ball terminal.
+              if (condensationBandOpenAtNextDepth(depth + 1)) {
+                condensationExpandStamps(eQ, eScale, eState, depth, best);
+              } else {
+                best = min(best, eScale * (eR - childBound.w));
+              }
 #else
             } else if (eKey < 1e29 && futureCondensation && eR <= stateBoundRadius(eState) &&
                        !condensationBandOpenAtNextDepth(depth)) {
-              best = min(best, eScale * (eR - stateBoundRadius(eState)));
+              if (condensationBandOpenAtNextDepth(depth + 1)) {
+                condensationExpandStamps(eQ, eScale, eState, depth, best);
+              } else {
+                best = min(best, eScale * (eR - stateBoundRadius(eState)));
+              }
 #endif
 #endif
             }
