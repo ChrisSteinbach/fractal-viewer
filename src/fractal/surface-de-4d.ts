@@ -3382,6 +3382,449 @@ function scheduledCondensationHasFutureDepth4(
   );
 }
 
+/** Module-scope sweep scratch for {@link expandPreBandStamps4} and
+ * {@link expandPreBandStampsFold4}, distinct from the descents' own sweep
+ * buffers. Single-threaded by construction and never re-entrant: every
+ * call site runs to completion inside its own candidate-loop iteration. */
+const EXPANSION_SWEEP4 = [0, 0, 0, 0];
+
+/**
+ * The 3D body's {@link expandPreBandStamps} one dimension up: one
+ * Hutchinson level past an evicted in-ball candidate whose level is still
+ * below the condensation band, when the band opens exactly at the level
+ * below it (`depth + 2 === firstCondensationDepth`). Each (sector, map)
+ * grandchild folds its escape certificate when it leaves its ball — the
+ * same last-level gate the walk's own certificates carry — and the C0 term
+ * at the band's first enabled level otherwise. A condensation system never
+ * carries a slab query (the build refuses one), so this helper is a point
+ * query by construction. The 4D ball is origin-anchored (no probe-fit
+ * bound centre), so the escape test measures the plain radius. Deeper
+ * pre-band levels keep the bare ball terminal; see the 3D helper's doc for
+ * the full argument. Returns the updated `best`; the caller owns the
+ * cutoff exits.
+ */
+function expandPreBandStamps4(
+  de: SurfaceDE4,
+  depth: number,
+  eX: number,
+  eY: number,
+  eZ: number,
+  eW: number,
+  eScale: number,
+  eState: number,
+  best: number,
+): number {
+  let acc = best;
+  const { order, stepBack } = de.symmetry;
+  const schedDepth = de.schedule?.depth ?? 0;
+  const inB = de.schedule !== undefined && depth + 1 < schedDepth;
+  const levelMaps = inB ? de.schedule!.maps : de.maps;
+  const sectorOrder = inB ? 1 : order;
+  const childBound = de.schedule
+    ? de.schedule.bounds[Math.min(depth + 2, schedDepth)]
+    : null;
+  const Rg = childBound ? childBound.radius : de.boundingRadius;
+  const gLast = condensationLastLevel(
+    de,
+    scheduledCondensationHasFutureDepth4(de, depth + 3),
+  );
+  for (let k = 0; k < sectorOrder; k++) {
+    let sX = eX;
+    let sY = eY;
+    let sZ = eZ;
+    let sW = eW;
+    if (k > 0) {
+      stepSector4(stepBack, sX, sY, sZ, sW, EXPANSION_SWEEP4);
+      sX = EXPANSION_SWEEP4[0];
+      sY = EXPANSION_SWEEP4[1];
+      sZ = EXPANSION_SWEEP4[2];
+      sW = EXPANSION_SWEEP4[3];
+    }
+    for (let j = 0; j < levelMaps.length; j++) {
+      const map = levelMaps[j];
+      if (!inB && !surfaceChaosAllows(de.chaos, eState, map.stateIndex!)) {
+        continue;
+      }
+      const childState = inB
+        ? SURFACE_CHAOS_WILDCARD
+        : (map.stateIndex ?? SURFACE_CHAOS_WILDCARD);
+      const im = map.invM;
+      const it = map.invT;
+      let pX = sX;
+      let pY = sY;
+      let pZ = sZ;
+      let pW = sW;
+      if (map.postInvM !== null) {
+        unpostPoint4(map, sX, sY, sZ, sW, null);
+        pX = UNPOST4[0];
+        pY = UNPOST4[1];
+        pZ = UNPOST4[2];
+        pW = UNPOST4[3];
+      }
+      const ix = im[0] * pX + im[1] * pY + im[2] * pZ + im[3] * pW + it[0];
+      const iy = im[4] * pX + im[5] * pY + im[6] * pZ + im[7] * pW + it[1];
+      const iz = im[8] * pX + im[9] * pY + im[10] * pZ + im[11] * pW + it[2];
+      const iw = im[12] * pX + im[13] * pY + im[14] * pZ + im[15] * pW + it[3];
+      const mapBoundR = map.stateBoundRadius ?? Rg;
+      const mapBoundC = map.stateBoundCenter;
+      const r =
+        mapBoundC === undefined
+          ? Math.hypot(ix, iy, iz, iw)
+          : Math.hypot(
+              ix - mapBoundC[0],
+              iy - mapBoundC[1],
+              iz - mapBoundC[2],
+              iw - mapBoundC[3],
+            );
+      const gScale = eScale * map.sigmaMin;
+      const stateRadius =
+        childState >= 0 &&
+        de.maps[childState] !== undefined &&
+        de.maps[childState].stateBoundRadius !== undefined
+          ? de.maps[childState].stateBoundRadius
+          : Rg;
+      if (r > stateRadius) {
+        const gcert = gLast ? Infinity : gScale * (r - mapBoundR);
+        if (gcert < acc) acc = gcert;
+      } else {
+        const shapeTerm = scheduledCondensationTerm4(
+          de,
+          depth + 2,
+          gScale,
+          ix,
+          iy,
+          iz,
+          iw,
+          childState,
+        );
+        if (shapeTerm < acc) acc = shapeTerm;
+      }
+    }
+  }
+  return acc;
+}
+
+/**
+ * {@link expandPreBandStampsFold} one dimension up, for
+ * {@link descendFold4}: the one-level stamp expansion through the maps'
+ * fold-BRANCH enumeration — boxfold 81 (b = selX + 3·selY + 9·selZ +
+ * 27·selW), spherefold 3, mandelbox 243 (b = boxIndex + 81·sphereIndex), 1
+ * for an affine map in a mixed system — decoded exactly as the frontier's
+ * own candidate loop decodes them, without the frontier bookkeeping and the
+ * stage-2 B&B skips. Point queries only (a condensation system refuses a
+ * slab at the build). The spherefold mid-shell guard folds its shell bound
+ * (floor-raised, last-level-gated) and skips the mandelbox group. Returns
+ * the updated `best`; the caller owns the cutoff exits.
+ */
+function expandPreBandStampsFold4(
+  de: SurfaceDE4,
+  depth: number,
+  eX: number,
+  eY: number,
+  eZ: number,
+  eW: number,
+  eScale: number,
+  eState: number,
+  eFloor: number,
+  best: number,
+): number {
+  let acc = best;
+  const { order, stepBack } = de.symmetry;
+  const schedDepth = de.schedule?.depth ?? 0;
+  const inB = de.schedule !== undefined && depth + 1 < schedDepth;
+  const levelMaps = inB ? de.schedule!.maps : de.maps;
+  const sectorOrder = inB ? 1 : order;
+  const childBound = de.schedule
+    ? de.schedule.bounds[Math.min(depth + 2, schedDepth)]
+    : null;
+  const Rg = childBound ? childBound.radius : de.boundingRadius;
+  const gLast = condensationLastLevel(
+    de,
+    scheduledCondensationHasFutureDepth4(de, depth + 3),
+  );
+  for (let k = 0; k < sectorOrder; k++) {
+    let sX = eX;
+    let sY = eY;
+    let sZ = eZ;
+    let sW = eW;
+    if (k > 0) {
+      stepSector4(stepBack, sX, sY, sZ, sW, EXPANSION_SWEEP4);
+      sX = EXPANSION_SWEEP4[0];
+      sY = EXPANSION_SWEEP4[1];
+      sZ = EXPANSION_SWEEP4[2];
+      sW = EXPANSION_SWEEP4[3];
+    }
+    for (let j = 0; j < levelMaps.length; j++) {
+      const map = levelMaps[j];
+      if (!inB && !surfaceChaosAllows(de.chaos, eState, map.stateIndex!)) {
+        continue;
+      }
+      const childState = inB
+        ? SURFACE_CHAOS_WILDCARD
+        : (map.stateIndex ?? SURFACE_CHAOS_WILDCARD);
+      const im = map.invM;
+      const it = map.invT;
+      let pX = sX;
+      let pY = sY;
+      let pZ = sZ;
+      let pW = sW;
+      if (map.postInvM !== null) {
+        unpostPoint4(map, sX, sY, sZ, sW, null);
+        pX = UNPOST4[0];
+        pY = UNPOST4[1];
+        pZ = UNPOST4[2];
+        pW = UNPOST4[3];
+      }
+      const kind = map.foldKind;
+      const branchCount = foldBranchCount4(kind);
+      const absW = map.foldSigma / map.sigmaMin;
+      const regionAbsW = map.postInvM === null ? absW : absW * map.postSigmaMin;
+      const fr = map.foldRadii;
+      const wall = fr.wall;
+      const wall2 = 2 * wall;
+      let ux = 0;
+      let uy = 0;
+      let uz = 0;
+      let uw = 0;
+      let ru = 0;
+      let px0 = 0;
+      let px1 = 0;
+      let px2 = 0;
+      let py0 = 0;
+      let py1 = 0;
+      let py2 = 0;
+      let pz0 = 0;
+      let pz1 = 0;
+      let pz2 = 0;
+      let pw0 = 0;
+      let pw1 = 0;
+      let pw2 = 0;
+      let dxUp = 0;
+      let dxDn = 0;
+      let dyUp = 0;
+      let dyDn = 0;
+      let dzUp = 0;
+      let dzDn = 0;
+      let dwUp = 0;
+      let dwDn = 0;
+      let vx = 0;
+      let vy = 0;
+      let vz = 0;
+      let vw = 0;
+      let sfSigma = 1;
+      let sfRd = 0;
+      if (kind !== SURFACE_FOLD_NONE) {
+        ux = pX * map.foldInvW;
+        uy = pY * map.foldInvW;
+        uz = pZ * map.foldInvW;
+        uw = pW * map.foldInvW;
+        if (kind === SURFACE_FOLD_BOXFOLD) {
+          px0 = ux;
+          px1 = wall2 - ux;
+          px2 = -wall2 - ux;
+          py0 = uy;
+          py1 = wall2 - uy;
+          py2 = -wall2 - uy;
+          pz0 = uz;
+          pz1 = wall2 - uz;
+          pz2 = -wall2 - uz;
+          pw0 = uw;
+          pw1 = wall2 - uw;
+          pw2 = -wall2 - uw;
+          dxUp = ux > wall ? ux - wall : 0;
+          dxDn = ux < -wall ? -wall - ux : 0;
+          dyUp = uy > wall ? uy - wall : 0;
+          dyDn = uy < -wall ? -wall - uy : 0;
+          dzUp = uz > wall ? uz - wall : 0;
+          dzDn = uz < -wall ? -wall - uz : 0;
+          dwUp = uw > wall ? uw - wall : 0;
+          dwDn = uw < -wall ? -wall - uw : 0;
+        } else {
+          ru = Math.sqrt(ux * ux + uy * uy + uz * uz + uw * uw);
+        }
+      }
+      for (let b = 0; b < branchCount; b++) {
+        let ix: number;
+        let iy: number;
+        let iz: number;
+        let iw: number;
+        let branchSigma: number;
+        let branchRd = 0;
+        if (kind === SURFACE_FOLD_NONE) {
+          ix = im[0] * pX + im[1] * pY + im[2] * pZ + im[3] * pW + it[0];
+          iy = im[4] * pX + im[5] * pY + im[6] * pZ + im[7] * pW + it[1];
+          iz = im[8] * pX + im[9] * pY + im[10] * pZ + im[11] * pW + it[2];
+          iw = im[12] * pX + im[13] * pY + im[14] * pZ + im[15] * pW + it[3];
+          branchSigma = map.sigmaMin;
+        } else {
+          if (
+            kind === SURFACE_FOLD_SPHEREFOLD ||
+            (kind === SURFACE_FOLD_MANDELBOX && b % 81 === 0)
+          ) {
+            const s = kind === SURFACE_FOLD_SPHEREFOLD ? b : b / 81;
+            if (s === 0) {
+              vx = ux;
+              vy = uy;
+              vz = uz;
+              vw = uw;
+              sfSigma = 1;
+              sfRd = ru < fr.fixedR ? fr.fixedR - ru : 0;
+            } else if (s === 1) {
+              vx = fr.innerScale * ux;
+              vy = fr.innerScale * uy;
+              vz = fr.innerScale * uz;
+              vw = fr.innerScale * uw;
+              sfSigma = fr.innerSigma;
+              sfRd = ru > fr.outputR ? ru - fr.outputR : 0;
+            } else {
+              if (ru < fr.midMinR) {
+                if (!gLast) {
+                  let shellCert = eScale * regionAbsW * (fr.fixedR - ru);
+                  if (eFloor > shellCert) shellCert = eFloor;
+                  if (shellCert < acc) acc = shellCert;
+                }
+                if (kind === SURFACE_FOLD_MANDELBOX) b += 80;
+                continue;
+              }
+              const invR2 = fr.fixedR2 / (ru * ru);
+              vx = ux * invR2;
+              vy = uy * invR2;
+              vz = uz * invR2;
+              vw = uw * invR2;
+              sfSigma = ru * fr.invFixedR;
+              sfRd =
+                ru < fr.fixedR
+                  ? fr.fixedR - ru
+                  : ru > fr.outputR
+                    ? ru - fr.outputR
+                    : 0;
+            }
+            if (kind === SURFACE_FOLD_MANDELBOX) {
+              px0 = vx;
+              px1 = wall2 - vx;
+              px2 = -wall2 - vx;
+              py0 = vy;
+              py1 = wall2 - vy;
+              py2 = -wall2 - vy;
+              pz0 = vz;
+              pz1 = wall2 - vz;
+              pz2 = -wall2 - vz;
+              pw0 = vw;
+              pw1 = wall2 - vw;
+              pw2 = -wall2 - vw;
+              dxUp = vx > wall ? vx - wall : 0;
+              dxDn = vx < -wall ? -wall - vx : 0;
+              dyUp = vy > wall ? vy - wall : 0;
+              dyDn = vy < -wall ? -wall - vy : 0;
+              dzUp = vz > wall ? vz - wall : 0;
+              dzDn = vz < -wall ? -wall - vz : 0;
+              dwUp = vw > wall ? vw - wall : 0;
+              dwDn = vw < -wall ? -wall - vw : 0;
+            }
+          }
+          let cx: number;
+          let cy: number;
+          let cz: number;
+          let cw: number;
+          if (kind === SURFACE_FOLD_SPHEREFOLD) {
+            cx = vx;
+            cy = vy;
+            cz = vz;
+            cw = vw;
+            branchRd = sfRd;
+          } else {
+            const bb = kind === SURFACE_FOLD_BOXFOLD ? b : b % 81;
+            const selX = bb % 3;
+            const selY = ((bb / 3) | 0) % 3;
+            const selZ = ((bb / 9) | 0) % 3;
+            const selW = (bb / 27) | 0;
+            cx = selX === 0 ? px0 : selX === 1 ? px1 : px2;
+            cy = selY === 0 ? py0 : selY === 1 ? py1 : py2;
+            cz = selZ === 0 ? pz0 : selZ === 1 ? pz1 : pz2;
+            cw = selW === 0 ? pw0 : selW === 1 ? pw1 : pw2;
+            const ddx =
+              selX === 0
+                ? dxUp > dxDn
+                  ? dxUp
+                  : dxDn
+                : selX === 1
+                  ? dxUp
+                  : dxDn;
+            const ddy =
+              selY === 0
+                ? dyUp > dyDn
+                  ? dyUp
+                  : dyDn
+                : selY === 1
+                  ? dyUp
+                  : dyDn;
+            const ddz =
+              selZ === 0
+                ? dzUp > dzDn
+                  ? dzUp
+                  : dzDn
+                : selZ === 1
+                  ? dzUp
+                  : dzDn;
+            const ddw =
+              selW === 0
+                ? dwUp > dwDn
+                  ? dwUp
+                  : dwDn
+                : selW === 1
+                  ? dwUp
+                  : dwDn;
+            const boxRd2 = ddx * ddx + ddy * ddy + ddz * ddz + ddw * ddw;
+            const boxRd = boxRd2 > 0 ? Math.sqrt(boxRd2) : 0;
+            branchRd =
+              kind === SURFACE_FOLD_BOXFOLD
+                ? boxRd
+                : sfRd > sfSigma * boxRd
+                  ? sfRd
+                  : sfSigma * boxRd;
+          }
+          ix = im[0] * cx + im[1] * cy + im[2] * cz + im[3] * cw + it[0];
+          iy = im[4] * cx + im[5] * cy + im[6] * cz + im[7] * cw + it[1];
+          iz = im[8] * cx + im[9] * cy + im[10] * cz + im[11] * cw + it[2];
+          iw = im[12] * cx + im[13] * cy + im[14] * cz + im[15] * cw + it[3];
+          branchSigma = map.foldSigma * sfSigma;
+        }
+        const mapBoundC = map.stateBoundCenter;
+        const r =
+          mapBoundC === undefined
+            ? Math.hypot(ix, iy, iz, iw)
+            : Math.hypot(
+                ix - mapBoundC[0],
+                iy - mapBoundC[1],
+                iz - mapBoundC[2],
+                iw - mapBoundC[3],
+              );
+        const gScale = eScale * branchSigma;
+        if (r > Rg) {
+          let gcert = gLast ? Infinity : gScale * (r - Rg);
+          const flr = eScale * regionAbsW * branchRd;
+          if (flr > gcert) gcert = flr;
+          const raised = eFloor > gcert ? eFloor : gcert;
+          if (raised < acc) acc = raised;
+        } else {
+          const shapeTerm = scheduledCondensationTerm4(
+            de,
+            depth + 2,
+            gScale,
+            ix,
+            iy,
+            iz,
+            iw,
+            childState,
+          );
+          if (shapeTerm < acc) acc = shapeTerm;
+        }
+      }
+    }
+  }
+  return acc;
+}
+
 function descend4(
   de: SurfaceDE4,
   p: Vec4,
@@ -3890,8 +4333,22 @@ function descend4(
             eR <= stateBallRadius(eState, R) &&
             depth + 1 < firstCondensationDepth
           ) {
-            const subtree = eScale * (eR - stateBallRadius(eState, R));
-            if (subtree < best) best = subtree;
+            if (depth + 2 === firstCondensationDepth) {
+              best = expandPreBandStamps4(
+                de,
+                depth,
+                eX,
+                eY,
+                eZ,
+                eW,
+                eScale,
+                eState,
+                best,
+              );
+            } else {
+              const subtree = eScale * (eR - stateBallRadius(eState, R));
+              if (subtree < best) best = subtree;
+            }
           }
         }
       }
@@ -3941,8 +4398,22 @@ function descend4(
           c2R <= stateBallRadius(c2State, R) &&
           depth + 1 < firstCondensationDepth
         ) {
-          const subtree = c2Scale * (c2R - stateBallRadius(c2State, R));
-          if (subtree < best) best = subtree;
+          if (depth + 2 === firstCondensationDepth) {
+            best = expandPreBandStamps4(
+              de,
+              depth,
+              c2X,
+              c2Y,
+              c2Z,
+              c2W,
+              c2Scale,
+              c2State,
+              best,
+            );
+          } else {
+            const subtree = c2Scale * (c2R - stateBallRadius(c2State, R));
+            if (subtree < best) best = subtree;
+          }
         }
       } else {
         bX = c2X;
@@ -4949,8 +5420,25 @@ function descend4Refined(
             eR <= stateBallRadius(eState, R) &&
             depth + 1 < firstCondensationDepth
           ) {
-            const subtree = eScale * (eR - stateBallRadius(eState, R));
-            if (subtree < best) best = subtree;
+            if (depth + 2 === firstCondensationDepth) {
+              best = expandPreBandStamps4(
+                de,
+                depth,
+                eX,
+                eY,
+                eZ,
+                eW,
+                eScale,
+                eState,
+                best,
+              );
+              if (best <= sphereBound || best * finalScale < bailBelow) {
+                return descentValue(best, sphereBound, finalScale);
+              }
+            } else {
+              const subtree = eScale * (eR - stateBallRadius(eState, R));
+              if (subtree < best) best = subtree;
+            }
           }
         }
       }
@@ -5006,8 +5494,25 @@ function descend4Refined(
           c2R <= stateBallRadius(c2State, R) &&
           depth + 1 < firstCondensationDepth
         ) {
-          const subtree = c2Scale * (c2R - stateBallRadius(c2State, R));
-          if (subtree < best) best = subtree;
+          if (depth + 2 === firstCondensationDepth) {
+            best = expandPreBandStamps4(
+              de,
+              depth,
+              c2X,
+              c2Y,
+              c2Z,
+              c2W,
+              c2Scale,
+              c2State,
+              best,
+            );
+            if (best <= sphereBound || best * finalScale < bailBelow) {
+              return descentValue(best, sphereBound, finalScale);
+            }
+          } else {
+            const subtree = c2Scale * (c2R - stateBallRadius(c2State, R));
+            if (subtree < best) best = subtree;
+          }
         }
       } else if (
         c2R >
@@ -5819,6 +6324,12 @@ function descendFold4(
   const { order, stepBack } = de.symmetry;
   const R = de.boundingRadius;
   const condensation = de.condensation;
+  // The affine bodies' `firstCondensationDepth` gate — descendFold4 had
+  // missed it when fr-ihnb gated the evicted-subtree terminal, so its
+  // in-ball eviction folded the enclosure ball at band-open levels too.
+  const firstCondensationDepth = condensation
+    ? condensation.depthBand.minDepth + (de.schedule?.depth ?? 0)
+    : Infinity;
   const startR = segmentRadius(x, y, z, w, FOLD_EXT4);
   const sphereBound = startR - R;
   let best = Infinity;
@@ -6587,10 +7098,37 @@ function descendFold4(
                   }
                 }
               } else if (futureCondensation) {
-                const subtree = evScale * (evR - R);
-                if (subtree < best) best = subtree;
-                if (best <= sphereBound || best * finalScale < bailBelow) {
-                  return descentValue(best, sphereBound, finalScale);
+                // The evicted in-ball terminal, gated like the 3D fold
+                // frontier's (fr-ihnb's rule, which descendFold4 had
+                // missed): once the band is open at the candidate's own
+                // level its C0 term has already been folded, so the
+                // enclosure ball must not double as a hit. One level short
+                // of the band's opening the stamp expansion folds the
+                // first enabled stamps' real terms instead.
+                if (depth + 1 < firstCondensationDepth) {
+                  if (depth + 2 === firstCondensationDepth) {
+                    best = expandPreBandStampsFold4(
+                      de,
+                      depth,
+                      evX,
+                      evY,
+                      evZ,
+                      evW,
+                      evScale,
+                      evState,
+                      evFloor,
+                      best,
+                    );
+                    if (best <= sphereBound || best * finalScale < bailBelow) {
+                      return descentValue(best, sphereBound, finalScale);
+                    }
+                  } else {
+                    const subtree = evScale * (evR - R);
+                    if (subtree < best) best = subtree;
+                    if (best <= sphereBound || best * finalScale < bailBelow) {
+                      return descentValue(best, sphereBound, finalScale);
+                    }
+                  }
                 }
               } else if (!lastLevel && evFloor > 0 && evFloor < best) {
                 // The drop-fold rule — gated at the band's last level like
