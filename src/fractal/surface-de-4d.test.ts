@@ -54,6 +54,7 @@ import {
   pentatope,
   PRESET_SCHEDULES,
   presetTransforms,
+  sierpinskiTetrahedron,
   sixteenCellFlake,
   tesseract,
   twentyFourCellFlake,
@@ -5457,6 +5458,88 @@ describe("emitter-only finite unions in 4D", () => {
         { minDepth: 3, maxDepth: 24 },
       ).status,
     ).not.toBe("ineligible");
+  });
+
+  it("expands an evicted pre-band subtree in 4D instead of folding its enclosure ball", () => {
+    // The 4D half of the two-cluster fixture: ten w-lifted recursive maps
+    // against the width-4 beam, one sphere emitter per cluster, clusters
+    // symmetric about the origin (the 4D ball is origin-anchored) so a void
+    // probe at the origin has in-ball inverse children under BOTH clusters'
+    // maps. Before the expansion the pre-band evicted terminal folded the
+    // enclosure ball over the whole void.
+    const emitter = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.1 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const symmetry = { order: 1, plane: "xz" as const };
+    const cluster = (xOff: number, idBase: number): Transform[] =>
+      sierpinskiTetrahedron().map((t, i): Transform => ({
+        ...t,
+        id: idBase + i,
+        position: [t.position[0] + xOff, t.position[1], t.position[2]],
+        w: { position: 0.25 },
+      }));
+    const transforms: Transform[] = [
+      ...cluster(-1.6, 0),
+      ...cluster(1.6, 4),
+      map4({
+        id: 8,
+        position: [1.6, 0, 0],
+        scale: [0.4, 0.4, 0.4],
+        w: { position: 0.25 },
+      }),
+      map4({
+        id: 9,
+        position: [-1.6, 0, 0],
+        scale: [0.4, 0.4, 0.4],
+        w: { position: 0.25 },
+      }),
+      map4({
+        id: 10,
+        position: [-1.6, 0.4, 0],
+        scale: [0.7, 0.7, 0.7],
+        w: { position: 0.25 },
+        emitter,
+      }),
+      map4({
+        id: 11,
+        position: [1.6, 0.4, 0],
+        scale: [0.7, 0.7, 0.7],
+        w: { position: 0.25 },
+        emitter,
+      }),
+    ];
+    const de2 = buildSurfaceDE4(transforms, null, symmetry, {
+      condensationDepthBand: { minDepth: 2, maxDepth: 24 },
+    });
+    expect(de2.condensation).toBeDefined();
+    // The origin sits between the clusters; verify real clearance against a
+    // sampled 4D cloud before trusting the positivity assertion.
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      20000,
+      mulberry32(0xbead5),
+    );
+    let cleared = Infinity;
+    const probe: Vec4 = [0, -0.2, 0.1, 0.25];
+    for (let i = 0; i < cloud.count; i++) {
+      const d = Math.hypot(
+        cloud.positions[i * 3] - probe[0],
+        cloud.positions[i * 3 + 1] - probe[1],
+        cloud.positions[i * 3 + 2] - probe[2],
+      );
+      void 0;
+      const dw = cloud.w[i] - probe[3];
+      const dist = Math.hypot(d, dw);
+      if (dist < cleared) cleared = dist;
+    }
+    expect(cleared).toBeGreaterThan(0.15);
+    expect(estimateDistance4(de2, probe)).toBeGreaterThan(0);
+    expect(estimateDistance4Refined(de2, probe)).toBeGreaterThan(0);
   });
 
   it("preserves the finite root through xaos support and w-plane symmetry copies", () => {
