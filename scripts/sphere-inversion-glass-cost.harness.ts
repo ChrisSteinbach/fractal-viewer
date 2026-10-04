@@ -35,6 +35,16 @@
  * the evidence for running a pending-prone ray's passes speculatively
  * (`docs/sphere-inversion-family.md`, "The glass tail is latency").
  *
+ * THE THIRD TEST is the pending chain's replay log, built and shipped
+ * (`surface-transport-fixture.ts`'s `replay` option): the in-order
+ * schedule traced twice per glass hit — without the log, and with pass
+ * k+1 consuming pass k's recorded answers — outcomes identical, pass 1's
+ * recompute fallen to 18% of its baseline and the worst critical path
+ * halved. The fixture THROWS on a consumed entry whose inputs differ
+ * from the pop's own, so the run is also the executable form of the
+ * alignment argument the kernel's positional log rests on; its per-pass
+ * entry counts sized the kernel's log cap.
+ *
  * Run: npx vitest run --config scripts/vitest.harness.config.ts \
  *        scripts/sphere-inversion-glass-cost.harness.ts
  */
@@ -59,6 +69,7 @@ import {
   transportSolidBoundaryQueryCPU,
   transportTraceCPU,
   type TransportFixtureSystem,
+  type TransportReplayEntry,
 } from "../src/app/gpu-bench/surface-transport-fixture";
 import { PRESET_SPHERE_INVERSIONS, PRESET_VIEWS } from "../src/fractal/presets";
 
@@ -555,6 +566,229 @@ describe("sphere-inversion glass: the transport's evaluation profile", () => {
         `early stop critical path, ${arm}: in order max ${String(Math.max(0, ...seq))}, chained max ${String(Math.max(0, ...chained))}`,
       );
     }
+    expect(differ).toBe(0);
+  });
+
+  it("prices the pending chain's replay log", () => {
+    // The pending chain's lever: a later pass visits a superset of the
+    // earlier pass's paths in the same relative order with identical
+    // query inputs, so pass k+1 can consume pass k's recorded answers
+    // instead of re-marching them. Per glass hit the in-order schedule
+    // (the cold chain: every pass from scratch) runs twice — without the
+    // log, and with it — and the outcomes must agree exactly. The log's
+    // stats size the kernel's buffers: the entries a pass records are
+    // its processed count, so their distribution sizes the log cap, and
+    // the consumed share is the saving. The fixture THROWS on a consumed
+    // entry whose inputs differ from the pop's own, so this test is also
+    // the executable form of the alignment argument the kernel's
+    // positional log rests on.
+    const authored = PRESET_SPHERE_INVERSIONS.glassPearls!();
+    const resolved = resolveSphereInversion(authored);
+    if (!resolved.ok || resolved.construction.dim !== 3)
+      throw new Error("glassPearls did not resolve to a 3D construction");
+    const de = buildSphereInversionDE(resolved.construction);
+    const radius = de.boundingRadius;
+    let evals = 0;
+    const system: TransportFixtureSystem = {
+      estimate: (p) => {
+        evals++;
+        return sphereInversionSignedDistance(de, p);
+      },
+      contains: (p) => {
+        evals++;
+        return sphereInversionContains(de, p);
+      },
+      stepScale: 1,
+      visibleRadius: radius,
+    };
+    const material: DielectricMaterial = {
+      ior: DIELECTRIC_IOR,
+      absorption: DIELECTRIC_ABSORPTION,
+      radius,
+    };
+    const query = (
+      origin: Vec3,
+      dir: Vec3,
+      anchorPresent: boolean,
+      anchorPoint: Vec3,
+      inside: boolean,
+      eps: number,
+    ) =>
+      transportSolidBoundaryQueryCPU(
+        system,
+        origin,
+        dir,
+        anchorPresent,
+        anchorPoint,
+        inside,
+        eps,
+      );
+    // One pass's log bookkeeping: entries recorded (the processed count),
+    // entries consumed, the entries the incoming log offered, and the
+    // evals the pass paid.
+    const passEntries: number[] = [];
+    const passConsumed: number[] = [];
+    const passOffered: number[] = [];
+    const passEvalsBaseline: number[] = [];
+    const passEvalsLogged: number[] = [];
+    const schedule = (start: Vec3, rd: Vec3, log: boolean): string => {
+      let theta = DIELECTRIC_INITIAL_BRANCH_THETA;
+      passEntries.length = 0;
+      passConsumed.length = 0;
+      passOffered.length = 0;
+      passEvalsBaseline.length = 0;
+      passEvalsLogged.length = 0;
+      let prevEntries: TransportReplayEntry[] | undefined;
+      for (let pass = 0; pass < DIELECTRIC_REPLAY_PASSES; pass++) {
+        const before = evals;
+        const consumed = { count: 0 };
+        const record: TransportReplayEntry[] = [];
+        const res = transportTraceCPU(
+          system,
+          start,
+          rd,
+          theta,
+          material,
+          [0.2, 0.2, 0.2],
+          { maxProcessedPaths: 2048, maxInterfaces: 2048 },
+          query,
+          undefined,
+          undefined,
+          log
+            ? {
+                // Pass 0 records without consuming: nothing precedes it.
+                theta: pass === 0 ? Infinity : theta * 2,
+                entries: prevEntries ?? [],
+                record,
+                consumed,
+              }
+            : undefined,
+        );
+        if (log) {
+          passEntries.push(record.length);
+          passConsumed.push(consumed.count);
+          passOffered.push(prevEntries?.length ?? 0);
+          passEvalsLogged.push(evals - before);
+          prevEntries = record;
+        } else {
+          passEvalsBaseline.push(evals - before);
+        }
+        if (
+          (res.status === "complete" || res.status === "residual") &&
+          res.residual <= DIELECTRIC_ERROR_BUDGET
+        )
+          return `accepted ${res.radiance.join(",")}`;
+        if (res.status === "invalid") return "invalid";
+        if (res.status === "unresolved") return "unresolved";
+        theta *= 0.5;
+      }
+      return "unresolved";
+    };
+    let glass = 0;
+    let differ = 0;
+    let evalsBaseline = 0;
+    let evalsLogged = 0;
+    // Per ray, the in-order pass-eval sequences both arms ran, for the
+    // chain columns beside the totals.
+    const chainsBaseline: number[][] = [];
+    const chainsLogged: number[][] = [];
+    // The log's sizing stats, aggregated across all rays: the entries
+    // each pass records (its processed count), the entries consumed, and
+    // the entries the consumed log OFFERED (the previous pass's record —
+    // the consumed share's denominator).
+    const entriesByPass: number[][] = Array.from(
+      { length: DIELECTRIC_REPLAY_PASSES },
+      () => [] as number[],
+    );
+    const consumedByPass: number[] = new Array<number>(
+      DIELECTRIC_REPLAY_PASSES,
+    ).fill(0);
+    const offeredByPass: number[] = new Array<number>(
+      DIELECTRIC_REPLAY_PASSES,
+    ).fill(0);
+    const view = PRESET_VIEWS.glassPearls!;
+    renderPreview(
+      {
+        de: (p) => estimateSphereInversionDistance(de, p, 0),
+        boundingRadius: radius,
+        stepScale: 1,
+        eye: [...view.camera.eye] as Vec3,
+        target: [...view.camera.target] as Vec3,
+        zoom: Math.tan((view.camera.fov * Math.PI) / 360),
+        maxSteps: 400,
+        ao: false,
+        shadow: false,
+        rayLinear: (ray) => {
+          if (ray.status !== PREVIEW_HIT) return [0, 0, 0];
+          glass++;
+          const start: Vec3 = [
+            ray.origin[0] + ray.rd[0] * ray.distance,
+            ray.origin[1] + ray.rd[1] * ray.distance,
+            ray.origin[2] + ray.rd[2] * ray.distance,
+          ];
+          const plain = schedule(start, ray.rd, false);
+          chainsBaseline.push([...passEvalsBaseline]);
+          evalsBaseline += passEvalsBaseline.reduce((a, b) => a + b, 0);
+          const logged = schedule(start, ray.rd, true);
+          chainsLogged.push([...passEvalsLogged]);
+          evalsLogged += passEvalsLogged.reduce((a, b) => a + b, 0);
+          for (let i = 0; i < passEntries.length; i++) {
+            entriesByPass[i].push(passEntries[i]);
+            consumedByPass[i] += passConsumed[i];
+            if (passConsumed[i] > 0) offeredByPass[i] += passOffered[i];
+          }
+          if (plain !== logged) differ++;
+          return [0, 0, 0];
+        },
+      },
+      SIZE,
+    );
+    const top = (xs: number[], k: number) =>
+      [...xs].sort((a, b) => a - b).slice(-k);
+    const seq = (ps: number[][]) => ps.map((p) => p.reduce((a, b) => a + b, 0));
+    console.log(
+      `replay log over ${String(glass)} glass hits, outcomes differing ${String(differ)}: evals ${String(evalsBaseline)} in order -> ${String(evalsLogged)} logged (${((100 * evalsLogged) / Math.max(1, evalsBaseline)).toFixed(1)}%); in-order critical path max ${String(Math.max(0, ...seq(chainsBaseline)))} -> ${String(Math.max(0, ...seq(chainsLogged)))}, top logged ${top(seq(chainsLogged), 5).join("/")}`,
+    );
+    // The log's sizing stats: the entries each pass records across all
+    // rays (the processed counts the kernel's log must hold), the share
+    // of the offered log consumed, and where the top end sits.
+    for (let i = 0; i < DIELECTRIC_REPLAY_PASSES; i++) {
+      const es = entriesByPass[i];
+      if (es.length === 0) continue;
+      console.log(
+        `pass ${String(i)}: rays ${String(es.length)}, entries recorded max ${String(Math.max(...es))} top ${top(es, 5).join("/")}, consumed ${String(consumedByPass[i])} of ${String(offeredByPass[i])} offered (${offeredByPass[i] > 0 ? ((100 * consumedByPass[i]) / offeredByPass[i]).toFixed(1) : "-"}%)`,
+      );
+    }
+    // The consumer-cap question: the largest single consumed share (how
+    // deep one chain's consumption reaches) and the recorded counts that
+    // exceed candidate caps (a log capped below a pass's processed count
+    // falls back to recompute past its last entry).
+    const allEntries = entriesByPass.flat();
+    for (const cap of [128, 256, 512, 1024, 2048])
+      console.log(
+        `entries over ${String(cap)}: ${String(allEntries.filter((e) => e > cap).length)} of ${String(allEntries.length)} pass traces`,
+      );
+    // The evals each pass paid, baseline vs logged, per pass index.
+    const loggedEvalsByPass: number[] = new Array<number>(
+      DIELECTRIC_REPLAY_PASSES,
+    ).fill(0);
+    const baselineEvalsByPass: number[] = new Array<number>(
+      DIELECTRIC_REPLAY_PASSES,
+    ).fill(0);
+    for (let r = 0; r < chainsBaseline.length; r++) {
+      for (let i = 0; i < chainsBaseline[r].length; i++)
+        baselineEvalsByPass[i] += chainsBaseline[r][i];
+      for (let i = 0; i < chainsLogged[r].length; i++)
+        loggedEvalsByPass[i] += chainsLogged[r][i];
+    }
+    console.log(
+      `per pass (baseline -> logged evals): ${baselineEvalsByPass
+        .map(
+          (b, i) =>
+            `p${String(i)} ${String(b)} -> ${String(loggedEvalsByPass[i])} (${((100 * loggedEvalsByPass[i]) / Math.max(1, b)).toFixed(0)}%)`,
+        )
+        .join(", ")}`,
+    );
     expect(differ).toBe(0);
   });
 });

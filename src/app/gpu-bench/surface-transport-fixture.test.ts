@@ -55,6 +55,7 @@ import {
   type TransportFiniteQueryFn,
   type TransportFixtureMedia,
   type TransportFixtureSystem,
+  type TransportReplayEntry,
 } from "./surface-transport-fixture";
 import {
   SHAPE_MARCH_SAFETY,
@@ -342,6 +343,182 @@ describe("transportTraceCPU over the closed-solid query", () => {
     expect(["complete", "residual"]).toContain(result.status);
     expect(result.failure).toBe(0);
     expect(result.radiance).toEqual([0, 0, 0]);
+  });
+
+  it("records one entry per processed pop and replays them whole at the same theta", () => {
+    const system = solidSystem(BOX);
+    const query = (
+      origin: Vec3,
+      dir: Vec3,
+      anchorPresent: boolean,
+      anchorPoint: Vec3,
+      inside: boolean,
+      eps: number,
+    ) =>
+      transportSolidBoundaryQueryCPU(
+        system,
+        origin,
+        dir,
+        anchorPresent,
+        anchorPoint,
+        inside,
+        eps,
+      );
+    const record: TransportReplayEntry[] = [];
+    const first = transportTraceCPU(
+      system,
+      [-0.5, 0, 0],
+      [1, 0, 0],
+      DIELECTRIC_INITIAL_BRANCH_THETA,
+      MATERIAL,
+      [0, 0, 0],
+      undefined,
+      query,
+      undefined,
+      undefined,
+      { theta: Infinity, entries: [], record },
+    );
+    expect(record.length).toBeGreaterThan(0);
+    // The same theta keeps the same tree, so every pop of the replay is
+    // shared: the log answers all of them and the query never marches.
+    let queries = 0;
+    const consumed = { count: 0 };
+    const replayed = transportTraceCPU(
+      system,
+      [-0.5, 0, 0],
+      [1, 0, 0],
+      DIELECTRIC_INITIAL_BRANCH_THETA,
+      MATERIAL,
+      [0, 0, 0],
+      undefined,
+      (origin, dir, anchorPresent, anchorPoint, inside, eps) => {
+        queries++;
+        return query(origin, dir, anchorPresent, anchorPoint, inside, eps);
+      },
+      undefined,
+      undefined,
+      {
+        theta: DIELECTRIC_INITIAL_BRANCH_THETA,
+        entries: record,
+        consumed,
+      },
+    );
+    expect(queries).toBe(0);
+    expect(consumed.count).toBe(record.length);
+    expect(replayed.status).toBe(first.status);
+    expect(replayed.residual).toBe(first.residual);
+    expect(replayed.radiance).toEqual(first.radiance);
+  });
+
+  it("throws when a consumed entry's inputs differ from the pop's own", () => {
+    const system = solidSystem(BOX);
+    const query = (
+      origin: Vec3,
+      dir: Vec3,
+      anchorPresent: boolean,
+      anchorPoint: Vec3,
+      inside: boolean,
+      eps: number,
+    ) =>
+      transportSolidBoundaryQueryCPU(
+        system,
+        origin,
+        dir,
+        anchorPresent,
+        anchorPoint,
+        inside,
+        eps,
+      );
+    const record: TransportReplayEntry[] = [];
+    transportTraceCPU(
+      system,
+      [-0.5, 0, 0],
+      [1, 0, 0],
+      DIELECTRIC_INITIAL_BRANCH_THETA,
+      MATERIAL,
+      [0, 0, 0],
+      undefined,
+      query,
+      undefined,
+      undefined,
+      { theta: Infinity, entries: [], record },
+    );
+    record[0].origin[0] += 1e-9;
+    expect(() =>
+      transportTraceCPU(
+        system,
+        [-0.5, 0, 0],
+        [1, 0, 0],
+        DIELECTRIC_INITIAL_BRANCH_THETA,
+        MATERIAL,
+        [0, 0, 0],
+        undefined,
+        query,
+        undefined,
+        undefined,
+        { theta: DIELECTRIC_INITIAL_BRANCH_THETA, entries: record },
+      ),
+    ).toThrow(/misaligned/);
+  });
+
+  it("recomputes every pop when the recorded theta exceeds them all", () => {
+    // The fallthrough: a pop whose bound is at or below the recorded
+    // pass's theta was cut there, so it was never logged — the consume
+    // rule leaves it to its own query. (A scene this simple has no
+    // populated band between two thetas; the cost harness's full run
+    // exercises the mixed consume/recompute schedule end to end.)
+    const system = solidSystem(BOX);
+    const query = (
+      origin: Vec3,
+      dir: Vec3,
+      anchorPresent: boolean,
+      anchorPoint: Vec3,
+      inside: boolean,
+      eps: number,
+    ) =>
+      transportSolidBoundaryQueryCPU(
+        system,
+        origin,
+        dir,
+        anchorPresent,
+        anchorPoint,
+        inside,
+        eps,
+      );
+    const record: TransportReplayEntry[] = [];
+    transportTraceCPU(
+      system,
+      [-0.5, 0, 0],
+      [1, 0, 0],
+      DIELECTRIC_INITIAL_BRANCH_THETA,
+      MATERIAL,
+      [0, 0, 0],
+      undefined,
+      query,
+      undefined,
+      undefined,
+      { theta: Infinity, entries: [], record },
+    );
+    let queries = 0;
+    const consumed = { count: 0 };
+    transportTraceCPU(
+      system,
+      [-0.5, 0, 0],
+      [1, 0, 0],
+      DIELECTRIC_INITIAL_BRANCH_THETA,
+      MATERIAL,
+      [0, 0, 0],
+      undefined,
+      (origin, dir, anchorPresent, anchorPoint, inside, eps) => {
+        queries++;
+        return query(origin, dir, anchorPresent, anchorPoint, inside, eps);
+      },
+      undefined,
+      undefined,
+      { theta: Infinity, entries: record, consumed },
+    );
+    expect(queries).toBe(record.length);
+    expect(consumed.count).toBe(0);
   });
 });
 
