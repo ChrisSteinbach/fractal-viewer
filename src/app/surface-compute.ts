@@ -490,6 +490,34 @@ export const SURFACE_COMPUTE_MARCH_STEPS_PIN_CAP =
 export const SURFACE_COMPUTE_PROGRESS_MS = 500;
 
 /**
+ * THE MEASURED PRESENT SHARE one cadence period may spend IN presents —
+ * the ceiling that stretches {@link SURFACE_COMPUTE_PROGRESS_MS} when a
+ * present costs enough of it to break.
+ *
+ * WHY THERE IS A CAP AT ALL. A progressive present is a full-frame readback
+ * plus (lit) an HDR encode plus the pane upload, so its cost scales with
+ * the raster while the cadence does not: MEASURED on this machine's AMD RX
+ * 7900 XTX at 1920x1080, a LIT pane-scale present costs ~206 ms against the
+ * shipped 500 ms — a fixed cadence spends up to ~29% of a slow settle's
+ * wall re-reading frames the GPU already rendered (measured at 30% on a
+ * 501 s settle: 687 presents × ~220 ms). The share is pure arithmetic —
+ * cost/(interval+cost) — so the fix prices presents the way the loop
+ * already prices dispatches: measure the cost, and stretch the interval to
+ * the share the constant names. Unlit pane-scale presents cost ~21 ms and
+ * previews' far less, so their interval stays at the shipped base and the
+ * cap only engages where the defect lives.
+ *
+ * WHY 0.2 AND NOT SMALLER. The present is not waste — it is the product
+ * (the screen developing, the progress row) — and pass 1 is the frame a
+ * user watches most. 0.2 bounds the duty cycle at a fifth while keeping a
+ * slow settle's update cadence near the present's own cost plus the
+ * interval (~1 s at the measured 206 ms), which no user of a minutes-long
+ * settle reads as stalled. The constant is the lever; a measured share
+ * above it is a regression, not a tuning invitation.
+ */
+export const SURFACE_COMPUTE_PRESENT_SHARE_MAX = 0.2;
+
+/**
  * How much MEASURED work one fence may stand behind — the compute arm's
  * `SURFACE_STRIP_FENCE_GROUP_MS`, and deliberately the same number,
  * because it is the same trade already made once on the WebGL arm: every
@@ -2100,6 +2128,41 @@ export function surfaceComputeFenceGroupStagedFull(
   ceilingBytes = SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES,
 ): boolean {
   return groupDispatches > 0 && stagedBytes + nextBytes >= ceilingBytes;
+}
+
+/**
+ * THE PRESENT-COST EMA one new measurement folds into: the first
+ * measurement ADOPTS fully (a stale-zero seed must not hold a ~200 ms
+ * present to the shipped 500 ms cadence — one over-frequent present is the
+ * defect the policy exists to stop), later ones average at 0.5 so the
+ * interval readapts within two presents after a raster change (a preview's
+ * cheap presents pull it back to the base; a settle's expensive ones
+ * stretch it again). Pure so the adoption rule is unit-tested.
+ */
+export function surfaceComputePresentCostEma(
+  prev: number,
+  measured: number,
+): number {
+  return prev === 0 ? measured : prev * 0.5 + measured * 0.5;
+}
+
+/**
+ * THE INTERVAL the frame's measured present cost calls for, against
+ * {@link SURFACE_COMPUTE_PRESENT_SHARE_MAX}: the shipped cadence until a
+ * present's cost would exceed the share's slice of the completion-to-
+ * completion period (period = interval + cost, so share = cost / period),
+ * then `cost·(1−share)/share` — 4× the measured cost at the shipped 0.2.
+ * The interval NEVER SHRINKS below the base, so a cheap present (a
+ * preview's, an unlit one) leaves the shipped cadence byte for byte, and a
+ * mid-frame raster change readapts through the EMA in two presents. Pure
+ * so the share arithmetic is unit-tested.
+ */
+export function surfaceComputePresentInterval(
+  baseMs: number,
+  presentCostMs: number,
+): number {
+  const s = SURFACE_COMPUTE_PRESENT_SHARE_MAX;
+  return Math.max(baseMs, (presentCostMs * (1 - s)) / s);
 }
 
 /**
@@ -5682,7 +5745,17 @@ export class SurfaceComputeRenderer {
     if (token !== this.frameToken || this.isLost || this.destroyed) return null;
     const wallStart = performance.now();
     const budgetMs = opts.budgetMs ?? Infinity;
-    const progressMs = opts.progressIntervalMs ?? SURFACE_COMPUTE_PROGRESS_MS;
+    // The SHIPPED cadence is the floor; the live interval stretches with
+    // the frame's measured present cost
+    // ({@link surfaceComputePresentInterval}), and every consumer — the
+    // cadence itself, the fence group's allowance
+    // ({@link surfaceComputeFenceGroupAllowanceMs} callers read it here) and
+    // the hit-batch hold bound — reads the LIVE value, because they are all
+    // pricing the same debt: work that delays the next present.
+    const baseProgressMs =
+      opts.progressIntervalMs ?? SURFACE_COMPUTE_PROGRESS_MS;
+    let progressMs = baseProgressMs;
+    let presentCostEma = 0;
     const { width, height } = spec;
     const rays = width * height;
     const device = this.device;
@@ -6874,6 +6947,10 @@ export class SurfaceComputeRenderer {
     ): Promise<boolean> => {
       if (!sink) return true;
       if (performance.now() - lastProgress < progressMs) return true;
+      // The present's whole span is the cost the share cap prices —
+      // readback, encode and the sink's upload — so it starts at the
+      // decision, not at the readback.
+      const presentStart = performance.now();
       tr("present readback BEGIN");
       const [partialBytes, partialLayerBytes] = await this.readbackFrame(
         buffers.color,
@@ -6891,7 +6968,6 @@ export class SurfaceComputeRenderer {
       if (token !== this.frameToken || this.isLost || this.destroyed) {
         return false;
       }
-      lastProgress = performance.now();
       // March credit accrues per consumed step, shade credit on shaded
       // pixels — surfaceComputeProgressDone owns the formula and the
       // monotonicity argument.
@@ -6909,6 +6985,21 @@ export class SurfaceComputeRenderer {
             marchSteps: spec.marchSteps,
           }),
         total,
+      );
+      // The interval turns AFTER the whole present is paid — the sunk cost
+      // prices the next gap, and `lastProgress` stays "when the screen was
+      // last updated" only if it moves at the sink's end. (It used to move
+      // before the sink, which under-counted the upload on every frame
+      // whose pane upload was comparable to its readback.)
+      lastProgress = performance.now();
+      const presentMs = lastProgress - presentStart;
+      presentCostEma = surfaceComputePresentCostEma(presentCostEma, presentMs);
+      progressMs = surfaceComputePresentInterval(
+        baseProgressMs,
+        presentCostEma,
+      );
+      tr(
+        `present cost=${presentMs.toFixed(1)}ms ema=${presentCostEma.toFixed(1)}ms interval→${progressMs.toFixed(0)}ms`,
       );
       return true;
     };
