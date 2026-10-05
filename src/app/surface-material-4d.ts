@@ -703,6 +703,76 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   vec4 stepSector4(vec4 q) {
     return uSymStepBack * q;
   }
+#if SURFACE_CONDENSATION
+  /** The oracle's expandPreBandStamps4: one Hutchinson level past an
+   * evicted in-ball candidate whose level is still below the band, when
+   * the band opens exactly at the level below it (the caller tests
+   * condensationBandOpenAtNextDepth4(depth + 1) beside its own
+   * !condensationBandOpenAtNextDepth4(depth) gate). Each (sector, map)
+   * grandchild folds its escape certificate when it leaves its ball — the
+   * same last-level gate the walk's own certificates carry, one level
+   * deeper — and the C0 term at the band's first enabled level otherwise,
+   * the same term the beam's own children fold at generation. A condensa-
+   * tion system never carries a slab query (the build refuses one), so
+   * this helper is a point query by construction. Deeper pre-band levels
+   * keep the bare ball terminal (the caller's else branch). The child
+   * arithmetic mirrors the descent loop's own (sector sweep, un-post,
+   * base inverse), so the two cannot drift. */
+  void condensationExpandStamps4(
+    vec4 eQ,
+    float eScale,
+    int eState,
+    int depth,
+    inout float best
+  ) {
+    int childDepth = depth + 2;
+#if SURFACE_SCHEDULE
+    int begin = surface4LevelMapBegin(depth + 1);
+    int end = surface4LevelMapEnd(depth + 1);
+    int sectors = surface4LevelSymOrder(depth + 1);
+    vec2 gbound = surface4LevelBound(childDepth);
+#else
+    int begin = 0;
+    int end = uMapCount;
+    int sectors = uSymOrder;
+#endif
+    bool gLast =
+      uMapCount > 0 && !condensationFutureAfterChild4(depth + 2, uMapCount);
+    for (int k = 0; k < sectors; k++) {
+      vec4 sQ = eQ;
+      if (k > 0) {
+        sQ = stepSector4(sQ);
+      }
+      for (int j = begin; j < end; j++) {
+        int childState = -1;
+#if SURFACE_CHAOS
+        childState = surfaceChaosChildState4(depth + 1, j);
+        if (!surfaceChaosAllows4(eState, childState)) {
+          continue;
+        }
+#endif
+        vec4 img = uInvM[j] * (uInvPostM[j] * sQ + uInvPostT[j]) + uInvT[j];
+#if SURFACE_SCHEDULE
+        float r = length(img - stateBoundCenter4(childState));
+        float ballR = gbound.x;
+#else
+        float r = length(img - stateBoundCenter4(childState));
+        float ballR = stateBoundRadius4(childState);
+#endif
+        float childScale = eScale * uMapColorSigma[j].w;
+        if (r > ballR) {
+          best = min(best, gLast ? 1e30 : childScale * (r - ballR));
+        } else {
+          condensationFold4(img, childScale, childDepth
+#if SURFACE_CHAOS
+            , childState
+#endif
+            , best);
+        }
+      }
+    }
+  }
+#endif
 
   /** One extra Hutchinson level on a frozen escaped candidate's own
    * inverse image (the oracle's refinedCert): the certificate becomes
@@ -1336,11 +1406,33 @@ uniform float uBalloonPaletteEnabled;
 #if SURFACE_SCHEDULE
             } else if (eKey < 1e29 && futureCondensation && eR <= childBound.x &&
                        !condensationBandOpenAtNextDepth4(depth)) {
-              best = min(best, eScale * (eR - childBound.x));
+              // One level short of the band's opening the stamp expansion
+              // folds the first enabled stamps' real terms instead of the
+              // invariant-ball terminal; deeper pre-band levels keep the
+              // ball terminal.
+              if (condensationBandOpenAtNextDepth4(depth + 1)) {
+                condensationExpandStamps4(eQ, eScale, eState, depth, best);
+                if (best <= sphereBound ||
+                    best * uFinalSigmaMin < bailBelow
+                ) {
+                  return max(best, sphereBound) * uFinalSigmaMin;
+                }
+              } else {
+                best = min(best, eScale * (eR - childBound.x));
+              }
 #else
             } else if (eKey < 1e29 && futureCondensation && eR <= stateBoundRadius4(eState) &&
                        !condensationBandOpenAtNextDepth4(depth)) {
-              best = min(best, eScale * (eR - stateBoundRadius4(eState)));
+              if (condensationBandOpenAtNextDepth4(depth + 1)) {
+                condensationExpandStamps4(eQ, eScale, eState, depth, best);
+                if (best <= sphereBound ||
+                    best * uFinalSigmaMin < bailBelow
+                ) {
+                  return max(best, sphereBound) * uFinalSigmaMin;
+                }
+              } else {
+                best = min(best, eScale * (eR - stateBoundRadius4(eState)));
+              }
 #endif
 #endif
             }
@@ -1998,11 +2090,23 @@ uniform float uBalloonPaletteEnabled;
 #if SURFACE_SCHEDULE
             } else if (eKey < 1e29 && futureCondensation && eR <= childBound.x &&
                        !condensationBandOpenAtNextDepth4(depth)) {
-              best = min(best, eScale * (eR - childBound.x));
+              // One level short of the band's opening the stamp expansion
+              // folds the first enabled stamps' real terms instead of the
+              // invariant-ball terminal; deeper pre-band levels keep the
+              // ball terminal.
+              if (condensationBandOpenAtNextDepth4(depth + 1)) {
+                condensationExpandStamps4(eQ, eScale, eState, depth, best);
+              } else {
+                best = min(best, eScale * (eR - childBound.x));
+              }
 #else
             } else if (eKey < 1e29 && futureCondensation && eR <= stateBoundRadius4(eState) &&
                        !condensationBandOpenAtNextDepth4(depth)) {
-              best = min(best, eScale * (eR - stateBoundRadius4(eState)));
+              if (condensationBandOpenAtNextDepth4(depth + 1)) {
+                condensationExpandStamps4(eQ, eScale, eState, depth, best);
+              } else {
+                best = min(best, eScale * (eR - stateBoundRadius4(eState)));
+              }
 #endif
 #endif
             }
