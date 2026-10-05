@@ -302,6 +302,16 @@ attractor and fabricated a surface across its interior. The WGSL cores
 carry the shared `condensationBandOpenAtNextDepth` predicate; the measured
 before/after and the regression are recorded in
 [Surface GLSL tracers](surface-glsl-tracers.md#condensation-shape-arm).
+The stamp expansion closes the gate's closed-band gap in the affine and
+affine4 cores (`condensationExpandStamps`, the (sector, map) grandchild
+sweep — the two-cluster fixture's measured `-0.131` to positive and the
+bench's emitter-only/agreement rows all green on the real driver), while
+the fold and fold4 cores carry the gate only: their evicted terminals are
+now gated (fr-ihnb's rule, which these two bodies had missed) but the
+expansion's branch-decode second copy is owed with its own bench legs.
+The deep-band admission bound (`condensationDeepBandRefusal`, the CPU
+analyzers') refuses bands opening 3+ past the schedule prefix whose first
+pre-band level evicts past the beam.
 Balloon needs no kernel fork: it
 wraps the same public estimator, and the existing balloon/plane mutual
 exclusion still applies. The separate 3D fragment-side grid also samples that

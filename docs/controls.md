@@ -462,7 +462,11 @@ morphs into place instead of snapping (see **Presets** below).
   scene; a loaded empty band offers **Use root shapes** beside the Surface
   button. A wide, deep **Hybrid schedule** may also be refused for these
   finite scenes: reduce its depth or number of active B maps as the adjacent
-  reason explains. Changing levels restarts Surface. SDF-only intersections
+  reason explains. A **First shape-copy level** of 3 or higher can likewise
+  be refused with more maps than the march can cover before the band opens —
+  the band's earlier levels cannot be covered soundly then — and the reason
+  says so; lower the first level or take **All levels**. Changing levels
+  restarts Surface. SDF-only intersections
   are supported; nearly-flat emitter poses and an emitter on the final
   transform remain refused. The [qualification record](emitter-only-surface.md)
   covers scheduled words, Xaos and the zero-child descent. In a 4D Surface
