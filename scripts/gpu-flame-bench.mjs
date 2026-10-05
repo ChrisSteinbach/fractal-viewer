@@ -142,6 +142,12 @@ const SURFACE_PASSTHROUGH_FLAGS = {
   // Run only one backend's transport agreement legs (estimator,
   // closedSolid or finiteSolid); verdict "fail" or "skipped", never "pass".
   "surface-transport-only": "surfaceTransportOnly",
+  // With --surface-transport-only: also run the 3D fold frontier's
+  // transport leg (the spill probe; a measured ring-hang risk). "1" runs
+  // the private-frontier arm, "shared" the LDS arm.
+  "surface-fold-transport-probe": "surfaceFoldTransportProbe",
+  // With --surface-fold-transport-probe: the leg's processed-path cap.
+  "surface-fold-transport-paths": "surfaceFoldTransportPaths",
   // Run only the optical-transport renderer envelope leg (the delegated
   // feasibility lines' settle-line measurement path); verdict "fail" or
   // "skipped", never "pass".

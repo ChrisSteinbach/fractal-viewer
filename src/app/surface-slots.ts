@@ -247,8 +247,9 @@ export function sphereInversionShadeSlots(
  * (`surface-optics-backend.ts`'s admission — emitter-only C0, the codegen
  * refusal list, the 4D canonical pose). The arms that can never qualify —
  * the forward families (their estimators are heuristics, not certified
- * lower bounds), a 3D fold descent (the kernel-measured frontier-spill
- * timeout), a software rasterizer — derive their wire with it false, and
+ * lower bounds), a 3D fold descent (the transport doc's fold row: ~250 ms
+ * per processed path, no bounded invocation), a software rasterizer —
+ * derive their wire with it false, and
  * so does any session the closed-solid admission refuses: an
  * optics-authored session that cannot resolve renders classic, disclosed,
  * never the estimator query's unresolved black. False also makes
