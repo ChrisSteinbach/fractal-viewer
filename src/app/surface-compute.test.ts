@@ -48,6 +48,8 @@ import {
   SURFACE_COMPUTE_FENCE_GROUP_MS,
   SURFACE_COMPUTE_JOB_WATCHDOG_MARGIN,
   SURFACE_COMPUTE_JOB_WATCHDOG_MS,
+  surfaceComputePresentCostEma,
+  surfaceComputePresentInterval,
   surfaceComputeLightingRayBatch,
   surfaceComputePassDurationsMs,
   SURFACE_COMPUTE_TS_QUERY_CAPACITY,
@@ -4431,6 +4433,58 @@ describe("surfaceComputeFenceGroupStagedFull", () => {
     // Row C's writes: small staging must not close a group early.
     expect(surfaceComputeFenceGroupStagedFull(1, KB16, KB16)).toBe(false);
     expect(surfaceComputeFenceGroupStagedFull(2, 2 * KB16)).toBe(false);
+  });
+});
+
+describe("surfaceComputePresentCostEma", () => {
+  it("adopts the first measurement fully", () => {
+    // A stale-zero seed must not hold a ~200 ms present to the shipped
+    // 500 ms cadence — one over-frequent present is the defect the share
+    // cap exists to stop.
+    expect(surfaceComputePresentCostEma(0, 206)).toBe(206);
+  });
+
+  it("averages later measurements at 0.5", () => {
+    expect(surfaceComputePresentCostEma(206, 20)).toBeCloseTo(113, 10);
+  });
+
+  it("readapts within two presents after a raster change", () => {
+    // A settle's expensive presents stretched the EMA; a preview's cheap
+    // one pulls it halfway back, a second one arrives at the base.
+    let ema = surfaceComputePresentCostEma(0, 206);
+    ema = surfaceComputePresentCostEma(ema, 6);
+    expect(ema).toBeCloseTo(106, 10);
+    ema = surfaceComputePresentCostEma(ema, 6);
+    expect(surfaceComputePresentInterval(500, ema)).toBe(500);
+  });
+});
+
+describe("surfaceComputePresentInterval", () => {
+  it("keeps the shipped cadence while a present is cheap", () => {
+    // Unlit pane-scale presents measured ~21 ms and previews' far less —
+    // their interval must stay byte for byte at the base.
+    expect(surfaceComputePresentInterval(500, 21)).toBe(500);
+    expect(surfaceComputePresentInterval(500, 0)).toBe(500);
+  });
+
+  it("stretches to four times a present the base cannot afford", () => {
+    // The measured lit pane-scale present (~206 ms) against the shipped
+    // 500 ms: share = 206/(500+206) ≈ 29%, the defect. At the shipped 0.2
+    // share the interval is cost·(1−0.2)/0.2 = 4·cost.
+    expect(surfaceComputePresentInterval(500, 206)).toBeCloseTo(824, 10);
+  });
+
+  it("never shrinks below the base, whatever the measured cost", () => {
+    expect(surfaceComputePresentInterval(1000, 206)).toBe(1000);
+    expect(surfaceComputePresentInterval(500, 1_000_000)).toBe(4_000_000);
+  });
+
+  it("bounds the completion-to-completion share at the constant", () => {
+    // The invariant, not the formula: cost/(interval+cost) ≤ 0.2 for any
+    // interval the policy produces over the base.
+    const cost = 206;
+    const interval = surfaceComputePresentInterval(500, cost);
+    expect(cost / (interval + cost)).toBeLessThanOrEqual(0.2);
   });
 });
 

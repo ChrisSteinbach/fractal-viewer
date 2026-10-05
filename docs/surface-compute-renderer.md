@@ -949,6 +949,42 @@ the retained layer's alpha while leaving terminal state/count buffers alone.
 The parameter ABI does not grow: `pose.fwd` already occupies its camera lane,
 and the former pad at byte 92 now stores focus depth.
 
+#### The present's cost is priced, and the cadence yields to it
+
+A progressive present is a full-frame readback, a (lit) HDR encode and the
+pane upload, so its cost scales with the raster while the cadence did not —
+the shipped `SURFACE_COMPUTE_PROGRESS_MS` = 500 ms is fixed. MEASURED, AMD RX
+7900 XTX, real driver `--display=:0`, production build, `?surfacetrace`:
+
+| scene / pass (2.07 M-ray pane, 1920x1080) | presents | present cost | pass wall | share |
+| ----------------------------------------- | -------- | ------------ | --------- | ----: |
+| cathedral starter, lit, pass 1 (before)   | 5        | ~213 ms each | 3.88 s    | 28.2% |
+| cathedral starter, lit, pass 1 (after)    | 3        | ~215 ms each | 3.42 s    | 18.9% |
+| hyperkifs, unlit, pass 1                  | 25       | ~21 ms each  | 15.97 s   |  4.5% |
+
+The lit row is the defect: at the fixed 500 ms cadence a ~210 ms present is
+a `cost/(interval+cost)` duty cycle of ~29%, which is where the 30% figure
+of the 501 s medium settle came from (687 presents × ~220 ms = 151 s of a
+501 s pass — the mechanism, not the medium). The unlit row is the control:
+a ~21 ms present never breaks 500 ms and must not move the cadence.
+
+THE FIX PRICES PRESENTS THE WAY THE LOOP ALREADY PRICES DISPATCHES:
+`maybePresent` measures its own whole span (readback through the sink —
+`lastProgress` moves after the sink, so the upload is inside the measured
+cost), folds it into a 0.5-EMA whose first reading ADOPTS fully, and
+stretches the live interval to `cost·(1−share)/share` with
+`SURFACE_COMPUTE_PRESENT_SHARE_MAX` = 0.2 — 4× the measured cost, bounding
+the completion-to-completion duty at a fifth. The interval NEVER shrinks
+below the base, so cheap presents (unlit panes, previews at their reduced
+raster) leave the shipped cadence byte for byte. One live interval serves
+all three consumers that price the same debt: the cadence itself, the fence
+group's present-allowance, and the hit-batch hold bound. The no-automatic-
+give-up and progressive-coverage contracts are untouched — presents keep
+firing between bounded pieces of work for as long as the frame runs; only
+their spacing yields to their measured cost. Passes 2..8 of a supersampling
+settle present nothing (the job presents only sample 0's arena), so the
+policy pays on pass 1 exactly, which is the frame a user watches.
+
 ## The Mesa park
 
 See "The frame loop and batch sizing" above for the mechanism. In short:
