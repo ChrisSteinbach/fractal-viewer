@@ -213,6 +213,20 @@ band select) supplies an inclusive word-depth
 band `[a,b]` (root = 0, ordinary-map children = 1); the classic setting is all depths, and finite bands
 give "cogs at one scale only."
 
+A finite band whose opening sits BELOW an evicted candidate's level needs
+care in the descent: the evicted in-ball subtree has no generated term to
+speak for it, and its enclosure-ball terminal — sound, but a lower bound
+over the WHOLE attractor — reads as surface across a loose ball. Where the
+band opens exactly one level below the evicted candidate, the descent
+expands the candidate one Hutchinson level and folds the first enabled
+stamps' real terms (escape certificates for escaped grandchildren, the C0
+term otherwise) — `expandPreBandStamps` and its fold/4D twins, mirrored in
+both GLSL affine arms and the WGSL affine/affine4 cores; a band opening
+three or more levels past the schedule prefix keeps bare terminals at its
+shallower pre-band levels and is REFUSED when its first pre-band level can
+evict past the beam (`condensationDeepBandRefusal`). The measured record:
+`docs/surface-glsl-tracers.md`'s condensation section.
+
 The shape term is evaluated at the root, every generated child, every retained or terminal frontier
 node, and every fold/lens branch the estimator visits. Its `0.9` safety factor is applied after the
 emitter pose's `sigma_min` and the accumulated chain scale. In 3D this is the ordinary posed solid SDF.

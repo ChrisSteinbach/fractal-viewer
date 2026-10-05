@@ -1326,6 +1326,44 @@ void probe measured `-0.221` before the gate and positive after). The
 condensation harness's coverage figures are unchanged (its four-map systems
 never evict).
 
+THE CLOSED-BAND GAP THE GATE LEFT IS CLOSED BY THE STAMP EXPANSION, and
+what it cannot reach is refused. A band opening at level 2 (`minDepth` 2,
+the gate's own disclosure: the same document measured `-0.828` at
+`minDepth 2`) still folded the bare terminal at its single pre-band level,
+because more than four in-ball candidates sat under one query there. The
+expansion (`expandPreBandStamps`, `expandPreBandStampsFold`,
+`expandPreBandStamps4`, `expandPreBandStampsFold4`) replaces that terminal
+where the band opens EXACTLY one level below the candidate
+(`depth + 2 == firstCondensationDepth`): each (sector, map) grandchild
+folds its escape certificate when it leaves its ball — the walk's own
+last-level gate, one level deeper — and the C0 term at the band's first
+enabled level otherwise, the same term the beam's own children fold at
+generation. A stamp at the query through an in-ball chain folds negative,
+so the adversary keeps its hit signal, now through the C0 term; the
+two-cluster fixture moves to `+0.00066` plain / `+0.062` refined at the
+void probe, and the fr-ihnb first-level-1 regression is bit-identical.
+The expansion is one level deep on purpose: a full tree to the band is
+exponential (the band sliders run to 24), so a band opening THREE OR MORE
+levels past the schedule prefix keeps bare terminals at its shallower
+pre-band levels — measured `-0.131`/`-0.408` at first levels 3/4 on the
+fixture — and `condensationDeepBandRefusal` refuses exactly that class
+(its first pre-band level evicting past the width-4 beam: recursive maps
+times the sector order above 4, or schedule maps above 4) with an
+actionable reason; bands opening at 2 are expansion-covered at any map
+count, and Gearworks' three recursive maps (which never evict at depth 0)
+keep their working first-level-3 band. The residual: bands opening 4+
+deep over admitted map counts keep bare terminals at the deeper pre-band
+levels, whose folds shrink with the accumulated contraction and are masked
+by tight balls. In the GLSL tracers the affine arms carry the expansion
+(`condensationExpandStamps`, the descent loop's own child arithmetic) and
+the fold arm carries the GATE ONLY — its branch decode's second copy
+pushed the fold+tiling+condensation program past the 65,536-byte emitted
+ceiling (measured 67,138 on the 336-combination sweep), so a pre-band
+eviction keeps the ball terminal there, disclosed against the oracle.
+The WGSL affine/affine4 cores carry the expansion
+(`condensationExpandStamps`, bench-pinned); the fold/fold4 cores carry the
+gate only, the same owed port.
+
 Mesh-bearing trap or condensation bodies call the same catalog-indexed
 `shapeMeshSdf` seam. The material lazily creates one cached 64³ R32F
 `Data3DTexture`; one `sampler3D` and one eight-`texelFetch` manual trilinear
