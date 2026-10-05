@@ -22,7 +22,6 @@ import {
   SURFACE_COMPUTE_TRANSPORT_QUANTUM_TARGET_MS,
   shadeHitAllowanceUs,
   shadeHitBudgetUs,
-  SURFACE_COMPUTE_MARCH_CHUNK_MIN,
   SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH,
   SURFACE_COMPUTE_MAX_STEPS_PER_PASS,
   SURFACE_COMPUTE_MAX_TILE_RAYS,
@@ -48,6 +47,7 @@ import {
   SURFACE_COMPUTE_FENCE_GROUP_MS,
   SURFACE_COMPUTE_JOB_WATCHDOG_MARGIN,
   SURFACE_COMPUTE_JOB_WATCHDOG_MS,
+  SURFACE_COMPUTE_MARCH_CHUNK_MIN,
   surfaceComputePresentCostEma,
   surfaceComputePresentInterval,
   surfaceComputeLightingRayBatch,
@@ -731,9 +731,37 @@ describe("marchChunkFor", () => {
     expect(marchChunkFor(10, 2)).toBe(12_500);
   });
 
-  it("never drops below the dispatch-overhead floor", () => {
+  it("keeps the shipped dispatch-overhead floor wherever safety affords it", () => {
+    // One step, budget-sized below the floor: the floor raises it — the
+    // shipped cold start.
     expect(marchChunkFor(200, 1)).toBe(SURFACE_COMPUTE_MARCH_CHUNK_MIN);
+    // 32 steps with nothing measured: the shipped 4096-ray floor — the
+    // 131k ray·step dispatch, byte-identical to the shipped loop.
     expect(marchChunkFor(10, 32)).toBe(SURFACE_COMPUTE_MARCH_CHUNK_MIN);
+  });
+
+  it("caps every slice at one allowance of TRUE work at the measured worst rate", () => {
+    // The record's mid-sweep monster: a ~1.9M-ray·step slice priced at
+    // the cheap bands' 0.2µs EMA. The cap prices it at the 1.6µs band's
+    // saturated rate: 2 steps may carry 93,750 rays — 187k ray·steps,
+    // ~300ms of TRUE work instead of 3 s.
+    expect(marchChunkFor(0.2, 2, 250, 1.6)).toBe(93_750);
+    // The record's deepest saturated band (3µs) at 32 steps: 3125 rays —
+    // 100k ray·steps, saturated and ~300ms of true work, where the
+    // shipped floor's 4096 rays were 1.7s on the deeper 13.2µs band.
+    expect(marchChunkFor(1.57, 32, 250, 3)).toBe(3125);
+    // A slice the budget already sized under the cap stands.
+    expect(marchChunkFor(5, 4, 250, 1.6)).toBe(12_500);
+  });
+
+  it("yields the floor to the worst measured rate, nothing else", () => {
+    // The floor is 4096 RAYS — the occupancy floor — and yields only
+    // where the worst rate says even that is a watchdog conversation:
+    // 25.5µs at 4 steps affords 2941 rays.
+    expect(marchChunkFor(15, 4, 250, 25.5)).toBe(2941);
+    // And the pass-target budget can never shrink below the floor while
+    // safety affords it: the 90µs prior at 1 step asks 2777 and gets 4096.
+    expect(marchChunkFor(90, 1)).toBe(SURFACE_COMPUTE_MARCH_CHUNK_MIN);
   });
 });
 

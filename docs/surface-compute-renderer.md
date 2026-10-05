@@ -1900,6 +1900,85 @@ dispatch we measured was 40 ms" is a statement about the SURVIVORS alone. That
 is the gap the probe was written to explain, and it does not close by making
 the existing number more accurate.
 
+#### The march lane's true-cost cap (2026-10-05, the pane-scale fold-4D trips)
+
+**THE MARCH LANE'S SIZING HAD NO WATCHDOG BOUND AT ALL, AND THE CLASS IT
+COULD SIZE REACHED 3 s OF TRUE WORK.** The trigger, MEASURED 2026-10-05
+pricing the progressive-present wall share (fr-p3x3's baseline session): a
+hyperkifs — 16-map fold4 — Surface entry at the 1920x1080 pane (2.07M rays,
+8-sample settles, `?surfacetrace`, real driver) lost its device ~19 s in five
+times one evening with `ring gfx_0.0.0 timeout`, each time exiting compute for
+Points as a compute-only session must. Thirteen settle jobs on a QUIET machine
+(the same scene, same pane) reproduced nothing — worst measured dispatch
+515 ms — because the killing dispatch's cost depends on which scanline band
+its slice lands on, not on anything reproducible run to run:
+
+- the mid-sweep slices (steps 2, at a converged ~0.13-0.18 µs/ray·step EMA)
+  are ~1.9M ray·steps in ONE dispatch — 427-439 ms measured on the cheap
+  bands they actually landed on, and 3 s of TRUE work on the 1.6 µs band
+  1.9M ray·steps of them measure (the pre-fix worst class, and the ~19 s
+  mark is exactly where those sweeps run);
+- the late sweeps (steps 32, ~8300-9892-ray queue-limited slices) measured
+  315-515 ms — the same shape that the whole-active dispatch and the
+  shipped 4096-ray floor could size into 1.7-11 s on the deepest bands the
+  same settles' tails measured (13.2-87 µs/ray·step at 9-37 rays).
+
+THE MECHANISM HAS TWO HALVES, and the second is what the first cut of this
+fix missed. (a) The per-ray·step EMA prices the AVERAGE band; the driver cuts
+the worst SUBMISSION, and a band's TRUE rate is invisible to the average by
+construction. (b) **THE PER-RAY·STEP RATE IS WIDTH-DEPENDENT** — the same
+deep bands read ~1.6-3 µs/ray·step at 159-316k-ray·step dispatches and
+9-45 µs at 3-16k-ray·step ones (occupancy: a 980-ray slice is 16 workgroups
+on 96 CUs, 83% of the machine idle behind unhidden latency). Any reactive
+bound therefore feeds back into the width it prices, and the wrong statistic
+picks the slow regime.
+
+**THE FIX: `marchChunkFor` gains a worst-rate input, priced from SATURATED
+dispatches only** (`SURFACE_COMPUTE_MARCH_SATURATION_MIN_RAYSTEPS` = 100k
+ray·steps), capping every slice at one fence-group allowance of TRUE work —
+`allowanceUs / (steps × worstRate)`. The evidence thresholds split by
+consumer: the EMA (throughput) hears every dispatch at or above the sizer's
+own floor (`SURFACE_COMPUTE_MARCH_EVIDENCE_MIN_RAYSTEPS` = 4096 ray·steps);
+the cap (safety) hears saturated widths only. The floor is the shipped 4096
+RAYS — the occupancy floor — yielding to the cap. Where nothing has been
+measured the sizer is byte-identical to the shipped loop.
+
+THE REFUTED INTERMEDIATE DESIGNS, each measured and kept as the record of why
+the shipped shape is what it is:
+
+- **A worst-rate cap fed ALL trusted readings ratchets itself into the slow
+  regime.** Feeding the cap the sub-saturated 14-22 µs tail readings capped
+  the tail's slices to 4-16k ray·steps, their own readings then read 15-45
+  µs, the step ladder stalled (43 sweeps against the shipped 12) and the
+  tail cost 16.2 s against the shipped 1.1 s — a 15x regression on one lane.
+- **A threshold ABOVE the sizer's own output freezes the EMA.** With the
+  honesty threshold at 4x the floor while the cold EMA still read the 90 µs
+  prior, every sizer output was the 4096-ray × 1-step floor (sub-threshold),
+  every reading filtered, the EMA frozen at the prior, and the frame ground
+  2124 floor-sized slices for 23 s of march GPU.
+- **An overshoot-driven predicted-cost budget (budget = allowance /
+  max(seed, measured lag)) collapses the widths it means to protect.** The
+  seed priced every frame at 150 ms of predicted work (the settle 1.5x);
+  the measured lag (a frame max of 4-11x through the deep bands) held the
+  crush there; the crushed budget then sized sub-saturated slices whose
+  filtered readings could never refine it — a stable, slow fixed point
+  (2124 dispatches again). The cap in TRUE units replaces it: the pass
+  target (250 ms) stays the sizing target, and the deadline is priced on
+  the quantity it is denominated in.
+
+VERIFIED ENVELOPE (same machine, same scene, same pane, the shipped loop with
+the cap): settle 97-103 s against the pre-fix 94-104 s — parity; worst march
+dispatch 366-517 ms across six settle jobs — the pre-fix's own 515 ms
+envelope; the 3 s monster class gone (the mid sweeps' slices now cap at
+~455k ray·steps, ~300-730 ms on the first band they meet, ~300 ms once the
+cap hears that band); zero device losses. The first-encounter residual — a
+dispatch landing on a band DEEPER than anything measured this frame — is
+bounded by one dispatch's worth of lag (~1.7-5.5x its prediction, ~1.4 s
+theoretical worst) and prices the cap correctly from the next dispatch on.
+That residual is the one class left, it is what the queue-limited len floor
+already tolerated, and closing it reactively is what every design above
+measured as a regression.
+
 `timestamp-query` IS AVAILABLE ON THIS STACK — the probe reads it, and its
 GPU-side figures track the host's fence wall to within 7 ms — and it is the
 right instrument: a pass's own begin-to-end ON THE DEVICE, in the currency the

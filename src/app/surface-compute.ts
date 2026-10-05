@@ -303,12 +303,12 @@ export function setSurfaceComputeTrace(
  *
  * The STEPS pin is the one that can ask for MORE. It shrinks the model's
  * march width by the factor it raises the step count, so the pass-target
- * bound rides through — until {@link marchChunkFor}'s
- * {@link SURFACE_COMPUTE_MARCH_CHUNK_MIN} floor takes over, which at a
- * far-field EMA happens around eight steps; past that the width stops
- * compensating and dispatch work grows linearly with the pin. The real
- * bound above it is the kernel's own `steps >= params.marchSteps` break,
- * not the sizer. Both are fine for an instrument run and neither is
+ * bound rides through — the {@link SURFACE_COMPUTE_MARCH_CHUNK_MIN} floor
+ * now bounds RAY·STEPS rather than rays (see {@link marchChunkFor}), so it
+ * takes over only where the per-ray·step EMA itself exceeds ~61µs — the
+ * cold prior's own scale — instead of widening with the pin as it used to.
+ * The real bound above it is the kernel's own `steps >= params.marchSteps`
+ * break, not the sizer. Both are fine for an instrument run and neither is
  * something to leave in a URL. `?surfacesamples=N` and
  * `?surfacemaxrays=N` are the same shape of escape hatch. Unlike the
  * app's own shareable links, which ride the `#v1=` hash, a diagnostic pin
@@ -1541,6 +1541,72 @@ export function surfaceComputeSeedDispatches(
 /** Smallest march slice worth its dispatch overhead. */
 export const SURFACE_COMPUTE_MARCH_CHUNK_MIN = 4096;
 
+/**
+ * THE SMALLEST march dispatch whose per-ray·step reading the throughput
+ * sizer may BELIEVE — the sizer's own floor, in RAY·STEPS: every dispatch
+ * the sizer sizes carries at least this much work, so the only
+ * sub-threshold dispatches are the queue-limited sweep remnants (and the
+ * slices safety forces smaller, which the saturation threshold below
+ * already excludes). A remnant's work is the deep band's total spread
+ * over a few ray·steps, and believing those readings is what ratcheted
+ * an earlier cut of this fix into 793 tiny dispatches and a tripled
+ * settle (96s -> 250-295s: the EMA read 19-108µs/ray·step off the
+ * remnants, collapsed the chunks, and stalled the step ladder).
+ *
+ * THE THRESHOLD MUST STAY AT THE SIZER'S FLOOR, AND THAT IS A DEADLOCK
+ * LESSON, not a tuning choice: a first draft put the threshold at 4x
+ * this value while the cold-start EMA still read the 90µs prior — every
+ * dispatch the sizer produced was then the 4096-ray × 1-step floor
+ * (4096 ray·steps, sub-threshold), every reading was filtered, the EMA
+ * froze at the prior, and the frame ground 2124 floor-sized slices for
+ * 23s of march GPU. A filter above what the sizer can produce is a
+ * filter that never lets the sizer learn.
+ */
+export const SURFACE_COMPUTE_MARCH_EVIDENCE_MIN_RAYSTEPS =
+  SURFACE_COMPUTE_MARCH_CHUNK_MIN;
+
+/**
+ * THE SMALLEST march dispatch whose per-ray·step reading the WATCHDOG
+ * CAP may believe — one saturated raster's worth, MEASURED on the
+ * pane-scale fold-4D settles (RX 7900 XTX): the same deep bands read
+ * ~1.6-3µs/ray·step at 159-316k-ray·step dispatches and 9-45µs at
+ * 3-16k-ray·step ones — the per-ray·step cost is a function of WIDTH
+ * (occupancy: a 980-ray slice is 16 workgroups on 96 CUs and 83% of the
+ * machine idles behind unhidden latency), so a cap fed the small-width
+ * readings caps every later slice into the slow regime and holds it
+ * there: the first cut of this fix fed the cap a 14-22µs tail reading,
+ * the tail's slices collapsed to 4-16k ray·steps, the step ladder
+ * stalled, the sweeps tripled, and the settle ran 15x the shipped tail
+ * cost (16.2s against 1.1s). At or above this threshold the reading is
+ * the band's honest saturated rate — the quantity the cap needs, since
+ * the cap's own outputs stay saturated (allowance/worstRate ray·steps is
+ * 100k+ at the record's rates) and the fixed point is self-consistent.
+ */
+export const SURFACE_COMPUTE_MARCH_SATURATION_MIN_RAYSTEPS = 100_000;
+
+/**
+ * The driver's job deadline was MEASURED at ~2.0 s on this machine
+ * ({@link SURFACE_COMPUTE_JOB_WATCHDOG_MS}) and the fence group's
+ * allowance spends it at the project's 4x margin. A march slice's TRUE
+ * cost is its width × the band's per-ray·step rate — and the EMA prices
+ * the AVERAGE band, so the class that tripped the amdgpu cut five times
+ * one evening (a ~1.9M-ray·step mid-sweep slice priced at the cheap
+ * bands' 0.2µs EMA landing on the 1.6µs band: 3 s of TRUE work) is
+ * invisible to the EMA by construction. This module's answer is a second
+ * sizer input, priced at the WORST rate the frame has measured at
+ * saturated widths, capping every slice at one allowance of TRUE work.
+ * There is no separate budget constant and no overshoot seed: an earlier
+ * cut of this fix carried both (budget = allowance / max(seed, o)) and
+ * the crush collapsed the widths — the seed priced EVERY frame at 150ms
+ * of predicted work (1.5x the settle wall) and the o evidence — a frame
+ * MAX over the deep bands' 4-11x lag — held the crush there; lifted to
+ * the honesty threshold's own budget it still collapsed the tail's
+ * widths 14x. The worst-rate cap bounds the same dispatches in TRUE
+ * units at the widths they will run at, and the pass target (250ms)
+ * stays the sizing target, byte-identical to the shipped loop wherever
+ * nothing has been measured yet.
+ */
+
 /** Conservative pre-measurement guess of march cost per ray·step (µs) —
  * sizes the very first slice of a frame; the measured EMA takes over from
  * the second slice on. ~8.7µs/ray·step measured far-field on Iris. */
@@ -1548,18 +1614,62 @@ export const SURFACE_COMPUTE_INITIAL_RAY_STEP_US = 10;
 
 /**
  * March slice sizing: how many rays one dispatch may advance by `steps`
- * DE steps to land near the pass target, from the measured per-ray·step
- * EMA. This is what keeps a FULL-RESOLUTION settle's submissions bounded
- * — a 921k-ray raster at ~9µs/ray·step would otherwise hand the driver
- * an ~8s pass (the same watchdog class the shade split fixed). Pure so
+ * DE steps, from the measured per-ray·step EMA — the bound that keeps a
+ * FULL-RESOLUTION settle's submissions bounded (a 921k-ray raster at
+ * ~9µs/ray·step would otherwise hand the driver an ~8s pass). Pure so
  * the bound is unit-tested.
+ *
+ * THE BUDGET, THE CAP AND THE FLOOR, each in the unit it is honest in:
+ *
+ * - `budgetMs` — the pass target: the EMA prices the AVERAGE band, and
+ *   the sizing target is a throughput choice. The shipped loop's
+ *   `SURFACE_COMPUTE_PASS_TARGET_MS`, unchanged.
+ * - `worstRayStepUs` — the frame's worst MEASURED per-ray·step cost AT
+ *   SATURATED WIDTHS
+ *   ({@link SURFACE_COMPUTE_MARCH_SATURATION_MIN_RAYSTEPS}) — caps the
+ *   slice at one fence-group allowance of TRUE work,
+ *   `allowanceUs / (steps × worstRate)` rays. The driver cuts the worst
+ *   SUBMISSION, not the mean one, and the EMA prices the average band —
+ *   the class that tripped the amdgpu cut five times one evening was a
+ *   ~1.9M-ray·step mid-sweep slice priced at the cheap bands' 0.2µs EMA
+ *   landing on the 1.6µs band: 3 s of TRUE work, invisible to the EMA by
+ *   construction. Zero (nothing measured yet) leaves the cap unbound and
+ *   this function byte-identical to the shipped sizer.
+ * - The dispatch-overhead floor raises a slice up to
+ *   `SURFACE_COMPUTE_MARCH_CHUNK_MIN` RAYS — the occupancy floor: a
+ *   128-ray slice is 2 workgroups on 96 CUs and 98% of the machine idles
+ *   behind unhidden latency, which is why the floor is in RAYS and not
+ *   in ray·steps — and YIELDS TO SAFETY: a floor past the worst-rate
+ *   bound would size the very dispatch the cap exists to bound (the
+ *   shipped floor's 4096-ray × 32-step minimum was 131k ray·steps —
+ *   1.7 s of TRUE work on the 13.2µs band the record's tails measured).
+ *
+ * THE HONESTY COUPLING is why the two thresholds differ
+ * ({@link SURFACE_COMPUTE_MARCH_EVIDENCE_MIN_RAYSTEPS} for the EMA,
+ * {@link SURFACE_COMPUTE_MARCH_SATURATION_MIN_RAYSTEPS} for the cap):
+ * the per-ray·step rate is width-dependent, so the cap must be fed
+ * saturated-width readings only, while the EMA must hear every honest
+ * reading or it freezes at the cold prior and the sizer never learns —
+ * the two failure modes an earlier cut of this fix demonstrated in that
+ * order.
  */
-export function marchChunkFor(emaUsPerRayStep: number, steps: number): number {
-  const budgetUs = SURFACE_COMPUTE_PASS_TARGET_MS * 1000;
-  const rays = Math.floor(
-    budgetUs / Math.max(1e-3, emaUsPerRayStep * Math.max(1, steps)),
+export function marchChunkFor(
+  emaUsPerRayStep: number,
+  steps: number,
+  budgetMs = SURFACE_COMPUTE_PASS_TARGET_MS,
+  worstRayStepUs = 0,
+): number {
+  const stepCount = Math.max(1, steps);
+  const denom = Math.max(1e-3, emaUsPerRayStep * stepCount);
+  const rays = Math.floor((budgetMs * 1000) / denom);
+  const worst = Math.max(1e-3, worstRayStepUs);
+  const safeChunk = Math.floor(
+    (surfaceComputeFenceGroupAllowanceMs() * 1000) / (stepCount * worst),
   );
-  return Math.max(SURFACE_COMPUTE_MARCH_CHUNK_MIN, rays);
+  return Math.max(
+    Math.min(SURFACE_COMPUTE_MARCH_CHUNK_MIN, safeChunk),
+    Math.min(rays, safeChunk),
+  );
 }
 
 /** HIT shade batch ceiling — plenty to swallow a cheap-probe frame's hits
@@ -6484,6 +6594,17 @@ export class SurfaceComputeRenderer {
     let rayStepEmaUs =
       SURFACE_COMPUTE_INITIAL_RAY_STEP_US * lensCostScale * balloonCostScale;
     /**
+     * THE MARCH LANE'S WATCHDOG EVIDENCE, per frame: the worst measured
+     * per-ray·step cost AT SATURATED WIDTHS — the quantity the sizer's
+     * true-cost cap prices every slice at, because the EMA prices the
+     * AVERAGE band and the amdgpu cut landed on the average's blind spot
+     * (a ~1.9M-ray·step mid-sweep slice at the cheap bands' EMA cost 3 s
+     * of TRUE work on the 1.6µs band, five times one evening). Resets
+     * per frame with the EMA: a new pose re-prices from evidence, not
+     * from a stale frame's bands.
+     */
+    let marchWorstRayStepUs = 0;
+    /**
      * THE FENCE GROUP: what has been SUBMITTED since the last fence and
      * what each of those dispatches still owes its model.
      *
@@ -6508,7 +6629,16 @@ export class SurfaceComputeRenderer {
      * because only the submit knows the slot.
      */
     type PendingDispatchBase =
-      | { kind: "march"; rays: number; steps: number }
+      | {
+          kind: "march";
+          rays: number;
+          steps: number;
+          /** What this slice was PREDICTED at submit — the EMA the sizer
+           * used, which the flush needs so the measured overshoot is
+           * judged against the sizing that committed the work, not
+           * against an EMA the group has since moved. */
+          predictedUs: number;
+        }
       | {
           kind: "shade";
           free: boolean;
@@ -6794,11 +6924,6 @@ export class SurfaceComputeRenderer {
       // apart where it matters.
       if (group[0].kind === "march") {
         marchGpuMs += wallMs;
-        let raySteps = 0;
-        for (const d of group) {
-          if (d.kind === "march") raySteps += d.rays * Math.max(1, d.steps);
-        }
-        const usPerRayStep = (workMs * 1000) / Math.max(1, raySteps);
         // BOTH currencies, per dispatch: `ms` is this member's share of
         // the group's WALL (a fence the frame really waited on is time the
         // frame really spent — that attribution is unchanged), and `work`
@@ -6814,6 +6939,8 @@ export class SurfaceComputeRenderer {
         );
         let peak = marchPeakWorkMs ?? 0;
         let member = 0;
+        let trustedRaySteps = 0;
+        let trustedWorkMs = 0;
         for (const d of group) {
           if (d.kind !== "march") continue;
           const ownWork = useGpu
@@ -6821,22 +6948,48 @@ export class SurfaceComputeRenderer {
             : marchWorkShare;
           member++;
           tr(
-            `march END ms=${marchWallShare.toFixed(1)} work=${ownWork.toFixed(1)} len=${d.rays} steps=${d.steps}`,
+            `march END ms=${marchWallShare.toFixed(1)} work=${ownWork.toFixed(1)} len=${d.rays} steps=${d.steps} predicted=${(d.predictedUs / 1000).toFixed(1)}`,
           );
-          // ONCE PER MEMBER, not once per group, at the group's aggregate
-          // rate: the measurement covers d dispatches' worth of ray·steps,
-          // so it is d dispatches' worth of evidence, and folding it in
-          // once would slow the EMA's convergence — and with it
-          // marchChunkFor's climb — by the group size. MEASURED on Chrome,
-          // where a single fold per group turned a 141-dispatch settle
-          // into a 210-dispatch one at the same wall time: more, smaller
-          // slices, each still paying a submission.
-          rayStepEmaUs = rayStepEmaUs * 0.6 + usPerRayStep * 0.4;
           peak = Math.max(peak, ownWork);
+          // TWO HONESTY GATES, one per consumer. The EMA's aggregate rate
+          // prices throughput from dispatches at or above the sizer's own
+          // floor — a queue-limited remnant's work is the deep band's
+          // total spread over a few ray·steps, and believing that reading
+          // is what ratcheted an earlier cut of this fix into 793 tiny
+          // dispatches and a tripled settle. The watchdog cap's input
+          // prices safety from SATURATED dispatches only
+          // ({@link SURFACE_COMPUTE_MARCH_SATURATION_MIN_RAYSTEPS}) — the
+          // same deep bands read 1.6-3µs at 159-316k ray·steps and 9-45µs
+          // at 3-16k, and feeding the cap the small-width readings
+          // collapsed the widths it caps and held the slow regime.
+          const memberRaySteps = d.rays * Math.max(1, d.steps);
+          if (memberRaySteps >= SURFACE_COMPUTE_MARCH_EVIDENCE_MIN_RAYSTEPS) {
+            trustedRaySteps += memberRaySteps;
+            trustedWorkMs += ownWork;
+          }
+          if (memberRaySteps >= SURFACE_COMPUTE_MARCH_SATURATION_MIN_RAYSTEPS) {
+            marchWorstRayStepUs = Math.max(
+              marchWorstRayStepUs,
+              (ownWork * 1000) / memberRaySteps,
+            );
+          }
+        }
+        // ONCE PER TRUSTED DISPATCH, at the group's aggregate rate over the
+        // trusted members: the measurement covers those dispatches' worth
+        // of ray·steps, so it is that much evidence, and folding it in once
+        // would slow the EMA's convergence — and with it marchChunkFor's
+        // climb — by the group size. MEASURED on Chrome, where a single
+        // fold per group turned a 141-dispatch settle into a 210-dispatch
+        // one at the same wall time: more, smaller slices, each still
+        // paying a submission. Sub-threshold members price nothing — their
+        // work is the band's, not a rate.
+        if (trustedRaySteps > 0) {
+          const usPerRayStep = (trustedWorkMs * 1000) / trustedRaySteps;
+          rayStepEmaUs = rayStepEmaUs * 0.6 + usPerRayStep * 0.4;
         }
         marchPeakWorkMs = peak;
         tr(
-          `fence march dispatches=${group.length} wall=${wallMs.toFixed(1)} work=${workMs.toFixed(1)} src=${src} perDispatch=${marchWorkShare.toFixed(1)} peak=${marchPeakWorkMs.toFixed(1)} emaUs=${rayStepEmaUs.toFixed(3)}`,
+          `fence march dispatches=${group.length} wall=${wallMs.toFixed(1)} work=${workMs.toFixed(1)} src=${src} perDispatch=${marchWorkShare.toFixed(1)} peak=${marchPeakWorkMs.toFixed(1)} emaUs=${rayStepEmaUs.toFixed(3)} worstRayStepUs=${marchWorstRayStepUs.toFixed(3)}`,
         );
         return true;
       }
@@ -7069,9 +7222,18 @@ export class SurfaceComputeRenderer {
           // marchChunkPin carries no cap of its own — the two terms below
           // already bound whatever it asks for (a ray count, unlike the
           // steps pin's per-ray work), so an unclamped parse is not a
-          // hazard here.
+          // hazard here. The sizer prices the slice at the EMA (the pass
+          // target) and caps it at one fence-group allowance of TRUE work
+          // at the frame's measured saturated worst rate
+          // ({@link marchChunkFor}).
           const chunk = Math.min(
-            marchChunkPin ?? marchChunkFor(rayStepEmaUs, stepsThisPass),
+            marchChunkPin ??
+              marchChunkFor(
+                rayStepEmaUs,
+                stepsThisPass,
+                SURFACE_COMPUTE_PASS_TARGET_MS,
+                marchWorstRayStepUs,
+              ),
             active.length - offset,
             maxDispatchRays,
           );
@@ -7090,7 +7252,17 @@ export class SurfaceComputeRenderer {
               marchPipeline,
               buffers.marchBindGroup,
               slice.length,
-              { kind: "march", rays: slice.length, steps: stepsThisPass },
+              {
+                kind: "march",
+                rays: slice.length,
+                steps: stepsThisPass,
+                // The EMA the slice was sized against, frozen at submit —
+                // the flush's overshoot evidence must judge the sizing
+                // that committed the work, not whatever the group has
+                // since measured.
+                predictedUs:
+                  slice.length * Math.max(1, stepsThisPass) * rayStepEmaUs,
+              },
               // This slice's statuses, staged where the sweep's rebuild
               // expects them — the kernel writes slot-relative
               // (`statusOut[gid]`), so slice k's answers land at k's own
@@ -7173,9 +7345,16 @@ export class SurfaceComputeRenderer {
         // — small rasters (previews) climb toward 32 exactly like the
         // bench loop; big rasters stay at fine steps and let the slicing
         // do the bounding (same total work, bounded pieces, presents in
-        // between).
+        // between). The test sizes at the pass target with the same
+        // worst-rate cap the slices use, so the answer is the one the
+        // sizing made.
         const sweptWhole =
-          marchChunkFor(rayStepEmaUs, stepsThisPass) >= active.length;
+          marchChunkFor(
+            rayStepEmaUs,
+            stepsThisPass,
+            SURFACE_COMPUTE_PASS_TARGET_MS,
+            marchWorstRayStepUs,
+          ) >= active.length;
         // Every surviving ray consumed this sweep's steps; must land
         // BEFORE stepsThisPass may grow for the next sweep.
         sweepSteps += stepsThisPass;
