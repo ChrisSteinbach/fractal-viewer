@@ -138,8 +138,10 @@
  * precedes the full-HD controls plateau. Live render and two repeated saves
  * then measure retained host RSS without GC; presentation/encoding is separate.
  * GPU buffer create/destroy census independently pins 40*C+32*slots plus
- * 16+2736*min(C,4096)+4 bytes of finite continuation scratch, where C is
- * actual retained capacity. MEMORY CEILINGS ARE NOT A GATE (the owner's
+ * 32+2736*min(C,4096)+4 bytes of finite continuation scratch, where C is
+ * actual retained capacity — the 32 is finite-transport-work's 8-word batch
+ * header (init, running count, generation, ray count, quantum, pads).
+ * MEMORY CEILINGS ARE NOT A GATE (the owner's
  * 2026-09-29 decision, docs/surface-dielectric-transport.md's
  * delivered-qualification section): the RSS figure and the declared-bytes
  * ceiling are REPORTED, never checked; what GATES is the census's own
@@ -1638,10 +1640,14 @@ async function runFiniteMemoryArm(ctx, label, authored, optics, evidence) {
   const slots = snapshots[0].roleBytes["optics-maps"] / 32;
   // Intentionally independent from finite-transport-work.ts: this browser
   // census must catch a changed allocation/layout, not share its arithmetic.
-  const scratchBytes = (rays) => 16 + 2736 * Math.min(rays, 4096);
+  // The 32-byte head is finite-transport-work's 8-word batch header (init,
+  // atomic running count, generation, ray count, per-submission quantum,
+  // three pads) — a LITERAL updated when the header itself changes
+  // (16→32 when the quantum landed), never imported.
+  const scratchBytes = (rays) => 32 + 2736 * Math.min(rays, 4096);
   evidence.opticalAccounting = {
     formula:
-      "40*C + 32*slots + 16 + 2736*min(C,4096) + 4: records/status/staging/materials plus one batch scratch and running-count staging",
+      "40*C + 32*slots + 32 + 2736*min(C,4096) + 4: records/status/staging/materials plus the finite-transport-work batch scratch (32-byte batch header + one slot per path) and the 4-byte running-count staging",
     capacity,
     slots,
     scratchCapacity: optics ? Math.min(capacity, 4096) : 0,
@@ -1655,38 +1661,61 @@ async function runFiniteMemoryArm(ctx, label, authored, optics, evidence) {
     highWaterScope:
       "Fresh canonical full-HD history only. A prior larger raster retains its larger C; 4M-ray optical buffers alone exceed 128 MiB. One batch-limited stack allocation serves all AA samples and repeated live/export renders; no full-image stack or AA/export multiplication.",
   };
-  check(
-    snapshots.every((gpu) => {
-      const rays = gpu.roleBytes["transport-state"] / 32;
-      const expected = optics
-        ? {
-            "optics-maps": 32,
-            "transport-state": 32 * rays,
-            "transport-status": 4 * rays,
-            "transport-staging": 4 * rays,
-            "finite-transport-work": scratchBytes(rays),
-            "finite-transport-running": 4,
-          }
-        : Object.fromEntries(
-            Object.keys(gpu.roleBytes).map((role) => [role, 0]),
-          );
-      return (
-        (!optics || (Number.isSafeInteger(rays) && rays >= 1920 * 1080)) &&
-        Object.entries(expected).every(([role, bytes]) => {
-          const records = gpu.live.filter((record) => record.role === role);
-          return (
-            gpu.roleBytes[role] === bytes &&
-            records.length === (optics ? 1 : 0) &&
-            (role !== "finite-transport-work" ||
-              !optics ||
-              records[0].boundAt1 === true)
-          );
-        }) &&
-        gpu.opticalLiveBytes ===
-          Object.values(expected).reduce((sum, bytes) => sum + bytes, 0)
+  const opticalMismatches = [];
+  for (const gpu of snapshots) {
+    const rays = gpu.roleBytes["transport-state"] / 32;
+    const expected = optics
+      ? {
+          "optics-maps": 32,
+          "transport-state": 32 * rays,
+          "transport-status": 4 * rays,
+          "transport-staging": 4 * rays,
+          "finite-transport-work": scratchBytes(rays),
+          "finite-transport-running": 4,
+        }
+      : Object.fromEntries(Object.keys(gpu.roleBytes).map((role) => [role, 0]));
+    const roleErrors = [];
+    if (optics && !(Number.isSafeInteger(rays) && rays >= 1920 * 1080))
+      roleErrors.push(`capacity ${rays} rays is below full-HD`);
+    for (const [role, bytes] of Object.entries(expected)) {
+      const records = gpu.live.filter((record) => record.role === role);
+      const countOk = records.length === (optics ? 1 : 0);
+      if (gpu.roleBytes[role] !== bytes || !countOk) {
+        roleErrors.push(
+          `${role}: ${gpu.roleBytes[role]} bytes over ${records.length} record(s)` +
+            ` (expected ${bytes} over ${optics ? 1 : 0})`,
+        );
+      }
+      if (
+        role === "finite-transport-work" &&
+        optics &&
+        countOk &&
+        records[0]?.boundAt1 !== true
+      )
+        roleErrors.push("finite-transport-work is not bound at binding 1");
+    }
+    const opticalTotal = Object.values(expected).reduce(
+      (sum, bytes) => sum + bytes,
+      0,
+    );
+    if (gpu.opticalLiveBytes !== opticalTotal)
+      roleErrors.push(
+        `total optical ${gpu.opticalLiveBytes} != expected ${opticalTotal}`,
       );
-    }),
-    `${label}: declared optical buffers independently match every size/count, including one bounded finite scratch and 4-byte running staging`,
+    if (roleErrors.length)
+      opticalMismatches.push(
+        `live=${JSON.stringify(
+          gpu.live.map(
+            (record) =>
+              `${record.id}:${record.label || "?"}:${record.bytes}:0x${record.usage.toString(16)}`,
+          ),
+        )}: ${roleErrors.join("; ")}`,
+      );
+  }
+  check(
+    opticalMismatches.length === 0,
+    `${label}: declared optical buffers independently match every size/count, including one bounded finite scratch and 4-byte running staging` +
+      (opticalMismatches.length ? ` [${opticalMismatches.join(" | ")}]` : ""),
   );
   check(
     evidence.gpu.warmupReleased?.liveBytes === 0 &&

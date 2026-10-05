@@ -2610,8 +2610,13 @@ diagnostic control, not a document setting.
 Finite cores have no map array, so the shade pipeline reuses binding 1 for
 one batch of continuation records without increasing the nine storage
 bindings. The march pipeline retains its dummy map binding. A 16-byte batch
-header carries initialization, an atomic running count, generation and ray
-count. Each slot has a 48-byte header followed by the existing 24 × 112-byte
+header carried initialization, an atomic running count, generation and ray
+count as delivered — the quantum-ladder change of 2026-09-23 grew it to
+32 bytes (the per-submission quantum word at offset 16 plus three pads;
+`FINITE_TRANSPORT_BUFFER_HEADER_BYTES`), and the figures in the next
+paragraph are the header-16 delivery's (the memory census's own formula
+was corrected to the 8-word header in 2026-10-05's census arc, below).
+Each slot has a 48-byte header followed by the existing 24 × 112-byte
 paths: a 2736-byte stride. Headers identify the pixel, replay pass and batch
 generation; malformed or stale continuations refuse. Completed slots stay
 done while their neighbors finish. The host holds the ray list and threshold
@@ -3133,6 +3138,42 @@ not moved: the settle's worst transport submission measured 498.6-500.1 ms
 against the 600 ms checkpoint line (83%; the 3D arm's is 138.9-141.2 ms).
 If that margin ages the way the settle line did, the checkpoint line's
 re-decision owes the same measured record.
+
+### The optical census's +16, named (2026-10-05)
+
+The memory leg's exactness check flapped run to run at the close of the
+delivered-qualification session: the standalone optical census read
+94,150,708 — its own formula, exact — in one run and 94,150,724 (+16) in
+the next two, same tree, stable within a run across all three save
+phases. The arc's answer is not a conditional allocation or a
+Dawn-reported rounding: the work buffer's batch header GREW 16 → 32
+bytes (init, running count, generation and ray count — four words —
+gained the per-submission quantum word and three pads) in the
+quantum-ladder change of 2026-09-23, and the census formula, written in
+the header-16 era, was never updated. On any post-quantum build the
+census therefore reads the buffer 16 bytes larger than its own formula,
+deterministically. The "exact" run is explained the same way from the
+other side: it measured a pre-quantum served bundle, where the stale
+formula and the stale buffer agreed. Evidence: the qualification run's
+own report (`scripts/out/finite-glass-memory/finite-glass-memory-report.json`,
+2026-09-29) carries every live record — the six optical roles match
+their expectations exactly and `finite-transport-work` alone measures
+11,206,688 = 32 + 4096·2736 against the formula's 11,206,672; the paired
+glass-minus-opaque rows stay green because both arms' app-level buffers
+agree, the delta cancelling in the paired check and only the standalone
+formula going red. Fixed in the census (the literal updated to the
+current 8-word header, named in the formula/roles text, the census still
+independent of `finite-transport-work.ts` by design — a literal updated
+deliberately when the header changes, never imported), and the exactness
+check now NAMES the offending role, observed-vs-expected bytes and the
+record's id/label/usage in its failure, so the next layout change is
+diagnosable from the message alone. Re-qualified on the current build:
+two consecutive full memory legs green, census expected = observed =
+94,150,724 both presets and all three phases, and a negative control
+(the stale 16-byte literal restored) fails naming exactly
+`finite-transport-work: 11206688 bytes over 1 record(s) (expected
+11206672 over 1)` with no other mismatch anywhere — the +16 has no other
+source.
 
 ## Reproduce
 
