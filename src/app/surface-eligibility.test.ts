@@ -359,6 +359,22 @@ describe("deriveSurfaceEligibility over the shipped presets", () => {
     expect(derivePreset("pentatope").kind).toBe("ifs4");
   });
 
+  // The twisted sponge's 4D twin is authored for the explorer/Flame/Solid
+  // renders and deliberately carries NO surface hint, because the
+  // hyper-Menger's 48 maps exceed the 4D tracer's uniform cap — the
+  // refusal is the preset's own disclosure, pinned here so a cap lift
+  // flips this test deliberately (and the preset can then take the hint).
+  it("admits the twisted sponge's lens and refuses its 48-map 4D twin at the 4D tracer's cap", () => {
+    const sponge = derivePreset("twistedSponge");
+    expect(sponge.status).toBe("eligible");
+    expect(sponge.kind).toBe("ifs");
+    const twin = derivePreset("twistedSponge4");
+    expect(twin.status).toBe("ineligible");
+    expect(twin.kind).toBe(null);
+    expect(twin.note).toContain("48 maps");
+    expect(twin.note).toContain("at most 24");
+  });
+
   it("routes the 4D escape presets to the escape4 kind", () => {
     for (const preset of [
       "mandelboxBrick",

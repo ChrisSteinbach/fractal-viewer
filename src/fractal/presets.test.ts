@@ -63,6 +63,7 @@ import {
   mandelboxLattice,
   metalStudio,
   mengerSponge,
+  hyperMengerSpongeTransforms,
   nextId,
   octahedronFlake,
   pentatope,
@@ -94,6 +95,8 @@ import {
   tesseractWireframe,
   twentyFourCellFlake,
   twentyFourCellWireframe,
+  twistedSponge4Lens,
+  twistedSpongeLens,
   woodGrain,
 } from "./presets";
 import { mulberry32 } from "./rng";
@@ -101,7 +104,11 @@ import {
   resolveSphereInversion,
   sphereInversionAuthoredDimension,
 } from "./sphere-inversion";
-import { analyzeSurfaceSystem, buildSurfaceDE } from "./surface-de";
+import {
+  analyzeSurfaceSystem,
+  buildSurfaceDE,
+  SURFACE_FOLD_SPHEREFOLD,
+} from "./surface-de";
 import { analyzeSurfaceSystem4, buildSurfaceDE4 } from "./surface-de-4d";
 import { SURFACE_LENS_SWIRL, SWIRL_LENS_MAX_RADIUS } from "./swirl-lens";
 import type { Transform, Vec4 } from "./types";
@@ -793,7 +800,76 @@ describe("PRESET_FINALS", () => {
       "pentatopePinwheel",
       "swirlPentatope",
       "swirlTetrahedron",
+      "twistedSponge",
+      "twistedSponge4",
     ]);
+  });
+});
+
+describe("Twisted sponge showcases", () => {
+  // The twisted sponge is the plain Menger plus a plot-time sphere-fold
+  // lens — the shipped approximation of the "bent, swollen sponge ball"
+  // whose exact construction (a fixed rotation between carve levels) is
+  // not an IFS, so the maps stay UNROTATED (rotating them scrambles the
+  // sponge; see twistedSpongeLens's doc). The lens is the whole difference
+  // from the menger preset, which therefore stays lens- and hint-less.
+  it("twistedSponge is the plain Menger plus a sphere-fold lens, opened in Surface", () => {
+    expect(presetTransforms("twistedSponge")).toEqual(mengerSponge());
+    expect(PRESET_RENDER_HINTS.twistedSponge).toBe("surface");
+    const final = PRESET_FINALS.twistedSponge!();
+    expect(final).toEqual(twistedSpongeLens());
+    expect(final.variations).toEqual([{ type: "spherefold", weight: 1 }]);
+    const analysis = analyzeSurfaceSystem(
+      presetTransforms("twistedSponge"),
+      final,
+    );
+    expect(analysis.status, analysis.reasons.join("; ")).toBe("eligible");
+    const de = buildSurfaceDE(presetTransforms("twistedSponge"), final);
+    expect(de.foldFinal?.foldKind).toBe(SURFACE_FOLD_SPHEREFOLD);
+    expect(de.visibleBoundingRadius).toBeGreaterThan(1);
+    // Main's absent-means-clear lookup restores the ordinary sibling.
+    expect(PRESET_FINALS.menger?.() ?? null).toBeNull();
+    expect(PRESET_RENDER_HINTS.menger).toBeUndefined();
+  });
+
+  // The 4D twin's home renderers are the explorer cloud, Flame and Solid:
+  // the hyper-Menger's 48 maps exceed the 4D surface tracer's 24-map cap,
+  // so the preset deliberately carries NO surface hint (a hinted load
+  // would switch into a mode that refuses the document). The cap refusal
+  // itself is pinned in surface-eligibility.test.ts over this preset's
+  // own map count; here the explorer's plot-time path is exercised for
+  // real: the lifted system plus the lifted lens converges to a bounded
+  // cloud with extent on all four axes.
+  it("twistedSponge4 is the hyper-Menger through the same lens with an xw tilt, authored for the explorer", () => {
+    expect(presetTransforms("twistedSponge4")).toEqual(
+      hyperMengerSpongeTransforms(),
+    );
+    expect(PRESET_RENDER_HINTS.twistedSponge4).toBeUndefined();
+    const final = PRESET_FINALS.twistedSponge4!();
+    expect(final).toEqual(twistedSponge4Lens());
+    expect(final.variations).toEqual([{ type: "spherefold", weight: 1 }]);
+    expect(final.w).toEqual({ rotation: { xw: 0.45 } });
+    const result = runChaosGame4(
+      presetTransforms("twistedSponge4").map(toTransform4),
+      20000,
+      mulberry32(11),
+      toTransform4(final),
+    );
+    expect(result.count).toBe(20000);
+    for (const w of result.w) expect(Number.isFinite(w)).toBe(true);
+    for (const p of result.positions) expect(Number.isFinite(p)).toBe(true);
+    const { minX, maxX, minY, maxY, minZ, maxZ, minW, maxW } = result.bounds;
+    for (const extent of [maxX - minX, maxY - minY, maxZ - minZ, maxW - minW]) {
+      expect(extent).toBeGreaterThan(0.2);
+    }
+    // The lens must actually fold: the twisted cloud differs from the
+    // plain hyper-Menger's, not from nothing.
+    const plain = runChaosGame4(
+      presetTransforms("twistedSponge4").map(toTransform4),
+      20000,
+      mulberry32(11),
+    );
+    expect(result.radius).not.toBeCloseTo(plain.radius, 3);
   });
 });
 
