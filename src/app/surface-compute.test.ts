@@ -85,6 +85,7 @@ import {
   SURFACE_GPU_PARAMS4_SCHEDULE_BYTES,
   SURFACE_GPU_PARAMS_SCHEDULE_BYTES,
   SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_BYTES,
+  SURFACE_GPU_TRANSPORT_DEBUG_RECORD_BYTES,
   surfaceDeKernelWgsl,
 } from "../fractal/surface-de-gpu";
 import { DIELECTRIC_REPLAY_PASSES } from "../fractal/surface-dielectric";
@@ -2712,6 +2713,9 @@ interface TeardownHarness {
    * frames allocate; a parked frame's staging buffers are exactly the ones
    * that must not be freed under it. */
   bufferDestroys: ReturnType<typeof vi.fn>[];
+  /** The createBuffer descriptor of each buffer in {@link bufferDestroys},
+   * same order — lets a test pick out a frame's buffers by size. */
+  bufferDescriptors: GPUBufferDescriptor[];
   /** Settles the device round trip an in-flight frame is parked on. A frame
    * makes several, and the FIRST — the error-scope pair
    * `allocateFrameBuffers` awaits over its buffer allocation — is the one a
@@ -2743,11 +2747,18 @@ function createHarness(
   opts: {
     lostBeforeConstruction?: boolean;
     target?: SurfaceComputeTarget;
+    /** Live optics lane (non-null transport pipeline) — what a transportDump
+     * session needs for the frame allocation to create its extra buffers. */
+    optics?: boolean;
+    /** The inside-miss replay dump's gate: allocates the transportDebug
+     * pair beside the other per-frame buffers. */
+    transportDump?: boolean;
   } = {},
 ): TeardownHarness {
   const work = deferred();
   const lost = deferred();
   const bufferDestroys: ReturnType<typeof vi.fn>[] = [];
+  const bufferDescriptors: GPUBufferDescriptor[] = [];
   const deviceDestroy = vi.fn();
   const device = {
     lost: lost.promise,
@@ -2762,9 +2773,10 @@ function createHarness(
     // Both of the allocation's two pops share one promise, so a single
     // `settleFrameWork()` releases the parked frame.
     popErrorScope: () => work.promise,
-    createBuffer: () => {
+    createBuffer: (descriptor: GPUBufferDescriptor) => {
       const destroy = vi.fn();
       bufferDestroys.push(destroy);
+      bufferDescriptors.push(descriptor);
       return { destroy } as unknown as GPUBuffer;
     },
     createBindGroup: () => ({}) as GPUBindGroup,
@@ -2786,8 +2798,9 @@ function createHarness(
     shadeLayout: {} as GPUBindGroupLayout,
     marchPipelineNoSlab: null,
     shadePipelineNoSlab: null,
-    transportPipeline: null,
+    transportPipeline: opts.optics ? ({} as GPUComputePipeline) : null,
     transportPipelineNoSlab: null,
+    transportDump: opts.transportDump === true,
     opticsMapsBuf: null,
     seedPipeline: {} as GPUComputePipeline,
     seedLayout: {} as GPUBindGroupLayout,
@@ -2805,6 +2818,7 @@ function createHarness(
     renderer,
     deviceDestroy,
     bufferDestroys,
+    bufferDescriptors,
     settleFrameWork: work.resolve,
     loseDevice: lost.resolve,
   };
@@ -2940,6 +2954,55 @@ describe("SurfaceComputeRenderer teardown", () => {
     bufferDestroys.forEach((destroy) =>
       expect(destroy).toHaveBeenCalledTimes(0),
     );
+  });
+
+  it("destroys the transport-dump pair when a dump session's frame buffers reallocate", async () => {
+    // The inside-miss replay dump's two buffers (binding 17's device buffer
+    // + its MAP_READ staging) exist only under the transportDump diagnostics
+    // gate, and they were missing from releaseFrameBuffers' destroy loop —
+    // a dump session leaked one pair per frame-buffer reallocation.
+    const { renderer, bufferDescriptors, bufferDestroys, settleFrameWork } =
+      createHarness({
+        optics: true,
+        transportDump: true,
+      });
+    const dumpBytes =
+      SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH *
+      SURFACE_GPU_TRANSPORT_DEBUG_RECORD_BYTES;
+    /** The destroy spies of every dump-sized buffer created so far (device
+     * + staging, one pair per frame set). */
+    const dumpBuffers = () =>
+      bufferDescriptors.flatMap((descriptor, i) =>
+        descriptor.size === dumpBytes ? [bufferDestroys[i]] : [],
+      );
+
+    // Each frame parks on the allocation's error scope and is settled like
+    // the tests above; past it the fake device throws and the frame
+    // unwinds null — it has allocated, which is all this path needs.
+    const first = renderer.renderFrame(frameSpec());
+    await flushMicrotasks();
+    settleFrameWork();
+    await first;
+    // The pair really exists: exactly one device + one staging buffer.
+    const firstPair = dumpBuffers();
+    expect(firstPair).toHaveLength(2);
+
+    // A larger raster is the reallocation that runs the destroy loop.
+    const second = renderer.renderFrame({
+      ...frameSpec(),
+      width: 4,
+      height: 4,
+    });
+    await flushMicrotasks();
+    settleFrameWork();
+    await second;
+
+    for (const destroy of firstPair) expect(destroy).toHaveBeenCalledTimes(1);
+
+    // The replacement frame's own pair stays live.
+    const secondPair = dumpBuffers().slice(2);
+    expect(secondPair).toHaveLength(2);
+    for (const destroy of secondPair) expect(destroy).not.toHaveBeenCalled();
   });
 
   it("does not report a device loss that its own destroy() caused", async () => {
