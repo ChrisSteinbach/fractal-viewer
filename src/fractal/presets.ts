@@ -990,6 +990,46 @@ export function juliaSnowflakeLens(): Transform {
 }
 
 /**
+ * The twisted-sponge lens: the Menger sponge seen through a strong,
+ * off-axis `spherefold` FINAL. This is the shipped approximation of the
+ * "bent, swollen sponge ball" — a Menger sponge whose outline curls while
+ * its cells stay legible, the look of KentaYoshii/Raymarcher's twisted
+ * Menger render (a fixed rotation applied to the SDF's query point
+ * between carve levels). That construction is NOT an IFS — the twist sits
+ * between levels at full scale, so no per-map composition closes — which
+ * is why the look ships as a plot-time lens over the plain 20-map sponge
+ * rather than as rotated maps: rotating the maps themselves scrambles the
+ * sponge (measured: per-map Euler k ≥ 0.25 destroys the cells, k ≤ 0.08
+ * barely bends). Parameters picked off a same-renderer comparison sheet
+ * against the reference image (weight 1.0, the lens off the sponge's
+ * centre so the fold's involution lands on the silhouette).
+ *
+ * The 4D twin ({@link twistedSponge4Lens}) carries the same lens one
+ * dimension up with an xw tilt, over the hyper-Menger.
+ */
+export function twistedSpongeLens(): Transform {
+  return {
+    ...defaultFinalTransform(),
+    position: [0.1, 0.05, -0.1],
+    rotation: [0.3, 0.2, 0.15],
+    scale: [0.85, 0.85, 0.85],
+    variations: [{ type: "spherefold", weight: 1 }],
+  };
+}
+
+/** {@link twistedSpongeLens} one dimension up. The xw tilt is the
+ * swirlPentatopeLens rule: it gives the zero-thickness Surface slice an
+ * oblique cut even before the view tumbles — and for the explorer cloud it
+ * turns the flat w-ramp into an oblique one, so the hyper-Menger's four
+ * directions all read. */
+export function twistedSponge4Lens(): Transform {
+  return {
+    ...twistedSpongeLens(),
+    w: { rotation: { xw: 0.45 } },
+  };
+}
+
+/**
  * "Julia Pinwheel" — the counter-rotating `swirl` PAIR (the
  * same two arm maps {@link dyedSpiral} braids, without its authored color
  * slots) flattened to the plane, seen through a final `julia` lens turned
@@ -2766,6 +2806,18 @@ const PRESETS = {
   // The Surface swirl pair uses the original affine attractors unchanged;
   // their bounded plot-time deformation lives in PRESET_FINALS.
   swirlTetrahedron: sierpinskiTetrahedron,
+  // The twisted-sponge pair: the plain Menger (3D) and hyper-Menger (4D)
+  // through a strong sphere-fold FINAL lens (PRESET_FINALS) — the shipped
+  // approximation of the "bent, swollen sponge ball" look whose exact
+  // construction (a fixed rotation applied to the SDF's query point
+  // between carve levels) no finite IFS can express; see
+  // twistedSpongeLens for why the maps stay unrotated. The 4D half is
+  // authored for the explorer/Flame/Solid renders and carries NO surface
+  // hint: the hyper-Menger's 48 maps exceed the 4D surface tracer's
+  // 24-map cap (SURFACE4_MAX_MAPS), so a hinted load would switch into a
+  // mode that refuses the document.
+  twistedSponge: mengerSponge,
+  twistedSponge4: hyperMengerSpongeTransforms,
   // The escape-time set's own presets: the mode had none, so the
   // only route in was authoring a lone fold map by hand.
   mandelboxClassic,
@@ -2975,6 +3027,12 @@ export const PRESET_RENDER_HINTS: Partial<
   fourFinishes: "surface",
   metalStudio: "surface",
   swirlTetrahedron: "surface",
+  // The twisted sponge's payoff is the folded surface (as a cloud it reads
+  // as a bent dust ball). Its 4D twin deliberately has NO entry: the
+  // hyper-Menger's 48 maps exceed the 4D surface tracer's 24-map cap, so a
+  // hinted load would switch into a mode that refuses the document — the
+  // 4D half is authored for the explorer cloud (and Flame/Solid) instead.
+  twistedSponge: "surface",
   swirlPentatope: "surface",
   tiledOctahedron: "surface",
   tiledPentatope: "surface",
@@ -3083,6 +3141,8 @@ export const PRESET_FINALS: Partial<Record<Preset, () => Transform>> = {
   swirlTetrahedron: swirlTetrahedronLens,
   swirlPentatope: swirlPentatopeLens,
   pentatopePinwheel: pentatopePinwheelLens,
+  twistedSponge: twistedSpongeLens,
+  twistedSponge4: twistedSponge4Lens,
 };
 
 /**
