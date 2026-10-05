@@ -5079,6 +5079,8 @@ export class SurfaceComputeRenderer {
       this.frame.stagingTransportStatus,
       this.frame.transportWork,
       this.frame.stagingTransportRunning,
+      this.frame.transportDebug,
+      this.frame.stagingTransportDebug,
       this.frame.transportLogIndex,
       this.frame.transportLogData,
     ]) {
