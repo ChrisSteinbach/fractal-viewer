@@ -3816,6 +3816,16 @@ interface SurfaceSectionConfig {
    * verdict is "fail" or "skipped", never "pass", like the
    * sphere-inversion-only path. Absent runs the whole section. */
   transportOnly: SurfaceTransportLegBackend | undefined;
+  /** The fold transport leg's A/B override (`--surface-fold-transport-probe`,
+   * `surfaceFoldTransportProbe`): the leg itself always gates at
+   * {@link SURFACE_TRANSPORT_FOLD_LEG_MAX_PATHS}; `1` is the private
+   * frontier arm (the shipped default) and `shared` the workgroup-shared
+   * (LDS) arm — the frontier-spill refutation's instrument. */
+  foldTransportProbe: "" | "1" | "shared";
+  /** With {@link foldTransportProbe}: the leg's processed-path cap
+   * (`--surface-fold-transport-paths=N`). Default the measured fold cap;
+   * 8 and above re-reproduce the driver's job cut. */
+  foldTransportPaths: number;
   /** Opt-in (`--surface-envelope-only=1`, `surfaceEnvelopeOnly=1`): run
    * ONLY the optical-transport renderer envelope leg after the canary
    * arms — the settle-line measurement path for the delegated
@@ -5757,6 +5767,19 @@ function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
     transportOnly: (["estimator", "closedSolid", "finiteSolid"] as const).find(
       (b) => b === params.get("surfaceTransportOnly"),
     ),
+    foldTransportProbe: ((): "" | "1" | "shared" => {
+      const v = params.get("surfaceFoldTransportProbe");
+      return v === "shared" ? "shared" : v === "1" ? "1" : "";
+    })(),
+    foldTransportPaths: (() => {
+      const v = Number.parseInt(
+        params.get("surfaceFoldTransportPaths") ?? "",
+        10,
+      );
+      return Number.isInteger(v) && v >= 1
+        ? v
+        : SURFACE_TRANSPORT_FOLD_LEG_MAX_PATHS;
+    })(),
     surfaceEnvelopeOnly: params.get("surfaceEnvelopeOnly") === "1",
     siGlassEnvelope: params.get("surfaceSiGlassEnvelope") === "1",
     siExactNormal: params.get("surfaceSiExactNormal") === "1",
@@ -7781,6 +7804,11 @@ function surfaceTransportControlWgsl(
   /** The chainDump emission adds a dbgSlot parameter to transportTrace;
    * the control's mode-0 call passes its own dispatch lane. */
   chainDump = false,
+  /** The entry's workgroup size — MUST match the leg kernel's
+   * `workgroupSize` option: one module, and under the shared frontier the
+   * workgroup arrays are sized `width * workgroupSize`, so a control entry
+   * at 64 lanes over a 32-lane frontier writes past every slot's rows. */
+  wg = SURFACE_TRANSPORT_WG,
 ): string {
   // The sphere-inversion glass backend rides the closed-solid query's
   // signature (the caller-carried medium) and its shadow/terminal helpers,
@@ -7846,7 +7874,7 @@ struct ControlResult {
 }
 @group(0) @binding(16) var<storage, read> controlQueries: array<ControlQuery>;
 @group(0) @binding(17) var<storage, read_write> controlResults: array<ControlResult>;
-@compute @workgroup_size(64)
+@compute @workgroup_size(${wg})
 fn controlTransport(
   @builtin(global_invocation_id) gid: vec3u,
   @builtin(local_invocation_index) li: u32,
@@ -8440,6 +8468,35 @@ async function runSurfaceSwirlBalloonEvalLeg(
  * `@workgroup_size` and the dispatch granularity the query padding
  * rounds to, so `gid.x` never indexes past the padded array. */
 const SURFACE_TRANSPORT_WG = 64;
+/** The shared-frontier transport arm's workgroup size: the LDS budget at
+ * the fold width is 14 arrays × width × WG × 4 B (fcX..fnCert), so WG 32
+ * spends 21,504 B of the 32,768 B default `maxComputeWorkgroupStorageSize`
+ * where WG 64 (43,008 B) would fail creation. */
+const SURFACE_TRANSPORT_SHARED_WG = 32;
+/**
+ * The fold transport leg's processed-path cap — the measured bound of the
+ * spill work (2026-10-05, RX 7900 XTX / radeonsi, quiet, certified): a
+ * fold work-list trace costs ~250 ms per processed path (the unsigned
+ * estimator's inside crawls — 192-step queries at ~150 µs/deep eval), and
+ * the driver cuts a GPU job at ~2.0 s, so the surviving caps are 1
+ * (63 ms) and 4 (1,019 ms); 8 was cut mid-dispatch and its readback came
+ * back as the PENDING garbage of a reset ring, and 128 hung the same way.
+ * Cap 4 exercises the work-list for real (the primary split's children
+ * and grandchildren process, the stack reaches depth 3) and the leg's
+ * agreement gates PASS there (radiance ≤ 7.3e-7, residual ≤ 7.5e-5,
+ * normals ≤ 2.5e-3 against the f64 twin) — the certified row the earlier
+ * refusal could not ship. The BEAD's suspected mechanism did not
+ * reproduce: the workgroup-shared (LDS) frontier arm —
+ * `--surface-fold-transport-probe=shared` — measured the boundary
+ * dispatch 427 ms vs the private arm's 448 ms and hung the 128-path trace
+ * identically, so the frontier's scratch residency is NOT the timeout's
+ * cause; the timeout is the trace's total per-lane work (paths ×
+ * 192-step crawls) at the spilled per-eval price every fold context
+ * pays. Production routing keeps the fold refusal on the corrected
+ * record: cap 4 bounds the WORK, not the wall — a slower driver multiplies
+ * per-path cost past any fixed cap — and a resolving glass frame needs
+ * thousands of paths per sample, which no bounded-cap invocation delivers. */
+const SURFACE_TRANSPORT_FOLD_LEG_MAX_PATHS = 4;
 /** One `ControlQuery`'s wire stride: three vec3f at their 16-byte
  * alignment, then eps/ior/radius at 44/48/52, absorb at its aligned 64,
  * theta/anchorPresent/mode/inside at 76/80/84/88, the mode-2 corridor's
@@ -9102,6 +9159,12 @@ async function runSurfaceTransportAgreementLegs(
   /** Run only this backend's legs (the sphere-inversion-only iteration
    * path); the other legs' build-or-skip notes are dropped with them. */
   only?: SurfaceTransportLegBackend,
+  /** The fold leg's A/B arms (the spill work's instruments). The leg
+   * itself always gates at {@link SURFACE_TRANSPORT_FOLD_LEG_MAX_PATHS};
+   * `foldProbe: "shared"` swaps the workgroup-shared (LDS) frontier arm
+   * in, and `foldPaths` re-measures any cap (8+ is the driver's job cut,
+   * recorded). */
+  opts?: { foldProbe?: "" | "1" | "shared"; foldPaths?: number },
 ): Promise<{
   rows: SurfaceTransportAgreementRow[];
   notes: string[];
@@ -9120,7 +9183,17 @@ async function runSurfaceTransportAgreementLegs(
     sliceHalfW: 0,
   };
 
-  const pushDescentLeg = (name: string, core: "fold" | "affine"): void => {
+  const pushDescentLeg = (
+    name: string,
+    core: "fold" | "affine",
+    /** The fold probe's overrides: the spill work's A/B arms ride the same
+     * helper so the leg spec cannot drift. Defaults are the shipped legs'. */
+    overrides?: {
+      sharedFrontier?: boolean;
+      workgroupSize?: number;
+      transportMaxPaths?: number;
+    },
+  ): void => {
     const sys = systems.descent.find((s) => s.name === name);
     if (!sys) {
       notes.push(
@@ -9141,11 +9214,12 @@ async function runSurfaceTransportAgreementLegs(
           core === "fold"
             ? SURFACE_FOLD_BEAM_WIDTH
             : SURFACE_AFFINE_LADDER_WIDTH,
-        workgroupSize: SURFACE_TRANSPORT_WG,
-        sharedFrontier: false,
+        workgroupSize: overrides?.workgroupSize ?? SURFACE_TRANSPORT_WG,
+        sharedFrontier: overrides?.sharedFrontier ?? false,
         bnbStage2: false,
         optics: true,
-        transportMaxPaths: SURFACE_TRANSPORT_LEG_MAX_PATHS,
+        transportMaxPaths:
+          overrides?.transportMaxPaths ?? SURFACE_TRANSPORT_LEG_MAX_PATHS,
       },
       packParams: (n) => packSurfaceGpuParams(de, { itemCount: n, cutoff: 0 }),
       packMaps: () => new Float32Array(packSurfaceGpuMaps(de)),
@@ -9209,8 +9283,10 @@ async function runSurfaceTransportAgreementLegs(
   };
 
   // CHEAPEST FIRST (bisect order): the forward cores' simple orbits, then
-  // the 4D ladders, the fold frontier last — if a leg kills the device the
-  // ordering says which core's transitive machinery did it.
+  // the 4D ladders, then the fold frontier — if a leg kills the device the
+  // ordering says which core's transitive machinery did it. (The fold leg
+  // gates at its measured cap and sits before escape4's, whose 28 ms leg
+  // is worth its place in a bisect even if the fold leg ever regressed.)
   pushDescentLeg("affineTetra", "affine");
   pushSurface4Leg("aff4Tetra", "affine4");
 
@@ -10240,23 +10316,21 @@ async function runSurfaceTransportAgreementLegs(
   }
 
   pushSurface4Leg("fold4Boxfold", "fold4");
-  // The fold core's leg is a MEASURED SKIP on this hardware, not a
-  // gap quietly left open: a fold transport invocation exceeds the
-  // kernel driver's GPU-job timeout at EVERY budget that exercises the
-  // work-list (dmesg `ring gfx_0.0.0 timeout`, chrome killed, every
-  // attempt — the width-12 frontier's dynamic indexing spills to scratch
-  // inside the transport's deep call nesting, the module doc's own
-  // frontier-spill precedent, and the spilled per-eval cost puts any
-  // full trace past ~10 s). The other six cores pin the shared
-  // arithmetic; the fold core's agreement waits on the spill fix or a
-  // per-invocation time bound, and production routing refuses the core
-  // on the same evidence.
-  notes.push(
-    "transport fold: skipped — measured device-loss on this driver " +
-      "(GPU-job timeout; the frontier spill inside the transport's " +
-      "nesting), disclosed and refused in routing rather than " +
-      "certified vacuously",
-  );
+  // The 3D fold frontier's transport leg — GATING at the measured cap
+  // ({@link SURFACE_TRANSPORT_FOLD_LEG_MAX_PATHS}: the certified bound of
+  // the per-path cost the driver's ~2 s job cut allows). The spill work's
+  // A/B arms stay reachable: `--surface-fold-transport-probe=shared` runs
+  // the workgroup-shared (LDS) frontier arm (the refutation instrument),
+  // and `--surface-fold-transport-paths=N` re-measures any cap — 8 and
+  // above are the driver's job cut, recorded.
+  pushDescentLeg("mandelboxKifs", "fold", {
+    sharedFrontier: opts?.foldProbe === "shared",
+    workgroupSize:
+      opts?.foldProbe === "shared"
+        ? SURFACE_TRANSPORT_SHARED_WG
+        : SURFACE_TRANSPORT_WG,
+    transportMaxPaths: opts?.foldPaths ?? SURFACE_TRANSPORT_FOLD_LEG_MAX_PATHS,
+  });
 
   const escape4Sys = systems.escape4[0];
   if (escape4Sys) {
@@ -10307,7 +10381,7 @@ async function runSurfaceTransportAgreementLegs(
     const { pipeline, compileMs } = await buildSurfacePipeline(
       device,
       "auto",
-      `${surfaceDeKernelWgsl(leg.options)}\n${surfaceTransportControlWgsl(leg.backend, leg.backend === "sphereInversion" || !!leg.fieldContains, leg.backend === "finiteSolid" && !!leg.options.finiteSolid?.general, leg.options.transportChainDump === true)}`,
+      `${surfaceDeKernelWgsl(leg.options)}\n${surfaceTransportControlWgsl(leg.backend, leg.backend === "sphereInversion" || !!leg.fieldContains, leg.backend === "finiteSolid" && !!leg.options.finiteSolid?.general, leg.options.transportChainDump === true, leg.options.workgroupSize ?? SURFACE_TRANSPORT_WG)}`,
       "controlTransport",
       `surface-de transport ${leg.core}`,
     );
@@ -10392,6 +10466,10 @@ async function runSurfaceTransportAgreementLegs(
     const queryStride = finite ? 192 : SURFACE_TRANSPORT_QUERY_STRIDE_BYTES;
     const resultStride = finite ? 96 : 64;
     const resultFloats = resultStride / 4;
+    // The control entry's workgroup size — the leg kernel's own option
+    // (surfaceTransportControlWgsl's doc): the shared-frontier arms run
+    // 32 lanes and the dispatch/padding math follows them.
+    const controlWg = leg.options.workgroupSize ?? SURFACE_TRANSPORT_WG;
     // The finite backend's twin (the leg's one closure) — absent on every
     // other backend, which is exactly what the twin consumers want.
     const finiteQuery = leg.finiteQuery;
@@ -11007,8 +11085,7 @@ async function runSurfaceTransportAgreementLegs(
     // the w slot even where the 3D/4D DDA lift reads xyz), thrown-on when
     // a finite record is missing one rather than silently re-zeroed.
     const packQueries = (list: ControlQueryRec[]): ArrayBuffer => {
-      const padded =
-        Math.ceil(list.length / SURFACE_TRANSPORT_WG) * SURFACE_TRANSPORT_WG;
+      const padded = Math.ceil(list.length / controlWg) * controlWg;
       const data = new ArrayBuffer(padded * queryStride);
       const view = new DataView(data);
       const write = (q: ControlQueryRec, i: number): void => {
@@ -11239,8 +11316,7 @@ async function runSurfaceTransportAgreementLegs(
       // auto layout declares it); a caller that supplies no chain buffer
       // gets a throwaway zeroed one — the main dispatches never read it.
       let ownChainBuf: GPUBuffer | null = null;
-      const chainSlots =
-        Math.ceil(list.length / SURFACE_TRANSPORT_WG) * SURFACE_TRANSPORT_WG;
+      const chainSlots = Math.ceil(list.length / controlWg) * controlWg;
       const chainBytes =
         chainSlots *
         SURFACE_GPU_TRANSPORT_CHAIN_CAP *
@@ -11289,9 +11365,7 @@ async function runSurfaceTransportAgreementLegs(
         const pass = encoder.beginComputePass();
         pass.setPipeline(pipeline);
         pass.setBindGroup(0, bindGroup);
-        pass.dispatchWorkgroups(
-          queryData.byteLength / SURFACE_TRANSPORT_WG / queryStride,
-        );
+        pass.dispatchWorkgroups(queryData.byteLength / controlWg / queryStride);
         pass.end();
         encoder.copyBufferToBuffer(
           resultsBuf,
@@ -11302,8 +11376,8 @@ async function runSurfaceTransportAgreementLegs(
         );
         if (chainBuf && chainStaging !== null) {
           const chainBytes =
-            Math.ceil(list.length / SURFACE_TRANSPORT_WG) *
-            SURFACE_TRANSPORT_WG *
+            Math.ceil(list.length / controlWg) *
+            controlWg *
             SURFACE_GPU_TRANSPORT_CHAIN_CAP *
             SURFACE_GPU_TRANSPORT_CHAIN_RECORD_VECS *
             16;
@@ -11407,29 +11481,36 @@ async function runSurfaceTransportAgreementLegs(
       }
     }
     let fieldOut: Float32Array | null = null;
+    const dispatchWall = async (
+      label: string,
+      run: () => Promise<Float32Array>,
+    ): Promise<Float32Array> => {
+      const t0 = performance.now();
+      const out = await run();
+      note(
+        `transport: ${leg.core} ${label} dispatch ok (${(performance.now() - t0).toFixed(0)} ms)`,
+      );
+      return out;
+    };
     try {
       const boundaryChain: { value: Float32Array | null } = { value: null };
-      boundaryOut = await runControl(
-        boundaryQueries,
-        params,
-        undefined,
-        boundaryChain,
+      boundaryOut = await dispatchWall("boundary", () =>
+        runControl(boundaryQueries, params, undefined, boundaryChain),
       );
       boundaryChainOut = boundaryChain.value;
-      note(`transport: ${leg.core} boundary dispatch ok`);
-      traceOut = await runControl(traceQueries);
-      note(`transport: ${leg.core} trace dispatch ok`);
+      traceOut = await dispatchWall("trace", () => runControl(traceQueries));
       if (shadowQueries.length > 0) {
-        shadowOut = await runControl(shadowQueries);
-        note(`transport: ${leg.core} shadow dispatch ok`);
+        shadowOut = await dispatchWall("shadow", () =>
+          runControl(shadowQueries),
+        );
       }
       if (terminalQueries.length > 0) {
-        terminalOut = await runControl(terminalQueries);
-        note(`transport: ${leg.core} terminal dispatch ok`);
+        terminalOut = await dispatchWall("terminal", () =>
+          runControl(terminalQueries),
+        );
       }
       if (fieldQueries.length > 0) {
-        fieldOut = await runControl(fieldQueries);
-        note(`transport: ${leg.core} field dispatch ok`);
+        fieldOut = await dispatchWall("field", () => runControl(fieldQueries));
       }
     } finally {
       params.destroy();
@@ -12501,7 +12582,7 @@ async function runSurfaceTransportAgreementLegs(
         const chainBuf = await createSurfaceBuffer(
           device,
           `surface-de transport chain ${leg.core}`,
-          SURFACE_TRANSPORT_WG *
+          controlWg *
             SURFACE_GPU_TRANSPORT_CHAIN_CAP *
             SURFACE_GPU_TRANSPORT_CHAIN_RECORD_VECS *
             16,
@@ -21910,6 +21991,10 @@ async function runSurfaceDeSection(
             activity,
             (text) => results.notes.push(text),
             only,
+            {
+              foldProbe: config.foldTransportProbe,
+              foldPaths: config.foldTransportPaths,
+            },
           );
         results.transportAgreement = rows;
         for (const n of transportNotes) results.notes.push(n);

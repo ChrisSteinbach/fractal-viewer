@@ -8127,11 +8127,12 @@ export function setSurfaceSystem(
   const finish = material.defines.SURFACE_FINISH === 1 ? 1 : 0;
   const pattern = material.defines.SURFACE_PATTERN === 1 ? 1 : 0;
   // The optics gate is the wire's admission one compile down, and a
-  // FOLD-shaped system refuses the transport (the measured kernel
-  // frontier-spill timeout — the same refusal the wire's admitOptics=false
-  // records for the session). The define therefore cannot survive a swap
-  // onto a fold-shaped system: cleared here, before the rebuild, and
-  // never re-established (the fold session's wire is null — optics off).
+  // FOLD-shaped system refuses the transport (the measured per-path cost
+  // with no chunk boundary to yield at — the transport doc's fold row;
+  // the same refusal the wire's closed-solid-only admission records for
+  // the session). The define therefore cannot survive a swap onto a
+  // fold-shaped system: cleared here, before the rebuild, and never
+  // re-established (the fold session's wire is null — optics off).
   const optics = hasFolds ? 0 : material.defines.SURFACE_OPTICS === 1 ? 1 : 0;
   const opticsDropped = optics === 0 && material.defines.SURFACE_OPTICS === 1;
   if (
@@ -10656,15 +10657,15 @@ export function setSurfaceMaterials(
   }
   if (materials?.optics) {
     // The fold frontier's refusal (the capability matrix's measured row):
-    // the width-12 frontier's dynamic indexing spills to scratch inside
-    // the transport's deep call nesting — the kernel-measured GPU-job
-    // timeout. The session-side wire derives a fold-shaped system's
-    // materials with the optics gate off, so reaching this is a caller
-    // that bypassed it; refuse loudly rather than compile a program the
-    // machine cannot run.
+    // a fold transport trace costs ~250 ms per processed path and a
+    // fragment is one all-or-nothing invocation — no chunk boundary to
+    // yield at, so no cap bounds it. The session-side wire derives a
+    // fold-shaped system's materials with the optics gate off, so
+    // reaching this is a caller that bypassed it; refuse loudly rather
+    // than compile a program the machine cannot run.
     if (material.defines.SURFACE_FOLDS === 1) {
       throw new RangeError(
-        "surface-material: a fold-shaped descent refuses the optical transport (the kernel-measured frontier-spill timeout)",
+        "surface-material: a fold-shaped descent refuses the optical transport (the measured per-path cost; no bounded invocation exists)",
       );
     }
     // MIXED WIRES ARE THE SUPPORTED SHAPE (the packer's own rule one
