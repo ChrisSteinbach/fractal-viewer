@@ -6060,6 +6060,80 @@ ${
     : "  return loopDepth + 1u >= params.condDepthMin;"
 }
 }
+
+// The oracle's expandPreBandStamps: one Hutchinson level past an evicted
+// in-ball candidate whose level is still below the band, when the band
+// opens exactly at the level below it (the call sites test
+// condensationBandOpenAtNextDepth(depth + 1u) beside their own
+// !condensationBandOpenAtNextDepth(depth) gate). Each (sector, map)
+// grandchild folds its escape certificate when it leaves its ball — the
+// same last-level gate the walk's own certificates carry, one level
+// deeper — and the C0 term at the band's first enabled level otherwise.
+// Deeper pre-band levels keep the bare ball terminal (the call sites'
+// else branch). The child arithmetic mirrors the descent's own (un-post,
+// base inverse, the map's or the child's state ball), so the two cannot
+// drift.
+fn condensationExpandStamps(eQ: ${core4 ? "vec4f" : "vec3f"}, eScale: f32, depth: u32, eState: u32, best: f32) -> f32 {
+  var acc = best;
+  let childDepth = depth + 2u;
+  let gLast = params.mapCount > 0u && !condensationHasFuture(depth + 3u);
+  for (var k = 0u; k < params.symOrder; k++) {
+    var sQ = eQ;
+    if (k > 0u) {
+      sQ = ${core4 ? "stepSector4(sQ)" : "stepSector(sQ)"};
+    }
+    for (var j = 0u; j < params.mapCount; j++) {
+${
+  chaos
+    ? `      if (!chaosAllows(j, eState)) {
+        continue;
+      }
+`
+    : ""
+}      let m = maps[j];
+      let img = ${core4 ? "mapApply4(m, mapUnpost4(m, sQ))" : "mapApply(m, mapUnpost(m, sQ))"};
+      let childState = ${chaos ? "chaosChildState(depth + 1u, j)" : "0u"};
+      let r = length(img - ${
+        core4
+          ? stateBounds
+            ? "stateCenterOf4(j, vec4f(0.0))"
+            : "vec4f(0.0)"
+          : stateBounds
+            ? "stateCenterOf(j, params.boundCenter)"
+            : "params.boundCenter"
+      });
+      let ballR = ${
+        stateBounds
+          ? core4
+            ? "stateRadiusOf4(childState, params.boundingRadius)"
+            : "stateRadiusOf(childState, params.boundingRadius)"
+          : "params.boundingRadius"
+      };
+      let certR = ${
+        stateBounds
+          ? core4
+            ? "stateRadiusOf4(j, params.boundingRadius)"
+            : "stateRadiusOf(j, params.boundingRadius)"
+          : "params.boundingRadius"
+      };
+      let childScale = eScale * m.p0.x;
+      if (r > ballR) {
+        let gcert = select(childScale * (r - certR), 1e30, gLast);
+        if (gcert < acc) {
+          acc = gcert;
+        }
+      } else {
+        let term = condensationTerm(img, childScale, childDepth${
+          chaos ? ", childState" : ""
+        });
+        if (term < acc) {
+          acc = term;
+        }
+      }
+    }
+  }
+  return acc;
+}
 `
     : "";
   // Shade-only descents must carry the winning C0 emitter's shade slot,
@@ -6997,7 +7071,15 @@ ${
     ? `          if (eR > ${stateBounds ? "stateRadiusOf(eState, R)" : "R"} && eCert < best) {
             best = min(best, refinedCert(eQ, eR, eScale, depth + 1u${chaos ? ", eState" : ""}));
           } else if (eKey < 1e30 && futureCondensation && eR <= ${stateBounds ? "stateRadiusOf(eState, R)" : "R"} && !condensationBandOpenAtNextDepth(depth)) {
-            best = min(best, eScale * (eR - ${stateBounds ? "stateRadiusOf(eState, R)" : "R"}));
+            // One level short of the band's opening the stamp expansion
+            // folds the first enabled stamps' real terms instead of the
+            // invariant-ball terminal; deeper pre-band levels keep the
+            // ball terminal.
+            if (condensationBandOpenAtNextDepth(depth + 1u)) {
+              best = condensationExpandStamps(eQ, eScale, depth, ${chaos ? "eState" : "0u"}, best);
+            } else {
+              best = min(best, eScale * (eR - ${stateBounds ? "stateRadiusOf(eState, R)" : "R"}));
+            }
           }
 `
     : ""
@@ -7572,7 +7654,15 @@ ${
     ? `          if (eR > ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(eState, R), !segment)" : "stateRadiusOf4(eState, R)") : "R"} && eCert < best) {
             best = min(best, refinedCert(eQ, ${slabExt ? "eExt, " : ""}eR, eScale, depth + 1u${chaos ? ", eState" : ""}));
           } else if (eKey < 1e30 && futureCondensation && eR <= ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(eState, R), !segment)" : "stateRadiusOf4(eState, R)") : "R"} && !condensationBandOpenAtNextDepth(depth)) {
-            best = min(best, eScale * (eR - ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(eState, R), !segment)" : "stateRadiusOf4(eState, R)") : "R"}));
+            // One level short of the band's opening the stamp expansion
+            // folds the first enabled stamps' real terms instead of the
+            // invariant-ball terminal; deeper pre-band levels keep the
+            // ball terminal.
+            if (condensationBandOpenAtNextDepth(depth + 1u)) {
+              best = condensationExpandStamps(eQ, eScale, depth, ${chaos ? "eState" : "0u"}, best);
+            } else {
+              best = min(best, eScale * (eR - ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(eState, R), !segment)" : "stateRadiusOf4(eState, R)") : "R"}));
+            }
           }
 `
     : ""
@@ -14125,7 +14215,16 @@ ${chaos ? "              fnState[frontierIx(slot, li)] = childState;\n" : ""}
                 }
               }${
                 condensationShapes
-                  ? ` else if (futureCondensation) {
+                  ? ` else if (futureCondensation && !condensationBandOpenAtNextDepth(depth)) {
+                // The evicted in-ball terminal, gated like the affine
+                // cores (fr-ihnb's rule, which this core had missed):
+                // once the band is open at the candidate's own level its
+                // C0 term has already been folded and the enclosure ball
+                // must not double as a hit. The stamp expansion is not
+                // ported to the fold cores — the branch decode's second
+                // kernel copy is owed with its own bench legs — so a
+                // pre-band eviction keeps the ball terminal here,
+                // disclosed against the oracle.
                 best = min(best, evScale * (evR - R));
                 if (
                   best <= sphereBound ||
@@ -14571,7 +14670,11 @@ ${chaos ? "            eState = tState;\n" : ""}
           }${
             condensationShapes
               ? ` else if (eKey < 1e30 && futureCondensation && eR <= ${stateBounds ? "stateRadiusOf(eState, R)" : "R"} && !condensationBandOpenAtNextDepth(depth)) {
-            best = min(best, eScale * (eR - ${stateBounds ? "stateRadiusOf(eState, R)" : "R"}));
+            if (condensationBandOpenAtNextDepth(depth + 1u)) {
+              best = condensationExpandStamps(eQ, eScale, depth, ${chaos ? "eState" : "0u"}, best);
+            } else {
+              best = min(best, eScale * (eR - ${stateBounds ? "stateRadiusOf(eState, R)" : "R"}));
+            }
           }`
               : ""
           }
@@ -15282,7 +15385,11 @@ ${
           }${
             condensationShapes
               ? ` else if (eKey < 1e30 && futureCondensation && eR <= ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(eState, R), !segment)" : "stateRadiusOf4(eState, R)") : "R"} && !condensationBandOpenAtNextDepth(depth)) {
-            best = min(best, eScale * (eR - ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(eState, R), !segment)" : "stateRadiusOf4(eState, R)") : "R"}));
+            if (condensationBandOpenAtNextDepth(depth + 1u)) {
+              best = condensationExpandStamps(eQ, eScale, depth, ${chaos ? "eState" : "0u"}, best);
+            } else {
+              best = min(best, eScale * (eR - ${stateBounds ? (slabExt ? "select(R, stateRadiusOf4(eState, R), !segment)" : "stateRadiusOf4(eState, R)") : "R"}));
+            }
           }`
               : ""
           }
@@ -15970,7 +16077,16 @@ ${chaos ? "              fnState[slot] = childState;\n" : ""}
                 }
               }${
                 condensationShapes
-                  ? ` else if (futureCondensation) {
+                  ? ` else if (futureCondensation && !condensationBandOpenAtNextDepth(depth)) {
+                // The evicted in-ball terminal, gated like the affine
+                // cores (fr-ihnb's rule, which this core had missed):
+                // once the band is open at the candidate's own level its
+                // C0 term has already been folded and the enclosure ball
+                // must not double as a hit. The stamp expansion is not
+                // ported to the fold cores — the branch decode's second
+                // kernel copy is owed with its own bench legs — so a
+                // pre-band eviction keeps the ball terminal here,
+                // disclosed against the oracle.
                 best = min(best, evScale * (evR - R));
                 if (
                   best <= sphereBound ||
