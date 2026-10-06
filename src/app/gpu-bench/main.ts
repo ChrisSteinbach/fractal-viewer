@@ -133,6 +133,7 @@ import {
   ESCAPE_LINK_SPHEREFOLD,
   ESCAPE_STEP_SCALE,
   ESCAPE_TIME_ITERATIONS,
+  ESCAPE_TIME_RADIUS,
   estimateEscapeDistance,
 } from "../../fractal/escape-de";
 import { resolveShapeTrap, shapeTrapLocalSdf } from "../../fractal/shape-trap";
@@ -151,6 +152,7 @@ import {
   SYM_PLANE_CODE4,
 } from "../../fractal/escape-de-4d";
 import type { EscapeDE4 } from "../../fractal/escape-de-4d";
+import type { TwistAuthored } from "../../fractal/twist";
 import {
   accumulateFlame,
   adaptiveDownsampleFlame,
@@ -6465,6 +6467,19 @@ function estimateEscapeDistanceF32(
       q[1] = fb;
     }
   }
+  // The chain twist's pre-rounded rows + offset, and the per-eval anchor
+  // R·(q + off) — the kernel's params lanes, f32 throughout. Null runs
+  // the untwisted lines below verbatim.
+  const tm = de.twistM?.map(f) ?? null;
+  const tb = de.twistB?.map(f) ?? null;
+  let ax = 0;
+  let ay = 0;
+  let az = 0;
+  if (tm !== null && tb !== null) {
+    ax = f(f(f(f(tm[0] * q[0]) + f(tm[1] * q[1])) + f(tm[2] * q[2])) + tb[0]);
+    ay = f(f(f(f(tm[3] * q[0]) + f(tm[4] * q[1])) + f(tm[5] * q[2])) + tb[1]);
+    az = f(f(f(f(tm[6] * q[0]) + f(tm[7] * q[1])) + f(tm[8] * q[2])) + tb[2]);
+  }
   let vx = q[0];
   let vy = q[1];
   let vz = q[2];
@@ -6475,7 +6490,11 @@ function estimateEscapeDistanceF32(
   // A PASS is one full cycle, so the budget is ESCAPE_TIME_ITERATIONS
   // applications OF EACH LINK (escape-de.ts's A PASS IS ONE FULL CYCLE).
   const steps = ESCAPE_TIME_ITERATIONS * n;
-  for (let i = 0; i < steps && r <= de.boundingRadius; i++) {
+  // The ORBIT BAILOUT, not the marching ball: the chain twist grows
+  // boundingRadius by its offset's length, and the set is defined
+  // against the constant ESCAPE_TIME_RADIUS — the oracle's and the
+  // kernel's own test (escape-de.ts's MARCHING BALL paragraph).
+  for (let i = 0; i < steps && r <= ESCAPE_TIME_RADIUS; i++) {
     const link = links[i % n];
     const m = link.m;
     const t = link.t;
@@ -6555,23 +6574,34 @@ function estimateEscapeDistanceF32(
     }
     // P ∘ (w·V) ∘ A, then the Mandelbrot +q offset — the production
     // WGSL's `linkPostForward(L, L.p0.y * y) + q`, term for term. The
-    // absent-post arm stays the old value-exact weight fold-in.
+    // absent-post arm stays the old value-exact weight fold-in. The
+    // CHAIN TWIST wraps the whole sum — v <- R(f(v) + q + off) — the
+    // kernel's conditional on escParams.x, f32 row terms throughout.
+    let fx: number;
+    let fy: number;
+    let fz: number;
     if (link.postM !== null && link.postT !== null) {
       const pm = link.postM;
       const pt = link.postT;
       const wx = f(link.w * yx);
       const wy = f(link.w * yy);
       const wz = f(link.w * yz);
-      const fx = f(f(f(f(pm[0] * wx) + f(pm[1] * wy)) + f(pm[2] * wz)) + pt[0]);
-      const fy = f(f(f(f(pm[3] * wx) + f(pm[4] * wy)) + f(pm[5] * wz)) + pt[1]);
-      const fz = f(f(f(f(pm[6] * wx) + f(pm[7] * wy)) + f(pm[8] * wz)) + pt[2]);
+      fx = f(f(f(f(pm[0] * wx) + f(pm[1] * wy)) + f(pm[2] * wz)) + pt[0]);
+      fy = f(f(f(f(pm[3] * wx) + f(pm[4] * wy)) + f(pm[5] * wz)) + pt[1]);
+      fz = f(f(f(f(pm[6] * wx) + f(pm[7] * wy)) + f(pm[8] * wz)) + pt[2]);
+    } else {
+      fx = f(link.w * yx);
+      fy = f(link.w * yy);
+      fz = f(link.w * yz);
+    }
+    if (tm !== null) {
+      vx = f(f(f(f(tm[0] * fx) + f(tm[1] * fy)) + f(tm[2] * fz)) + ax);
+      vy = f(f(f(f(tm[3] * fx) + f(tm[4] * fy)) + f(tm[5] * fz)) + ay);
+      vz = f(f(f(f(tm[6] * fx) + f(tm[7] * fy)) + f(tm[8] * fz)) + az);
+    } else {
       vx = f(fx + q[0]);
       vy = f(fy + q[1]);
       vz = f(fz + q[2]);
-    } else {
-      vx = f(f(link.w * yx) + q[0]);
-      vy = f(f(link.w * yy) + q[1]);
-      vz = f(f(link.w * yz) + q[2]);
     }
     dr = f(f(f(link.g * localL) * dr) + 1);
     r = f(Math.sqrt(f(f(f(vx * vx) + f(vy * vy)) + f(vz * vz))));
@@ -6749,6 +6779,42 @@ function estimateEscapeDistance4F32(
     q[ia] = f(f(a * c) + f(b * s));
     q[ib] = Math.abs(f(f(b * c) - f(a * s)));
   }
+  // The chain twist's pre-rounded SO(4) rows + offset and the per-eval
+  // anchor R·(q + off4) — the 3D twin's hoist over four axes, the
+  // kernel's 480..559 lanes, f32 throughout. Null runs the untwisted
+  // lines below verbatim.
+  const tm = de.twistM?.map(f) ?? null;
+  const tb = de.twistB?.map(f) ?? null;
+  let ax = 0;
+  let ay = 0;
+  let az = 0;
+  let aw = 0;
+  if (tm !== null && tb !== null) {
+    ax = f(
+      f(
+        f(f(f(tm[0] * q[0]) + f(tm[1] * q[1])) + f(tm[2] * q[2])) +
+          f(tm[3] * q[3]),
+      ) + tb[0],
+    );
+    ay = f(
+      f(
+        f(f(f(tm[4] * q[0]) + f(tm[5] * q[1])) + f(tm[6] * q[2])) +
+          f(tm[7] * q[3]),
+      ) + tb[1],
+    );
+    az = f(
+      f(
+        f(f(f(tm[8] * q[0]) + f(tm[9] * q[1])) + f(tm[10] * q[2])) +
+          f(tm[11] * q[3]),
+      ) + tb[2],
+    );
+    aw = f(
+      f(
+        f(f(f(tm[12] * q[0]) + f(tm[13] * q[1])) + f(tm[14] * q[2])) +
+          f(tm[15] * q[3]),
+      ) + tb[3],
+    );
+  }
   let vx = q[0];
   let vy = q[1];
   let vz = q[2];
@@ -6764,7 +6830,9 @@ function estimateEscapeDistance4F32(
   // structural about this orbit (escape-de-4d.ts's THE ORBIT IS
   // DIMENSION-FREE paragraph).
   const steps = ESCAPE_TIME_ITERATIONS * n;
-  for (let i = 0; i < steps && r <= de.boundingRadius; i++) {
+  // The ORBIT BAILOUT, not the marching ball — the 3D twin's rule, whose
+  // reasoning is escape-de.ts's MARCHING BALL paragraph.
+  for (let i = 0; i < steps && r <= ESCAPE_TIME_RADIUS; i++) {
     const link = links[i % n];
     const m = link.m;
     const t = link.t;
@@ -6833,7 +6901,13 @@ function estimateEscapeDistance4F32(
     }
     // The production WGSL's `linkPostForward4(L, L.p0.y * y) + q`, with
     // the same row-major post and f32 operation boundaries. The no-post
-    // arm remains the exact pre-existing weight fold-in.
+    // arm remains the exact pre-existing weight fold-in. The CHAIN TWIST
+    // wraps the whole sum — v <- R(f(v) + q + off4) — the kernel's
+    // conditional on esc4Params.y, f32 row terms throughout.
+    let fx: number;
+    let fy: number;
+    let fz: number;
+    let fw: number;
     if (link.postM !== null && link.postT !== null) {
       const pm = link.postM;
       const pt = link.postT;
@@ -6841,34 +6915,56 @@ function estimateEscapeDistance4F32(
       const wy = f(link.w * yy);
       const wz = f(link.w * yz);
       const ww = f(link.w * yw);
-      const fx = f(
+      fx = f(
         f(f(f(f(pm[0] * wx) + f(pm[1] * wy)) + f(pm[2] * wz)) + f(pm[3] * ww)) +
           pt[0],
       );
-      const fy = f(
+      fy = f(
         f(f(f(f(pm[4] * wx) + f(pm[5] * wy)) + f(pm[6] * wz)) + f(pm[7] * ww)) +
           pt[1],
       );
-      const fz = f(
+      fz = f(
         f(
           f(f(f(pm[8] * wx) + f(pm[9] * wy)) + f(pm[10] * wz)) + f(pm[11] * ww),
         ) + pt[2],
       );
-      const fw = f(
+      fw = f(
         f(
           f(f(f(pm[12] * wx) + f(pm[13] * wy)) + f(pm[14] * wz)) +
             f(pm[15] * ww),
         ) + pt[3],
       );
+    } else {
+      fx = f(link.w * yx);
+      fy = f(link.w * yy);
+      fz = f(link.w * yz);
+      fw = f(link.w * yw);
+    }
+    if (tm !== null) {
+      vx = f(
+        f(f(f(f(tm[0] * fx) + f(tm[1] * fy)) + f(tm[2] * fz)) + f(tm[3] * fw)) +
+          ax,
+      );
+      vy = f(
+        f(f(f(f(tm[4] * fx) + f(tm[5] * fy)) + f(tm[6] * fz)) + f(tm[7] * fw)) +
+          ay,
+      );
+      vz = f(
+        f(
+          f(f(f(tm[8] * fx) + f(tm[9] * fy)) + f(tm[10] * fz)) + f(tm[11] * fw),
+        ) + az,
+      );
+      vw = f(
+        f(
+          f(f(f(tm[12] * fx) + f(tm[13] * fy)) + f(tm[14] * fz)) +
+            f(tm[15] * fw),
+        ) + aw,
+      );
+    } else {
       vx = f(fx + q[0]);
       vy = f(fy + q[1]);
       vz = f(fz + q[2]);
       vw = f(fw + q[3]);
-    } else {
-      vx = f(f(link.w * yx) + q[0]);
-      vy = f(f(link.w * yy) + q[1]);
-      vz = f(f(link.w * yz) + q[2]);
-      vw = f(f(link.w * yw) + q[3]);
     }
     dr = f(f(f(link.g * localL) * dr) + 1);
     r = f(
@@ -19727,6 +19823,10 @@ async function runSurfaceDeSection(
     transforms: Transform[];
     seed: number;
     symmetry?: SymmetryParams;
+    /** The chain twist (`twist.ts`'s authored block) the DE builds with —
+     * absent on every row that predates the field, so the untwisted rows
+     * remain the twist legs' controls. */
+    twist?: TwistAuthored;
   }[] = [
     {
       name: "escMandelbox",
@@ -20100,6 +20200,114 @@ async function runSurfaceDeSection(
         },
       ],
     },
+    {
+      // The reference construction's twist on a two-link chain — the
+      // offset is load-bearing (the marching ball grows to 4 + |b|, the
+      // set shifts), and this row is what a twisted preset would ride.
+      name: "escChainTwisted",
+      seed: 413,
+      twist: {
+        rotation: [0, -0.9272952180016122, 0],
+        offset: [1.4, 1.4, 1.4],
+      },
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
+        },
+        {
+          id: 1,
+          position: [0, 0, 0],
+          rotation: [0, (20 * Math.PI) / 180, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "boxfold", weight: 1.6 }],
+        },
+      ],
+    },
+    {
+      // Rotation-only — isolates the twist's rotation from its offset, so
+      // a flag or lane mixup between them names itself.
+      name: "escChainTwistedRotation",
+      seed: 414,
+      twist: { rotation: [0.5, -0.3, 0.9] },
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
+        },
+        {
+          id: 1,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "spherefold", weight: 1.2 }],
+        },
+        {
+          id: 2,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "boxfold", weight: -1.5 }],
+        },
+      ],
+    },
+    {
+      // The COMMUTING control: origin-centred box folds under a 90-degree
+      // z twist — the one twist that reproduces the untwisted estimates
+      // on-axis (escape-de.test.ts's certification), so this row reads
+      // against escMandelbox-class rows as a no-op-on-the-axis check while
+      // staying load-bearing off it.
+      name: "escChainTwistedCommuting",
+      seed: 415,
+      twist: { rotation: [0, 0, Math.PI / 2] },
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "boxfold", weight: 3 }],
+        },
+        {
+          id: 1,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
+        },
+      ],
+    },
+    {
+      // Twist under the kaleidoscope: the query wedge fold composes with
+      // the per-step twist (the doc's E = g^-1(M) argument holds verbatim),
+      // and this row pins the two isometries' order on the wire.
+      name: "escChainTwistKaleido",
+      seed: 416,
+      symmetry: { order: 3, plane: "xz" },
+      twist: { rotation: [0.4, 0, 0] },
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
+        },
+        {
+          id: 1,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "boxfold", weight: 1.6 }],
+        },
+      ],
+    },
   ];
   const escapeSystems: SurfaceEscapeSystemState[] = [];
   for (const def of escapeSystemDefs) {
@@ -20117,7 +20325,12 @@ async function runSurfaceDeSection(
           `${def.name}: skipped — ${eligibility.reasons.join("; ")}`,
         );
       } else {
-        const de = buildEscapeDE(def.transforms, null, symmetry);
+        const de = buildEscapeDE(
+          def.transforms,
+          null,
+          symmetry,
+          def.twist ?? null,
+        );
         const queries = escapeQueries(de, def.seed);
         const cpu64 = queries.map((q) => estimateEscapeDistance(de, q));
         const cpu32 = queries.map((q) => estimateEscapeDistanceF32(de, q));
@@ -20241,6 +20454,9 @@ async function runSurfaceDeSection(
     transforms: Transform[];
     seed: number;
     symmetry?: SymmetryParams;
+    /** The chain twist (`twist.ts`'s authored block, SO(4) rows on the
+     * 4D wire) — absent on every row that predates the field. */
+    twist?: TwistAuthored;
     view4: (de: EscapeDE4) => SurfaceGpu4View;
   }[] = [
     {
@@ -20412,6 +20628,74 @@ async function runSurfaceDeSection(
         sliceHalfW: 0,
       }),
     },
+    {
+      // The chain twist one dimension up: the embedded Euler rotation plus
+      // a w-plane angle and a fourth offset component, so every lane of
+      // the SO(4) wire is live (rows 480..543, offset 544..559, flag
+      // esc4Params.y). The offset grows the marching ball exactly as in
+      // 3D, and the value body's bailout test reads the repurposed
+      // escapeRadius lane.
+      name: "esc4ChainTwisted",
+      seed: 807,
+      twist: {
+        rotation: [0.2, -0.4, 0],
+        offset: [0.6, 0.6, 0.6],
+        w: { rotation: { zw: 0.5 }, offset: 0.2 },
+      },
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
+        },
+        {
+          id: 1,
+          position: [0, 0, 0],
+          rotation: [0, (20 * Math.PI) / 180, 0],
+          scale: [1, 1, 1],
+          w: { rotation: { xw: 0.3 } },
+          variations: [{ type: "boxfold", weight: 1.6 }],
+        },
+      ],
+      view4: () => ({
+        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        w0: 0,
+        sliceHalfW: 0,
+      }),
+    },
+    {
+      // The twist under the 4D kaleidoscope — the wedge fold composes with
+      // the per-step isometry, and this row pins their order on the
+      // SYM_PLANE_CODE4 wire.
+      name: "esc4ChainTwistKaleido",
+      seed: 808,
+      symmetry: { order: 3, plane: "yw" },
+      twist: { rotation: [0, 0.5, 0], w: { rotation: { yw: 0.3 } } },
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
+        },
+        {
+          id: 1,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          w: { rotation: { xw: 0.3 } },
+          variations: [{ type: "boxfold", weight: 1.6 }],
+        },
+      ],
+      view4: () => ({
+        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        w0: 0,
+        sliceHalfW: 0,
+      }),
+    },
   ];
   const escape4Systems: SurfaceEscape4SystemState[] = [];
   for (const def of escape4SystemDefs) {
@@ -20426,7 +20710,12 @@ async function runSurfaceDeSection(
           `${def.name}: skipped — ${eligibility.reasons.join("; ")}`,
         );
       } else {
-        const de = buildEscapeDE4(def.transforms, null, symmetry);
+        const de = buildEscapeDE4(
+          def.transforms,
+          null,
+          symmetry,
+          def.twist ?? null,
+        );
         const view4 = def.view4(de);
         const queries = escape4Queries(de, view4, def.seed);
         // Both oracles see the query through the SAME view lift the kernel

@@ -2949,14 +2949,18 @@ export function packEscapeGpuParams(
     view.setFloat32(256, 1, true);
   } else {
     // Untwisted: the head-link bytes, frozen ballast the kernel reads no
-    // link from, and flag 0 — absence renders byte-identically.
+    // link from — EXCEPT the flag lane, which the kernel now reads as the
+    // twist's on-flag and MUST pack 0 (the head link's kind rode that
+    // lane and is never zero; a kind read as a flag would twist every
+    // untwisted session with the ballast as its matrix — caught by the
+    // untwisted bench rows failing while the twisted ones agreed).
     writeVec3(view, 208, [de.m[0], de.m[1], de.m[2]]);
     view.setFloat32(220, de.t[0], true);
     writeVec3(view, 224, [de.m[3], de.m[4], de.m[5]]);
     view.setFloat32(236, de.t[1], true);
     writeVec3(view, 240, [de.m[6], de.m[7], de.m[8]]);
     view.setFloat32(252, de.t[2], true);
-    view.setFloat32(256, de.kind, true);
+    view.setFloat32(256, 0, true);
     view.setFloat32(260, de.w, true);
     view.setFloat32(264, de.derivGrowth, true);
   }
