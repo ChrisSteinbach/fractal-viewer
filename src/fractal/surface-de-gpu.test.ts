@@ -4209,11 +4209,12 @@ describe("surfaceDeKernelWgsl escape core (core)", () => {
     // The bailout test sits at the head of the SINGLE-LINK step, and the
     // Mandelbrot offset lands per link — never once per pass (chaining
     // fattens the set to 37.1% of the bailout ball at six links, against
-    // cycling's 0.2%). The step sum is `linkPostForward(...) + q` in a
-    // `let s` the chain twist then conditionally rotates (the untwisted
-    // else runs it verbatim).
-    expect(wgsl).toContain("let s = linkPostForward(L, L.p0.y * y) + q;");
+    // cycling's 0.2%). The link's own output is `f` in a `let`, which the
+    // chain twist then conditionally rotates onto the hoisted anchor
+    // (the untwisted else runs the original line verbatim).
+    expect(wgsl).toContain("let f = linkPostForward(L, L.p0.y * y);");
     expect(wgsl).toContain("if (params.escParams.x != 0.0) {");
+    expect(wgsl).toContain(") + twistAnchor;");
     // The per-step escape test reads the ORBIT BAILOUT lane, not the
     // (twist-grown) marching ball.
     expect(wgsl).toContain("if (r > params.escapeRadius) {");
