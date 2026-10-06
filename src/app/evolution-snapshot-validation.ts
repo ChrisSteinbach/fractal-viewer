@@ -386,6 +386,7 @@ const SCENE_FIELDS = {
   fogTintStrength: true,
   groundPlane: true,
   finiteSolid: true,
+  chainTwist: true,
 } satisfies Fields<SceneSnapshot>;
 
 function object(
@@ -895,6 +896,18 @@ function finiteSolidBlock(value: unknown, path: string): void {
   jsonValue(value, path, 0);
 }
 
+/**
+ * The chain-twist block's verbatim twin: same contract, same reasoning —
+ * `twist.ts`'s `resolveTwist` refuses rather than throws, so the crossover
+ * carries the block through untouched.
+ */
+function chainTwistBlock(value: unknown, path: string): void {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError(`${path} must be an object`);
+  }
+  jsonValue(value, path, 0);
+}
+
 function jsonValue(value: unknown, path: string, depth: number): void {
   if (depth > 32) throw new RangeError(`${path} nests too deeply`);
   if (
@@ -1365,6 +1378,9 @@ export function assertValidEvolutionSceneSnapshot(
   }
   if (scene.finiteSolid !== undefined) {
     finiteSolidBlock(scene.finiteSolid, "snapshot.finiteSolid");
+  }
+  if (scene.chainTwist !== undefined) {
+    chainTwistBlock(scene.chainTwist, "snapshot.chainTwist");
   }
 
   param(
