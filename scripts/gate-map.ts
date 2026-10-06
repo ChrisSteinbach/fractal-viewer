@@ -812,6 +812,7 @@ export const GATE_MAP: GateMapEntry[] = [
       "surprise-residual",
       "swirl-lens",
       "tiling",
+      "twisted-menger",
       "tiling-symmetry",
       "transmission-bend",
       "transmission-bend-tiles",
