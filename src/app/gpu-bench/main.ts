@@ -3889,6 +3889,27 @@ interface SurfaceKernelConfig {
   wg: number;
 }
 
+/** One query-level disagreement on a forward-orbit agreement row —
+ * {@link SurfaceAgreementRow.outliers}' entry shape. Enough to re-run the
+ * orbit CPU-side (`docs/gpu-bench-surface.md`'s calibration sections) and
+ * name the exit-step structure without a second GPU run. */
+interface SurfaceAgreementOutlier {
+  /** The query's index in the fixture's own query list. */
+  i: number;
+  q: [number, number, number];
+  /** The f64 oracle's value (the comparison base). */
+  cpu64: number;
+  /** The GPU's value. */
+  gpu: number;
+  /** The fround twin's value AT the query. */
+  twin: number;
+  /** `surfaceEvalTol(cpu64, R)` — the tolerance the query missed. */
+  tol: number;
+  /** True when the ±1..4-ULP walk verified the GPU's value (the row
+   * counted it a `chaoticFlips` entry), false when it stands a failure. */
+  ulpVerified: boolean;
+}
+
 interface SurfaceAgreementRow {
   system: string;
   core: "fold" | "affine" | "escape" | "bulb" | "affine4" | "fold4" | "escape4";
@@ -3968,6 +3989,17 @@ interface SurfaceAgreementRow {
    * {@link SURFACE_LENS4_EXCLUDED_CAP}'s doc. `undefined` on every 3D
    * fold/affine/lens row (nothing is ever excluded there). */
   excluded?: number;
+  /** The FORWARD-orbit legs: the one-ULP ensemble's own exclusion count
+   * ({@link SurfaceForwardSystemState.stabilityExcluded}) — the population
+   * the `SURFACE_ESCAPE_EXCLUDED_CAP`-class caps bind, and exactly what
+   * `excluded` was before the boundary rings existed. Equal to `excluded`
+   * on the bulb leg and on every row predating the rings. */
+  stabilityExcluded?: number;
+  /** The escape and escape4 legs: queries the one-ULP ensemble passed but
+   * a boundary ring excluded ({@link SurfaceForwardSystemState.
+   * boundaryExcluded}) — capped by `SURFACE_ESCAPE_BOUNDARY_EXCLUDED_CAP`.
+   * 0 on the bulb leg and on every row predating the rings. */
+  boundaryExcluded?: number;
   /** The FORWARD-orbit legs only (escape, bulb, escape4):
    * stable-classified failures POST-HOC verified as shadow flips (the GPU's
    * value matched a 1..4-ULP neighbor orbit's fround value —
@@ -3976,6 +4008,14 @@ interface SurfaceAgreementRow {
    * {@link SURFACE_BULB_FLIP_CAP} — the escape4 leg reuses the escape
    * one, since it runs the same orbit one dimension up). */
   chaoticFlips?: number;
+  /** The FORWARD-orbit legs only, and only when a row's disagreement
+   * population is non-empty: the query-level detail the adapter-
+   * calibration questions ask (`docs/gpu-bench-surface.md`'s classifier
+   * sections — every one of them had to re-derive which queries moved).
+   * One entry per stable query whose GPU value missed tolerance (a
+   * `chaoticFlips` entry or a failure), capped at 24; a quiet row emits
+   * no field. */
+  outliers?: SurfaceAgreementOutlier[];
   /** The FORWARD-orbit legs only: the shared core pipeline's compile time
    * (identical across every row of a leg — one pipeline serves all its
    * systems, like the M0 affine leg's). */
@@ -4738,6 +4778,60 @@ const SURFACE_ESCAPE_EXCLUDED_CAP = 140;
  * boundary-weighted mix (200 of the 700 queries are bisected ONTO the
  * boundary) leaves 560 queries gating. */
 const SURFACE_BULB_EXCLUDED_CAP = 140;
+
+/**
+ * The boundary rings' exclusion budget for the escape and escape4 legs —
+ * the same structural 20% of 700 as {@link SURFACE_ESCAPE_EXCLUDED_CAP},
+ * over a DIFFERENT population: queries the one-ULP ensemble called stable
+ * whose 2..8-ULP neighborhood has already left the f64 oracle's full
+ * tolerance ({@link boundaryRingUnstable}).
+ *
+ * Measured on the run that exposed the class (AMD RX 7900 XTX, 2026-10-06,
+ * the fixture row's own figures): worst row escChainTwistKaleido 102,
+ * escChainKaleido 78 — the two rows the one-ULP ensemble's exclusions
+ * (76/97) came from — so the widened rule's boundary population sits
+ * inside this budget with room on the fixtures that motivated it. The
+ * full-sweep bench run re-measures every other escape/escape4 row under
+ * the same rule; a row over this budget fails its leg with its own note,
+ * and the derivation moves to `docs/gpu-bench-surface.md` with the
+ * measurement.
+ */
+const SURFACE_ESCAPE_BOUNDARY_EXCLUDED_CAP = 140;
+
+/**
+ * The forward legs' shared exclusion-budget check: the one-ULP ensemble's
+ * count against its cap ({@link SURFACE_ESCAPE_EXCLUDED_CAP} class — the
+ * original semantic, preserved when the boundary rings moved part of the
+ * population to a budget of their own) plus the boundary rings' count
+ * against {@link SURFACE_ESCAPE_BOUNDARY_EXCLUDED_CAP}. Returns the
+ * failure notes; empty when the row sits inside both budgets.
+ */
+function forwardExclusionBudgetNotes(
+  row: SurfaceAgreementRow,
+  leg: string,
+): string[] {
+  const notes: string[] = [];
+  const stabilityCap =
+    leg === "bulb" ? SURFACE_BULB_EXCLUDED_CAP : SURFACE_ESCAPE_EXCLUDED_CAP;
+  const stabilityExcluded = row.stabilityExcluded ?? row.excluded ?? 0;
+  if (stabilityExcluded > stabilityCap) {
+    notes.push(
+      `${leg} agreement ${row.system}: excluded ` +
+        `${stabilityExcluded}/${row.n} queries (> ${stabilityCap}) from ` +
+        "the f32-stability gate — see compareSurfaceForwardAgreement's doc",
+    );
+  }
+  const boundaryExcluded = row.boundaryExcluded ?? 0;
+  if (boundaryExcluded > SURFACE_ESCAPE_BOUNDARY_EXCLUDED_CAP) {
+    notes.push(
+      `${leg} agreement ${row.system}: boundary-excluded ` +
+        `${boundaryExcluded}/${row.n} queries ` +
+        `(> ${SURFACE_ESCAPE_BOUNDARY_EXCLUDED_CAP}) — see ` +
+        "boundaryRingUnstable's doc",
+    );
+  }
+  return notes;
+}
 
 /** {@link SURFACE_ESCAPE_FLIP_CAP} for the bulb leg — same
  * 1%-of-700 reasoning, same meaning (isolated post-hoc shadow flips are
@@ -7130,6 +7224,88 @@ function forwardQueryStable(
   return true;
 }
 
+/**
+ * The escape and escape4 legs' BOUNDARY rings — the widened continuation
+ * of {@link forwardQueryStable}'s ensemble, added 2026-10-06 after the
+ * first real-AMD `bench:surface` run gate-failed both twist-kaleido rows
+ * on populations the one-ULP ensemble cannot see
+ * (`docs/gpu-bench-surface.md`'s boundary-rings section).
+ *
+ * THE MEASURED SHAPE: every outlier query on the failing rows was a
+ * BISECTION query parked on the DE≈0.02 contour, whose fround twin agreed
+ * with the f64 oracle bit for bit AT the query and at ±1 ULP (that is why
+ * the ensemble passed it), while the GPU's compiled realization — a
+ * handful of fused multiply-adds' worth of arithmetic difference from the
+ * twin — landed on the OTHER side of the estimate's own discontinuity.
+ * The DE there jumps between "orbit stays bounded, DE ≈ 0" and "orbit
+ * escapes at the boundary, DE ≈ 4/3"; which side a realization lands on
+ * is a coin flip. The one-ULP ring models input sensitivity; the
+ * realization difference is NOT an input perturbation, so the ensemble
+ * was blind to it by construction. The rings ask the question at the
+ * realization's own scale: does the twin's value at 2, 4 or 8 ULP —
+ * the equivalent-input-perturbation size of a legal compiler
+ * realization's divergence, measured off the verified flips — still
+ * agree with the f64 oracle at full tolerance? A query whose 8-ULP
+ * neighborhood has already left the oracle is parked on the
+ * discontinuity and excluded BEFORE the GPU is consulted, exactly like
+ * the affine4/fold4 legs' bisection-discontinuity exclusions
+ * ({@link surface4QueryStable}); the excluded counts stay
+ * adapter-independent (the rule is CPU-only), which is what kept the
+ * SwiftShader false-failure diagnosis honest.
+ *
+ * The ladder {2,4,8,16} (not the full 1..16 walk): a discontinuity at j
+ * ULP is crossed by the next ring past it, so the ladder catches every
+ * boundary at or under 16 ULP at 24 evals per query. Measured against the
+ * failing run's own outliers: the full walk and the ladder exclude
+ * identical sets on the 3D fixtures, the ladder covers 22/22 of them at
+ * K=8 where K=4 covers 20/22 — and the 4D row's three surviving failures
+ * needed 16 (their basin boundary sits at 9..15 ULP of equivalent input
+ * perturbation; the escape4 kernel's four-wide dots give a compiled
+ * realization more contraction surface than the 3D one's, so its
+ * divergence reaches further in this currency).
+ *
+ * The rule is applied to the escape and escape4 legs only, and only to
+ * queries the one-ULP ensemble already called stable (a boundary-unstable
+ * query is a SUBSET of the widened-unstable set, and the one-ULP count
+ * keeps its own cap's semantics unchanged). The bulb leg keeps the
+ * un-widened ensemble: its rows gate clean on this adapter class, its
+ * exclusion budget is calibrated at the same structural 20% against the
+ * un-widened population, and the twisted-bulb work (the bulb core's chain
+ * twist) can turn the rings on for its own fixtures with the same
+ * argument when it lands.
+ */
+const FORWARD_BOUNDARY_RINGS: readonly number[] = [2, 4, 8, 16];
+
+/**
+ * {@link FORWARD_BOUNDARY_RINGS}' verdict for one query: true when some
+ * ring neighbor's fround twin value has left the f64 oracle's FULL
+ * tolerance — the query is parked on the estimate's own discontinuity.
+ * Full `tol`, not {@link forwardQueryStable}'s `tol / 2`: the rings are
+ * modelling realization-scale divergence, and the discontinuity jumps it
+ * exists to catch are O(1) against a tolerance of ~8e-4.
+ */
+function boundaryRingUnstable(
+  evalF32: (p: Vec3) => number,
+  q: Vec3,
+  cpu64: number,
+  tol: number,
+): boolean {
+  for (const ulps of FORWARD_BOUNDARY_RINGS) {
+    for (let axis = 0; axis < 3; axis++) {
+      for (const dir of [1, -1]) {
+        const p: Vec3 = [q[0], q[1], q[2]];
+        const base = Math.fround(p[axis]);
+        const step = Math.max(Math.abs(base) * 1.2e-7, 1e-38) * ulps;
+        p[axis] = Math.fround(base + dir * step);
+        if (Math.abs(evalF32(p) - cpu64) > tol) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 function surfaceNormalize(v: Vec3): Vec3 {
   const l = Math.hypot(v[0], v[1], v[2]);
   return [v[0] / l, v[1] / l, v[2] / l];
@@ -8238,8 +8414,20 @@ interface SurfaceForwardSystemState<TDe> {
   cpu32: number[];
   /** Per-query stability: the seven-orbit ensemble verdict
    * ({@link forwardQueryStable}). Only stable queries enter the GPU
-   * agreement gate — see `compareSurfaceForwardAgreement`. */
+   * agreement gate — see `compareSurfaceForwardAgreement`. On the escape
+   * and escape4 systems this is the ensemble's verdict MINUS the boundary
+   * rings' ({@link boundaryRingUnstable}); on bulb systems it is the
+   * ensemble's alone. */
   stable: boolean[];
+  /** The one-ULP ensemble's own exclusion count — what `excluded` was
+   * before the boundary rings existed, and the population the
+   * `SURFACE_ESCAPE_EXCLUDED_CAP`-class caps keep binding. */
+  stabilityExcluded: number;
+  /** Queries the one-ULP ensemble called stable but a boundary ring
+   * excluded ({@link boundaryRingUnstable}) — the discontinuity-parked
+   * population, capped by `SURFACE_ESCAPE_BOUNDARY_EXCLUDED_CAP`. 0 on
+   * systems built without the rings (the bulb leg). */
+  boundaryExcluded: number;
   buffers?: {
     params: GPUBuffer;
     /** The forward chain's storage list: the escape core's
@@ -15447,6 +15635,8 @@ async function runSurfaceTilingAbiLeg(
       cpu64: spec.cpu,
       cpu32: spec.cpu,
       stable: spec.cpu.map(() => true),
+      stabilityExcluded: 0,
+      boundaryExcluded: 0,
     };
     try {
       await ensureSurfaceForwardEvalBuffers(
@@ -15852,6 +16042,7 @@ function compareSurfaceForwardAgreement<TDe>(
   let maxGpuMinusCpu = -Infinity;
   let minGpuMinusCpu = Infinity;
   let failuresOver = 0;
+  const outliers: SurfaceAgreementOutlier[] = [];
   for (let i = 0; i < sys.cpu64.length; i++) {
     if (!sys.stable[i]) continue;
     stableCount++;
@@ -15867,7 +16058,29 @@ function compareSurfaceForwardAgreement<TDe>(
       // value — excluded from the error statistics like the pre-hoc
       // unstable set, but counted separately so it stays visible.
       chaoticFlips++;
+      if (outliers.length < 24) {
+        outliers.push({
+          i,
+          q: [...sys.queries[i]] as [number, number, number],
+          cpu64: cpu,
+          gpu: gpu[i],
+          twin: evalF32(sys.queries[i]),
+          tol,
+          ulpVerified: true,
+        });
+      }
       continue;
+    }
+    if (err > tol && outliers.length < 24) {
+      outliers.push({
+        i,
+        q: [...sys.queries[i]] as [number, number, number],
+        cpu64: cpu,
+        gpu: gpu[i],
+        twin: evalF32(sys.queries[i]),
+        tol,
+        ulpVerified: false,
+      });
     }
     absErrs.push(err);
     if (err > maxAbsErr) maxAbsErr = err;
@@ -15908,7 +16121,10 @@ function compareSurfaceForwardAgreement<TDe>(
     // mix. These legs' own query-mix diagnostic is `excluded` below.
     failuresByClass: { jittered: 0, uniform: 0, exact: 0 },
     excluded: sys.cpu64.length - stableCount,
+    stabilityExcluded: sys.stabilityExcluded,
+    boundaryExcluded: sys.boundaryExcluded,
     chaoticFlips,
+    outliers: outliers.length > 0 ? outliers : undefined,
     compileMs,
     gpuMs,
   };
@@ -20338,15 +20554,32 @@ async function runSurfaceDeSection(
         // The f32-stability gate (compareSurfaceForwardAgreement's doc):
         // only queries the ENSEMBLE classifier (forwardQueryStable — the
         // fround twin at the query plus its six one-ULP neighbors, all
-        // agreeing with the f64 oracle) enter the GPU comparison below.
-        const stable = cpu64.map((c64, i) =>
+        // agreeing with the f64 oracle) enter the GPU comparison below —
+        // MINUS the boundary rings' widening (boundaryRingUnstable's doc):
+        // a query whose twin value at 2..8 ULP has already left the f64
+        // oracle's tolerance is parked on the estimate's own
+        // discontinuity, where every realization coin-flips.
+        const escapeEvalF32 = (q: Vec3): number =>
+          estimateEscapeDistanceF32(de, q);
+        const ensembleStable = cpu64.map((c64, i) =>
           forwardQueryStable(
-            (q) => estimateEscapeDistanceF32(de, q),
+            escapeEvalF32,
             queries[i],
             c64,
             surfaceEvalTol(c64, R),
           ),
         );
+        const boundaryUnstable = cpu64.map(
+          (c64, i) =>
+            ensembleStable[i] &&
+            boundaryRingUnstable(
+              escapeEvalF32,
+              queries[i],
+              c64,
+              surfaceEvalTol(c64, R),
+            ),
+        );
+        const stable = ensembleStable.map((s, i) => s && !boundaryUnstable[i]);
         escapeSystems.push({
           name: def.name,
           de,
@@ -20354,6 +20587,8 @@ async function runSurfaceDeSection(
           cpu64,
           cpu32,
           stable,
+          stabilityExcluded: ensembleStable.filter((s) => !s).length,
+          boundaryExcluded: boundaryUnstable.filter((b) => b).length,
         });
       }
     } catch (e) {
@@ -20727,10 +20962,24 @@ async function runSurfaceDeSection(
           estimateEscapeDistance4F32(de, liftEscape4F32(view4, q));
         const cpu32 = queries.map(evalF32);
         const R = de.boundingRadius;
-        // The identical seven-orbit ensemble gate the 3D escape leg uses.
-        const stable = cpu64.map((c64, i) =>
+        // The identical ensemble gate the 3D escape leg uses, plus the
+        // boundary rings the run that exposed the class demanded
+        // (boundaryRingUnstable's doc) — the 4D rows' own outliers read
+        // the same bisection-parked shape.
+        const ensembleStable = cpu64.map((c64, i) =>
           forwardQueryStable(evalF32, queries[i], c64, surfaceEvalTol(c64, R)),
         );
+        const boundaryUnstable = cpu64.map(
+          (c64, i) =>
+            ensembleStable[i] &&
+            boundaryRingUnstable(
+              evalF32,
+              queries[i],
+              c64,
+              surfaceEvalTol(c64, R),
+            ),
+        );
+        const stable = ensembleStable.map((s, i) => s && !boundaryUnstable[i]);
         escape4Systems.push({
           name: def.name,
           de,
@@ -20739,6 +20988,8 @@ async function runSurfaceDeSection(
           cpu64,
           cpu32,
           stable,
+          stabilityExcluded: ensembleStable.filter((s) => !s).length,
+          boundaryExcluded: boundaryUnstable.filter((b) => b).length,
         });
       }
     } catch (e) {
@@ -20870,6 +21121,10 @@ async function runSurfaceDeSection(
           cpu64,
           cpu32,
           stable,
+          stabilityExcluded: stable.filter((s) => !s).length,
+          // No boundary rings on the bulb leg (boundaryRingUnstable's
+          // doc): the population is zero by construction.
+          boundaryExcluded: 0,
         });
       }
     } catch (e) {
@@ -23205,14 +23460,9 @@ async function runSurfaceDeSection(
             gpuMs,
           );
           results.agreement.push(row);
-          const excluded = row.excluded ?? 0;
-          if (excluded > SURFACE_ESCAPE_EXCLUDED_CAP) {
+          for (const note of forwardExclusionBudgetNotes(row, "escape")) {
             escapeGateFail = true;
-            results.notes.push(
-              `escape agreement ${sys.name}: excluded ${excluded}/${row.n} ` +
-                `queries (> ${SURFACE_ESCAPE_EXCLUDED_CAP}) from the ` +
-                "f32-stability gate — see compareSurfaceForwardAgreement's doc",
-            );
+            results.notes.push(note);
           }
           const flips = row.chaoticFlips ?? 0;
           if (flips > SURFACE_ESCAPE_FLIP_CAP) {
@@ -23318,14 +23568,9 @@ async function runSurfaceDeSection(
             gpuMs,
           );
           results.agreement.push(row);
-          const excluded = row.excluded ?? 0;
-          if (excluded > SURFACE_BULB_EXCLUDED_CAP) {
+          for (const note of forwardExclusionBudgetNotes(row, "bulb")) {
             bulbGateFail = true;
-            results.notes.push(
-              `bulb agreement ${sys.name}: excluded ${excluded}/${row.n} ` +
-                `queries (> ${SURFACE_BULB_EXCLUDED_CAP}) from the ` +
-                "f32-stability gate — see compareSurfaceForwardAgreement's doc",
-            );
+            results.notes.push(note);
           }
           const flips = row.chaoticFlips ?? 0;
           if (flips > SURFACE_BULB_FLIP_CAP) {
@@ -25119,14 +25364,9 @@ async function runSurfaceDeSection(
             gpuMs,
           );
           results.agreement.push(row);
-          const excluded = row.excluded ?? 0;
-          if (excluded > SURFACE_ESCAPE_EXCLUDED_CAP) {
+          for (const note of forwardExclusionBudgetNotes(row, "escape4")) {
             escape4GateFail = true;
-            results.notes.push(
-              `escape4 agreement ${sys.name}: excluded ${excluded}/${row.n} ` +
-                `queries (> ${SURFACE_ESCAPE_EXCLUDED_CAP}) from the ` +
-                "f32-stability gate — see compareSurfaceForwardAgreement's doc",
-            );
+            results.notes.push(note);
           }
           const flips = row.chaoticFlips ?? 0;
           if (flips > SURFACE_ESCAPE_FLIP_CAP) {
@@ -25267,12 +25507,9 @@ async function runSurfaceDeSection(
             gpuMs,
           );
           results.agreement.push(row);
-          if ((row.excluded ?? 0) > SURFACE_ESCAPE_EXCLUDED_CAP) {
+          for (const note of forwardExclusionBudgetNotes(row, "escape+trap")) {
             escapeGateFail = true;
-            results.notes.push(
-              `escape+trap agreement ${sys.name}: excluded ` +
-                `${row.excluded ?? 0}/${row.n} queries (> ${SURFACE_ESCAPE_EXCLUDED_CAP})`,
-            );
+            results.notes.push(note);
           }
           if ((row.chaoticFlips ?? 0) > SURFACE_ESCAPE_FLIP_CAP) {
             escapeGateFail = true;
@@ -25322,12 +25559,9 @@ async function runSurfaceDeSection(
             gpuMs,
           );
           results.agreement.push(row);
-          if ((row.excluded ?? 0) > SURFACE_BULB_EXCLUDED_CAP) {
+          for (const note of forwardExclusionBudgetNotes(row, "bulb+trap")) {
             bulbGateFail = true;
-            results.notes.push(
-              `bulb+trap agreement ${sys.name}: excluded ` +
-                `${row.excluded ?? 0}/${row.n} queries (> ${SURFACE_BULB_EXCLUDED_CAP})`,
-            );
+            results.notes.push(note);
           }
           if ((row.chaoticFlips ?? 0) > SURFACE_BULB_FLIP_CAP) {
             bulbGateFail = true;
@@ -25377,12 +25611,9 @@ async function runSurfaceDeSection(
             gpuMs,
           );
           results.agreement.push(row);
-          if ((row.excluded ?? 0) > SURFACE_ESCAPE_EXCLUDED_CAP) {
+          for (const note of forwardExclusionBudgetNotes(row, "escape4+trap")) {
             escape4GateFail = true;
-            results.notes.push(
-              `escape4+trap agreement ${sys.name}: excluded ` +
-                `${row.excluded ?? 0}/${row.n} queries (> ${SURFACE_ESCAPE_EXCLUDED_CAP})`,
-            );
+            results.notes.push(note);
           }
           if ((row.chaoticFlips ?? 0) > SURFACE_ESCAPE_FLIP_CAP) {
             escape4GateFail = true;
@@ -25528,12 +25759,12 @@ async function runSurfaceDeSection(
             gpuMs,
           );
           results.agreement.push(row);
-          if ((row.excluded ?? 0) > SURFACE_ESCAPE_EXCLUDED_CAP) {
+          for (const note of forwardExclusionBudgetNotes(
+            row,
+            "escape+trap-geometry",
+          )) {
             escapeGateFail = true;
-            results.notes.push(
-              `escape+trap-geometry agreement ${sys.name}: excluded ` +
-                `${row.excluded ?? 0}/${row.n} queries (> ${SURFACE_ESCAPE_EXCLUDED_CAP})`,
-            );
+            results.notes.push(note);
           }
           if ((row.chaoticFlips ?? 0) > SURFACE_ESCAPE_FLIP_CAP) {
             escapeGateFail = true;
@@ -25651,12 +25882,12 @@ async function runSurfaceDeSection(
             gpuMs,
           );
           results.agreement.push(row);
-          if ((row.excluded ?? 0) > SURFACE_ESCAPE_EXCLUDED_CAP) {
+          for (const note of forwardExclusionBudgetNotes(
+            row,
+            "escape4+trap-geometry",
+          )) {
             escape4GateFail = true;
-            results.notes.push(
-              `escape4+trap-geometry agreement ${sys.name}: excluded ` +
-                `${row.excluded ?? 0}/${row.n} queries (> ${SURFACE_ESCAPE_EXCLUDED_CAP})`,
-            );
+            results.notes.push(note);
           }
           if ((row.chaoticFlips ?? 0) > SURFACE_ESCAPE_FLIP_CAP) {
             escape4GateFail = true;
@@ -27847,6 +28078,8 @@ async function runScratchProbe(
         cpu64: cpu,
         cpu32: cpu,
         stable: queries.map(() => true),
+        stabilityExcluded: 0,
+        boundaryExcluded: 0,
       };
       const paramsData =
         core === "escape"

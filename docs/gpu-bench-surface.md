@@ -306,7 +306,82 @@ leg gates, and the layered classifier exists precisely so a real
 disagreement could not hide inside the chaotic-orbit excuse: it was built
 for the escape compute port after real Iris flipped march-unproject rows a
 SwiftShader-clean run had called stable. Judge the escape rows on
-`--display=:0`.
+`--display=:0`. (The class got its principled answer when a second real
+adapter measured it — the boundary rings below; this section's
+"calibration, not a bug" reading is what that answer confirmed.)
+
+## The boundary rings: the classifier's answer to the second real adapter
+
+The open question above ("the cap is one number applied to every adapter")
+got its second data point when the escape-chain-twist work's first
+`--display=:0` run landed on the AMD RX 7900 XTX (2026-10-06): the Iris
+rows all gate clean there, and the TWO TWIST-KALEIDO FIXTURES failed —
+`escChainTwistKaleido` 2 failures + 20 verified chaotic flips, and
+`esc4ChainTwistKaleido` 4 failures + 5 flips, with `excluded` essentially
+unmoved (76/69 against Iris's 76/69) and p99AbsErr still ~1.6e-6 — the
+SwiftShader false failure's exact signature, on hardware.
+
+MEASURED TO THE QUERY, with the row-level outlier dump the run carried
+(the `outliers` field, added in the same change): all 31 outliers are
+BISECTION queries (indices 400-599, the mix parked on the DE≈0.02
+contour); every one's fround twin agrees with the f64 oracle BIT FOR BIT
+at the query and at ±1 ULP (that is why the ensemble passed them); and
+the GPU's values are the DE of ITS OWN orbit realization — they match no
+step of the f64 orbit's exit values (the boundary-exit-value verification
+was drafted and REFUTED on this data: 0/22), they match a ±1..4-ULP
+neighbor's twin value on 18/22 (the flips) and nothing on the rest. The
+population is the estimate's own discontinuity — the DE jumps between
+"orbit stays bounded, DE ≈ 0" and "orbit escapes at the boundary, DE ≈
+4/3" across the basin boundary — and the bisection parks queries ON it.
+The one-ULP ensemble models input sensitivity; a compiler realization's
+divergence is NOT an input perturbation, so the ensemble was blind to
+this class by construction, and the flip cap was never calibrated for it.
+
+THE FIX IS THE CLASSIFIER, NOT A CAP. `boundaryRingUnstable` widens the
+ensemble with rings at 2, 4, 8 and 16 ULP (a ladder — a discontinuity at j
+ULP is crossed by the next ring past it — at 24 evals per query): a query
+whose twin value at those radii has left the f64 oracle's FULL tolerance
+is parked on the discontinuity and excluded BEFORE the GPU is consulted.
+The radii are the equivalent-input-perturbation size of a legal compiler
+realization's divergence, measured off the verified flips themselves
+(±1..4 ULP verified 18/22 of the 3D row's outliers; its two refusals and
+all three of the 4D row's survivors needed 16 — the escape4 kernel's
+four-wide dots give a compiled realization more contraction surface than
+the 3D one's, so its divergence reaches further in this currency).
+Measured on the failing fixtures (probe run against the bench's own twin,
+reproduced bit-exactly): the ladder covers 22/22 of the 3D row's outliers
+at K=8 where K=4 covers 20/22, the full 1..8 walk excludes the identical
+set, and the 3D populations barely move past K=8 (175→175, 178→180) —
+the 16 ring is the 4D rows' alone. The excluded
+counts stay adapter-independent (the rule is CPU-only), which is what
+kept the SwiftShader diagnosis honest; the one-ULP population keeps its
+own counter (`stabilityExcluded`) and cap, and the rings' population gets
+its own (`boundaryExcluded`, capped by
+`SURFACE_ESCAPE_BOUNDARY_EXCLUDED_CAP` — structural 20% of 700). The rule
+runs on the escape and
+escape4 legs; the bulb leg keeps the un-widened ensemble (its rows gate
+clean on this adapter, and its budget is calibrated against the
+un-widened population — the twisted-bulb work can turn the rings on for
+its own fixtures with the same argument when it lands).
+
+THE FULL-SWEEP VERDICT ON THE SAME ADAPTER, with the final ladder: the
+section's first `--display=:0` PASS on AMD RX 7900 XTX — all six
+chain-twist fixtures at fail=0 flips=0 (`escChainTwisted` maxAbs 8.8e-7,
+`escChainTwistedRotation` 4.7e-7, `escChainTwistedCommuting` 5.3e-7,
+`escChainTwistKaleido` 4.1e-6, `esc4ChainTwisted` 6.7e-7,
+`esc4ChainTwistKaleido` 1.9e-6), every forward row's remaining flip
+population a single bulb query, and the boundary populations' worst row
+`esc4ChainSlice` at 138 of 700 against the 140 budget — close enough
+that the budget is doing its job (a row over it fails its leg with its
+own note and the derivation gets re-measured, not silently raised). The
+one-ULP populations are unchanged from the pre-rings runs (worst 97,
+`escChainKaleido`), as the subset design requires.
+
+The row schema gained `stabilityExcluded`, `boundaryExcluded` and the
+capped `outliers` dump (query index, coordinates, cpu64/gpu/twin/tol and
+whether the ±4-ULP walk verified it) — the query-level detail every
+adapter-calibration question above had to re-derive by hand, now carried
+by any row that disagrees at all.
 
 ## Cross-family rows (the chain's power links)
 
