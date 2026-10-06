@@ -816,3 +816,48 @@ mutation moves exactly the row written for it —
 — while folding only x/y/z in the box fold moves ALL SIX rows 321-407, i.e.
 every fixture is genuinely 4D by measurement rather than by having a `w`
 field.
+
+## The finite-tiling ABI leg wedges the driver on the Iris Xe box (2026-10-06)
+
+A machine record, kept beside the SwiftShader false failure because it is the
+same KIND of finding: a leg whose numeric content is fine but whose run cannot
+be certified on a given stack. On this machine (Mesa Intel Iris Xe TGL GT2,
+Chrome 154 system + Chromium 151 bundled, kernel 7.0.0-34) the FINITE-TILING
+ABI leg — the 19-spec compile/bind/dispatch matrix — began killing the GPU
+process mid-leg at ~10:30 after four complete green sections in the morning
+(each canary-checked through the whole section). The wedge is deterministic
+since: every full `--display=:0` run after that dies with `device.lost`
+("A valid external Instance reference no longer exists", then "Instance
+dropped in popErrorScope") at exactly that leg, on both browsers, surviving a
+reboot — and it reproduces with the leg run in ISOLATION
+(`--surface-tiling-only=1`, a temporary filter, reverted) in ~2 minutes.
+
+THE ISOLATION WORK, which is the record's substance:
+
+- Spec-by-spec, all 19 compile and dispatch clean — EXCEPT
+  `stride-balloon-lens4SwirlPostOverFold-f4` (the evalStride variant of the
+  swirl lens's stride pair over a fold4 base under a finite tiling), which
+  trips alone; its non-stride sibling and every 3D sibling pass.
+- The exact kernel config emits a 44,160-byte module that is BYTE-IDENTICAL
+  between the twist branch and the pre-change commit `c64a1233` (diff-verified)
+  — the wedge is entirely pre-existing text.
+- A standalone probe (no bench, no vite): `getCompilationInfo` returns clean,
+  then `createComputePipelineAsync` never resolves — a driver-side compiler
+  wedge, not a shader-validation failure. In the bench, per-spec notes show all
+  19 pipelines creating; the death is at the last spec's dispatch.
+- A fresh boot did not clear it; the Mesa disk shader cache was quarantined
+  (moved aside) with no effect — rejected as the cause. A crash dump at 09:53
+  (`/var/crash/_opt_google_chrome_chrome.1000.crash`, SIGTRAP, gpu-process,
+  `--enable-unsafe-swiftshader`) predates the wedge and is one candidate for
+  what poisoned the machine state; the true mechanism is UNRESOLVED.
+
+WHAT THIS CLEARS: the twist branch's escape/escape4 kernels are cleared of
+the wedge by the byte-identical module, by the pre-change worktree dying at
+the same leg, and by the four morning runs that completed the leg on the
+WITH-TWIST tree. The chain-twist rows' numeric agreement comes from those
+morning runs (all six twist fixtures fail=0, maxAbsErr 3.3e-06..8.4e-07,
+excluded 9-76/700, flips 0-1, against caps 140/7); the flag-lane fix
+(untwisted sessions must pack flag 0) is byte-pinned by unit tests and
+verified end-to-end by the escape-family and 4D-lift verify gates, both
+`verdict=pass` on the real driver after the fix. What remains owed: ONE
+complete clean `bench:surface` verdict on a machine that survives the leg.
