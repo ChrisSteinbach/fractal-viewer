@@ -1,9 +1,15 @@
 /**
- * The twisted mod-Menger family's ONE shared vocabulary, imported by both
- * estimator twins (`menger-de.ts`, `menger-de-4d.ts`) under the twin-file
- * convention (`escape-de-4d.ts`'s rule): what a construction IS has one
- * definition across both dimensions, and only the estimators' vector
- * arithmetic is duplicated.
+ * The twisted mod-Menger family's vocabulary — the authored block with its
+ * carve-depth ceiling and its family defaults, resolved through the SHARED
+ * twist vocabulary (`twist.ts`): the authored semantics, the validation
+ * body and the matrix composition have ONE definition both families read
+ * (the escape-time chain is the second), and only the Menger-specific
+ * parts — the level count, the reference-construction defaults, the
+ * dimension verdict — live here. Imported by both estimator twins
+ * (`menger-de.ts`, `menger-de-4d.ts`) under the twin-file convention
+ * (`escape-de-4d.ts`'s rule): what a construction IS has one definition
+ * across both dimensions, and only the estimators' vector arithmetic is
+ * duplicated.
  *
  * THE OBJECT. The classic mod-based Menger carve SDF — a box with the
  * three axis bars removed at every level of a 3-by recursion — with a
@@ -48,9 +54,17 @@
  * block byte for byte and show the refusal beside it. Defaults fill
  * absent fields: the repo's own construction (4 levels, the ~53.13° Y
  * rotation, no offset — the pure twist), so an empty block names THE
- * twisted sponge and not something quieter.
+ * twisted sponge and not something quieter. The rotation default is the
+ * FAMILY's: the shared vocabulary's own neutral default is the identity,
+ * and this family pre-fills its reference construction before resolving.
  */
-import type { Rotation4, Vec3 } from "./types";
+import {
+  resolveTwistFields,
+  twistWIsNonTrivial,
+  TWIST_AUTHORED_FIELDS,
+} from "./twist";
+import type { TwistAuthored, TwistConstruction } from "./twist";
+import type { Vec3 } from "./types";
 
 /**
  * Carve-depth ceiling. Each level triples the lattice; 8 leaves every
@@ -68,7 +82,9 @@ export const MENGER_TWIST_MAX_LEVELS = 8;
  * our Euler-XYZ convention, exact to the matrix's two decimal places
  * (`atan2(0.8, 0.6)`). The animated offset stays OUT of the default: the
  * pure twist is the construction, and richer offsets are authored (the
- * repo animates its `off` between them).
+ * repo animates its `off` between them). The offset default is the shared
+ * vocabulary's own neutral one (zero), stated here so the family's
+ * "defaults are the reference construction" reads in one place.
  */
 export const MENGER_TWIST_DEFAULTS = Object.freeze({
   levels: 4,
@@ -76,59 +92,40 @@ export const MENGER_TWIST_DEFAULTS = Object.freeze({
   offset: Object.freeze([0, 0, 0]),
 });
 
-/** The authored form, as persisted. Every field optional; unknown keys
- * refuse. The `w` extension mirrors `Transform.w`'s convention: presence
- * with a non-trivial value lifts the construction to the 4D hyper-Menger
- * and turns the scene's dimension with it (`mengerTwistAuthoredDimension`). */
-export interface MengerTwistAuthored {
+/** The authored form, as persisted — the SHARED twist block
+ * (`twist.ts`'s `TwistAuthored`) plus this family's carve depth. Every
+ * field optional; unknown keys refuse. The `w` extension mirrors
+ * `Transform.w`'s convention: presence with a non-trivial value lifts the
+ * construction to the 4D hyper-Menger and turns the scene's dimension
+ * with it (`mengerTwistAuthoredDimension`). */
+export interface MengerTwistAuthored extends TwistAuthored {
   /** Carve depth: an integer in `[1, MENGER_TWIST_MAX_LEVELS]`. */
   levels?: number;
-  /** The twist's 3D Euler angles in radians (XYZ order, `affine.ts`'s
-   * convention), applied at EVERY level. */
-  rotation?: Vec3;
-  /** The per-level offset added BEFORE the rotation — the repo's scalar
-   * `off` broadcast to all three axes is `offset = [k, k, k]`. */
-  offset?: Vec3;
-  /** The 4D lift: plane rotations composed after the 3D Euler part and a
-   * fourth offset component. Any non-trivial value makes the construction
-   * the 4D hyper-Menger. */
-  w?: {
-    /** Plane rotations (`affine4.ts`'s convention) — the twist's extra
-     * SO(4) degrees of freedom. */
-    rotation?: Rotation4;
-    /** The fourth offset component. */
-    offset?: number;
-  };
 }
 
-/** Every field the authored form defines, top level and w. Any other key
- * is REFUSED as unknown: a document written by a newer version may name a
- * field this version cannot read, and ignoring it would render a
- * different object than the document names. */
+/** Every field the authored form defines — the shared block's fields plus
+ * `levels`. Any other key is REFUSED as unknown: a document written by a
+ * newer version may name a field this version cannot read, and ignoring
+ * it would render a different object than the document names. */
 export const MENGER_TWIST_AUTHORED_FIELDS: readonly string[] = Object.freeze([
+  ...TWIST_AUTHORED_FIELDS,
   "levels",
-  "rotation",
-  "offset",
-  "w",
 ]);
 export const MENGER_TWIST_W_FIELDS: readonly string[] = Object.freeze([
   "rotation",
   "offset",
 ]);
 
-/** The resolved construction the estimator twins read. The 3D fields are
- * always filled (defaults included); the w fields are filled with the
- * trivial twist when absent, so a consumer never branches on presence —
- * only {@link mengerTwistAuthoredDimension}'s verdict matters for
- * routing. */
-export interface MengerTwistConstruction {
+/** The resolved construction the estimator twins read — the shared twist
+ * fields plus the family's level count and dimension verdict. The 3D
+ * fields are always filled (defaults included); the w fields are filled
+ * with the trivial twist when absent, so a consumer never branches on
+ * presence — only {@link mengerTwistAuthoredDimension}'s verdict matters
+ * for routing. */
+export type MengerTwistConstruction = TwistConstruction & {
   dim: 3 | 4;
   levels: number;
-  rotation: Vec3;
-  offset: Vec3;
-  rotation4: Rotation4;
-  offsetW: number;
-}
+};
 
 export type MengerTwistResolution =
   | { ok: true; construction: MengerTwistConstruction }
@@ -138,75 +135,32 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-function isFiniteVector(v: unknown, n: number): boolean {
-  return (
-    Array.isArray(v) &&
-    v.length === n &&
-    v.every((x) => typeof x === "number" && Number.isFinite(x))
-  );
-}
-
 /** Whether the authored `w` extension is present and non-trivial — the
  * same presence-and-nonzero rule `affine4.ts`'s flatness tests use, so a
- * round-tripped `w: {}` or all-zero block stays 3D. */
+ * round-tripped `w: {}` or all-zero block stays 3D. The shared
+ * vocabulary's own check, under this family's name. */
 export function mengerTwistAuthoredDimension(
   authored: MengerTwistAuthored,
 ): 3 | 4 {
-  const w = authored.w;
-  if (!isPlainObject(w)) return 3;
-  const rotation: unknown = w.rotation;
-  if (isPlainObject(rotation)) {
-    for (const angle of Object.values(rotation)) {
-      if (typeof angle === "number" && Number.isFinite(angle) && angle !== 0) {
-        return 4;
-      }
-    }
-  }
-  const offset = w.offset;
-  if (typeof offset === "number" && Number.isFinite(offset) && offset !== 0) {
-    return 4;
-  }
-  return 3;
+  return twistWIsNonTrivial(authored) ? 4 : 3;
 }
 
 /**
- * Expand the authored block into the resolved construction. Refuses, never
- * clamps: an out-of-range level count or a non-finite twist would render a
- * different object than the document names. Never mutates its input.
+ * Expand the authored block into the resolved construction. Refuses,
+ * never clamps: an out-of-range level count or a non-finite twist would
+ * render a different object than the document names. Never mutates its
+ * input. The twist fields resolve through the SHARED validation body
+ * (`twist.ts`'s `resolveTwistFields`) with this family's extended field
+ * list, and the family's reference-construction rotation default pre-fills
+ * an absent one.
  */
 export function resolveMengerTwist(
   authored: MengerTwistAuthored,
 ): MengerTwistResolution {
-  // The plain-object check runs on an `unknown` COPY (the sphere-inversion
-  // resolver's trick): narrowing the typed parameter itself would intersect
-  // it with `Record<string, unknown>` and collapse the tuple-typed fields
-  // to `{} | null` at every spread below.
-  const block: unknown = authored;
-  if (!isPlainObject(block)) {
+  if (!isPlainObject(authored)) {
     return { ok: false, reasons: ["the menger-twist block is not an object"] };
   }
   const reasons: string[] = [];
-  for (const key of Object.keys(authored)) {
-    if (!MENGER_TWIST_AUTHORED_FIELDS.includes(key)) {
-      reasons.push(`unknown field "${key}" (not readable by this version)`);
-    }
-  }
-  const rawW: unknown = authored.w;
-  let wObject: Record<string, unknown> | undefined;
-  if (rawW !== undefined) {
-    if (!isPlainObject(rawW)) {
-      reasons.push("w is not an object");
-    } else {
-      wObject = rawW;
-      for (const key of Object.keys(rawW)) {
-        if (!MENGER_TWIST_W_FIELDS.includes(key)) {
-          reasons.push(
-            `unknown w field "${key}" (not readable by this version)`,
-          );
-        }
-      }
-    }
-  }
 
   let levels: number = MENGER_TWIST_DEFAULTS.levels;
   if (authored.levels !== undefined) {
@@ -220,68 +174,23 @@ export function resolveMengerTwist(
     }
   }
 
-  let rotation: Vec3 = [...MENGER_TWIST_DEFAULTS.rotation] as Vec3;
-  if (authored.rotation !== undefined) {
-    if (isFiniteVector(authored.rotation, 3)) {
-      rotation = [...authored.rotation] as Vec3;
-    } else {
-      reasons.push("rotation is not three finite numbers");
-    }
+  const resolution = resolveTwistFields(authored, MENGER_TWIST_AUTHORED_FIELDS);
+  if (!resolution.ok) {
+    return { ok: false, reasons: [...reasons, ...resolution.reasons] };
   }
-
-  let offset: Vec3 = [...MENGER_TWIST_DEFAULTS.offset] as Vec3;
-  if (authored.offset !== undefined) {
-    if (isFiniteVector(authored.offset, 3)) {
-      offset = [...authored.offset] as Vec3;
-    } else {
-      reasons.push("offset is not three finite numbers");
-    }
-  }
-
-  const rotation4: Rotation4 = {};
-  let offsetW = 0;
-  if (wObject !== undefined) {
-    const rawWRot: unknown = wObject.rotation;
-    if (rawWRot !== undefined) {
-      if (!isPlainObject(rawWRot)) {
-        reasons.push("w.rotation is not an object");
-      } else {
-        for (const plane of ["xy", "xz", "yz", "xw", "yw", "zw"] as const) {
-          const angle: unknown = rawWRot[plane];
-          if (angle === undefined) continue;
-          if (typeof angle !== "number" || !Number.isFinite(angle)) {
-            reasons.push(`w.rotation.${plane} is not a finite number`);
-          } else {
-            rotation4[plane] = angle;
-          }
-        }
-        for (const key of Object.keys(rawWRot)) {
-          if (!["xy", "xz", "yz", "xw", "yw", "zw"].includes(key)) {
-            reasons.push(`unknown w.rotation plane "${key}"`);
-          }
-        }
-      }
-    }
-    const rawWOff: unknown = wObject.offset;
-    if (rawWOff !== undefined) {
-      if (typeof rawWOff !== "number" || !Number.isFinite(rawWOff)) {
-        reasons.push("w.offset is not a finite number");
-      } else {
-        offsetW = rawWOff;
-      }
-    }
-  }
-
   if (reasons.length > 0) return { ok: false, reasons };
+
+  const twist = resolution.twist;
   return {
     ok: true,
     construction: {
+      ...twist,
+      rotation:
+        authored.rotation === undefined
+          ? ([...MENGER_TWIST_DEFAULTS.rotation] as Vec3)
+          : twist.rotation,
       dim: mengerTwistAuthoredDimension(authored),
       levels,
-      rotation,
-      offset,
-      rotation4,
-      offsetW,
     },
   };
 }

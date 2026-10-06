@@ -352,6 +352,62 @@
  * exactly. So `order` here means `order` rotations and their mirrors, and
  * the fundamental wedge is `pi / order` wide about the plane's first axis.
  *
+ * THE CHAIN TWIST applies the shared twist vocabulary (`twist.ts`) to the
+ * orbit itself: at every link the step map becomes
+ *
+ *     v <- R(f(v) + q + off)
+ *
+ * — the per-link `+ q` offset add joined by the authored offset, the whole
+ * sum rotated by the fixed isometry `R`. This is "rotation applied to the
+ * point p" (KentaYoshii/Raymarcher's phrase for its twisted Menger)
+ * generalized past the carve: the same authored block
+ * (`twist.ts`'s — one semantics both families read), applied at the
+ * chain's own application sites, which is what makes every escape-family
+ * shape — Mandelboxes, Juliaboxes, hybrid chains — twistable from one
+ * wire addition. The build pre-composes it ({@link EscapeDE.twistM}, and
+ * `twistB = R·off`) so the hot loop pays one 9-term matrix and one add
+ * per step, exactly the Menger estimator's wire, and the per-eval anchor
+ * `R·q + twistB` is hoisted out of the loop entirely.
+ *
+ * SOUNDNESS IS THE KALEIDOSCOPE'S ONE MORE TIME, and free where a
+ * post-affine is not. `R` is an isometry, so the escape test survives
+ * unchanged (`|R x| = |x|`), and the derivative recurrence is UNCHANGED:
+ * `dv/dp = R·(df/dv · dv/dp + dg/dp)`, whose norm the existing
+ * `dr = growth·L·dr + 1` still bounds, because the isometry passes
+ * through at factor 1 where a post-affine pays its `sigma_max`. The
+ * `+ 1` keeps its meaning (the offset add's own derivative, through the
+ * twist). The estimate is the same heuristic at the same damping —
+ * {@link ESCAPE_STEP_SCALE} needs no re-measurement for the same reason
+ * the chains needed none: the recurrence's form, not its constants, is
+ * what the step-scale measurements priced. The twist also does not touch
+ * the query's entry path, so the kaleidoscope's wedge-symmetry argument
+ * (`E = g^-1(M)`) holds verbatim for the twisted chain: the two compose.
+ *
+ * THE MARCHING BALL GROWS BY THE OFFSET'S LENGTH. The bailout test stays
+ * the constant {@link ESCAPE_TIME_RADIUS} — the set's definition is the
+ * orbit staying inside that ball, exactly as before, and
+ * {@link escapeSetContains}/{@link probeEscapeFill} keep asking it. But
+ * the set itself can sit as far from the origin as the offset carries it
+ * (a member's first step needs only `|f(q) + q + off| <= 4`, so a query
+ * near `-off` whose fold output cancels the shift is a member at
+ * `|q| ~ |off|`), and the sphere tracer enters/exits against
+ * {@link EscapeDE.boundingRadius} — so a twisted chain's boundingRadius
+ * is `ESCAPE_TIME_RADIUS + |twistB|`, the same one-line accounting
+ * `bulb-de.ts` applies to its pre-power offset `t`. The GPU value bodies
+ * read the ORBIT bailout off the wire (the descent cores' dead
+ * `escapeRadius` lane repurposed — the one per-step test that may not
+ * read the grown ball), while the hit-info orbit and the rings/sheets
+ * normalization keep the grown ball, which is what the CPU carrier sample
+ * has always mirrored.
+ *
+ * Absence is `twistM = null`, bit-identical: the orbit's untwisted lines
+ * run verbatim, and an authored-then-zeroed block resolves trivial
+ * (`twist.ts`'s `twistIsTrivial`) and collapses back to absence, exactly
+ * like a fold length dragged back to its classic value. A `w` extension
+ * on a 3D chain is refused at the gate — the 3D estimator has no fourth
+ * axis to give it meaning — and the 4D chain's twist is
+ * `escape-de-4d.ts`'s, same placement, SO(4) rows.
+ *
  * MEASURED (`scripts/escape-chain.harness.ts`, `escape-chain-kaleido.png`,
  * a two-link chain at orders 1/2/3/5/8 seen down the symmetry axis): the
  * estimate moves by at most 2.1e-14 under a whole sector rotation — f64
@@ -677,6 +733,13 @@ import type {
 } from "./surface-pattern";
 import { SHAPE_MARCH_SAFETY } from "./shapes";
 import {
+  resolveTwist,
+  twistIsTrivial,
+  twistMatrices3,
+  twistWIsNonTrivial,
+} from "./twist";
+import type { TwistAuthored, TwistConstruction } from "./twist";
+import {
   CONTRACTION_LIMIT,
   SURFACE_FOLD_BOXFOLD,
   SURFACE_FOLD_MANDELBOX,
@@ -892,6 +955,18 @@ export interface EscapeDE extends EscapeLink {
    * — which is what keeps a fold-only chain bit-identical.
    */
   logEstimate: boolean;
+  /**
+   * The chain twist's pre-composed rotation — the row-major 3×3 isometry
+   * the orbit applies to `f(v) + q + off` at EVERY link (module doc's
+   * CHAIN TWIST paragraph) — or `null`. `null` is every document that
+   * predates the field and every trivially-authored one, and it is
+   * bit-identical: the untwisted lines run verbatim.
+   */
+  twistM: number[] | null;
+  /** The twist offset in `q <- R q + b` form: `b = R·off`. `null` exactly
+   * with {@link twistM}; its LENGTH joins the marching-ball accounting
+   * (`boundingRadius = ESCAPE_TIME_RADIUS + |twistB|` when live). */
+  twistB: Vec3 | null;
   /** Kaleidoscope sectors the query is folded into before the orbit starts
    * ({@link foldQueryIntoSector}); `1` is off, and the whole fold is then
    * skipped, which is what keeps an unsymmetrised system bit-identical. */
@@ -1139,13 +1214,15 @@ function buildEscapeLink(map: Transform): EscapeLink {
 
 /**
  * Precompute the {@link EscapeDE} for an eligible system. Throws on an
- * ineligible one ({@link analyzeEscapeSystem}) — the app gates first, so
- * reaching the throw is a bug.
+ * ineligible one ({@link analyzeEscapeSystem}) and on a REFUSED twist
+ * block ({@link resolveTwist}) — the app gates both first, so reaching
+ * either throw is a bug.
  */
 export function buildEscapeDE(
   transforms: Transform[],
   finalTransform: Transform | null = null,
   symmetry: SymmetryParams = { order: 1, plane: "xz" },
+  twist: TwistAuthored | null = null,
 ): EscapeDE {
   const analysis = analyzeEscapeSystem(transforms, finalTransform, symmetry);
   if (analysis.status === "ineligible") {
@@ -1154,14 +1231,49 @@ export function buildEscapeDE(
     );
   }
   const links = activeMaps(transforms).map(buildEscapeLink);
+  // The chain twist: resolved, refused never clamped, and a trivially
+  // authored block collapses to absence (module doc). A `w` extension has
+  // no fourth axis to act on here — the gate refuses one, so reaching the
+  // throw is a bug.
+  let twistM: number[] | null = null;
+  let twistB: Vec3 | null = null;
+  let boundingRadius = ESCAPE_TIME_RADIUS;
+  if (twist !== null) {
+    const resolution = resolveTwist(twist);
+    if (!resolution.ok) {
+      throw new Error(
+        `system has a refused chain twist: ${resolution.reasons.join("; ")}`,
+      );
+    }
+    const construction: TwistConstruction = resolution.construction;
+    if (twistWIsNonTrivial(twist)) {
+      throw new Error(
+        "system has a 4D chain twist on the 3D escape-time estimator",
+      );
+    }
+    if (!twistIsTrivial(construction)) {
+      const matrices = twistMatrices3(construction);
+      twistM = matrices.m;
+      twistB = matrices.b;
+      // The marching ball grows by the offset's length (module doc's
+      // MARCHING BALL paragraph); the bailout test stays the constant.
+      boundingRadius =
+        ESCAPE_TIME_RADIUS +
+        Math.sqrt(
+          twistB[0] * twistB[0] + twistB[1] * twistB[1] + twistB[2] * twistB[2],
+        );
+    }
+  }
   const de: EscapeCalibrationDE = {
     // The head link's fields, flat — the wire the six mirrors read.
     ...links[0],
     links,
     logEstimate: links.some((l) => escapeLinkPower(l.kind) > 0),
+    twistM,
+    twistB,
     symmetryOrder: effectiveSymmetryOrder(symmetry.order, transforms.length),
     symmetryPlane: symmetry.plane,
-    boundingRadius: ESCAPE_TIME_RADIUS,
+    boundingRadius,
   };
   return {
     ...de,
@@ -1323,6 +1435,20 @@ function runEscapeOrbit(
   let dr = 1;
   let r = Math.sqrt(vx * vx + vy * vy + vz * vz);
   const maxSteps = maxIterations * n;
+  // The chain twist's per-eval anchor: the constant part of the twisted
+  // offset add, `R·(q + off) = R·q + twistB`, hoisted out of the hot loop
+  // so a step pays one 9-term matrix and one add (module doc). `null`
+  // runs the untwisted lines verbatim — absence is bit-identical.
+  const tm = de.twistM;
+  const tb = de.twistB;
+  let ax = 0;
+  let ay = 0;
+  let az = 0;
+  if (tm !== null && tb !== null) {
+    ax = tm[0] * qx + tm[1] * qy + tm[2] * qz + tb[0];
+    ay = tm[3] * qx + tm[4] * qy + tm[5] * qz + tb[1];
+    az = tm[6] * qx + tm[7] * qy + tm[8] * qz + tb[2];
+  }
   for (let step = 0; step < maxSteps && r <= ESCAPE_TIME_RADIUS; step++) {
     // Mandelbulber2's `seq->GetSequence(i)`: slot `i mod n`, which is the
     // single map itself at n = 1.
@@ -1427,9 +1553,19 @@ function runEscapeOrbit(
       fy = link.w * fy;
       fz = link.w * fz;
     }
-    vx = fx + qx;
-    vy = fy + qy;
-    vz = fz + qz;
+    // The Mandelbrot form's offset — the QUERY POINT (folded before the
+    // orbit) — joined by the chain twist's: the whole sum rotated by the
+    // fixed isometry, `v <- R(f(v) + q + off)` (module doc). The untwisted
+    // lines are the original expression, verbatim.
+    if (tm !== null) {
+      vx = tm[0] * fx + tm[1] * fy + tm[2] * fz + ax;
+      vy = tm[3] * fx + tm[4] * fy + tm[5] * fz + ay;
+      vz = tm[6] * fx + tm[7] * fy + tm[8] * fz + az;
+    } else {
+      vx = fx + qx;
+      vy = fy + qy;
+      vz = fz + qz;
+    }
     dr = link.derivGrowth * localL * dr + 1;
     r = Math.sqrt(vx * vx + vy * vy + vz * vz);
     // Trap color and geometry share this ONE local-SDF evaluation and the
@@ -1489,6 +1625,17 @@ function escapePatternCarrierSample(
   let rings = 1;
   let sheets = 1;
   const maxSteps = ESCAPE_TIME_ITERATIONS * n;
+  // The chain twist's per-eval anchor — the value orbit's, same hoist.
+  const tm = de.twistM;
+  const tb = de.twistB;
+  let ax = 0;
+  let ay = 0;
+  let az = 0;
+  if (tm !== null && tb !== null) {
+    ax = tm[0] * qx + tm[1] * qy + tm[2] * qz + tb[0];
+    ay = tm[3] * qx + tm[4] * qy + tm[5] * qz + tb[1];
+    az = tm[6] * qx + tm[7] * qy + tm[8] * qz + tb[2];
+  }
   for (let step = 0; step < maxSteps && r <= de.boundingRadius; step++) {
     const link = links[step % n];
     const m = link.m;
@@ -1571,9 +1718,17 @@ function escapePatternCarrierSample(
       fy = link.w * fy;
       fz = link.w * fz;
     }
-    vx = fx + qx;
-    vy = fy + qy;
-    vz = fz + qz;
+    // The twisted offset add — the carrier mirrors the hit-info orbit,
+    // which applies the same chain twist the value body does.
+    if (tm !== null) {
+      vx = tm[0] * fx + tm[1] * fy + tm[2] * fz + ax;
+      vy = tm[3] * fx + tm[4] * fy + tm[5] * fz + ay;
+      vz = tm[6] * fx + tm[7] * fy + tm[8] * fz + az;
+    } else {
+      vx = fx + qx;
+      vy = fy + qy;
+      vz = fz + qz;
+    }
     r = Math.sqrt(vx * vx + vy * vy + vz * vz);
     rings = Math.min(rings, r / de.boundingRadius);
     sheets = Math.min(sheets, Math.abs(vy) / de.boundingRadius);

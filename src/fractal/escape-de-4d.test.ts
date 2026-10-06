@@ -12,6 +12,9 @@ import {
   analyzeEscapeSystem,
   buildEscapeDE,
   ESCAPE_LINK_BOXFOLD,
+  ESCAPE_LINK_MANDELBOX,
+  ESCAPE_LINK_SPHEREFOLD,
+  ESCAPE_TIME_ITERATIONS,
   ESCAPE_TIME_RADIUS,
   escapeSetContains,
   escapeShapeTrap,
@@ -25,6 +28,7 @@ import { mulberry32 } from "./rng";
 import { PEACE_SIGN_SHAPE, SHAPE_MARCH_SAFETY } from "./shapes";
 import { transformSeparatedSigmas4 } from "./surface-de-4d";
 import { SYMMETRY_PLANES } from "./types";
+import type { TwistAuthored } from "./twist";
 import type {
   SymmetryParams,
   Transform,
@@ -908,6 +912,8 @@ describe("probeEscapeFill4", () => {
       ...link,
       links: [link],
       logEstimate: false,
+      twistM: null,
+      twistB: null,
       symmetryOrder: 1,
       symmetryPlane: "xz",
       boundingRadius: ESCAPE_TIME_RADIUS,
@@ -1148,5 +1154,412 @@ describe("shape-trap geometry in estimateEscapeDistance4", () => {
     expect(estimateEscapeDistance4(de, p, 1, empty)).toBe(
       estimateEscapeDistance4(de, p, 1),
     );
+  });
+});
+
+describe("the 4D chain twist", () => {
+  /**
+   * The twisted 4D chain estimator as the module doc specifies it, FROZEN
+   * — the query fold, the four link kinds this dimension admits, the
+   * per-link post, and the twisted step map `v <- R(f(v) + q + off)` with
+   * the SO(4) rows inlined, written against the doc rather than against
+   * the estimator. A twisted 4D document has to reproduce this to the
+   * bit; never refactor it to share code with the estimator it checks.
+   */
+  function twistedChainReference4(
+    de: EscapeDE4,
+    p: Vec4,
+    maxIterations = ESCAPE_TIME_ITERATIONS,
+  ): number {
+    const foldAxis = (t: number, wall: number): number =>
+      2 * Math.max(-wall, Math.min(wall, t)) - t;
+    const planes: Record<string, [number, number]> = {
+      xy: [0, 1],
+      xz: [0, 2],
+      yz: [1, 2],
+      xw: [0, 3],
+      yw: [1, 3],
+      zw: [2, 3],
+    };
+    let qx = p[0];
+    let qy = p[1];
+    let qz = p[2];
+    let qw = p[3];
+    if (de.symmetryOrder > 1) {
+      const [ia, ib] = planes[de.symmetryPlane];
+      const sector = (2 * Math.PI) / de.symmetryOrder;
+      const coords = [p[0], p[1], p[2], p[3]];
+      const a = coords[ia];
+      const b = coords[ib];
+      const turn = Math.round(Math.atan2(b, a) / sector) * sector;
+      const c = Math.cos(turn);
+      const s = Math.sin(turn);
+      coords[ia] = a * c + b * s;
+      coords[ib] = Math.abs(b * c - a * s);
+      qx = coords[0];
+      qy = coords[1];
+      qz = coords[2];
+      qw = coords[3];
+    }
+    const links = de.links;
+    const n = links.length;
+    const tm = de.twistM;
+    const tb = de.twistB;
+    let ax = 0;
+    let ay = 0;
+    let az = 0;
+    let aw = 0;
+    if (tm !== null && tb !== null) {
+      ax = tm[0] * qx + tm[1] * qy + tm[2] * qz + tm[3] * qw + tb[0];
+      ay = tm[4] * qx + tm[5] * qy + tm[6] * qz + tm[7] * qw + tb[1];
+      az = tm[8] * qx + tm[9] * qy + tm[10] * qz + tm[11] * qw + tb[2];
+      aw = tm[12] * qx + tm[13] * qy + tm[14] * qz + tm[15] * qw + tb[3];
+    }
+    let vx = qx;
+    let vy = qy;
+    let vz = qz;
+    let vw = qw;
+    let dr = 1;
+    let r = Math.sqrt(vx * vx + vy * vy + vz * vz + vw * vw);
+    for (
+      let step = 0;
+      step < maxIterations * n && r <= ESCAPE_TIME_RADIUS;
+      step++
+    ) {
+      const link = links[step % n];
+      const m = link.m;
+      const yx = m[0] * vx + m[1] * vy + m[2] * vz + m[3] * vw + link.t[0];
+      const yy = m[4] * vx + m[5] * vy + m[6] * vz + m[7] * vw + link.t[1];
+      const yz = m[8] * vx + m[9] * vy + m[10] * vz + m[11] * vw + link.t[2];
+      const yw = m[12] * vx + m[13] * vy + m[14] * vz + m[15] * vw + link.t[3];
+      let fx: number;
+      let fy: number;
+      let fz: number;
+      let fw: number;
+      let localL: number;
+      const wall = link.boxLimit;
+      const mR2 = link.minRadius2;
+      const fR2 = link.fixedRadius2;
+      if (link.kind === ESCAPE_LINK_BOXFOLD) {
+        fx = foldAxis(yx, wall);
+        fy = foldAxis(yy, wall);
+        fz = foldAxis(yz, wall);
+        fw = foldAxis(yw, wall);
+        localL = 1;
+      } else if (link.kind === ESCAPE_LINK_SPHEREFOLD) {
+        const r2 = yx * yx + yy * yy + yz * yz + yw * yw;
+        const f = fR2 / Math.max(mR2, Math.min(fR2, r2));
+        fx = yx * f;
+        fy = yy * f;
+        fz = yz * f;
+        fw = yw * f;
+        localL = f;
+      } else if (link.kind === ESCAPE_LINK_MANDELBOX) {
+        const bx = foldAxis(yx, wall);
+        const by = foldAxis(yy, wall);
+        const bz = foldAxis(yz, wall);
+        const bw = foldAxis(yw, wall);
+        const r2 = bx * bx + by * by + bz * bz + bw * bw;
+        const f = fR2 / Math.max(mR2, Math.min(fR2, r2));
+        fx = bx * f;
+        fy = by * f;
+        fz = bz * f;
+        fw = bw * f;
+        localL = f;
+      } else {
+        fx = yx * yx - yy * yy - yz * yz - yw * yw;
+        fy = 2 * yx * yy;
+        fz = 2 * yx * yz;
+        fw = 2 * yx * yw;
+        localL = 2 * Math.sqrt(yx * yx + yy * yy + yz * yz + yw * yw);
+      }
+      if (link.postM !== null && link.postT !== null) {
+        const pm = link.postM;
+        const pt = link.postT;
+        const wx = link.w * fx;
+        const wy = link.w * fy;
+        const wz = link.w * fz;
+        const ww = link.w * fw;
+        fx = pm[0] * wx + pm[1] * wy + pm[2] * wz + pm[3] * ww + pt[0];
+        fy = pm[4] * wx + pm[5] * wy + pm[6] * wz + pm[7] * ww + pt[1];
+        fz = pm[8] * wx + pm[9] * wy + pm[10] * wz + pm[11] * ww + pt[2];
+        fw = pm[12] * wx + pm[13] * wy + pm[14] * wz + pm[15] * ww + pt[3];
+      } else {
+        fx = link.w * fx;
+        fy = link.w * fy;
+        fz = link.w * fz;
+        fw = link.w * fw;
+      }
+      if (tm !== null) {
+        vx = tm[0] * fx + tm[1] * fy + tm[2] * fz + tm[3] * fw + ax;
+        vy = tm[4] * fx + tm[5] * fy + tm[6] * fz + tm[7] * fw + ay;
+        vz = tm[8] * fx + tm[9] * fy + tm[10] * fz + tm[11] * fw + az;
+        vw = tm[12] * fx + tm[13] * fy + tm[14] * fz + tm[15] * fw + aw;
+      } else {
+        vx = fx + qx;
+        vy = fy + qy;
+        vz = fz + qz;
+        vw = fw + qw;
+      }
+      dr = link.derivGrowth * localL * dr + 1;
+      r = Math.sqrt(vx * vx + vy * vy + vz * vz + vw * vw);
+    }
+    if (!de.logEstimate) return r / dr;
+    return r <= 1 ? 0 : (0.5 * r * Math.log(r)) / dr;
+  }
+
+  it("leaves absence bit-identical and collapses a zeroed block back to it", () => {
+    const chain = [
+      canonicalMandelbox(),
+      canonicalMandelbox({ id: 1, w: { rotation: { xw: 0.3 } } }),
+    ];
+    const de = buildEscapeDE4(chain);
+    expect(de.twistM).toBeNull();
+    expect(de.twistB).toBeNull();
+    expect(de.boundingRadius).toBe(ESCAPE_TIME_RADIUS);
+    const zeroed = buildEscapeDE4(chain, null, undefined, {
+      rotation: [0, 0, 0],
+      offset: [0, 0, 0],
+      w: { rotation: { zw: 0 }, offset: 0 },
+    });
+    expect(zeroed.twistM).toBeNull();
+    expect(zeroed.twistB).toBeNull();
+    const rng = mulberry32(0x4d17);
+    for (let i = 0; i < 40; i++) {
+      const p: Vec4 = [
+        rng() * 7 - 3.5,
+        rng() * 7 - 3.5,
+        rng() * 7 - 3.5,
+        rng() * 2 - 1,
+      ];
+      expect(estimateEscapeDistance4(de, p)).toBe(
+        twistedChainReference4(de, p),
+      );
+    }
+  });
+
+  it("pins the twisted orbit to its frozen reference across fixtures and queries", () => {
+    const fixtures: Array<{
+      label: string;
+      transforms: Transform[];
+      twist: TwistAuthored;
+    }> = [
+      {
+        label: "4D chain, euler rotation only",
+        transforms: [
+          canonicalMandelbox(),
+          canonicalMandelbox({ id: 1, w: { rotation: { xw: 0.3 } } }),
+        ],
+        twist: { rotation: [0.3, -0.5, 0.2] },
+      },
+      {
+        label: "4D chain, w-plane rotation only",
+        transforms: [
+          canonicalMandelbox(),
+          canonicalMandelbox({ id: 1, w: { rotation: { yw: 0.4 } } }),
+        ],
+        twist: { w: { rotation: { zw: 0.7 } } },
+      },
+      {
+        label: "4D chain, offset with a fourth component",
+        transforms: [
+          canonicalMandelbox(),
+          canonicalMandelbox({ id: 1, w: { offset: 0.2 } }),
+        ],
+        twist: { offset: [0.6, -0.1, 0.3], w: { offset: 0.25 } },
+      },
+      {
+        label: "qsquare chain, full twist",
+        transforms: [
+          canonicalMandelbox(),
+          canonicalMandelbox({ id: 1, w: { rotation: { xw: 0.3 } } }),
+          powerMap(2, "qsquare"),
+        ],
+        twist: {
+          rotation: [0, -0.9272952180016122, 0],
+          offset: [1.4, 1.4, 1.4],
+          w: { rotation: { yw: 0.5 }, offset: 0.3 },
+        },
+      },
+      {
+        label: "posted 4D links",
+        transforms: [
+          canonicalMandelbox(),
+          canonicalMandelbox({
+            id: 1,
+            w: { rotation: { xw: 0.3 } },
+            post4: {
+              m: [1, 0, 0, 0, 0, 0.9, 0, 0.1, 0, 0, 1, 0, 0, -0.1, 0, 0.9],
+              t: [0, 0.05, 0, 0],
+            },
+          }),
+        ],
+        twist: { rotation: [0.5, 0, 0], w: { rotation: { xw: 0.2 } } },
+      },
+    ];
+    for (const fixture of fixtures) {
+      const de = buildEscapeDE4(
+        fixture.transforms,
+        null,
+        undefined,
+        fixture.twist,
+      );
+      const rng = mulberry32(0x644e);
+      for (let i = 0; i < 50; i++) {
+        const p: Vec4 = [
+          rng() * 9 - 4.5,
+          rng() * 9 - 4.5,
+          rng() * 9 - 4.5,
+          rng() * 3 - 1.5,
+        ];
+        expect(
+          estimateEscapeDistance4(de, p),
+          `${fixture.label} at ${p.join(", ")}`,
+        ).toBe(twistedChainReference4(de, p));
+      }
+    }
+  });
+
+  it("anchors the 3D twist at w = 0: a flat chain with a 3D-only twist estimates what the 3D module estimates", () => {
+    // The 3D-lift anchor the module doc names: the embedded Euler rows and
+    // the offset's first three components reproduce the 3D twist's matrix
+    // exactly, and the w = 0 orbit carries the fourth axis through as
+    // exact zeros — so the estimates agree TO THE BIT on the anchor slice.
+    const maps = [
+      canonicalMandelbox(),
+      foldMap(1, "boxfold", 1.6, { rotation: [0, 0.35, 0] }),
+    ];
+    for (const twist of [
+      { rotation: [0.3, -0.8, 0.5] } as TwistAuthored,
+      { offset: [0.7, -0.2, 0.4] } as TwistAuthored,
+      {
+        rotation: [0, -0.9272952180016122, 0],
+        offset: [1.4, 1.4, 1.4],
+      } as TwistAuthored,
+    ]) {
+      const de3 = buildEscapeDE(maps, null, undefined, twist);
+      const de4 = buildEscapeDE4(maps, null, undefined, twist);
+      const rng = mulberry32(0x0a4c);
+      for (let i = 0; i < 50; i++) {
+        const p: Vec3 = [rng() * 8 - 4, rng() * 8 - 4, rng() * 8 - 4];
+        expect(
+          estimateEscapeDistance4(de4, toVec4(p, 0)),
+          `twist ${JSON.stringify(twist)} at ${p.join(", ")}`,
+        ).toBe(estimateEscapeDistance(de3, p));
+      }
+    }
+  });
+
+  it("pre-composes the SO(4) twist: orthonormal rows, b = R·[off, offW], the ball grown by |b|", () => {
+    const de = buildEscapeDE4(
+      [
+        canonicalMandelbox(),
+        canonicalMandelbox({ id: 1, w: { rotation: { xw: 0.3 } } }),
+      ],
+      null,
+      undefined,
+      {
+        rotation: [0.1, 0.2, 0.3],
+        offset: [0.4, 0.5, 0.6],
+        w: { rotation: { yw: 0.4 }, offset: 0.7 },
+      },
+    );
+    const m = de.twistM!;
+    const b = de.twistB!;
+    expect(m).toHaveLength(16);
+    for (const row of [0, 4, 8, 12]) {
+      expect(
+        Math.hypot(m[row], m[row + 1], m[row + 2], m[row + 3]),
+      ).toBeCloseTo(1, 12);
+    }
+    expect(m[0] * m[4] + m[1] * m[5] + m[2] * m[6] + m[3] * m[7]).toBeCloseTo(
+      0,
+      12,
+    );
+    const off4 = [0.4, 0.5, 0.6, 0.7];
+    for (let r = 0; r < 4; r++) {
+      let sum = 0;
+      for (let c = 0; c < 4; c++) sum += m[r * 4 + c] * off4[c];
+      expect(b[r]).toBe(sum);
+    }
+    expect(de.boundingRadius).toBe(
+      ESCAPE_TIME_RADIUS + Math.hypot(b[0], b[1], b[2], b[3]),
+    );
+  });
+
+  it("responds to the w extension the 3D estimator has no axis for", () => {
+    const maps = [
+      canonicalMandelbox(),
+      canonicalMandelbox({ id: 1, w: { rotation: { xw: 0.3 } } }),
+    ];
+    const flat = buildEscapeDE4(maps, null, undefined, {
+      rotation: [0.4, 0.2, 0],
+    });
+    const lifted = buildEscapeDE4(maps, null, undefined, {
+      rotation: [0.4, 0.2, 0],
+      w: { rotation: { zw: 0.6 }, offset: 0.3 },
+    });
+    let differing = 0;
+    const rng = mulberry32(31);
+    for (let i = 0; i < 300; i++) {
+      const p: Vec4 = [
+        rng() * 6 - 3,
+        rng() * 6 - 3,
+        rng() * 6 - 3,
+        rng() * 2 - 1,
+      ];
+      if (
+        estimateEscapeDistance4(flat, p) !== estimateEscapeDistance4(lifted, p)
+      ) {
+        differing++;
+      }
+    }
+    expect(differing).toBeGreaterThan(150);
+  });
+
+  it("reproduces the untwisted orbit exactly where the twist commutes with the chain", () => {
+    // The 3D module's commuting-case certification one axis up: a chain of
+    // origin-centred box folds commutes with any signed permutation of the
+    // FOUR axes, so a 90° xy-plane twist leaves every (z, w)-axis orbit's
+    // recurrence character-identical.
+    const maps = [foldMap(0, "boxfold", 3), foldMap(1, "mandelbox", 2)];
+    const plain = buildEscapeDE4(maps);
+    const twisted = buildEscapeDE4(maps, null, undefined, {
+      w: { rotation: { xy: Math.PI / 2 } },
+    });
+    for (const [z, w] of [
+      [0, 0],
+      [0.5, 0],
+      [-0.5, 0.25],
+      [1.3, -0.6],
+    ] as const) {
+      const p: Vec4 = [0, 0, z, w];
+      expect(estimateEscapeDistance4(twisted, p)).toBe(
+        estimateEscapeDistance4(plain, p),
+      );
+    }
+  });
+
+  it("refuses a refused twist block (the resolver's reasons ride the throw)", () => {
+    expect(() =>
+      buildEscapeDE4(
+        [canonicalMandelbox(), canonicalMandelbox({ id: 1 })],
+        null,
+        undefined,
+        {
+          rotation: [Number.NaN, 0, 0],
+        },
+      ),
+    ).toThrow(/refused chain twist/);
+    expect(() =>
+      buildEscapeDE4(
+        [canonicalMandelbox(), canonicalMandelbox({ id: 1 })],
+        null,
+        undefined,
+        {
+          bogus: 1,
+        } as unknown as TwistAuthored,
+      ),
+    ).toThrow(/refused chain twist/);
   });
 });
