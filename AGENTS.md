@@ -48,6 +48,8 @@ the subsystem records below or its owning harness header:
   cycling vs chaining, the estimate form, the emptiness instruments.
 - `docs/gpu-bench-surface.md` — `npm run bench:surface`: what it pins, the
   known SwiftShader false failure, the fixture rows.
+- `docs/twisted-menger-family.md` — the twisted mod-Menger family's
+  record.
 - `docs/harness-sheets.md` — the `scripts/*.harness.ts` catalogue and each
   sheet's verdict.
 - `docs/fold-de-performance-brief.md`, `docs/quaternion-julia-brief.md`,
@@ -513,20 +515,14 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `postTrans` remains at 1216 and the two extra arrays append at 1232.
   - `menger-twist.ts` — the twisted mod-Menger family's ONE vocabulary: the
     authored `mengerTwist` block (levels / Euler rotation / per-level
-    offset; a Transform-style `w` extension lifts to the 4D hyper-Menger and
-    decides the scene's dimension) resolved sphere-inversion style —
-    refuse-not-clamp, no mutation; defaults are the reference construction
-    itself. NOT AN IFS: the repo twist sits BETWEEN carve levels at full
-    scale and no per-map composition closes — the measured per-map-rotation
-    refusals ride the `twistedSponge` presets. The estimators
-    (`menger-de.ts`/`menger-de-4d.ts`) are the single-chain carve oracles —
-    sound at every twist (isometry: each level's term is the true world
-    distance to the removed pattern; the running max is a lower bound,
-    membership-pinned), step scale 1.0 measured (0/62,400 boundary-shell
-    overshoots, `scripts/twisted-menger.harness.ts`), the 4D carve term the
-    3D median's mirror image (max-of-mins = second-largest of four). Full
-    record: `docs/twisted-menger-family.md`. App routing and the shader
-    mirrors are the family's next stage.
+    offset; a `w` extension lifts to the 4D hyper-Menger and decides the
+    scene's dimension), resolved sphere-inversion style; defaults are the
+    reference construction itself. NOT AN IFS — the twist sits BETWEEN
+    levels, no per-map composition closes. The estimators
+    (`menger-de.ts`/`-4d.ts`) are the single-chain carve oracles, sound at
+    every twist (isometry), step scale 1.0 measured (0/62,400 overshoots);
+    the 4D term is max-of-mins (second-largest of four). Record:
+    `docs/twisted-menger-family.md`; routing/mirrors: next stage.
   - `inversion.ts` — sphere inversion's ONE shared identity:
     `inversionBallScale`, the Möbius factor `R²/(|c|² − r²)` that takes a
     ball to a ball exactly, returning 0 — "no information", so a caller's
@@ -1174,27 +1170,14 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     position that costs the least.
     Full record — the per-axis extent figures and the rotation-cost
     comparison across link positions — in `docs/escape-time-family.md`.
-  - `qjulia-de.ts` — the quaternion Julia set's CPU oracle, `q <- q^2 + c`
-    (`qsquare` with the translation as the constant): gate, build and the
-    Böttcher estimate; a nonidentity post is REFUSED. The escape family's
-    only CERTIFIED estimator (`|dq'| = 2|q|·|dq|` exactly). NO RENDERER READS
-    IT: `scripts/qjulia-beauty.harness.ts` found the object SMOOTH at every
-    pose and zoom, so its cores and 4D lift are CLOSED won't-do. It stays as
-    that record and as the exact derivative the escape chain's `qsquare` link
-    reuses (`hybridChainQuaternion`), read in `v` space with `escape-de.ts`'s
-    form. Cost, step-scale and overshoot figures: its module doc.
-  - `bulb-de.ts` — the Mandelbulb CPU oracle: triplex power 8 in Mandelbrot
-    form, `v <- V(Mv + t) + p`, with `t` the live pre-power offset. `dr`
-    seeds at `sigma_max(M)` and carries that exact floor; the estimate is
-    the Böttcher log form from `|y|`, with `ln|r|` clamped below 1. It is a
-    HEURISTIC (unlike quaternion square), but measured step scale 1.0 stands;
-    evidence is in `scripts/bulb-preview.harness.ts`. `SURFACE_BULB` and the
-    WGSL `core:"bulb"` mirror it, and the three Mandelbulb presets route it.
-    A lone bulb belongs ONLY to this estimator; a bulb beside another link
-    belongs to the escape chain (`ESCAPE_LINK_BULB`), whose coordinates and
-    derivative form deliberately differ. A lone bulb with a non-identity
-    post is REFUSED: the frozen bulb params wire has no post rows; pairing it
-    with a fold routes the posted power through the chain instead.
+  - `qjulia-de.ts` — the quaternion Julia set's CPU oracle. Its module doc
+    carries every settled verdict: the conjugacy, the CERTIFIED estimate,
+    the smooth-alone renderer refusal (CLOSED won't-do, measured), the
+    hybrid-chain reuse, the cost figures; a nonidentity post is REFUSED.
+  - `bulb-de.ts` — the Mandelbulb CPU oracle. Its module doc carries every
+    settled verdict: the Mandelbrot form and `y`-space orbit, the Böttcher
+    estimate with the `dr` floor, measured step scale 1.0, the
+    lone-bulb/escape-chain split, the post refusal, the mirrors' warning.
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
     `FOUR_D_COLOR_MODES`/`SYMMETRY_PLANES` const arrays (single source of

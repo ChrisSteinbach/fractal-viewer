@@ -108,7 +108,8 @@
  * branch structure in this vocabulary, so `analyzeSurfaceSystem` refuses it
  * at every parameter and the complement is automatic. There is likewise no
  * flatness clause: the quaternions are natively 4D, and a `w` extension on
- * the map is exactly how the Julia constant acquires its `k` component.
+ * the map is exactly how the Julia constant acquires its `k` component. A
+ * nonidentity POST is REFUSED.
  */
 import { isIdentityAffine } from "./affine";
 import { composeAffine4, toTransform4 } from "./affine4";

@@ -152,6 +152,13 @@
  * estimator). Like both siblings there is no "must not contract" clause:
  * `analyzeSurfaceSystem` refuses every map with a non-fold variation
  * ("map N uses variations"), so the IFS complement is automatic.
+ *
+ * ROUTING. A lone bulb belongs ONLY to this estimator; a bulb beside
+ * another link belongs to the escape chain (`ESCAPE_LINK_BULB`), whose
+ * coordinates and derivative form deliberately differ. The three
+ * Mandelbulb presets route it. A lone bulb with a non-identity post is
+ * REFUSED: the frozen bulb params wire has no post rows; pairing it with
+ * a fold routes the posted power through the chain instead.
  */
 import { composeAffine, isIdentityAffine } from "./affine";
 import { isFlatTransform } from "./affine4";
