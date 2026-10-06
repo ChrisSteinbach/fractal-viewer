@@ -148,6 +148,7 @@ const SCENE_FIELDS = {
   // rides whole from the primary parent, like the look fields below.
   sphereInversion: "primary",
   finiteSolid: "primary",
+  chainTwist: "primary",
   numPoints: "primary",
   pointSize: "primary",
   colorMode: "primary",
@@ -939,6 +940,7 @@ function buildSnapshot(
 
   copyOptionalSceneField(snapshot, primary, "sphereInversion");
   copyOptionalSceneField(snapshot, primary, "finiteSolid");
+  copyOptionalSceneField(snapshot, primary, "chainTwist");
   copyOptionalSceneField(snapshot, primary, "customPalette");
   copyOptionalSceneField(snapshot, primary, "positionAxisColors");
   copyOptionalSceneField(snapshot, primary, "camera");
