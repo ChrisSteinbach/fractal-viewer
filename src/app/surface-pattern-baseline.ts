@@ -70,28 +70,28 @@ export const PRE_PATTERN_SOURCE_HASHES: Record<
     emitted: "9dfff5fed89b0f1d",
   },
   "3D escape finish0": {
-    resolved: "3a1614f818ee2ceb",
-    emitted: "3a1614f818ee2ceb",
+    resolved: "86f0c307bb5e92ad",
+    emitted: "86f0c307bb5e92ad",
   },
   "3D escape finish1": {
-    resolved: "1167aa5270fc0b4b",
-    emitted: "1167aa5270fc0b4b",
+    resolved: "71e9259a1de8a672",
+    emitted: "71e9259a1de8a672",
   },
   "3D escape+balloon finish0": {
-    resolved: "0782d8e0eeb244b4",
-    emitted: "438cd917df2e0117",
+    resolved: "a90b36c91af7e94f",
+    emitted: "22a13206008bddc5",
   },
   "3D escape+balloon finish1": {
-    resolved: "6c29761b44c1a0fb",
-    emitted: "b7a5b2ae2e534314",
+    resolved: "0fac34b766de662d",
+    emitted: "dcdc93e811623797",
   },
   "3D escape+plane finish0": {
-    resolved: "5cdbabf7ad2ffd82",
-    emitted: "9468c56d49d0280b",
+    resolved: "d99cd01801d1ceb7",
+    emitted: "2fd606033f825428",
   },
   "3D escape+plane finish1": {
-    resolved: "8b061cef149af3fc",
-    emitted: "5236a48f808a0f3b",
+    resolved: "582215cc94ca5726",
+    emitted: "ecb2c1f99e7c0b1b",
   },
   "3D bulb finish0": {
     resolved: "04c0733e93674a47",

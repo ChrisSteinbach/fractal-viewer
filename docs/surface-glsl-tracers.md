@@ -731,6 +731,17 @@ measured earlier in this section stripped from ~83-92KB raw down to
 keeps every variant far below it. And it is a MEASUREMENT pairing only:
 balloon is IFS-only, so no shipped session ever compiles this source.
 
+The chain twist cost the escape arm its uniforms (`uEscTwist`/`uEscTwistM`/
+`uEscTwistB`), the two orbit bodies' anchor hoist + conditional wrap, and
+the per-step bailout's move to `uEscapeRadius` — measured resolved /
+emitted: escape finish0 60494B (unstripped, both), escape finish1 62893B
+(unstripped), escape+trap 64171B (unstripped), escape+geometry+trap 64218B
+(unstripped), escape+finish+trap 66570B resolved / 14959B emitted (NOW
+STRIPPED — the benign crossing this doc predicted for every arm
+eventually), escape+geometry+finish+trap 66617B / 15585B (stripped). The
+trap-free and finish-free rows keep their comments; the finish rows'
+commentary now lives in the resolved source only.
+
 A FULL RE-MEASUREMENT of every variant closes out three stale figures in
 `surface-material.ts`'s own comments: the fold-lens variant was called
 "~79KB" against the ~80KB Mesa cliff, the escape arm "escape ~40KB", the

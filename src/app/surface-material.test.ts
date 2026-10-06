@@ -58,7 +58,7 @@ import {
   BULB_ITERATIONS,
   BULB_STEP_SCALE,
 } from "../fractal/bulb-de";
-import { buildEscapeDE } from "../fractal/escape-de";
+import { buildEscapeDE, ESCAPE_TIME_RADIUS } from "../fractal/escape-de";
 import { shapeTrapInvNorm } from "../fractal/shape-trap";
 import { activeMeshSdfAtlas } from "../fractal/mesh-sdf-atlas-cache";
 import {
@@ -152,12 +152,12 @@ const BALLOON_PALETTE_SOURCE_HASHES: Record<
     emitted: "fd44f5a17c42aeb3",
   },
   "3D escape+balloon finish0": {
-    resolved: "0782d8e0eeb244b4",
-    emitted: "438cd917df2e0117",
+    resolved: "a90b36c91af7e94f",
+    emitted: "22a13206008bddc5",
   },
   "3D escape+balloon finish1": {
-    resolved: "6c29761b44c1a0fb",
-    emitted: "b7a5b2ae2e534314",
+    resolved: "0fac34b766de662d",
+    emitted: "dcdc93e811623797",
   },
   "3D bulb+balloon finish0": {
     resolved: "c24a193a838a914c",
@@ -232,16 +232,16 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
     emitted: "1c65d10713495ab7",
   },
   "3D escape finish0": {
-    resolved: "3a1614f818ee2ceb",
-    emitted: "3a1614f818ee2ceb",
+    resolved: "86f0c307bb5e92ad",
+    emitted: "86f0c307bb5e92ad",
   },
   "3D escape+balloon finish0": {
-    resolved: "0782d8e0eeb244b4",
-    emitted: "438cd917df2e0117",
+    resolved: "a90b36c91af7e94f",
+    emitted: "22a13206008bddc5",
   },
   "3D escape+plane finish0": {
-    resolved: "5cdbabf7ad2ffd82",
-    emitted: "9468c56d49d0280b",
+    resolved: "d99cd01801d1ceb7",
+    emitted: "2fd606033f825428",
   },
   "3D bulb finish0": {
     resolved: "04c0733e93674a47",
@@ -280,16 +280,16 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
     emitted: "9dfff5fed89b0f1d",
   },
   "3D escape finish1": {
-    resolved: "1167aa5270fc0b4b",
-    emitted: "1167aa5270fc0b4b",
+    resolved: "71e9259a1de8a672",
+    emitted: "71e9259a1de8a672",
   },
   "3D escape+balloon finish1": {
-    resolved: "6c29761b44c1a0fb",
-    emitted: "b7a5b2ae2e534314",
+    resolved: "0fac34b766de662d",
+    emitted: "dcdc93e811623797",
   },
   "3D escape+plane finish1": {
-    resolved: "8b061cef149af3fc",
-    emitted: "5236a48f808a0f3b",
+    resolved: "582215cc94ca5726",
+    emitted: "ecb2c1f99e7c0b1b",
   },
   "3D bulb finish1": {
     resolved: "cbda974981f5b6c0",
@@ -1694,7 +1694,7 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
       ),
     ).toBe("267e1091ffe0f790052b4858e46ef0cc19f91578f48d486bbe6f428e0aab0a23");
     expect(sha256(sourceFor(a3, { escape: 1 }))).toBe(
-      "899383ab5521f7cb591c2e70cf1d4ce0b80f1d5f415ba64c2f9dcb05e591df6d",
+      "d268465cfef750252bf3d3d2e3949b23c553da6f4ae47f10cff244a49ffd6fb4",
     );
   });
 
@@ -3403,6 +3403,81 @@ describe("SURFACE_ESCAPE cross-family links", () => {
     // this packer's every other field is written to avoid.
     setEscapeSystem(material, buildEscapeDE(foldChain()), black);
     expect(material.uniforms.uEscLogForm.value).toBe(0);
+  });
+
+  it("packs the chain twist's rows + offset + flag, and clears them back for an untwisted chain", () => {
+    const material = createSurfaceMaterial();
+    // Default: flag 0 — the untwisted behaviour a material that never
+    // sees a twist reads.
+    expect(material.uniforms.uEscTwist.value).toBe(0);
+
+    const twoLinks: Transform[] = [
+      {
+        id: 0,
+        position: [0.4, 0.3, 0.2],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "mandelbox", weight: 2 }],
+      },
+      {
+        id: 1,
+        position: [0, 0, 0],
+        rotation: [0, 0.3, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "boxfold", weight: 1.6 }],
+      },
+    ];
+    const twisted = buildEscapeDE(twoLinks, null, undefined, {
+      rotation: [0.1, 0.2, 0.3],
+      offset: [0.4, 0.5, 0.6],
+    });
+    setEscapeSystem(material, twisted, black);
+    expect(material.uniforms.uEscTwist.value).toBe(1);
+    // Rows packed column-major — the escM slots' Matrix3 convention.
+    const m = twisted.twistM!;
+    expect(
+      Array.from(
+        (material.uniforms.uEscTwistM.value as THREE.Matrix3).elements,
+      ),
+    ).toEqual([m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]]);
+    const b = material.uniforms.uEscTwistB.value as THREE.Vector3;
+    expect([b.x, b.y, b.z]).toEqual(twisted.twistB);
+    // The marching ball grown by |b|; the per-step bailout stays the
+    // constant the set is defined by.
+    expect(material.uniforms.uBoundingRadius.value).toBe(
+      twisted.boundingRadius,
+    );
+    expect(material.uniforms.uEscapeRadius.value).toBe(ESCAPE_TIME_RADIUS);
+
+    // And BACK: a later untwisted chain must clear the flag and reset the
+    // rows — the stale-uniform bug this packer's every other field is
+    // written to avoid.
+    setEscapeSystem(material, buildEscapeDE(twoLinks), black);
+    expect(material.uniforms.uEscTwist.value).toBe(0);
+    expect(
+      Array.from(
+        (material.uniforms.uEscTwistM.value as THREE.Matrix3).elements,
+      ),
+    ).toEqual([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    const cleared = material.uniforms.uEscTwistB.value as THREE.Vector3;
+    expect([cleared.x, cleared.y, cleared.z]).toEqual([0, 0, 0]);
+  });
+
+  it("emits the twist's conditional wrap + anchor hoist in both orbit bodies, and the per-step bailout reads uEscapeRadius", () => {
+    const resolved = surfaceFragmentFor(1, 0);
+    // Both orbit-running overloads carry the hoist + the conditional.
+    const anchor = "vec3 twistAnchor = uEscTwist != 0";
+    const wrap = "v = uEscTwistM * fOut + twistAnchor;";
+    expect(resolved.split(anchor).length - 1).toBe(2);
+    expect(resolved.split(wrap).length - 1).toBe(2);
+    // The untwisted else runs the original line verbatim.
+    expect(resolved.split("v = fOut + q;").length - 1).toBe(2);
+    // The value body's per-step ORBIT BAILOUT, not the twist-grown
+    // marching ball; the hit-info body deliberately keeps
+    // uBoundingRadius — its rings/sheets/escFrac normalize by the grown
+    // ball, which the WGSL hit-info and the CPU carrier sample test too.
+    expect(resolved.split("if (r > uEscapeRadius) {").length - 1).toBe(1);
+    expect(resolved.split("if (r > uBoundingRadius) {").length - 1).toBe(1);
   });
 
   it("reads the terminal radius through the flag in BOTH bodies, never through the link that terminated", () => {
@@ -5737,7 +5812,7 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
     const cases = [
       {
         source: surfaceFragmentResolvedFor(1, 0),
-        hash: "3a1614f818ee2ceb190e3ecc395cd2d13b3cfd90c4f1847a8726051faedf29dd",
+        hash: "86f0c307bb5e92ad7114011b122735979b329bb13ab3fb004ec19e21581dc20f",
       },
       {
         source: surfaceFragmentResolvedFor(
@@ -5751,7 +5826,7 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
           undefined,
           PEACE_SIGN_SHAPE,
         ),
-        hash: "3816520af965dc7a72997e9466237db97eabbda879a8393ffe625dd5fe0b0c18",
+        hash: "ffba364784383cd357a15877de500a7c0971f73da5625b1338951ea58a2cf9b9",
       },
       {
         source: surfaceFragmentResolvedFor(
@@ -5765,7 +5840,7 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
           undefined,
           PEACE_SIGN_SHAPE,
         ),
-        hash: "4bbf1530ed1f991340b38475b45dc07258eba5577f642aee9fb5c8cebca15d45",
+        hash: "854088efdea155ee0900152012121c8824986a490711c1a77dd5b1d0325141d9",
       },
     ];
     for (const { source, hash } of cases) {
@@ -6004,27 +6079,51 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
     expect(grab(escape)).toBe(grab(bulb));
   });
 
-  it("keeps the two shipped forward arms under the strip threshold with the trap on — the reference peace-sign spec included", () => {
+  it("records the forward arms' strip statuses with the trap on — the reference peace-sign spec included", () => {
     // Measured at the change: escape+trap 60412 B (5124 B under), bulb+trap
     // 43752 B (21784 B under); with the finish arm too, escape+finish+trap
     // 62811 B (2725 B under) — THE pairing to watch next, and the reason
     // this assertion exists. Crossing is BENIGN (stripping brings the
     // emitted source to a third, far under Mesa's cliff); what this
     // protects is the arms' commentary surviving into a driver log.
+    //
+    // The chain twist crossed it for the FINISH rows (its uniforms + the
+    // bodies' wrap/anchor push escape+finish+trap to 66570 B and
+    // escape+geometry+finish+trap to 66617 B — both now STRIP, emitted
+    // 14959/15585 B, far under the cliff; the trap-free rows stay under:
+    // escape 60494, escape+trap 64171, escape+geometry+trap 64218). The
+    // finish rows therefore assert the strip FIRED, exactly the benign
+    // event the doc predicted, with the emitted source under the cliff.
     for (const finish of [0, 1]) {
-      expect(
-        surfaceFragmentResolvedFor(
-          1,
-          0,
-          0,
-          0,
-          0,
-          finish,
-          0,
-          undefined,
-          PEACE_SIGN_SHAPE,
-        ).length,
-      ).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+      const escapeResolved = surfaceFragmentResolvedFor(
+        1,
+        0,
+        0,
+        0,
+        0,
+        finish,
+        0,
+        undefined,
+        PEACE_SIGN_SHAPE,
+      ).length;
+      const escapeEmitted = surfaceFragmentFor(
+        1,
+        0,
+        0,
+        0,
+        0,
+        finish,
+        0,
+        undefined,
+        PEACE_SIGN_SHAPE,
+      ).length;
+      if (finish === 0) {
+        expect(escapeResolved).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+        expect(escapeEmitted).toBe(escapeResolved);
+      } else {
+        expect(escapeResolved).toBeGreaterThan(SURFACE_GLSL_STRIP_BYTES);
+        expect(escapeEmitted).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+      }
       expect(
         surfaceFragmentResolvedFor(
           0,
@@ -6041,24 +6140,47 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
     }
   });
 
-  it("keeps escape trap geometry under the resolved-source strip threshold, including finish", () => {
+  it("records escape trap geometry's strip statuses, including finish", () => {
+    // The chain twist crossed the finish row (66570 -> 66617 B resolved,
+    // 15585 B emitted — stripped, far under the cliff); the finish-free
+    // rows stay under (64218 B). Same benign event the forward-arms test
+    // records.
     for (const finish of [0, 1]) {
-      expect(
-        surfaceFragmentResolvedFor(
-          1,
-          0,
-          0,
-          0,
-          0,
-          finish,
-          0,
-          undefined,
-          PEACE_SIGN_SHAPE,
-          null,
-          false,
-          1,
-        ).length,
-      ).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+      const resolved = surfaceFragmentResolvedFor(
+        1,
+        0,
+        0,
+        0,
+        0,
+        finish,
+        0,
+        undefined,
+        PEACE_SIGN_SHAPE,
+        null,
+        false,
+        1,
+      ).length;
+      const emitted = surfaceFragmentFor(
+        1,
+        0,
+        0,
+        0,
+        0,
+        finish,
+        0,
+        undefined,
+        PEACE_SIGN_SHAPE,
+        null,
+        false,
+        1,
+      ).length;
+      if (finish === 0) {
+        expect(resolved).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+        expect(emitted).toBe(resolved);
+      } else {
+        expect(resolved).toBeGreaterThan(SURFACE_GLSL_STRIP_BYTES);
+        expect(emitted).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+      }
     }
   });
 
