@@ -511,6 +511,22 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     harness, with the 3D Slot's fold/parameter/extra lanes verbatim and all
     old offsets frozen. `SLOT4_STRIDE_BYTES` is 1296: its existing
     `postTrans` remains at 1216 and the two extra arrays append at 1232.
+  - `menger-twist.ts` — the twisted mod-Menger family's ONE vocabulary: the
+    authored `mengerTwist` block (levels / Euler rotation / per-level
+    offset; a Transform-style `w` extension lifts to the 4D hyper-Menger and
+    decides the scene's dimension) resolved sphere-inversion style —
+    refuse-not-clamp, no mutation; defaults are the reference construction
+    itself. NOT AN IFS: the repo twist sits BETWEEN carve levels at full
+    scale and no per-map composition closes — the measured per-map-rotation
+    refusals ride the `twistedSponge` presets. The estimators
+    (`menger-de.ts`/`menger-de-4d.ts`) are the single-chain carve oracles —
+    sound at every twist (isometry: each level's term is the true world
+    distance to the removed pattern; the running max is a lower bound,
+    membership-pinned), step scale 1.0 measured (0/62,400 boundary-shell
+    overshoots, `scripts/twisted-menger.harness.ts`), the 4D carve term the
+    3D median's mirror image (max-of-mins = second-largest of four). Full
+    record: `docs/twisted-menger-family.md`. App routing and the shader
+    mirrors are the family's next stage.
   - `inversion.ts` — sphere inversion's ONE shared identity:
     `inversionBallScale`, the Möbius factor `R²/(|c|² − r²)` that takes a
     ball to a ball exactly, returning 0 — "no information", so a caller's

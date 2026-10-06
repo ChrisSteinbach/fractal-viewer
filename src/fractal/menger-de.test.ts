@@ -35,9 +35,11 @@ function constructionOf(
 
 describe("menger-twist resolver", () => {
   it("fills the defaults with the reference construction (4 levels, the ~53° Y twist, no offset)", () => {
-    const { ok, construction } = resolveMengerTwist({});
-    expect(ok).toBe(true);
-    if (!ok) return;
+    const resolution = resolveMengerTwist({});
+    if (!resolution.ok) {
+      throw new Error(resolution.reasons.join("; "));
+    }
+    const construction = resolution.construction;
     expect(construction.levels).toBe(4);
     expect(construction.rotation).toEqual([0, -0.9272952180016122, 0]);
     expect(construction.offset).toEqual([0, 0, 0]);
@@ -62,10 +64,14 @@ describe("menger-twist resolver", () => {
       { w: "nope" } as unknown as MengerTwistAuthored,
     ];
     for (const authored of cases) {
-      const { ok, reasons } = resolveMengerTwist(authored);
-      expect(ok, JSON.stringify(authored)).toBe(false);
-      if (ok) continue;
-      expect(reasons.length, JSON.stringify(authored)).toBeGreaterThan(0);
+      const resolution = resolveMengerTwist(authored);
+      if (resolution.ok) {
+        throw new Error(`expected refusal: ${JSON.stringify(authored)}`);
+      }
+      expect(
+        resolution.reasons.length,
+        JSON.stringify(authored),
+      ).toBeGreaterThan(0);
     }
   });
 
@@ -86,12 +92,12 @@ describe("menger-twist resolver", () => {
   });
 
   it("never mutates its input", () => {
-    const authored: MengerTwistAuthored = Object.freeze({
+    const authored: MengerTwistAuthored = {
       levels: 3,
-      rotation: Object.freeze([0.1, 0.2, 0.3] as Vec3),
-      offset: Object.freeze([0.4, 0.5, 0.6] as Vec3),
-      w: Object.freeze({ rotation: Object.freeze({ xw: 0.7 }), offset: 0.8 }),
-    });
+      rotation: [0.1, 0.2, 0.3],
+      offset: [0.4, 0.5, 0.6],
+      w: { rotation: { xw: 0.7 }, offset: 0.8 },
+    };
     const before = JSON.stringify(authored);
     resolveMengerTwist(authored);
     expect(JSON.stringify(authored)).toBe(before);
