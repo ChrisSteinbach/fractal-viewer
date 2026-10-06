@@ -1371,8 +1371,10 @@ describe("Ui table-driven exact numeric controls", () => {
     const ranges = SCALAR_CONTROLS.filter((spec) => spec.kind === "range");
 
     // 47 plus the six sphere-inversion sliders (radius, seed size,
-    // half-thickness, cut radius, cut offset, depth).
-    expect(ranges).toHaveLength(53);
+    // half-thickness, cut radius, cut offset, depth) and the ten chain-twist
+    // sliders (rotation XYZ, offset XYZ, the three w-plane turns, the w
+    // offset).
+    expect(ranges).toHaveLength(63);
     for (const spec of ranges) {
       const slider = document.getElementById(spec.id);
       const number = exactInput(spec.id);

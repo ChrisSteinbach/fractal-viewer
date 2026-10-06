@@ -8425,3 +8425,72 @@ describe("decodeScene fourD world slice", () => {
     expect(result!.fourD!.sliceCenter).toBe(0.25);
   });
 });
+
+describe("chain-twist codec (the escape chain's twist block)", () => {
+  it("encodes a scene without the block byte-identically to one predating the field", () => {
+    const s = baseSnapshot();
+    const withUndefined = { ...s, chainTwist: undefined };
+    expect(encodeScene(withUndefined)).toBe(encodeScene(s));
+    expect(decodeScene(encodeScene(s))!.chainTwist).toBeUndefined();
+  });
+
+  it("round-trips a live block verbatim, w extension included", () => {
+    const block = {
+      rotation: [0.1, -0.9272952180016122, 0.3] as Vec3,
+      offset: [0.4, 0.5, 0.6] as Vec3,
+      w: { rotation: { yw: 0.7 }, offset: -0.25 },
+    };
+    const hash = encodeScene({ ...baseSnapshot(), chainTwist: block });
+    expect(decodeScene(hash)!.chainTwist).toEqual(block);
+    expect(encodeScene(decodeScene(hash)!)).toBe(hash);
+  });
+
+  it("preserves a refused block verbatim through decode then encode (unknown key, non-finite, future field)", () => {
+    const block = {
+      rotation: [0.1, "nope", 0.3],
+      bogus: 1,
+      w: { future: [1, { nested: null }] },
+    } as unknown as SceneSnapshot["chainTwist"];
+    const hash = encodeScene({ ...baseSnapshot(), chainTwist: block });
+    const decoded = decodeScene(hash)!;
+    expect(decoded.chainTwist).toEqual(block);
+    expect(encodeScene(decoded)).toBe(hash);
+  });
+
+  it("drops a value that cannot be a block (array, scalar, null) to absent without rejecting the scene", () => {
+    for (const raw of [[1, 2], 5, "twist", null]) {
+      const body = encodeScene(baseSnapshot())
+        .slice(3)
+        .replace(/-/g, "+")
+        .replace(/_/g, "/");
+      const json = JSON.parse(
+        atob(body + "=".repeat((4 - (body.length % 4)) % 4)),
+      ) as Record<string, unknown>;
+      json.chainTwist = raw;
+      const hash =
+        "v1=" +
+        btoa(JSON.stringify(json))
+          .replace(/\+/g, "-")
+          .replace(/\//g, "_")
+          .replace(/=+$/, "");
+      const decoded = decodeScene(hash);
+      expect(decoded, JSON.stringify(raw)).not.toBeNull();
+      expect(decoded!.chainTwist).toBeUndefined();
+    }
+  });
+
+  it("clears the block when restoring a legacy snapshot without one", () => {
+    const base = initialState(true);
+    const withBlock = fromSnapshot(
+      {
+        ...baseSnapshot(),
+        chainTwist: { rotation: [0.3, 0, 0] as Vec3 },
+      },
+      base,
+    );
+    expect(withBlock.chainTwist).toEqual({ rotation: [0.3, 0, 0] });
+    const cleared = fromSnapshot(baseSnapshot(), base);
+    expect(cleared.chainTwist).toBeUndefined();
+    expect(encodeScene(toSnapshot(cleared))).toBe(encodeScene(baseSnapshot()));
+  });
+});

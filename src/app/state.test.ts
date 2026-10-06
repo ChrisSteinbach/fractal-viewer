@@ -188,6 +188,8 @@ import {
   systemIsNonFlat,
   displayedIsNonFlat,
   sceneIsNonFlat,
+  setChainTwist,
+  setChainTwistField,
   setSphereInversion,
   updateTransform,
 } from "./state";
@@ -204,7 +206,7 @@ import { seedCustomStops } from "../fractal/palette";
 import type { CustomPalette } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
 import { chaosRowIsNonTrivial, MAX_TRANSFORMS } from "../fractal/chaos-game";
-import type { ShapeTrap, Transform } from "../fractal/types";
+import type { ShapeTrap, Transform, Vec3 } from "../fractal/types";
 import {
   CRESCENT_MOON_SHAPE,
   FACETED_CRYSTAL_SHAPE,
@@ -2954,5 +2956,62 @@ describe("setTiling (the space-tiling block)", () => {
     const on = setTiling(base, lattice);
     expect(on.tiling).toBe(lattice);
     expect(setTiling(on, null).tiling).toBeUndefined();
+  });
+});
+
+describe("setChainTwist / setChainTwistField (the escape chain's twist block)", () => {
+  it("stores the block as authored and clears it with null", () => {
+    const block = {
+      rotation: [0.1, 0.2, 0.3] as Vec3,
+      offset: [0.4, 0, 0] as Vec3,
+    };
+    const withBlock = setChainTwist(initialState(true), block);
+    expect(withBlock.chainTwist).toEqual(block);
+    const cleared = setChainTwist(withBlock, null);
+    expect(cleared.chainTwist).toBeUndefined();
+  });
+
+  it("merges one field at a time and collapses a trivially-valued block to absent", () => {
+    const base = initialState(true);
+    const rotated = setChainTwistField(base, "rotation.y", -0.5);
+    expect(rotated.chainTwist).toEqual({ rotation: [0, -0.5, 0] });
+    const offset = setChainTwistField(rotated, "offset.z", 1.4);
+    expect(offset.chainTwist).toEqual({
+      rotation: [0, -0.5, 0],
+      offset: [0, 0, 1.4],
+    });
+    // Merging on an absent block starts from the neutral defaults.
+    const fresh = setChainTwistField(base, "offset.x", 0.2);
+    expect(fresh.chainTwist).toEqual({ offset: [0.2, 0, 0] });
+    // Dragging every value back to neutral REMOVES the block — the
+    // fold-length rows' rule one level up.
+    const back = setChainTwistField(
+      setChainTwistField(
+        setChainTwistField(offset, "rotation.y", 0),
+        "offset.z",
+        0,
+      ),
+      "offset.x",
+      0,
+    );
+    expect(back.chainTwist).toBeUndefined();
+  });
+
+  it("merges the w extension's fields and keeps a refused block as authored", () => {
+    const base = initialState(true);
+    const lifted = setChainTwistField(base, "w.rotation.xw", 0.7);
+    expect(lifted.chainTwist).toEqual({ w: { rotation: { xw: 0.7 } } });
+    const withOffset = setChainTwistField(lifted, "w.offset", -0.25);
+    expect(withOffset.chainTwist).toEqual({
+      w: { rotation: { xw: 0.7 }, offset: -0.25 },
+    });
+    // A non-finite slider value is a no-op (never stored).
+    expect(
+      setChainTwistField(withOffset, "rotation.x", Number.NaN).chainTwist,
+    ).toEqual(withOffset.chainTwist);
+    // An unknown field path is a no-op too.
+    expect(setChainTwistField(withOffset, "bogus", 1).chainTwist).toEqual(
+      withOffset.chainTwist,
+    );
   });
 });

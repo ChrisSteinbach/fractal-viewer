@@ -16,7 +16,7 @@ import {
 import type { Preset } from "../fractal/presets";
 import { hyperMengerSpongeTransforms } from "../fractal/finite-solid";
 import { mengerSponge } from "../fractal/presets";
-import { shapeSdfSource } from "../fractal/shapes";
+import { PEACE_SIGN_SHAPE, shapeSdfSource } from "../fractal/shapes";
 import type { ShapeSpec } from "../fractal/shapes";
 import type { TilingSpec } from "../fractal/tiling";
 import type { SymmetryParams, Transform } from "../fractal/types";
@@ -2299,5 +2299,173 @@ describe("the finite-solid route", () => {
     );
     expect(result.status).toBe("ineligible");
     expect(result.note).toContain("Space tiling");
+  });
+});
+
+describe("the chain twist's routing", () => {
+  /** The canonical non-contracting Mandelbox chain the escape gate admits. */
+  const mboxChain: Transform[] = [
+    {
+      id: 0,
+      position: [0.4, 0.3, 0.2],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: [{ type: "mandelbox", weight: 2 }],
+    },
+    {
+      id: 1,
+      position: [0, 0, 0],
+      rotation: [0, 0.35, 0],
+      scale: [1, 1, 1],
+      variations: [{ type: "boxfold", weight: 1.6 }],
+    },
+  ];
+
+  function derive(
+    transforms: Transform[],
+    twist: unknown,
+    opts: { computeAvailable?: boolean; tiling?: TilingSpec | null } = {},
+  ): ReturnType<typeof deriveSurfaceEligibility> {
+    return deriveSurfaceEligibility(
+      transforms,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: opts.computeAvailable ?? true },
+      null,
+      null,
+      opts.tiling ?? null,
+      undefined,
+      null,
+      null,
+      twist as never,
+    );
+  }
+
+  it("leaves an absent or trivial twist exactly as before", () => {
+    const plain = deriveSurfaceEligibility(mboxChain, null, NO_SYMMETRY, {
+      computeAvailable: true,
+    });
+    const absent = derive(mboxChain, undefined);
+    const trivial = derive(mboxChain, {
+      rotation: [0, 0, 0],
+      offset: [0, 0, 0],
+    });
+    for (const result of [absent, trivial]) {
+      expect(result.status).toBe(plain.status);
+      expect(result.kind).toBe(plain.kind);
+      expect(result.note).toBe(plain.note);
+    }
+    expect(plain.kind).toBe("escape");
+  });
+
+  it("discloses a live twist on the escape note and refuses tiling beside it", () => {
+    const live = derive(mboxChain, { rotation: [0.3, -0.2, 0.1] });
+    expect(live.status).toBe("degraded");
+    expect(live.kind).toBe("escape");
+    expect(live.note).toContain("chain twist");
+    const tiled = derive(
+      mboxChain,
+      { rotation: [0.3, 0, 0] },
+      {
+        tiling: { group: "a3" },
+      },
+    );
+    expect(tiled.status).toBe("ineligible");
+    expect(tiled.note).toContain("Space tiling");
+  });
+
+  it("lifts a w-bearing twist on a flat document to the 4D chain, compute-only", () => {
+    const lifted = derive(mboxChain, { w: { offset: 0.3 } });
+    expect(lifted.kind).toBe("escape4");
+    expect(lifted.status).toBe("degraded");
+    const withoutCompute = derive(
+      mboxChain,
+      { w: { offset: 0.3 } },
+      {
+        computeAvailable: false,
+      },
+    );
+    expect(withoutCompute.status).toBe("ineligible");
+    expect(withoutCompute.note).toContain("compute");
+  });
+
+  it("refuses a w-bearing twist on a chain the 4D gate refuses (a triplex-power link)", () => {
+    const bulbChain: Transform[] = [
+      ...mboxChain,
+      {
+        id: 2,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.4, 0.4, 0.4],
+        variations: [{ type: "bulb", weight: 1 }],
+      },
+    ];
+    const result = derive(bulbChain, { w: { offset: 0.3 } });
+    expect(result.status).toBe("ineligible");
+    expect(result.note).toContain("w extension");
+    expect(result.note).toContain("triplex");
+  });
+
+  it("refuses the twist beside the lone Mandelbulb route (no chain to twist)", () => {
+    const bulb: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "bulb", weight: 1 }],
+      },
+    ];
+    const result = derive(bulb, { rotation: [0.3, 0, 0] });
+    expect(result.status).toBe("ineligible");
+    expect(result.note).toContain("lone Mandelbulb");
+  });
+
+  it("discloses a dormant twist on an IFS route", () => {
+    const ifs: Transform[] = [
+      {
+        id: 0,
+        position: [0.5, 0.5, 0.5],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        variations: [],
+      },
+      {
+        id: 1,
+        position: [-0.5, -0.5, 0.5],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        variations: [],
+      },
+    ];
+    const result = derive(ifs, { rotation: [0.3, 0, 0] });
+    expect(result.kind).toBe("ifs");
+    expect(result.status).toBe("degraded");
+    expect(result.note).toContain("untwisted");
+  });
+
+  it("surfaces the resolver's refusal verbatim", () => {
+    const result = derive(mboxChain, { rotation: [Number.NaN, 0, 0] });
+    expect(result.status).toBe("ineligible");
+    expect(result.note).toContain("chain twist refused");
+  });
+
+  it("refuses a shape trap beside a live twist", () => {
+    const trap = { shape: PEACE_SIGN_SHAPE } as never;
+    const result = deriveSurfaceEligibility(
+      mboxChain,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      trap,
+      null,
+      undefined,
+      null,
+      null,
+      { rotation: [0.3, 0, 0] },
+    );
+    expect(result.status).toBe("ineligible");
+    expect(result.note).toContain("shape trap");
   });
 });

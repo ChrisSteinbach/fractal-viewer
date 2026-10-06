@@ -55,6 +55,7 @@ import {
   type SphereInversionNumericField,
 } from "./sphere-inversion-controls";
 import { clamp } from "../fractal/vec";
+import { setChainTwistField } from "./state";
 import {
   DEFAULT_FLAME_PALETTE,
   DEFAULT_SOLID_PALETTE,
@@ -1096,6 +1097,23 @@ function numericControl(
     ...(options.bounds ? { bounds: options.bounds } : {}),
     ...(options.numberToRange ? { numberToRange: options.numberToRange } : {}),
   };
+}
+
+/**
+ * The chain twist's edit behavior: document state read at Surface entry,
+ * so an edit re-derives the route (a twist can lift a flat document to the
+ * 4D chain or refuse a combination) and restarts the session — the
+ * symmetry section's restart discipline.
+ */
+function chainTwistEffect(_s: AppState, fx: ControlEffects): void {
+  fx.refreshSurfaceEligibility();
+  fx.restartSurfaceRender();
+}
+
+/** The twist readout: radians to two decimals (the numeric companion
+ * carries the exact value; the label is a glance). */
+function twistAngleLabel(value: number): string {
+  return `${value.toFixed(2)}`;
 }
 
 export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
@@ -3019,6 +3037,207 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     read: (s) => String(s.shapeTrap?.fade ?? 0),
     apply: (s, raw) => updateShapeTrap(s, { fade: Number(raw) }),
     effect: shapeTrapLiveEffect,
+  },
+  {
+    // The CHAIN TWIST's authored fields — one slider per number, merged
+    // into the document's block through setChainTwistField (which
+    // collapses a trivially-valued block to absent, so dragging every
+    // value back to neutral is the same edit as clearing). Radians for
+    // the rotations, world units for the offsets; the 4D rows live under
+    // chainTwist4DRows and show when the set is 4D or the block already
+    // carries a w extension.
+    kind: "range",
+    id: "chainTwistRotationXSlider",
+    label: {
+      id: "chainTwistRotationXLabel",
+      text: (s) => twistAngleLabel(s.chainTwist?.rotation?.[0] ?? 0),
+    },
+    numeric: numericControl(
+      "Chain twist rotation X",
+      -Math.PI,
+      Math.PI,
+      0.01,
+      (s) => s.chainTwist?.rotation?.[0] ?? 0,
+      (s, value) => setChainTwistField(s, "rotation.x", value),
+    ),
+    read: (s) => String(s.chainTwist?.rotation?.[0] ?? 0),
+    apply: (s, raw) => setChainTwistField(s, "rotation.x", Number(raw)),
+    effect: chainTwistEffect,
+  },
+  {
+    kind: "range",
+    id: "chainTwistRotationYSlider",
+    label: {
+      id: "chainTwistRotationYLabel",
+      text: (s) => twistAngleLabel(s.chainTwist?.rotation?.[1] ?? 0),
+    },
+    numeric: numericControl(
+      "Chain twist rotation Y",
+      -Math.PI,
+      Math.PI,
+      0.01,
+      (s) => s.chainTwist?.rotation?.[1] ?? 0,
+      (s, value) => setChainTwistField(s, "rotation.y", value),
+    ),
+    read: (s) => String(s.chainTwist?.rotation?.[1] ?? 0),
+    apply: (s, raw) => setChainTwistField(s, "rotation.y", Number(raw)),
+    effect: chainTwistEffect,
+  },
+  {
+    kind: "range",
+    id: "chainTwistRotationZSlider",
+    label: {
+      id: "chainTwistRotationZLabel",
+      text: (s) => twistAngleLabel(s.chainTwist?.rotation?.[2] ?? 0),
+    },
+    numeric: numericControl(
+      "Chain twist rotation Z",
+      -Math.PI,
+      Math.PI,
+      0.01,
+      (s) => s.chainTwist?.rotation?.[2] ?? 0,
+      (s, value) => setChainTwistField(s, "rotation.z", value),
+    ),
+    read: (s) => String(s.chainTwist?.rotation?.[2] ?? 0),
+    apply: (s, raw) => setChainTwistField(s, "rotation.z", Number(raw)),
+    effect: chainTwistEffect,
+  },
+  {
+    kind: "range",
+    id: "chainTwistOffsetXSlider",
+    label: {
+      id: "chainTwistOffsetXLabel",
+      text: (s) => twistAngleLabel(s.chainTwist?.offset?.[0] ?? 0),
+    },
+    numeric: numericControl(
+      "Chain twist offset X",
+      -2,
+      2,
+      0.01,
+      (s) => s.chainTwist?.offset?.[0] ?? 0,
+      (s, value) => setChainTwistField(s, "offset.x", value),
+    ),
+    read: (s) => String(s.chainTwist?.offset?.[0] ?? 0),
+    apply: (s, raw) => setChainTwistField(s, "offset.x", Number(raw)),
+    effect: chainTwistEffect,
+  },
+  {
+    kind: "range",
+    id: "chainTwistOffsetYSlider",
+    label: {
+      id: "chainTwistOffsetYLabel",
+      text: (s) => twistAngleLabel(s.chainTwist?.offset?.[1] ?? 0),
+    },
+    numeric: numericControl(
+      "Chain twist offset Y",
+      -2,
+      2,
+      0.01,
+      (s) => s.chainTwist?.offset?.[1] ?? 0,
+      (s, value) => setChainTwistField(s, "offset.y", value),
+    ),
+    read: (s) => String(s.chainTwist?.offset?.[1] ?? 0),
+    apply: (s, raw) => setChainTwistField(s, "offset.y", Number(raw)),
+    effect: chainTwistEffect,
+  },
+  {
+    kind: "range",
+    id: "chainTwistOffsetZSlider",
+    label: {
+      id: "chainTwistOffsetZLabel",
+      text: (s) => twistAngleLabel(s.chainTwist?.offset?.[2] ?? 0),
+    },
+    numeric: numericControl(
+      "Chain twist offset Z",
+      -2,
+      2,
+      0.01,
+      (s) => s.chainTwist?.offset?.[2] ?? 0,
+      (s, value) => setChainTwistField(s, "offset.z", value),
+    ),
+    read: (s) => String(s.chainTwist?.offset?.[2] ?? 0),
+    apply: (s, raw) => setChainTwistField(s, "offset.z", Number(raw)),
+    effect: chainTwistEffect,
+  },
+  {
+    // The twist's SO(4) rows: the w-mixing planes the 4D chain's estimator
+    // applies, plus the fourth offset component. A non-trivial value here
+    // makes the SET 4D (the eligibility derivation routes the session to
+    // the 4D chain); the rows show only when that is reachable.
+    kind: "range",
+    id: "chainTwistXWSlider",
+    label: {
+      id: "chainTwistXWLabel",
+      text: (s) => twistAngleLabel(s.chainTwist?.w?.rotation?.xw ?? 0),
+    },
+    numeric: numericControl(
+      "Chain twist XW turn",
+      -Math.PI,
+      Math.PI,
+      0.01,
+      (s) => s.chainTwist?.w?.rotation?.xw ?? 0,
+      (s, value) => setChainTwistField(s, "w.rotation.xw", value),
+    ),
+    read: (s) => String(s.chainTwist?.w?.rotation?.xw ?? 0),
+    apply: (s, raw) => setChainTwistField(s, "w.rotation.xw", Number(raw)),
+    effect: chainTwistEffect,
+  },
+  {
+    kind: "range",
+    id: "chainTwistYWSlider",
+    label: {
+      id: "chainTwistYWLabel",
+      text: (s) => twistAngleLabel(s.chainTwist?.w?.rotation?.yw ?? 0),
+    },
+    numeric: numericControl(
+      "Chain twist YW turn",
+      -Math.PI,
+      Math.PI,
+      0.01,
+      (s) => s.chainTwist?.w?.rotation?.yw ?? 0,
+      (s, value) => setChainTwistField(s, "w.rotation.yw", value),
+    ),
+    read: (s) => String(s.chainTwist?.w?.rotation?.yw ?? 0),
+    apply: (s, raw) => setChainTwistField(s, "w.rotation.yw", Number(raw)),
+    effect: chainTwistEffect,
+  },
+  {
+    kind: "range",
+    id: "chainTwistZWSlider",
+    label: {
+      id: "chainTwistZWLabel",
+      text: (s) => twistAngleLabel(s.chainTwist?.w?.rotation?.zw ?? 0),
+    },
+    numeric: numericControl(
+      "Chain twist ZW turn",
+      -Math.PI,
+      Math.PI,
+      0.01,
+      (s) => s.chainTwist?.w?.rotation?.zw ?? 0,
+      (s, value) => setChainTwistField(s, "w.rotation.zw", value),
+    ),
+    read: (s) => String(s.chainTwist?.w?.rotation?.zw ?? 0),
+    apply: (s, raw) => setChainTwistField(s, "w.rotation.zw", Number(raw)),
+    effect: chainTwistEffect,
+  },
+  {
+    kind: "range",
+    id: "chainTwistWOffsetSlider",
+    label: {
+      id: "chainTwistWOffsetLabel",
+      text: (s) => twistAngleLabel(s.chainTwist?.w?.offset ?? 0),
+    },
+    numeric: numericControl(
+      "Chain twist W offset",
+      -2,
+      2,
+      0.01,
+      (s) => s.chainTwist?.w?.offset ?? 0,
+      (s, value) => setChainTwistField(s, "w.offset", value),
+    ),
+    read: (s) => String(s.chainTwist?.w?.offset ?? 0),
+    apply: (s, raw) => setChainTwistField(s, "w.offset", Number(raw)),
+    effect: chainTwistEffect,
   },
 ];
 

@@ -29,6 +29,8 @@ import type { TilingSpec } from "../fractal/tiling";
 import { scenePartsAreNonFlat } from "../fractal/scene-dimension";
 import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
 import type { FiniteSolidAuthored } from "../fractal/finite-solid";
+import { resolveTwist, twistIsTrivial } from "../fractal/twist";
+import type { TwistAuthored } from "../fractal/twist";
 import {
   SHAPE_TRAP_GEOMETRY_LEVEL_MAX,
   resolveShapeTrap,
@@ -545,6 +547,27 @@ export interface AppState {
    * never interpolate it (it is read once per Surface enter).
    */
   finiteSolid?: FiniteSolidAuthored;
+  /**
+   * Optional chain-twist block (`fractal/twist.ts`'s shared authored form).
+   * Applies a fixed rigid twist — `v <- R(f(v) + q + off)` at every link —
+   * to the escape-time chain Surface renders from this document's
+   * transforms, and its `w` extension (a non-trivial one) makes the
+   * rendered set 4D, routing the session to the 4D chain. The transform
+   * system REMAINS the subject: this is a composition ON the escape
+   * family's orbit, not a replacement of it (the sphereInversion
+   * block's shape it follows). Stored EXACTLY as authored or decoded — a
+   * block the resolver refuses (an unknown key, a non-finite angle) is
+   * kept verbatim and surfaces its refusal through the Surface gate,
+   * never clamped or dropped. Absent or trivial (identity rotation, zero
+   * offset) ⇒ byte-identical to every document predating the field, and
+   * every renderer reads the untwisted chain. Scene content: persists and
+   * rides shared links; morphs never interpolate it (the target's block
+   * applies from a replace-load's first push, the schedule's placement).
+   * Only the escape-time Surface routes read it; Points/Flame/Solid draw
+   * the transforms' own debris cloud as before and the panel discloses
+   * that scope.
+   */
+  chainTwist?: TwistAuthored;
   numPoints: number;
   /** Multiplier on each render style's base point size; 1 = as authored. */
   pointSize: number;
@@ -2296,6 +2319,73 @@ export function setFiniteSolid(
 ): AppState {
   if (!finiteSolid) return { ...state, finiteSolid: undefined };
   return { ...state, finiteSolid };
+}
+
+/**
+ * Install/replace the chain-twist block, or clear it with `null` —
+ * {@link setSphereInversion}'s shape: stored AS AUTHORED with no
+ * normalization, because the resolver refuses rather than clamps and the
+ * Surface gate must describe the block the document actually carries. The
+ * PANEL's sliders go through `setChainTwistField`, which merges one field
+ * into the authored block and collapses the block to absent when the
+ * resolved twist is trivial — dragging every value back to neutral is the
+ * same edit as clearing, so no document keeps a block that renders
+ * nothing.
+ */
+export function setChainTwist(
+  state: AppState,
+  chainTwist: TwistAuthored | null,
+): AppState {
+  if (!chainTwist) return { ...state, chainTwist: undefined };
+  return { ...state, chainTwist };
+}
+
+/** One twist field's merge-and-collapse edit — the fold-length rows' rule
+ * (a length is written once its slider moves; dragging it back to classic
+ * removes it) one level up: the field is merged into the authored block
+ * (absent fields fill from the shared neutral defaults), and a block whose
+ * RESOLVED twist is trivial leaves the document outright. `field` is the
+ * dotted path ("rotation.x", "offset.z", "w.rotation.xw",
+ * "w.offset"). Refused drafts are kept for the panel to show — the merge
+ * never resolves, so a NaN slider value can only keep the block away from
+ * the renderer. */
+export function setChainTwistField(
+  state: AppState,
+  field: string,
+  value: number,
+): AppState {
+  if (!Number.isFinite(value)) return state;
+  const base: TwistAuthored = { ...(state.chainTwist ?? {}) };
+  const [head, mid, leaf] = field.split(".");
+  if (head === "w" && mid && leaf === undefined) {
+    // w.offset — the fourth offset component.
+    const w = { ...base.w, [mid]: value };
+    return finishChainTwist(state, { ...base, w });
+  }
+  if (head === "w" && mid === "rotation" && leaf !== undefined) {
+    const rotation = { ...base.w?.rotation, [leaf]: value };
+    return finishChainTwist(state, { ...base, w: { ...base.w, rotation } });
+  }
+  if ((head === "rotation" || head === "offset") && mid !== undefined) {
+    const axis = mid;
+    const idx = axis === "x" ? 0 : axis === "y" ? 1 : 2;
+    const vec = [...(base[head] ?? [0, 0, 0])];
+    vec[idx] = value;
+    return finishChainTwist(state, { ...base, [head]: vec });
+  }
+  return state;
+}
+
+/** Collapse a trivially-valued block to absent (the shared resolver's own
+ * triviality verdict, so the panel's collapse rule and the renderer's
+ * absence rule are ONE definition). A refused block stays as authored —
+ * the Surface gate discloses the refusal beside it. */
+function finishChainTwist(state: AppState, block: TwistAuthored): AppState {
+  const resolution = resolveTwist(block);
+  if (!resolution.ok) return { ...state, chainTwist: block };
+  return twistIsTrivial(resolution.construction)
+    ? { ...state, chainTwist: undefined }
+    : { ...state, chainTwist: block };
 }
 
 export function setNumPoints(state: AppState, numPoints: number): AppState {

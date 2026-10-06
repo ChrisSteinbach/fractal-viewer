@@ -1389,6 +1389,145 @@
           </label>
         </details>
 
+        <!-- The escape chain twist is authored Scene / Look geometry for
+             the escape-time render family: a fixed rigid rotation and
+             offset applied to the orbit point between chain links (the
+             shared twist vocabulary the twisted Menger family reads).
+             Document state read at Surface entry, so edits restart the
+             session; the applicability rules hide the section unless an
+             escape chain is what Surface is marching. -->
+        <details
+          class="panel-section"
+          id="chainTwistSection"
+          name="panel-section"
+        >
+          <summary>Escape chain twist</summary>
+          <p id="chainTwistHint" class="flame-hint">
+            Applies to the Surface escape-time render; edits restart it.
+          </p>
+          <details class="panel-explainer">
+            <summary>What the twist does</summary>
+            <p>
+              Every link's step rotates the orbit point by a fixed angle and
+              shifts it, so the chain's escape set bends as a rigid whole — the
+              "rotation applied to point p" recipe, generalized past the twisted
+              Menger carve.
+            </p>
+          </details>
+          <label class="select-label">
+            Rotation X: <span id="chainTwistRotationXLabel">0.00</span>
+            <input
+              type="range"
+              id="chainTwistRotationXSlider"
+              min="-3.141592653589793"
+              max="3.141592653589793"
+              step="0.01"
+              value="0"
+            />
+          </label>
+          <label class="select-label">
+            Rotation Y: <span id="chainTwistRotationYLabel">0.00</span>
+            <input
+              type="range"
+              id="chainTwistRotationYSlider"
+              min="-3.141592653589793"
+              max="3.141592653589793"
+              step="0.01"
+              value="0"
+            />
+          </label>
+          <label class="select-label">
+            Rotation Z: <span id="chainTwistRotationZLabel">0.00</span>
+            <input
+              type="range"
+              id="chainTwistRotationZSlider"
+              min="-3.141592653589793"
+              max="3.141592653589793"
+              step="0.01"
+              value="0"
+            />
+          </label>
+          <label class="select-label">
+            Offset X: <span id="chainTwistOffsetXLabel">0.00</span>
+            <input
+              type="range"
+              id="chainTwistOffsetXSlider"
+              min="-2"
+              max="2"
+              step="0.01"
+              value="0"
+            />
+          </label>
+          <label class="select-label">
+            Offset Y: <span id="chainTwistOffsetYLabel">0.00</span>
+            <input
+              type="range"
+              id="chainTwistOffsetYSlider"
+              min="-2"
+              max="2"
+              step="0.01"
+              value="0"
+            />
+          </label>
+          <label class="select-label">
+            Offset Z: <span id="chainTwistOffsetZLabel">0.00</span>
+            <input
+              type="range"
+              id="chainTwistOffsetZSlider"
+              min="-2"
+              max="2"
+              step="0.01"
+              value="0"
+            />
+          </label>
+          <div id="chainTwist4DRows" class="hidden">
+            <label class="select-label">
+              XW turn: <span id="chainTwistXWLabel">0.00</span>
+              <input
+                type="range"
+                id="chainTwistXWSlider"
+                min="-3.141592653589793"
+                max="3.141592653589793"
+                step="0.01"
+                value="0"
+              />
+            </label>
+            <label class="select-label">
+              YW turn: <span id="chainTwistYWLabel">0.00</span>
+              <input
+                type="range"
+                id="chainTwistYWSlider"
+                min="-3.141592653589793"
+                max="3.141592653589793"
+                step="0.01"
+                value="0"
+              />
+            </label>
+            <label class="select-label">
+              ZW turn: <span id="chainTwistZWLabel">0.00</span>
+              <input
+                type="range"
+                id="chainTwistZWSlider"
+                min="-3.141592653589793"
+                max="3.141592653589793"
+                step="0.01"
+                value="0"
+              />
+            </label>
+            <label class="select-label">
+              W offset: <span id="chainTwistWOffsetLabel">0.00</span>
+              <input
+                type="range"
+                id="chainTwistWOffsetSlider"
+                min="-2"
+                max="2"
+                step="0.01"
+                value="0"
+              />
+            </label>
+          </div>
+        </details>
+
         <!-- Space tiling is authored Scene / Look geometry: the kind chooser
              picks the finite reflection group or the mirrored lattice; the
              independent ShapeSpec clip can only trim content inside the

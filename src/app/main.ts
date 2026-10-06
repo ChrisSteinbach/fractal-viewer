@@ -38,6 +38,7 @@ import {
   transformColors,
   W_SIDE_PALETTES,
 } from "../fractal/color";
+import { twistWIsNonTrivial } from "../fractal/twist";
 import { analyzeEscapeSystem, buildEscapeDE } from "../fractal/escape-de";
 import { buildEscapeDE4 } from "../fractal/escape-de-4d";
 import { buildBulbDE } from "../fractal/bulb-de";
@@ -132,6 +133,7 @@ import {
 import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
 import type { SurfaceNativeCalibration } from "../fractal/surface-pattern";
 import {
+  chainTwistGate,
   deriveSurfaceDocumentEligibility,
   deriveSurfaceEligibility,
   sphereInversionComputeOnlySubject,
@@ -6407,6 +6409,7 @@ async function main(): Promise<void> {
         state.condensationDepthBand,
         state.sphereInversion ?? null,
         state.finiteSolid ?? null,
+        state.chainTwist ?? null,
       );
       if (sessionEligibility.status === "ineligible") {
         ui.flashToast(
@@ -6415,6 +6418,19 @@ async function main(): Promise<void> {
         queueMicrotask(() => surfaceSession.exit());
         return { post: () => {}, terminate: () => teardownSurfaceCompute() };
       }
+      // The chain twist, resolved once at the session door — the escape
+      // arms read its verdict (skip tiling/trap the eligibility refused,
+      // pass the block into the builders); the IFS arms ignore it (the
+      // dormant disclosure rode the eligibility note). A w-bearing twist
+      // lifts the SESSION to the 4D arm even on a flat document — the
+      // twist's w extension makes the SET 4D — so the dimension split
+      // below reads `twistIs4D` beside the scene's own flatness.
+      const twistGate = chainTwistGate(state.chainTwist);
+      const twistLive = twistGate.verdict === "live";
+      const twistIs4D =
+        twistLive &&
+        state.chainTwist !== undefined &&
+        twistWIsNonTrivial(state.chainTwist);
       // Resolve the finite reflection group exactly once at the session
       // door. Both engines receive this same canonical record; neither
       // renderer is allowed to re-derive roots or interpret the authored
@@ -6856,7 +6872,19 @@ async function main(): Promise<void> {
             state.finalTransform ?? null,
             state.symmetry,
             state.sphereInversion,
-          )
+          ) ||
+          // The chain twist's w extension makes the SET 4D even on a
+          // flat document — the 4D chain's SO(4) rows are the only
+          // estimator that can apply it, so a flat escape document
+          // carrying one lifts to this arm (the eligibility derivation
+          // made the same call and routed kind escape4; a refused or
+          // dormant twist never reaches here live).
+          (twistIs4D &&
+            analyzeEscapeSystem(
+              state.transforms,
+              state.finalTransform ?? null,
+              state.symmetry,
+            ).status === "eligible")
         ) {
           // A 4D system: the w = sliceCenter cross-section (or slab) of the
           // rotor-posed attractor. Rotor + slice are LIVE per frame
@@ -6899,16 +6927,26 @@ async function main(): Promise<void> {
               state.transforms,
               state.finalTransform ?? null,
               state.symmetry,
+              // The chain twist rides the document: the eligibility gate
+              // already refused a refused block, a dormant one is absent
+              // here, and a live one's SO(4) rows compose into the 4D
+              // wire. The session skips tiling/trap when it is live (the
+              // refusals below), mirroring the 3D arm.
+              twistLive ? (state.chainTwist ?? null) : null,
             );
             // Lattice: the forward chain's marching ball is the
             // estimator authority (escape4's packer pins the same radius);
-            // the clip pose is the bailout ball's.
-            const surfaceTiling = poseTilingForSession(
-              resolveSurfaceTiling(de.boundingRadius),
-              true,
-              de.boundingRadius,
-              true,
-            );
+            // the clip pose is the bailout ball's. A live twist refuses
+            // tiling — the eligibility's combination policy, which the
+            // session honors by not posing a clip at all.
+            const surfaceTiling = twistLive
+              ? null
+              : poseTilingForSession(
+                  resolveSurfaceTiling(de.boundingRadius),
+                  true,
+                  de.boundingRadius,
+                  true,
+                );
             if (surfaceTiling && isResolvedLatticeTiling(surfaceTiling)) {
               fitLatticeCamera(surfaceTiling, true);
             }
@@ -6944,13 +6982,15 @@ async function main(): Promise<void> {
                 tiling: surfaceTiling ?? undefined,
                 // The 3D escape arm's trap wiring, one dimension up — the
                 // channel's 4D half is this ONE core (no fragment mirror
-                // exists by design).
-                ...computeShapeTrapTarget(),
+                // exists by design). A live twist refuses the trap (the
+                // eligibility's combination policy), so the target
+                // carries none.
+                ...(twistLive ? {} : computeShapeTrapTarget()),
               };
               scene.enterSurfaceComputeEscape4Session(
                 state.groundPlane,
                 de.boundingRadius,
-                state.shapeTrap ?? null,
+                twistLive ? null : (state.shapeTrap ?? null),
               );
               scene.setSurface4View(fourDView.matrix(), liveSliceCenter(), 0);
               surfaceGrid.cancel();
@@ -7306,15 +7346,23 @@ async function main(): Promise<void> {
               state.transforms,
               state.finalTransform ?? null,
               state.symmetry,
+              // The chain twist rides the document (the eligibility gate
+              // already refused a refused block and routed a w-bearing
+              // one to the 4D arm, so a live twist here is w-free).
+              twistLive ? (state.chainTwist ?? null) : null,
             );
             // Lattice: the forward chain's bailout marching ball is the
             // estimator authority; the clip pose is the bailout ball's.
-            const surfaceTiling = poseTilingForSession(
-              resolveSurfaceTiling(de.boundingRadius),
-              true,
-              de.boundingRadius,
-              false,
-            );
+            // A live twist refuses tiling — the eligibility's combination
+            // policy, which the session honors by not posing a clip.
+            const surfaceTiling = twistLive
+              ? null
+              : poseTilingForSession(
+                  resolveSurfaceTiling(de.boundingRadius),
+                  true,
+                  de.boundingRadius,
+                  false,
+                );
             if (surfaceTiling && isResolvedLatticeTiling(surfaceTiling)) {
               fitLatticeCamera(surfaceTiling, false);
             }
@@ -7357,20 +7405,22 @@ async function main(): Promise<void> {
                 // The shape-trap channel — create-time geometry on the
                 // target (the kernels bake the SDF), the live pose block
                 // riding every frame spec off the scene's stored
-                // document block.
-                ...computeShapeTrapTarget(),
+                // document block. A live twist refuses the trap (the
+                // eligibility's combination policy), so the target
+                // carries none.
+                ...(twistLive ? {} : computeShapeTrapTarget()),
               };
               scene.enterSurfaceComputeEscapeSession(
                 state.groundPlane,
                 de.boundingRadius,
-                state.shapeTrap ?? null,
+                twistLive ? null : (state.shapeTrap ?? null),
               );
             } else {
               forwardWebglDetail();
               scene.setEscapeSystem(
                 de,
                 escapeSlotColor(),
-                state.shapeTrap ?? null,
+                twistLive ? null : (state.shapeTrap ?? null),
                 surfaceTiling,
               );
             }
@@ -8188,6 +8238,7 @@ async function main(): Promise<void> {
       state.condensationDepthBand,
       state.sphereInversion ?? null,
       state.finiteSolid ?? null,
+      state.chainTwist ?? null,
     );
   }
 
