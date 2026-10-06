@@ -2022,25 +2022,29 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `nowMs()`), awaits `CloudGenerator.settle()` per frame for determinism.
     `video-encode.ts` = WebCodecs H.264 adapter; `mp4-mux.ts` = dependency-free
     faststart muxer (handles B-frame reordering). Render keyframes PARK the
-    clock while the flame/solid/surface render converges (no frames
-    captured), then dwell the step's holdMs on the converged still —
-    authored clip length.
-  - `isolation-handoff.ts` — a session-only, sessionStorage, read-and-clear
-    bridge carrying `AppState.renderMode` across the cross-origin-isolation
-    reload (see `register-sw.ts`). The scene document needs no such
-    bridge — `persist.ts` already round-trips it through the `#v1=` hash as
-    every edit happens — but `renderMode` is deliberately session-only
-    (`state.ts`), so it rides nothing across a reload on its own.
-    `saveIsolationHandoff` runs from the new `onBeforeIsolationReload` hook;
-    `consumeIsolationHandoff` reads it back once, early in the next boot.
+    clock while the render converges, then dwell the step's hold on the
+    converged still — authored clip length.
+  - `motion-export.ts` — the motion-clip export's pure plan: the render
+    session's automatic motion recorded frame-exactly (4D → tumble, flat →
+    orbit; Points/Solid refuse). The flame frame's completion is a
+    TWO-PHASE signal wait (`restarted` zeroes `renderComplete.flame`,
+    then the new budget met) — a stale budget-met chunk can still be in
+    flight when the pose commits. Flame 3D rides a new `setProjection`
+    worker command (the flat camera restart beside `setFourDView`);
+    `FourDView.step` is the tumble's UNconditional
+    composition (an explicitly requested clip animates); pose
+    edits/mode switches/gestures/exports/resize stop the run.
+    `?motionfps=N` is a gate-only rate override. Gate:
+    `scripts/motion-export.verify.mjs` (surface leg → `--mode=x11::0`).
+  - `isolation-handoff.ts` — the session-only sessionStorage bridge
+    carrying `renderMode` across the cross-origin-isolation reload
+    (`register-sw.ts`'s `onBeforeIsolationReload`).
   - `register-sw.ts` — service-worker registration + COOP/COEP bootstrap.
     Takes an `onBeforeIsolationReload` hook, fired the instant
     before the isolation reload — never the update reload — so the app can
     snapshot session state the reload is about to destroy (any throw
-    swallowed; isolation matters more). A page bound for that reload now
-    registers immediately instead of waiting for `load`, shrinking the
-    window in which interaction can be lost; an already-isolated page keeps
-    the original `load` timing.
+    swallowed; isolation matters more). A page bound for that reload
+    registers immediately instead of waiting for `load`.
   - `sw/sw.ts` — Workbox precache + COOP/COEP headers (own TS program).
 
 Core algorithm: the chaos game on an IFS — repeatedly apply a randomly chosen
