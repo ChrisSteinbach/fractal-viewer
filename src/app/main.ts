@@ -365,6 +365,15 @@ import {
 } from "./recorder";
 import { OFFLINE_EXPORT_FPS, runOfflineExport } from "./offline-export";
 import {
+  MOTION_CLIP_DEFAULT_SECONDS,
+  motionClipFrameCount,
+  resolveMotionClip,
+  resolveMotionExportFps,
+  waitForFlameFrame,
+  type MotionKind,
+} from "./motion-export";
+import { sameProjection } from "./four-d-worker-view";
+import {
   createOfflineEncoder,
   offlineExportSupported,
   type OfflineEncoderSession,
@@ -964,6 +973,20 @@ async function main(): Promise<void> {
     return new Promise<void>((resolve) => {
       renderSignalWaiters.push(resolve);
     });
+  }
+
+  // The motion-clip export's live run (driveMotionExport below) — the
+  // offline-export machinery pointed at the session's automatic view motion
+  // (the 4D tumble or the 3D auto-orbit) instead of a timeline player.
+  // `pending` spans the encoder probe and the run, so a second Record click
+  // can't double-start; `stop` is the ONE channel every "user reached in"
+  // chokepoint calls — the run finalizes its partial clip and unwinds, the
+  // same contract the timeline export's stop policy gives every chokepoint.
+  let motionExportPending = false;
+  let motionExportStop: (() => void) | null = null;
+  /** Stop a running motion clip if one is live; a no-op otherwise. */
+  function stopMotionExportIfRunning(): void {
+    motionExportStop?.();
   }
 
   // Adaptive resolution: a pure frame-time governor decides when
@@ -2082,6 +2105,12 @@ async function main(): Promise<void> {
             offlineParkWaiter = resolve;
           }),
         renderFrame: async (frameNowMs) => {
+          // The camera the step just advanced (a pose glide's per-frame
+          // position) is applied BEFORE the compute force frame assembles
+          // its spec — the spec reads the applied camera, so without this
+          // the trace would render the PREVIOUS frame's pose and the
+          // force-frame memo would then pin it for the whole dwell.
+          scene.applyCamera(orbit);
           // The compute surface path traces its full-quality frame on the
           // GPU FIRST (memoized per view, so dwell frames skip it) — all
           // task-crossing awaits happen here, and tickRender's force paint
@@ -2149,6 +2178,381 @@ async function main(): Promise<void> {
       lastInsetTickMs = realNow;
       lastGovernedFrameMs = null;
       ui.setTimelineExportProgress(null);
+    }
+  }
+
+  // ── Motion-clip export ────────────────────────────────────────────────
+  // The offline-export machinery pointed at the session's automatic view
+  // motion instead of a timeline player: each exported frame advances the
+  // 4D rotor tumble (a non-flat session) or the 3D auto-orbit turntable (a
+  // flat one) by one frame's dt, commits the pose to the active renderer,
+  // and encodes it only once that frame is FULLY converged — a complete
+  // flame accumulation at the new rotor/camera, a full-quality surface
+  // trace at the new pose. Not the realtime capture: its timing is whatever
+  // the event loop delivered, and a motion clip's whole point is that every
+  // frame is converged at its own pose, however slowly the machine needs to
+  // get there. The live views stay frozen exactly as the render modes'
+  // contracts keep them — the driver is the one writer of the pose while
+  // the clip runs, and every "user reached in" chokepoint stops the run
+  // (partial clip saved) rather than fighting it.
+
+  /** The one non-finite-safe handler input: the panel slider's own domain
+   * is [MIN, MAX], this re-resolves it against the bounds so a stale
+   * element value can't author an out-of-domain clip. Session-only state,
+   * like tumbleSpeed — never in the document. */
+  let motionClipDurationS = MOTION_CLIP_DEFAULT_SECONDS;
+  // The camera projection the running orbit clip last posted — the
+  // setProjection commit's unchanged-pose guard (the tumble branch's
+  // commitKey guard, one family over). Plain number[] so
+  // four-d-worker-view.ts's exact comparison reads it directly.
+  let lastProjectionSnapshot: number[] | null = null;
+
+  function nonFlatOfActiveRenderSession(): boolean {
+    return state.renderMode === "surface"
+      ? surfaceSessionIs4D
+      : activeFlameNonFlat;
+  }
+
+  /** The Capture section's "Record motion" button: start a frame-exact clip
+   * of the active render session's automatic motion, or stop the running
+   * one (the partial clip still saves) — the recorder's own button
+   * toggles the same way. */
+  async function startMotionExport(): Promise<void> {
+    // The running clip owns the button: the click is its stop affordance.
+    if (motionExportStop !== null) {
+      stopMotionExportIfRunning();
+      return;
+    }
+    if (motionExportPending) return; // probe in flight; the click can't double-start
+    // One offline export at a time — the timeline Export button refuses
+    // symmetrically while a motion clip runs (its handler checks the
+    // pending flag below).
+    if (offlineExportPending || timelinePlayer.active) {
+      ui.flashToast("Another export or playback is running");
+      return;
+    }
+    const plan = resolveMotionClip(
+      state.renderMode,
+      nonFlatOfActiveRenderSession(),
+    );
+    if (!plan.ok) {
+      ui.flashToast(plan.reason);
+      return;
+    }
+    if (!offlineExportSupported()) {
+      ui.flashToast("Frame-exact export unavailable in this browser");
+      return;
+    }
+    motionExportPending = true;
+    try {
+      // Pin the render resolution BEFORE reading the canvas size — the
+      // encoder's dimensions are fixed for the whole clip (the timeline
+      // export's own discipline; the adaptive governor must not resize the
+      // buffer under it).
+      resolutionGovernor.reset();
+      scene.setResolutionScale(1);
+      const session = await createOfflineEncoder({
+        width: scene.canvas.width,
+        height: scene.canvas.height,
+        fps: motionExportFps,
+      });
+      if (motionExportStop !== null) {
+        // A stop raced the probe (a chokepoint or a second click) — don't
+        // start.
+        session?.abort();
+        return;
+      }
+      if (session === null) {
+        // No honest fallback exists: the realtime capture would record
+        // frames that are NOT converged (its timing is whatever the event
+        // loop delivered), which is exactly what a motion clip exists not
+        // to be. Refuse, never degrade.
+        ui.flashToast("No frame-exact encoder for this canvas size");
+        return;
+      }
+      await driveMotionExport(session, plan.kind);
+    } catch (err) {
+      // The setup catch and the run catch both speak through the shared
+      // wording (driveOfflineExport's pattern).
+      exportFailedToast(err);
+    } finally {
+      motionExportPending = false;
+    }
+  }
+
+  /**
+   * One motion-clip run: `offline-export.ts`'s driver loop with a different
+   * motion source. There is no park machinery — every frame's convergence is
+   * awaited inside `renderFrame` (flame: the two-phase restart-then-budget
+   * wait; surface compute: the force-frame trace; surface WebGL: the
+   * synchronous full-tier strip drain inside the forced tick) — so
+   * `renderParked` is constant false and the virtual clock never holds.
+   * `stepFrame` advances the ONE automatic motion and commits it; the
+   * convergence await and the paint both happen in `renderFrame`, keeping
+   * the OfflineExportDeps contract's "paint is the final synchronous act"
+   * shape. The `finally` unwinds exactly what `driveOfflineExport`'s does:
+   * anything still timed against the virtual clock is snapped, and the dt
+   * chains restart from real time.
+   */
+  async function driveMotionExport(
+    session: OfflineEncoderSession,
+    kind: MotionKind,
+  ): Promise<void> {
+    const frameMs = 1000 / motionExportFps;
+    const capFrames = MAX_RECORDING_SECONDS * motionExportFps;
+    // The authored clip IS the loop's end: unlike the timeline export (whose
+    // natural finish comes from the player going inactive, so its maxFrames
+    // stays the recorder-parity cap), a motion clip's running() never goes
+    // false on its own — so the frame budget passed to the loop is the
+    // authored total (already capped), not the recorder cap, or the clip
+    // would run to the cap and the duration slider would only lie in the
+    // progress percentage.
+    const totalFrames = motionClipFrameCount(
+      motionClipDurationS,
+      motionExportFps,
+      capFrames,
+    );
+    const maxFrames = Math.max(1, totalFrames);
+    const flameMode = state.renderMode === "flame";
+    const surfaceMode = state.renderMode === "surface";
+    // The committed-pose guard: skip a frame whose motion advanced to
+    // exactly the last committed pose (a zero-advance edge — a paused
+    // tumble at a degenerate dt). Committing an identical pose would make
+    // the worker's own equality guard swallow the restart, and the
+    // completion wait would then hang on a `restarted` that never comes;
+    // the frame simply re-encodes the previous one's pixels. `frameAwait`
+    // is the renderFrame half of the same guard: only a frame that
+    // actually committed owes the completion wait.
+    let lastCommitted: string | null = null;
+    let frameAwait = false;
+    // t0 = real now, so any tween in flight continues seamlessly onto the
+    // virtual clock; from here it advances by frame arithmetic only.
+    const t0 = performance.now();
+    lastMotionTickMs = t0;
+    lastInsetTickMs = t0;
+    // The shows launch replace-loads mid-clip — a user reaching in of the
+    // same class as every chokepoint below.
+    stopShows({ notify: true });
+    // Snap the projection inset to its current target rather than letting
+    // it ease across the clip's opening frames (driveOfflineExport's
+    // framing-determinism rule).
+    sceneRightInset = panelInsetTarget();
+    scene.setRightInset(sceneRightInset);
+    // The run owns the surface tracer's uniforms while it lives — the
+    // Save-PNG capture's own claim. The live tier loop stands aside (no
+    // preview races the driver's force frames), the pose push and the
+    // grid/composite handoffs are suppressed (the driver pushed the pose
+    // itself), and the flag self-heals at the unwind exactly as the
+    // capture's does.
+    const holdsSurfaceTracer = surfaceMode;
+    if (holdsSurfaceTracer) surfaceCaptureFlight = true;
+    lastProjectionSnapshot = null;
+    let running = true;
+    let stopWaiter: (() => void) | null = null;
+    const stopRun = (): void => {
+      running = false;
+      stopWaiter?.();
+      stopWaiter = null;
+    };
+    motionExportStop = stopRun;
+    // A resize changes the canvas the encoder is pinned to — the realtime
+    // capture's own stop rule, kept for parity.
+    const onResize = (): void => stopRun();
+    window.addEventListener("resize", onResize);
+    ui.setRecordMotionState("0%");
+    const yieldChannel = new MessageChannel();
+    try {
+      const run = await runOfflineExport({
+        startMs: t0,
+        frameMs,
+        maxFrames,
+        totalFrames,
+        stepFrame: (frameNowMs) => {
+          virtualNowMs = frameNowMs;
+          const dt = frameMs / 1000;
+          frameAwait = false;
+          // A hand on the scene wins: a pointer drag (camera or rotor)
+          // reaching in mid-clip stops the run — the clip records
+          // automatic motion, and the user's gesture is a different
+          // motion.
+          if (gestures.gestureActive()) {
+            stopRun();
+            return Promise.resolve();
+          }
+          if (kind === "tumble") {
+            fourDView.step(dt);
+            if (flameMode) {
+              const view = fourDWorkerView();
+              const commitKey = JSON.stringify(view);
+              if (commitKey !== lastCommitted) {
+                lastCommitted = commitKey;
+                frameAwait = true;
+                flameSession.post({ type: "setFourDView", view });
+              }
+            } else {
+              const commitKey = JSON.stringify([
+                fourDView.matrix(),
+                liveSliceCenter(),
+                surface4SlabAvailable ? fourDView.sliceThickness : 0,
+              ]);
+              if (commitKey !== lastCommitted) {
+                lastCommitted = commitKey;
+                scene.setSurface4View(
+                  fourDView.matrix(),
+                  liveSliceCenter(),
+                  surface4SlabAvailable ? fourDView.sliceThickness : 0,
+                );
+              }
+            }
+          } else {
+            // The 3D auto-orbit turntable: the explorer's own rates — the
+            // speed slider stays the motion's knob; the ambient on/off
+            // flags don't gate an explicitly requested clip.
+            orbit.spherical.theta -= dt * AUTO_ORBIT_RATE * autoOrbitSpeed;
+            scene.applyCamera(orbit);
+            if (flameMode) {
+              const projection = scene.flameProjectionMatrix();
+              if (
+                lastProjectionSnapshot === null ||
+                !sameProjection(lastProjectionSnapshot, projection)
+              ) {
+                lastProjectionSnapshot = projection;
+                frameAwait = true;
+                flameSession.post({ type: "setProjection", projection });
+              }
+            }
+            // Surface 3D: nothing to commit here — the camera lives in the
+            // force-frame spec, assembled per frame in renderFrame below.
+          }
+          return Promise.resolve();
+        },
+        running: () => running,
+        renderParked: () => false,
+        nextParkSignal: () => new Promise<void>(() => {}),
+        renderFrame: async (frameNowMs) => {
+          // The pose the step advanced is already committed; the camera is
+          // applied here so the surface spec assembles from THIS frame's
+          // projection (the same ordering fix the timeline export gets).
+          scene.applyCamera(orbit);
+          if (flameMode) {
+            // The restart's accumulation must be complete before this
+            // frame paints: the two-phase wait (restart landed, then
+            // budget met) consumes the signal stream the progress events
+            // already feed. A stopped run resolves false and paints
+            // nothing more. A frame whose commit was skipped (the
+            // zero-advance edge) re-encodes the previous frame's pixels —
+            // no wait, or it would hang on a `restarted` that never comes.
+            if (frameAwait) {
+              const stopSignal = () =>
+                new Promise<void>((resolve) => {
+                  stopWaiter = resolve;
+                });
+              const done = await waitForFlameFrame(
+                () => renderComplete.flame,
+                () => Promise.race([nextRenderSignal(), stopSignal()]),
+                () => !running,
+              );
+              if (!done) return;
+            }
+            tickRender(frameNowMs, true);
+            return;
+          }
+          // Surface: the tracer claim this run holds suppresses
+          // tickRender's own tier/force branches, so the driver paints
+          // directly.
+          if (surfaceSession.hasFirstFrame) {
+            if (surfaceComputeRenderer) {
+              // The compute force frame traces and presents (the canvas
+              // blit is inside ensureSurfaceComputeForceFrame's present).
+              await ensureSurfaceComputeForceFrame();
+            } else {
+              // The WebGL tracer's full-tier frame, synchronously — the
+              // tier gate's force trio, run directly (the claim would
+              // otherwise suppress this branch in tickRender).
+              scene.abandonSurfaceSettle();
+              surfaceSettled = false;
+              surfaceSettlePending = false;
+              scene.renderSurface("full");
+            }
+          } else {
+            // The first-frame gap: the explorer view shows (the flag
+            // doesn't gate this branch in tickRender).
+            tickRender(frameNowMs, true);
+          }
+        },
+        encodeFrame: (index) => session.encodeFrame(scene.canvas, index),
+        onProgress: (done, total) => {
+          ui.setRecordMotionState(
+            `${String(Math.min(100, Math.round((done / total) * 100)))}%`,
+          );
+        },
+        yieldToUi: () =>
+          new Promise((resolve) => {
+            yieldChannel.port1.onmessage = (): void => {
+              resolve();
+            };
+            yieldChannel.port2.postMessage(undefined);
+          }),
+      });
+      const completed = running && run.frames >= totalFrames;
+      const clip = await session.finish();
+      if (clip !== null) {
+        triggerDownload(clip, recordingFileName("video/mp4", Date.now()));
+        ui.flashToast(
+          completed
+            ? "Motion clip saved"
+            : "Recording stopped — partial clip saved",
+        );
+      } else {
+        ui.flashToast(
+          session.error !== null
+            ? `Export failed: ${session.error}`
+            : "Export produced no data",
+        );
+      }
+    } catch (err) {
+      // A WebGL surface force frame that priced past the export ceilings
+      // throws SurfaceCaptureCostError out of the loop: the frames so far
+      // are valid — finalize the partial clip instead of discarding it
+      // (the timeline export aborts here only because an encoder death
+      // corrupts the stream; a refused trace does not).
+      if (err instanceof SurfaceCaptureCostError) {
+        try {
+          const clip = await session.finish();
+          if (clip !== null) {
+            triggerDownload(clip, recordingFileName("video/mp4", Date.now()));
+            ui.flashToast(`Recording stopped — ${err.message}`);
+          } else {
+            ui.flashToast(err.message);
+          }
+        } catch {
+          session.abort();
+          exportFailedToast(err);
+        }
+      } else {
+        // An encodeFrame rejection (encoder death mid-run) — discard the
+        // clip, the timeline export's error stance.
+        session.abort();
+        exportFailedToast(err);
+      }
+    } finally {
+      window.removeEventListener("resize", onResize);
+      motionExportStop = null;
+      running = false;
+      if (holdsSurfaceTracer) surfaceCaptureFlight = false;
+      lastProjectionSnapshot = null;
+      virtualNowMs = null;
+      // Unwind the virtual clock (driveOfflineExport's own discipline):
+      // snap anything still timed against it and restart the dt chains
+      // from real time.
+      cameraTween.finish();
+      fourDTween.finish();
+      snapMorph();
+      const realNow = performance.now();
+      lastMotionTickMs = realNow;
+      lastInsetTickMs = realNow;
+      lastGovernedFrameMs = null;
+      ui.setRecordMotionState(null);
     }
   }
 
@@ -2371,6 +2775,10 @@ async function main(): Promise<void> {
   // sibling of cancelTween on a camera grab; deliberately does NOT stop a
   // running show (neither does grabbing the camera).
   function releaseFourDPoseControl(): void {
+    // The clip records automatic motion; a hand on the 4D view is a
+    // different motion — stop the run (partial clip saved), the same
+    // "user reached in" contract every chokepoint gives the exports.
+    stopMotionExportIfRunning();
     fourDTween.cancel();
     loadHints.clearPose();
   }
@@ -4551,6 +4959,13 @@ async function main(): Promise<void> {
   const surfaceComputeForced = new URLSearchParams(window.location.search).has(
     "surfacecompute",
   );
+  // `?motionfps=N` — the motion-clip rate override the verification gate
+  // uses to record a 2-3 frame clip (see resolveMotionExportFps). The
+  // encoder probe and the driver's frame clock read the SAME value, so a
+  // gated clip's timing stays authored.
+  const motionExportFps = resolveMotionExportFps(
+    new URLSearchParams(window.location.search).get("motionfps"),
+  );
   // `?surfacemaxrays=N` stands in for the device's own per-frame ray ceiling
   // — the ?surfshadewidth-style escape hatch for the sizing that ceiling
   // drives. A real device only bands an export at 2-4x (~8-32M rays), which
@@ -5749,6 +6164,10 @@ async function main(): Promise<void> {
    * to disclose.
    */
   async function savePng(scale: number): Promise<void> {
+    // A Save-PNG capture would fight the motion clip for the tracer
+    // (compute: the capture's cancel() kills the driver's in-flight force
+    // frame) — the clip yields, partial clip saved, before the modal opens.
+    stopMotionExportIfRunning();
     const captureMode = state.renderMode;
     const plan = planPngExport(scale);
     const run = exportProgress.begin({
@@ -7503,6 +7922,9 @@ async function main(): Promise<void> {
   // (clicking the lit segment must not restart a converging render).
   function switchRenderMode(target: RenderMode): void {
     if (target === state.renderMode) return;
+    // A mode change ends the motion clip: its renderer session is the
+    // clip's subject (every chokepoint finalizes the partial clip).
+    stopMotionExportIfRunning();
     // Every door into a renderer funnels through here (the mode control,
     // load hints, shows), so the family's Flame/Solid refusal lives here
     // once.
@@ -11399,7 +11821,18 @@ async function main(): Promise<void> {
       balloonSweepStartMs = nowMs();
     },
     onRecordVideoToggle: () => {
+      // Two writers of the canvas can't overlap: the realtime capture
+      // would record the motion clip's mid-convergence frames — the exact
+      // frames the clip exists not to deliver — so the clip yields first.
+      stopMotionExportIfRunning();
       recorder.toggle();
+    },
+    onRecordMotionToggle: () => {
+      void startMotionExport();
+    },
+    onMotionClipDurationInput: (seconds) => {
+      motionClipDurationS = seconds;
+      ui.setMotionClipDuration(seconds);
     },
     // Saved-scene collection. Save/copy act on the CURRENT document (the same
     // encodeScene(currentDocument()) the autosave uses — camera and non-flat
@@ -11554,6 +11987,10 @@ async function main(): Promise<void> {
     // path instead parks its clock through convergence, so there the authored
     // total is exact.
     onTimelineExport: () => {
+      // A motion clip is the same offline-export machinery on a different
+      // motion source — one run at a time; the clip yields (partial clip
+      // saved) before the timeline one probes.
+      stopMotionExportIfRunning();
       // While an offline export runs, the button is the cancel
       // affordance: stop the show and the driver saves the partial clip.
       // During the pre-playback probe gap the stop no-ops — the click just
@@ -12310,6 +12747,10 @@ async function main(): Promise<void> {
   refreshGuides();
   refreshUi();
   editSession.syncUi();
+  // The motion-clip controls' boot state: the length readout from the
+  // (constant) session default, and the button's idle title.
+  ui.setMotionClipDuration(motionClipDurationS);
+  ui.setRecordMotionState(null);
   ui.setCollectionCount(collection.size);
   refreshScheduleSavedScenes();
   // The async upgrade to the document's real density: same request

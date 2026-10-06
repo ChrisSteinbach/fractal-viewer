@@ -425,6 +425,12 @@ export interface UiHandlers {
   onRegenerate: () => void;
   onSavePng: () => void;
   onRecordVideoToggle: () => void;
+  /** "🎞 Record motion" was clicked: start (or, while one runs, stop) the
+   * frame-exact clip of the active render session's automatic motion. */
+  onRecordMotionToggle: () => void;
+  /** The motion-clip length slider moved: session-only seconds, never in
+   * the document (the tumbleSpeed pattern). */
+  onMotionClipDurationInput: (seconds: number) => void;
   /** "⤓ Save scene file" was clicked: download the current scene document as
    * a JSON file — the file counterpart of "🔗 Copy link". */
   onSaveSceneFile: () => void;
@@ -2471,6 +2477,9 @@ export class Ui {
    * self-explaining pattern as {@link exportCollectionTitle}. */
   private readonly savePngTitle: string;
   private readonly recordVideoBtn: HTMLButtonElement;
+  private readonly recordMotionBtn: HTMLButtonElement;
+  private readonly motionClipDurationSlider: HTMLInputElement;
+  private readonly motionClipDurationLabel: HTMLElement;
   private readonly saveSceneFileBtn: HTMLButtonElement;
   private readonly saveSceneFileTitle: string;
   private readonly saveFlameFileBtn: HTMLButtonElement;
@@ -3373,6 +3382,9 @@ export class Ui {
     this.savePngTitle = this.savePngBtn.title;
     this.recordVideoBtn = this.byId("recordVideoBtn");
     this.recordVideoBtn.classList.toggle("hidden", !videoCaptureSupported());
+    this.recordMotionBtn = this.byId("recordMotionBtn");
+    this.motionClipDurationSlider = this.byId("motionClipDurationSlider");
+    this.motionClipDurationLabel = this.byId("motionClipDurationLabel");
     this.saveSceneFileBtn = this.byId("saveSceneFileBtn");
     this.saveSceneFileTitle = this.saveSceneFileBtn.title;
     this.saveFlameFileBtn = this.byId("saveFlameFileBtn");
@@ -4292,6 +4304,15 @@ export class Ui {
     this.recordVideoBtn.addEventListener("click", () =>
       handlers.onRecordVideoToggle(),
     );
+    this.recordMotionBtn.addEventListener("click", () =>
+      handlers.onRecordMotionToggle(),
+    );
+    this.motionClipDurationSlider.addEventListener("input", () => {
+      const value = Number(this.motionClipDurationSlider.value);
+      if (Number.isFinite(value)) {
+        handlers.onMotionClipDurationInput(value);
+      }
+    });
     this.saveSceneFileBtn.addEventListener("click", () =>
       handlers.onSaveSceneFile(),
     );
@@ -6565,6 +6586,29 @@ export class Ui {
       : "● Record video";
     this.recordVideoBtn.classList.toggle("btn-ghost", !recording);
     this.recordVideoBtn.classList.toggle("btn-red", recording);
+  }
+
+  /** Reflect the motion-clip export on its button (the export-clip
+   * pattern): non-null ("42%") relabels it with the run's progress and
+   * keeps it ENABLED as the run's cancel affordance; null restores the
+   * idle label. The red style rides with the recorder's recording state
+   * for one "these two record" read. */
+  setRecordMotionState(progress: string | null): void {
+    const recording = progress !== null;
+    this.recordMotionBtn.textContent = recording
+      ? `⏳ Recording ${progress}`
+      : "🎞 Record motion";
+    this.recordMotionBtn.classList.toggle("btn-ghost", !recording);
+    this.recordMotionBtn.classList.toggle("btn-red", recording);
+    this.recordMotionBtn.title = recording
+      ? "Stop recording — the partial clip still saves"
+      : "Record a frame-exact clip of this render's automatic motion";
+  }
+
+  /** Sync the motion-clip length readout (session-only, like the tumble
+   * speed's label). */
+  setMotionClipDuration(seconds: number): void {
+    this.motionClipDurationLabel.textContent = `${String(Math.round(seconds))}s`;
   }
 
   /**

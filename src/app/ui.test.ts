@@ -123,6 +123,8 @@ function noopHandlers(): UiHandlers {
     onRegenerate: vi.fn(),
     onSavePng: vi.fn(),
     onRecordVideoToggle: vi.fn(),
+    onRecordMotionToggle: vi.fn(),
+    onMotionClipDurationInput: vi.fn(),
     onSaveSceneFile: vi.fn(),
     onSaveFlameFile: vi.fn(),
     onSaveToCollection: vi.fn(),
