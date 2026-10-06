@@ -1,4 +1,5 @@
 import { meanContraction } from "../fractal/affine4";
+import { twistWIsNonTrivial } from "../fractal/twist";
 import { SWIRL_LENS_MAX_RADIUS } from "../fractal/swirl-lens";
 import type { FinalSwirlRadiusControlAnalysis } from "./swirl-radius-control";
 import {
@@ -2797,6 +2798,9 @@ export class Ui {
    * emitter-backed IFS route; Shape trap belongs to forward-orbit routes. */
   private readonly surfaceCondensationSection: HTMLDetailsElement;
   private readonly surfaceTrapSection: HTMLDetailsElement;
+  private readonly chainTwistSection: HTMLDetailsElement;
+  private readonly chainTwist4DRows: HTMLElement;
+  private readonly chainTwistHint: HTMLElement;
   /** The render-mode segmented control's three buttons, keyed by the mode
    * each one switches to — the single entry/exit surface that replaced the
    * flame/solid modal islands' four separate buttons. */
@@ -3636,6 +3640,9 @@ export class Ui {
     );
     this.surfaceTrapSection =
       this.byId<HTMLDetailsElement>("surfaceTrapSection");
+    this.chainTwistSection = this.byId<HTMLDetailsElement>("chainTwistSection");
+    this.chainTwist4DRows = this.byId("chainTwist4DRows");
+    this.chainTwistHint = this.byId("chainTwistHint");
     this.surfaceRendererLightingGroup = this.byId(
       "surfaceRendererLightingGroup",
     );
@@ -5904,6 +5911,21 @@ export class Ui {
       surfaceTrapApplicability.kind !== "enabled",
     );
     this.surfaceTrapControls.classList.toggle("hidden", !state.shapeTrap);
+    // The chain twist's section, one applicability read beside the trap's:
+    // visible while an escape-shaped session marches (escape4 reports kind
+    // "escape"), hidden otherwise. Its 4D rows show when the SET is 4D —
+    // the document is non-flat, or the authored block already carries a w
+    // extension — and hide on a flat 3D chain, where those sliders would
+    // silently author an unreachable lift. The eligibility note beside the
+    // gate carries the dormant/refused scope; the hint stays static.
+    this.chainTwistSection.classList.toggle(
+      "hidden",
+      resolvePanelApplicability("chainTwist", panelContext).kind !== "enabled",
+    );
+    this.chainTwist4DRows.classList.toggle(
+      "hidden",
+      !nonFlat && !twistWIsNonTrivial(state.chainTwist ?? {}),
+    );
     this.syncAuthoredShapeEditor(
       this.surfaceTrapPrimitiveEditor,
       state.shapeTrap?.shape,

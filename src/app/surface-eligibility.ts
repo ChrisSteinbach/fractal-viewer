@@ -25,6 +25,12 @@ import {
 import type { FiniteSolidAuthored } from "../fractal/finite-solid";
 import { analyzeEscapeSystem, systemHasPowerLink } from "../fractal/escape-de";
 import { analyzeEscapeSystem4 } from "../fractal/escape-de-4d";
+import {
+  resolveTwist,
+  twistIsTrivial,
+  twistWIsNonTrivial,
+} from "../fractal/twist";
+import type { TwistAuthored, TwistConstruction } from "../fractal/twist";
 import { systemHasActiveQSquare } from "../fractal/qjulia-de";
 import {
   analyzeSurfaceSystem,
@@ -129,6 +135,7 @@ export interface SurfaceEligibilityDocument {
   condensationDepthBand?: CondensationDepthBand;
   sphereInversion?: SphereInversionAuthored | null;
   finiteSolid?: FiniteSolidAuthored | null;
+  chainTwist?: TwistAuthored | null;
 }
 
 /**
@@ -869,6 +876,59 @@ function inverseDescentTrapGeometryRefusal(
  * document cannot answer (no adapter, a latched device loss, or the
  * deliberate `?surfacegl` flag), injected so this stays pure and testable.
  */
+/**
+ * One chain-twist gate read shared by the three escape-family arms: is the
+ * authored block absent/trivial (renders nothing, every arm's default),
+ * LIVE (an isometry the chain's own estimator applies between links), or
+ * REFUSED (`twist.ts`'s resolver reasons, verbatim — a refused block's
+ * unknown keys rode the document and the note names them)? The `w`
+ * extension is NOT this helper's verdict: each arm decides what a non-
+ * trivial `w` means for it (the 4D chain applies it; the 3D chain and the
+ * lone Mandelbulb have no fourth axis and refuse the block outright, per
+ * the shared vocabulary's own rule for consumers that cannot carry it).
+ */
+export function chainTwistGate(
+  block: TwistAuthored | null | undefined,
+):
+  | { verdict: "absent" }
+  | { verdict: "live"; construction: TwistConstruction }
+  | { verdict: "refused"; reasons: string[] } {
+  if (block === null || block === undefined) return { verdict: "absent" };
+  const resolution = resolveTwist(block);
+  if (!resolution.ok)
+    return { verdict: "refused", reasons: resolution.reasons };
+  return twistIsTrivial(resolution.construction)
+    ? { verdict: "absent" }
+    : { verdict: "live", construction: resolution.construction };
+}
+
+/** The combination refusals + disclosure a LIVE twist appends, shared by
+ * both chain dimensions so the two arms cannot disagree about the policy
+ * (the user's re-scope verdict): Space tiling and shape traps are refused —
+ * neither instrument's certificate covers a twisted chain yet — and the
+ * note DISCLOSES the twist (the panel-ia contract: the route names what it
+ * renders differently). */
+function chainTwistRefusals(
+  tiling: TilingSpec | null,
+  shapeTrap: ShapeTrap | null,
+): string[] {
+  const refusals: string[] = [];
+  if (tiling) {
+    refusals.push(
+      "Space tiling is not available with a chain twist (no tiling wrapper certifies a twisted chain yet)",
+    );
+  }
+  if (shapeTrap) {
+    refusals.push(
+      "a shape trap is not available with a chain twist (no trap certificate covers a twisted orbit yet)",
+    );
+  }
+  return refusals;
+}
+
+const CHAIN_TWIST_DISCLOSURE =
+  "the chain twist rotates the orbit point between links";
+
 export function deriveSurfaceEligibility(
   transforms: Transform[],
   finalTransform: Transform | null,
@@ -880,6 +940,7 @@ export function deriveSurfaceEligibility(
   condensationDepthBand?: CondensationDepthBand,
   sphereInversion: SphereInversionAuthored | null = null,
   finiteSolid: FiniteSolidAuthored | null = null,
+  chainTwist: TwistAuthored | null = null,
 ): SurfaceEligibilityResult {
   // A sphere-inversion block replaces the transform system as the subject:
   // it takes precedence over, and is disjoint from, every gate below.
@@ -1048,17 +1109,48 @@ export function deriveSurfaceEligibility(
             kind: null,
           };
         }
+        // The chain twist, one dimension up: the SO(4) extension is
+        // exactly what the 4D estimator carries, so it needs no w-refusal
+        // here — only the shared resolver's refusal, the combination
+        // policy, and the disclosure.
+        const twist4 = chainTwistGate(chainTwist);
+        if (twist4.verdict === "refused") {
+          return {
+            status: "ineligible",
+            note: `chain twist refused: ${twist4.reasons.join("; ")}`,
+            kind: null,
+          };
+        }
+        const twist4Refusals =
+          twist4.verdict === "live"
+            ? chainTwistRefusals(tiling, shapeTrap)
+            : [];
+        if (twist4Refusals.length > 0) {
+          return {
+            status: "ineligible",
+            note: `Escape-time chain twist refused: ${twist4Refusals.join("; ")}`,
+            kind: null,
+          };
+        }
+        // A live twist is disclosed on the degraded note (panel-ia: the
+        // route names what it renders differently), joined to the
+        // source-budget guard that the twist refusals just bypassed for
+        // tiling/trap — the budget only prices what the route would bake.
+        const base4Note =
+          links > 1
+            ? `Escape-time render: these ${links} maps reach out of the w = 0 hyperplane and do not all contract, so Surface marches the w-slice of the escape-time set of the chain they form — one link per orbit step — rather than an IFS attractor.`
+            : "Escape-time render: this 4D fold does not contract, so Surface marches the w-slice of its escape-time set rather than an IFS attractor.";
         return withSurfaceShapeSourceBudget(
           {
             status: "degraded",
             note:
-              links > 1
-                ? `Escape-time render: these ${links} maps reach out of the w = 0 hyperplane and do not all contract, so Surface marches the w-slice of the escape-time set of the chain they form — one link per orbit step — rather than an IFS attractor.`
-                : "Escape-time render: this 4D fold does not contract, so Surface marches the w-slice of its escape-time set rather than an IFS attractor.",
+              twist4.verdict === "live"
+                ? `${base4Note} ${CHAIN_TWIST_DISCLOSURE}.`
+                : base4Note,
             kind: "escape4",
           },
-          shapeTrap ? [shapeTrap.shape] : [],
-          tiling,
+          twist4.verdict === "live" ? [] : shapeTrap ? [shapeTrap.shape] : [],
+          twist4.verdict === "live" ? null : tiling,
         );
       }
       // qsquare's complement, one dimension up — see the 3D arm below for
@@ -1127,8 +1219,29 @@ export function deriveSurfaceEligibility(
         tiling,
       );
     }
+    // A chain twist is DORMANT on an IFS route — the attractor render has
+    // no escape chain for the per-link wrap to join — and the note says so
+    // (the panel-ia contract: a dormant capability discloses, never
+    // silently ignores). The transforms are still the subject and render
+    // untouched.
+    const twist4Dormant = chainTwistGate(chainTwist);
+    if (twist4Dormant.verdict === "refused") {
+      return {
+        status: "ineligible",
+        note: `chain twist refused: ${twist4Dormant.reasons.join("; ")}`,
+        kind: null,
+      };
+    }
+    const ifs4Note =
+      twist4Dormant.verdict === "live"
+        ? "the chain twist composes with an escape-time chain, which this document is not — it renders as the IFS attractor, untwisted"
+        : null;
     return withSurfaceShapeSourceBudget(
-      { status: "eligible", note: null, kind: "ifs4" },
+      {
+        status: twist4Dormant.verdict === "live" ? "degraded" : "eligible",
+        note: ifs4Note,
+        kind: "ifs4",
+      },
       activeEmitterShapes(transforms),
       tiling,
     );
@@ -1180,24 +1293,85 @@ export function deriveSurfaceEligibility(
           recovery: "disableShapeTrapGeometry",
         };
       }
+      // The chain twist: the resolver's refusals surface; a non-trivial `w`
+      // extension is the SET'S dimension — the 4D estimator owns it, so the
+      // route lifts to escape4 (and refuses without compute), unless the
+      // 4D gate refuses the chain itself (a triplex power link, which the
+      // 3D chain carries and the 4D one refuses — then the document has no
+      // route and the note names both halves).
+      const twist3 = chainTwistGate(chainTwist);
+      if (twist3.verdict === "refused") {
+        return {
+          status: "ineligible",
+          note: `chain twist refused: ${twist3.reasons.join("; ")}`,
+          kind: null,
+        };
+      }
+      if (twist3.verdict === "live" && twistWIsNonTrivial(chainTwist!)) {
+        const escape4Lift = analyzeEscapeSystem4(
+          transforms,
+          finalTransform,
+          symmetry,
+        );
+        if (escape4Lift.status === "ineligible") {
+          return {
+            status: "ineligible",
+            note: `the twist's w extension needs the 4D chain, which refuses this system: ${escape4Lift.reasons.join("; ")}`,
+            kind: null,
+          };
+        }
+        if (!opts.computeAvailable) {
+          return {
+            status: "ineligible",
+            note: "a 4D chain twist renders on WebGPU compute, which is unavailable here",
+            kind: null,
+          };
+        }
+        const liftRefusals = chainTwistRefusals(tiling, shapeTrap);
+        if (liftRefusals.length > 0) {
+          return {
+            status: "ineligible",
+            note: `Escape-time chain twist refused: ${liftRefusals.join("; ")}`,
+            kind: null,
+          };
+        }
+        return {
+          status: "degraded",
+          note: `Escape-time render: the twist's w extension makes the chain 4D, so Surface marches the w-slice of the twisted escape-time set. ${CHAIN_TWIST_DISCLOSURE}.`,
+          kind: "escape4",
+        };
+      }
+      const twist3Refusals =
+        twist3.verdict === "live" ? chainTwistRefusals(tiling, shapeTrap) : [];
+      if (twist3Refusals.length > 0) {
+        return {
+          status: "ineligible",
+          note: `Escape-time chain twist refused: ${twist3Refusals.join("; ")}`,
+          kind: null,
+        };
+      }
+      const baseNote =
+        links > 1
+          ? // The hybrid chain: the transform list IS the formula
+            // sequence, so name the object as a chain rather than as
+            // "the canonical Mandelbox". Cross-family power links split
+            // the sentence again, because a chain may hold a POWER link
+            // and "these N folds" is then simply false.
+            systemHasPowerLink(transforms)
+            ? `Escape-time render: these ${links} maps form a hybrid formula chain, so Surface marches one link per orbit step rather than an IFS attractor.`
+            : `Escape-time render: these ${links} folds do not all contract, so Surface marches their escape-time chain, one link per orbit step, not an IFS attractor.`
+          : "Escape-time render: this fold does not contract, so Surface marches its escape-time set — the canonical Mandelbox object — rather than an IFS attractor.";
       return withSurfaceShapeSourceBudget(
         {
           status: "degraded",
           note:
-            links > 1
-              ? // The hybrid chain: the transform list IS the formula
-                // sequence, so name the object as a chain rather than as
-                // "the canonical Mandelbox". Cross-family power links split
-                // the sentence again, because a chain may hold a POWER link
-                // and "these N folds" is then simply false.
-                systemHasPowerLink(transforms)
-                ? `Escape-time render: these ${links} maps form a hybrid formula chain, so Surface marches one link per orbit step rather than an IFS attractor.`
-                : `Escape-time render: these ${links} folds do not all contract, so Surface marches their escape-time chain, one link per orbit step, not an IFS attractor.`
-              : "Escape-time render: this fold does not contract, so Surface marches its escape-time set — the canonical Mandelbox object — rather than an IFS attractor.",
+            twist3.verdict === "live"
+              ? `${baseNote} ${CHAIN_TWIST_DISCLOSURE}.`
+              : baseNote,
           kind: "escape",
         },
-        shapeTrap ? [shapeTrap.shape] : [],
-        tiling,
+        twist3.verdict === "live" ? [] : shapeTrap ? [shapeTrap.shape] : [],
+        twist3.verdict === "live" ? null : tiling,
       );
     }
     // The escape family's second complement: a single pure triplex-power
@@ -1209,6 +1383,24 @@ export function deriveSurfaceEligibility(
       analyzeBulbSystem(transforms, finalTransform, symmetry).status ===
       "eligible"
     ) {
+      // The twist on a LONE power map: the bulb route has no chain for the
+      // per-link wrap to join (the vocabulary's rule — a consumer without
+      // the application sites refuses rather than silently ignoring).
+      const bulbTwist = chainTwistGate(chainTwist);
+      if (bulbTwist.verdict === "refused") {
+        return {
+          status: "ineligible",
+          note: `chain twist refused: ${bulbTwist.reasons.join("; ")}`,
+          kind: null,
+        };
+      }
+      if (bulbTwist.verdict === "live") {
+        return {
+          status: "ineligible",
+          note: "the chain twist composes with an escape-time chain, not the lone Mandelbulb render — clear the twist to render it",
+          kind: null,
+        };
+      }
       if (shapeTrap?.geometry === true) {
         return {
           status: "ineligible",
@@ -1281,8 +1473,25 @@ export function deriveSurfaceEligibility(
       tiling,
     );
   }
+  // The 3D IFS route's dormant-twist clause — the 4D one above, verbatim.
+  const twistDormant = chainTwistGate(chainTwist);
+  if (twistDormant.verdict === "refused") {
+    return {
+      status: "ineligible",
+      note: `chain twist refused: ${twistDormant.reasons.join("; ")}`,
+      kind: null,
+    };
+  }
+  const ifsNote =
+    twistDormant.verdict === "live"
+      ? "the chain twist composes with an escape-time chain, which this document is not — it renders as the IFS attractor, untwisted"
+      : null;
   return withSurfaceShapeSourceBudget(
-    { status: "eligible", note: null, kind: "ifs" },
+    {
+      status: twistDormant.verdict === "live" ? "degraded" : "eligible",
+      note: ifsNote,
+      kind: "ifs",
+    },
     activeEmitterShapes(transforms),
     tiling,
   );

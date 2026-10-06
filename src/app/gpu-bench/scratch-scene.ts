@@ -35,6 +35,7 @@ import {
   type SurfaceDE4,
 } from "../../fractal/surface-de-4d";
 import type { EscapeDE } from "../../fractal/escape-de";
+import type { TwistAuthored } from "../../fractal/twist";
 import type { EscapeDE4 } from "../../fractal/escape-de-4d";
 import type { BulbDE } from "../../fractal/bulb-de";
 import type { SphereInversionDE } from "../../fractal/sphere-inversion";
@@ -136,6 +137,9 @@ export interface ScratchScene {
   condensationDepthBand?: CondensationDepthBand;
   sphereInversion: SphereInversionAuthored | null;
   finiteSolid: FiniteSolidAuthored | null;
+  /** The chain twist's authored block, as decoded — the escape/escape4
+   * builders' fourth argument. */
+  chainTwist: TwistAuthored | null;
   /** The scene's own 4D view pose when it carries one — the preset's
    * authored rotor + world `w0`, or the decoded document's `FourDPose`
    * (world `sliceW` preferred, the persisted convention). Null → identity
@@ -209,6 +213,7 @@ export function scratchPresetScene(name: string): ScratchScene | null {
     schedule: PRESET_SCHEDULES[preset]?.() ?? null,
     sphereInversion: PRESET_SPHERE_INVERSIONS[preset]?.() ?? null,
     finiteSolid: PRESET_FINITE_SOLIDS[preset] ?? null,
+    chainTwist: null,
     view4: view?.fourD
       ? { rotor: rotorMatrix(presetRotorPair(view.fourD)), w0: view.fourD.w0 }
       : null,
@@ -243,6 +248,7 @@ export function scratchDocScene(payload: string): ScratchScene {
     condensationDepthBand: snapshot.condensationDepthBand,
     sphereInversion: snapshot.sphereInversion ?? null,
     finiteSolid: snapshot.finiteSolid ?? null,
+    chainTwist: snapshot.chainTwist ?? null,
     view4: pose
       ? {
           rotor: rotorMatrix(pose.pair),
@@ -293,6 +299,7 @@ export function deriveScratchRoute(scene: ScratchScene): ScratchRoute {
     scene.condensationDepthBand,
     scene.sphereInversion,
     scene.finiteSolid,
+    scene.chainTwist,
   );
   if (eligibility.status === "ineligible" || eligibility.kind === null) {
     throw new Error(
@@ -352,6 +359,7 @@ export function deriveScratchRoute(scene: ScratchScene): ScratchRoute {
           scene.transforms,
           scene.finalTransform,
           scene.symmetry,
+          scene.chainTwist,
         ),
         view4,
       };
@@ -370,6 +378,7 @@ export function deriveScratchRoute(scene: ScratchScene): ScratchRoute {
           scene.transforms,
           scene.finalTransform,
           scene.symmetry,
+          scene.chainTwist,
         ),
         view4,
       };

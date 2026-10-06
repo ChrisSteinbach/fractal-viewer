@@ -147,6 +147,7 @@ import type { ShapePart, ShapePose, ShapeSpec } from "../fractal/shapes";
 import { TILING_GROUPS, isLatticeTilingSpec } from "../fractal/tiling";
 import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
 import type { FiniteSolidAuthored } from "../fractal/finite-solid";
+import type { TwistAuthored } from "../fractal/twist";
 import type { TilingGroup, TilingSpec } from "../fractal/tiling";
 import { isMeshAssetId } from "../fractal/mesh-shapes";
 import { resolveCondensationDepthBand } from "../fractal/condensation-de";
@@ -217,6 +218,13 @@ export interface SceneSnapshot {
    * JSON object as-is so a refused block survives decode → encode exactly.
    */
   finiteSolid?: FiniteSolidAuthored;
+  /**
+   * Optional chain-twist block (see {@link AppState.chainTwist}). Same
+   * wire discipline as `sphereInversion`: written only when present, the
+   * authored JSON VERBATIM, and {@link decodeChainTwist} keeps any plain
+   * JSON object as-is so a refused block survives decode → encode exactly.
+   */
+  chainTwist?: TwistAuthored;
   numPoints: number;
   pointSize: number;
   colorMode: ColorMode;
@@ -490,6 +498,10 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     ...(state.finiteSolid !== undefined
       ? { finiteSolid: state.finiteSolid }
       : {}),
+    ...(state.chainTwist !== undefined ? { chainTwist: state.chainTwist } : {}),
+    ...(state.finiteSolid !== undefined
+      ? { finiteSolid: state.finiteSolid }
+      : {}),
     numPoints: state.numPoints,
     pointSize: state.pointSize,
     colorMode: state.colorMode,
@@ -591,6 +603,8 @@ export function fromSnapshot(
     sphereInversion: snapshot.sphereInversion,
     // The finite-solid block, same scene-content reason.
     finiteSolid: snapshot.finiteSolid,
+    // The chain-twist block, same scene-content reason.
+    chainTwist: snapshot.chainTwist,
     balloonEcho: snapshot.balloonEcho ?? false,
     balloonRadius: snapshot.balloonRadius ?? DEFAULT_BALLOON_RADIUS,
     balloonPaletteId: snapshot.balloonPaletteId ?? DEFAULT_BALLOON_PALETTE,
@@ -1364,6 +1378,21 @@ function decodeSphereInversion(
  * pre-validates a field. Never throws.
  */
 function decodeFiniteSolid(raw: unknown): FiniteSolidAuthored | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  return raw;
+}
+
+/**
+ * Keep one untrusted `chainTwist` wire value as-is when it can be a block
+ * at all: a plain JSON object (not an array, not null, not a scalar), which
+ * drops to absent otherwise — a non-object names no block to preserve.
+ * `twist.ts`'s `resolveTwist` is written for such untrusted values (wrong
+ * types refuse, never coerce), so nothing here pre-validates a field.
+ * Never throws.
+ */
+function decodeChainTwist(raw: unknown): TwistAuthored | undefined {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return undefined;
   }
@@ -3321,6 +3350,7 @@ export function encodeScene(s: SceneSnapshot): string {
         };
     sphereInversion?: SphereInversionAuthored;
     finiteSolid?: FiniteSolidAuthored;
+    chainTwist?: TwistAuthored;
     numPoints: number;
     pointSize: number;
     colorMode: ColorMode;
@@ -3666,6 +3696,12 @@ export function encodeScene(s: SceneSnapshot): string {
   if (s.finiteSolid !== undefined && s.finiteSolid !== null) {
     payload.finiteSolid = s.finiteSolid;
   }
+  // The chain-twist block, written only when present and VERBATIM — the
+  // sphere-inversion reasoning again: no rounding, refused blocks' unknown
+  // keys ride along untouched (decodeChainTwist's contract).
+  if (s.chainTwist !== undefined && s.chainTwist !== null) {
+    payload.chainTwist = s.chainTwist;
+  }
   // Written only when present, like finalTransform above — never-authored
   // scenes keep their short URLs. Encoded as hex (per-stop strings for an
   // authored gradient, one concatenated ramp string for an imported one) for
@@ -3936,6 +3972,10 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     // decodeFiniteSolid.
     const finiteSolid = decodeFiniteSolid(o.finiteSolid);
 
+    // chainTwist: optional block — same verbatim discipline; see
+    // decodeChainTwist.
+    const chainTwist = decodeChainTwist(o.chainTwist);
+
     // colorMode / renderStyle: exact known-string matches only. ---------------
     const { colorMode, renderStyle } = o;
     if (typeof colorMode !== "string" || !VALID_COLOR_MODES.has(colorMode))
@@ -4148,6 +4188,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       tiling,
       sphereInversion,
       finiteSolid,
+      chainTwist,
       numPoints,
       pointSize,
       colorMode: colorMode as ColorMode,
