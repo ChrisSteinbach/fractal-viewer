@@ -4269,12 +4269,11 @@ describe("surfaceComputeFenceGroupSize", () => {
 
   it("sizes the group from twice the lane's worst measured dispatch", () => {
     // 300 ms of group budget against 2 x 25 ms of measured work is six
-    // dispatches, which the measured browser ceiling then cuts to its own
-    // — so the formula is checked past that cap, where it still speaks.
+    // dispatches, and since the browser ceiling rose to eight the WORK
+    // rule is what lands there — the cap now binds only on cheaper lanes,
+    // which the next test covers.
     expect(surfaceComputeFenceGroupSize(25, Infinity, 16)).toBe(6);
-    expect(surfaceComputeFenceGroupSize(25)).toBe(
-      SURFACE_COMPUTE_FENCE_GROUP_MAX,
-    );
+    expect(surfaceComputeFenceGroupSize(25)).toBe(6);
   });
 
   it("gives an expensive lane a group of one", () => {
@@ -4416,8 +4415,11 @@ describe("SurfaceComputeRenderer fence group staging", () => {
 
       expect(await renderer.renderFrame(spec)).not.toBeNull();
 
+      // The count cap rose to 8, so the grouping this test guards is
+      // "more than one dispatch per fence" rather than exactly two — the
+      // sweep's eight 256-ray slices may now all share one fence.
       expect(
-        fenceGroups(events, seedPipeline).some((g) => g.dispatches === 2),
+        fenceGroups(events, seedPipeline).some((g) => g.dispatches > 1),
       ).toBe(true);
     } finally {
       setSurfaceComputeSchedulePins({});

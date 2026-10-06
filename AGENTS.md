@@ -1906,10 +1906,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     PILOTED at one. NEVER SIZE A GROUP OFF A MODEL PREDICTION (a
     dispatch's predicted cost IS the target by construction).
     `SURFACE_COMPUTE_FENCE_GROUP_MAX` IS A MEASURED CEILING, NOT A DIAL:
-    Firefox dies at FOUR queued dispatches on outstanding `writeBuffer`
-    staging volume; groups also close at
-    `SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES`; raising the count needs
-    in-app measurement; a killed device never returns, so the loss latch is
+    8 since the frame prefill left the queue — Firefox died at 4+ while
+    `runFrame` staged it, and the repro settled staged VOLUME behind a
+    fence (row C 0/20); groups also close at
+    `SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES`; a killed device never
+    returns, so the loss latch is
     one-way by measurement (`scripts/webgpu-staging-ceiling.repro.mjs`).
     THE WATCHDOG'S UNIT IS THE SUBMISSION: submissions ARE separate driver
     JOBS (a backlog is not one — REFUTED), ONE job is cut at ~2.0 s on the

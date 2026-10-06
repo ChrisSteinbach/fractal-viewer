@@ -1464,7 +1464,7 @@ SO FOUR BOUNDS CLOSE A GROUP, whichever comes first — the first three in
   what kills. After the device seed the volume left is the ray lists — a
   march slice's list, and the free queue, which drains whole (3.7 MB at
   1280x720). The bound binds under `?surfacefencegroup` too, which is what
-  should make raising the count safe at any raster. It cannot fix row G: a
+  made raising the count safe at any raster. It cannot fix row G: a
   single dispatch whose own list is tens of megabytes;
 
 - **twice the lane's worst MEASURED per-dispatch work this frame**, against
@@ -1500,6 +1500,11 @@ at `--fencegroup=4` and `=6`; clean at 1, 2 and 3.
 | -------------- | ------- | ------- | -------- |
 | 1, 2, 3        | compute | compute | compute  |
 | 4, 6           | LOST    | —       | —        |
+
+THAT TABLE IS THE HISTORY, NOT THE PRESENT: the prefill that made four
+fatal left the queue when `runFrame`'s seed replaced the three staged
+uploads (below), and the re-measurement that raised the cap is under "THE
+CAP ROSE TO EIGHT" further down this section.
 
 #### It is a VOLUME, not a count — what the app-free reproduction settled
 
@@ -1576,14 +1581,15 @@ conservative, and a retry-on-loss is a measured won't-do.
 
 CHROME IS UNAFFECTED — 0/10 at 32 and at 512 bare submits a fence, and
 0/10 on cell D, the exact shape that kills Firefox 7/20 — and it gains
-nothing measurable from a wider group, so the cap stays the SMALLEST
-stack's rather than a compromise. **The shipped cap of TWO stands, for a
-better reason than the one it was given:** the failure is a RATE rather
-than a threshold, so "clean at three" was never a property of three — it
-was one run of a cell whose neighbour at four dies a third of the time —
-and the cost of being wrong is a compute-only session, fold-shaped or
-escape-shaped 4D, losing its Surface renderer outright with no way back.
-**THE FRAME PREFILL IS NOW SEEDED ON THE DEVICE.** `runFrame` no longer
+nothing measurable from a wider group. **THE SHIPPED CAP OF TWO STOOD, FOR
+A BETTER REASON THAN THE ONE IT WAS GIVEN, for as long as it stood:** the
+failure is a RATE rather than a threshold, so "clean at three" was never a
+property of three — it was one run of a cell whose neighbour at four dies
+a third of the time — and the cost of being wrong is a compute-only
+session, fold-shaped or escape-shaped 4D, losing its Surface renderer
+outright with no way back. That rate logic is exactly why the cap's rise,
+once the seed removed the volume, was MEASURED in the app rather than
+assumed (below). **THE FRAME PREFILL IS NOW SEEDED ON THE DEVICE.** `runFrame` no longer
 stages `color`, `layer` or `states` through the queue: one `seedFrame`
 dispatch (`surface-de-gpu.ts`'s `surfaceComputeSeedWgsl`) writes all three
 per ray — state `(-1, ACTIVE, 0, 0)`, the uncovered layer, the pixel's own
@@ -1597,10 +1603,25 @@ change nothing in a completed frame — the shade entry overwrites every
 terminal ray — so it is visible only on rays still active at a budget cut
 and in mid-frame progressive presents.
 
-**THE CAP IS STILL TWO.** The seed removes the quantity that set it; it
-does not measure what the cap can now be. Raising
-`SURFACE_COMPUTE_FENCE_GROUP_MAX` waits on the fence gate and the staging
-repro re-run in the app on Firefox.
+**THE CAP ROSE TO EIGHT ON THE RE-MEASUREMENT THE PARAGRAPH ABOVE WAITED
+FOR.** 2026-10-06, same machine, same fixture, production build. The gate
+at pinned `?surfacefencegroup=4` and `=6` — the two counts the table above
+lost — and `=8`, the candidate: every run clean on the compute engine and
+a hardware adapter, across eight Firefox sessions (unlit 4/6/8 twice each
+and 8 a third time, lit 8 once; no device loss, no uncaptured error) —
+and the repro's row-C shape extended to a group of EIGHT, 0/20 at ten
+rounds. `SURFACE_COMPUTE_FENCE_GROUP_MAX` is now 8, Chrome's own
+`SURFACE_STRIP_FENCE_GROUP_MAX`: the smallest stack's is the bigger
+number because the smallest stack's quantity left the queue. Measured
+against the same run's cap-2 baseline (55 fences, settle frame 5006 ms),
+the pinned arms carried 44-46 fences (45-46 unlit, 44 lit) and
+4307-4517 ms — fences are the solid signal, the frame time its
+~100 ms-a-fence consequence — and the unpinned default measured 47/4297
+after the raise. What still bounds a
+group: the staged bytes (1 MiB), twice the lane's worst measured work
+against the 300 ms target, the caller's present/budget deadline — and the
+count cap binds only on frames of queue-limited slivers, where it is the
+whole reason they do not fence one at a time.
 
 AND EACH LANE IS PILOTED. Until a lane's first group comes back measured
 there is no measurement to size from, so that lane fences one dispatch at a
