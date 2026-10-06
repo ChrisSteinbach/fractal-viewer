@@ -17,6 +17,7 @@ import {
 import {
   ESCAPE_STEP_SCALE,
   ESCAPE_TIME_ITERATIONS,
+  ESCAPE_TIME_RADIUS,
   type EscapeDE,
 } from "./escape-de";
 import {
@@ -592,6 +593,10 @@ import type { Vec3 } from "./types";
  * Params uniform — {@link SURFACE_GPU_PARAMS_BYTES} = 288 bytes:
  *   offset  0  vec3f boundCenter          12  f32 boundingRadius
  *          16  f32  escapeRadius          20  f32 stepScale
+ *              (per-core meaning: the descent/bulb cores' outer-sphere
+ *              2R versus the escape cores' ORBIT BAILOUT
+ *              ESCAPE_TIME_RADIUS — the one per-step test that may not
+ *              read the grown ball)
  *          24  f32  visibleRadius         28  f32 slowestSigma
  *          32  f32  stepCos               36  f32 stepSin
  *          40  u32  symOrder              44  u32 symPlane (0=yz,1=xz,2=xy)
@@ -2835,34 +2840,32 @@ function writeGroundPlane(view: DataView, gp: SurfaceGpuGroundPlane): void {
 /**
  * Pack the params uniform for the ESCAPE core and its formula CHAIN.
  * The frozen offsets carry the escape session's marching
- * quantities — the bailout ball is both bounding and visible sphere,
- * {@link ESCAPE_STEP_SCALE} damps steps (the GLSL variant's
+ * quantities — `boundingRadius` (12) is the QUERY-space marching ball,
+ * `escapeRadius` (16) is the ORBIT BAILOUT (`ESCAPE_TIME_RADIUS`, the one
+ * per-step test that may not read the grown ball: the chain twist grows
+ * `boundingRadius` by its offset's length, and the set's definition is
+ * the orbit staying inside the constant — escape-de.ts's MARCHING BALL
+ * paragraph), {@link ESCAPE_STEP_SCALE} damps steps (the GLSL variant's
  * `uStepScale`), `maxDepth` is the orbit's iteration budget in PASSES
  * ({@link ESCAPE_TIME_ITERATIONS} full, preview-clamped by
  * `run.maxDepth`), `mapCount` is the LINK COUNT the cycle wraps at, and
  * `symOrder`/`symPlane` are the query-space wedge fold's own order and
  * plane (the `stepCos`/`stepSin` sector-sweep pair stays inert — that is
- * a descent concept) — and the 208..271 VARIANT block carries the HEAD
- * link in the lens rows' interleave, tail vec4f in the GLSL `uEscParams`
- * order (kind, w, derivGrowth, logEstimate).
+ * a descent concept).
  *
- * That head-link block is the wire's ONE redundancy, kept
- * deliberately: the bodies read every link — the head included — from the
- * maps storage binding ({@link packEscapeGpuMaps}), but the block's
- * offsets are frozen (the ground-plane block lands at 288 behind it) and
- * a struct member cannot be left undeclared without moving that. It
+ * The 208..271 VARIANT block carries the CHAIN TWIST when one is live:
+ * its rows in the head-link ballast's row lanes (208/224/240), its
+ * `twistB` offset in the `.w` lanes (220/236/252), and the on-flag in
+ * `escParams.x` (256) — the head-link ballast repurposed, since the
+ * bodies read every link from the maps storage binding and the block's
+ * offsets are frozen behind the shared ground-plane block at 288.
+ * `escParams.w` (268) stays `EscapeDE.logEstimate`, the block's other
+ * live word since the power links landed. Untwisted sessions pack the
+ * head-link bytes and flag 0, so absence renders byte-identically — and
  * cannot drift, since `EscapeDE`'s flat fields ARE `links[0]`'s.
  *
- * Its LAST word is the exception, and the only thing here the kernel
- * reads: offset 268 carries `EscapeDE.logEstimate` — 0 for the
- * fold family's linear `r / dr`, 1 for the Böttcher `0.5·r·ln r / dr` a
- * chain holding a POWER link needs. One number per chain, so it rides the
- * params block rather than the per-link maps binding.
- *
  * The final packs identity/1 (the escape gate refuses final transforms);
- * `escapeRadius` packs the GLSL's dead `2R` so the wire never carries an
- * uninitialized word; `footprint` packs 0 — a forward loop has no
- * cone-footprint depth cap.
+ * `footprint` packs 0 — a forward loop has no cone-footprint depth cap.
  */
 export function packEscapeGpuParams(
   de: EscapeDE,
@@ -2883,7 +2886,12 @@ export function packEscapeGpuParams(
   );
   const view = new DataView(buf);
   view.setFloat32(12, de.boundingRadius, true);
-  view.setFloat32(16, de.boundingRadius * 2, true);
+  // The ORBIT BAILOUT — ESCAPE_TIME_RADIUS, the value body's per-step
+  // escape test. The descent cores read this lane as the outer-sphere 2R;
+  // this core's value body reads the constant instead, which is
+  // value-identical while the ball is the bailout and stays right when
+  // the chain twist grows it.
+  view.setFloat32(16, ESCAPE_TIME_RADIUS, true);
   view.setFloat32(20, ESCAPE_STEP_SCALE, true);
   view.setFloat32(24, de.boundingRadius, true);
   view.setFloat32(28, 1, true);
@@ -2923,15 +2931,35 @@ export function packEscapeGpuParams(
   // line. The escape shade path reads it through the same shared
   // shadeRays fn as every other core.
   view.setFloat32(204, run.fogDensity ?? 1, true);
-  writeVec3(view, 208, [de.m[0], de.m[1], de.m[2]]);
-  view.setFloat32(220, de.t[0], true);
-  writeVec3(view, 224, [de.m[3], de.m[4], de.m[5]]);
-  view.setFloat32(236, de.t[1], true);
-  writeVec3(view, 240, [de.m[6], de.m[7], de.m[8]]);
-  view.setFloat32(252, de.t[2], true);
-  view.setFloat32(256, de.kind, true);
-  view.setFloat32(260, de.w, true);
-  view.setFloat32(264, de.derivGrowth, true);
+  if (de.twistM !== null && de.twistB !== null) {
+    // The CHAIN TWIST rides the variant block: its rows in the head-link
+    // lanes, its offset in the `.w` lanes, the on-flag in escParams.x —
+    // the packer doc comment carries the layout. The kernel applies
+    // v <- R(f(v) + q + off) per link; the anchor R·q + twistB is
+    // folded into these bytes (twistB = R·off, so R·f + (R·q + twistB)
+    // is the same sum rotated).
+    const m = de.twistM;
+    const b = de.twistB;
+    writeVec3(view, 208, [m[0], m[1], m[2]]);
+    view.setFloat32(220, b[0], true);
+    writeVec3(view, 224, [m[3], m[4], m[5]]);
+    view.setFloat32(236, b[1], true);
+    writeVec3(view, 240, [m[6], m[7], m[8]]);
+    view.setFloat32(252, b[2], true);
+    view.setFloat32(256, 1, true);
+  } else {
+    // Untwisted: the head-link bytes, frozen ballast the kernel reads no
+    // link from, and flag 0 — absence renders byte-identically.
+    writeVec3(view, 208, [de.m[0], de.m[1], de.m[2]]);
+    view.setFloat32(220, de.t[0], true);
+    writeVec3(view, 224, [de.m[3], de.m[4], de.m[5]]);
+    view.setFloat32(236, de.t[1], true);
+    writeVec3(view, 240, [de.m[6], de.m[7], de.m[8]]);
+    view.setFloat32(252, de.t[2], true);
+    view.setFloat32(256, de.kind, true);
+    view.setFloat32(260, de.w, true);
+    view.setFloat32(264, de.derivGrowth, true);
+  }
   // The CHAIN's estimate form — 0 linear, 1 the Böttcher/
   // Green's form (escape-de.ts's ESTIMATE FORM paragraph). The one
   // live value in the 208..271 variant block, whose other rows stay
@@ -3550,7 +3578,9 @@ function writeGroundPlane4(view: DataView, gp: SurfaceGpuGroundPlane): void {
  * the orbit's PASS budget, and `symOrder`/`symPlane` carrying the
  * query-space wedge fold — with `symPlane` in {@link SYM_PLANE_CODE4}'s
  * six-plane code rather than the descents' collapsed one, because the
- * fold picks its two axes by name.
+ * fold picks its two axes by name. `escapeRadius` (16) packs the ORBIT
+ * BAILOUT, not the outer sphere: the value body's per-step test reads it,
+ * and the chain twist grows `boundingRadius` by its offset's length.
  *
  * From the 4D packer: the rotor rows, `w0`, and the slice-ADJUSTED
  * `visibleRadius` so the shared march entry's sphere gate is textually
@@ -3562,10 +3592,12 @@ function writeGroundPlane4(view: DataView, gp: SurfaceGpuGroundPlane): void {
  * colour ramp is `|q4|` over the bailout ball — an escape chain has no
  * probe-fit band.
  *
- * The 464..575 VARIANT block holds ONE live word, the chain's estimate
- * form; it is sized to the lens4 block ({@link
- * SURFACE_GPU_PARAMS4_ESCAPE_BYTES}) so the shared plane block below
- * lands at 576 for every 4D core.
+ * The 464..575 VARIANT block holds the CHAIN-LEVEL word — `esc4Params.x`
+ * the estimate form, `esc4Params.y` the twist on-flag — and, when the
+ * twist is live, its SO(4) rows + offset at 480..559, the lens4 block's
+ * region behind the word (560..575 stays pad). It is sized to the lens4
+ * block ({@link SURFACE_GPU_PARAMS4_ESCAPE_BYTES}) so the shared plane
+ * block below lands at 576 for every 4D core.
  */
 export function packEscape4GpuParams(
   de: EscapeDE4,
@@ -3595,7 +3627,10 @@ export function packEscape4GpuParams(
   const view = new DataView(buf);
   const R = de.boundingRadius;
   view.setFloat32(12, R, true);
-  view.setFloat32(16, R * 2, true);
+  // The ORBIT BAILOUT — ESCAPE_TIME_RADIUS — not the outer sphere: the
+  // value body's per-step escape test reads this lane, and the chain
+  // twist grows R by its offset's length (the 3D escape packer's rule).
+  view.setFloat32(16, ESCAPE_TIME_RADIUS, true);
   view.setFloat32(20, ESCAPE_STEP_SCALE, true);
   // The slice-adjusted marching ball: |(p, w0)| <= R implies |p| <= this,
   // the affine4 packer's own line at sliceHalfW 0.
@@ -3648,8 +3683,28 @@ export function packEscape4GpuParams(
   view.setFloat32(424, 1, true);
   view.setFloat32(428, R, true);
   view.setFloat32(452, 1 / R, true);
-  // The one live word of the 464..575 variant block.
+  // The CHAIN-LEVEL word: .x the estimate form (the one live word this
+  // block has carried since the chain reached the mirrors), .y the chain
+  // twist's on-flag.
   view.setFloat32(464, de.logEstimate ? 1 : 0, true);
+  view.setFloat32(468, de.twistM !== null ? 1 : 0, true);
+  if (de.twistM !== null && de.twistB !== null) {
+    // The chain twist's SO(4) rows + offset, riding the lens4 block's
+    // region at 480..559 (the packer doc names the layout; 560..575
+    // stays pad). Row-major rows, applied per link as
+    // v <- R(f(v) + q + off).
+    const m = de.twistM;
+    const b = de.twistB;
+    for (let i = 0; i < 4; i++) {
+      view.setFloat32(480 + i * 16, m[i * 4], true);
+      view.setFloat32(484 + i * 16, m[i * 4 + 1], true);
+      view.setFloat32(488 + i * 16, m[i * 4 + 2], true);
+      view.setFloat32(492 + i * 16, m[i * 4 + 3], true);
+    }
+    for (let i = 0; i < 4; i++) {
+      view.setFloat32(544 + i * 4, b[i], true);
+    }
+  }
   if (groundPlane) {
     writeGroundPlane4(view, groundPlane);
   }
@@ -8248,8 +8303,19 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
       y = vec3f(y.x * y.x - y.y * y.y - y.z * y.z, 2.0 * y.x * y.y, 2.0 * y.x * y.z);
     }
     // The link's own POST-AFFINE, forward, before the +q offset (the
-    // escape packer stores the forward post on the lanes).
-    v = linkPostForward(L, L.p0.y * y) + q;
+    // escape packer stores the forward post on the lanes). The CHAIN
+    // TWIST wraps the whole sum, exactly as the value body applies it —
+    // the hit-info colors what the value body's geometry drew.
+    let s = linkPostForward(L, L.p0.y * y) + q;
+    if (params.escParams.x != 0.0) {
+      v = vec3f(
+        dot(params.escM0, s) + params.escT0,
+        dot(params.escM1, s) + params.escT1,
+        dot(params.escM2, s) + params.escT2,
+      );
+    } else {
+      v = s;
+    }
     r = length(v);
     growth = L.p0.z;
     // The DEGREE of the link that produced this r — 0 for a
@@ -8341,8 +8407,19 @@ fn surfaceDEHitInfo(${tiling ? "qIn: vec4f" : "p: vec3f"}, li: u32) -> SurfaceHi
       );
     }
     // The link's own POST-AFFINE, forward, before the +q offset (the
-    // escape packer stores the forward post on the lanes).
-    v = linkPostForward4(L, L.p0.y * y) + q;
+    // escape packer stores the forward post on the lanes). The CHAIN
+    // TWIST wraps the whole sum, exactly as the value body applies it.
+    let s = linkPostForward4(L, L.p0.y * y) + q;
+    if (params.esc4Params.y != 0.0) {
+      v = vec4f(
+        dot(params.esc4TwistR0, s) + params.esc4TwistB.x,
+        dot(params.esc4TwistR1, s) + params.esc4TwistB.y,
+        dot(params.esc4TwistR2, s) + params.esc4TwistB.z,
+        dot(params.esc4TwistR3, s) + params.esc4TwistB.w,
+      );
+    } else {
+      v = s;
+    }
     r = length(v);
     growth = L.p0.z;
     lastPower = select(0.0, 2.0, kind == 5u);
@@ -13258,19 +13335,32 @@ struct Params {
         }`
       : core === "escape4"
         ? /* wgsl */ `
-  // (logEstimate, 0, 0, 0) — the chain-level estimate form, 0
-  // linear and 1 Bottcher. One number per CHAIN, read once after the
-  // orbit, which is why it rides here and not the maps binding. Nothing
-  // else: this block was written after the chain reached the shader
-  // mirrors, so it carries no frozen
-  // head-link ballast the way the 3D escape core's does.
-  esc4Params: vec4f,${
+  // (logEstimate, twist, 0, 0) — the CHAIN-LEVEL word: .x is the
+  // chain's estimate form, 0 linear and 1 Bottcher; .y is the chain
+  // twist's on-flag. Both are one number per CHAIN, read once after the
+  // orbit (the flag) or once per step (the twist), which is why they
+  // ride here and not the maps binding. Nothing else: this block was
+  // written after the chain reached the shader mirrors, so it carries no
+  // frozen head-link ballast the way the 3D escape core's does.
+  esc4Params: vec4f,
+  // The chain twist's SO(4) rows + offset, riding the lens4 block's
+  // region behind the chain word (480..559 — the twist needs exactly
+  // five vec4s of it, and 560..575 stays pad). UNCONDITIONAL members —
+  // the body reads them whether or not the shared 4D tail block is
+  // declared, and a smaller struct reading the larger buffer is valid
+  // WebGPU. Untwisted sessions pack flag 0 and these lanes zero; the
+  // kernel then runs the untwisted line verbatim.
+  esc4TwistR0: vec4f,
+  esc4TwistR1: vec4f,
+  esc4TwistR2: vec4f,
+  esc4TwistR3: vec4f,
+  esc4TwistB: vec4f,${
     tail4Block
       ? /* wgsl */ `
-  // 480..575, PAD — the lens4 block's remaining region, which this core
+  // 560..575, PAD — the lens4 block's remaining region, which this core
   // can never use (escape4+lens throws) and which exists so the shared
   // plane block below lands at ONE offset across every 4D core.
-  padE4: array<vec4f, 6>,`
+  padE4: array<vec4f, 1>,`
       : ""
   }`
         : core === "finite4"
@@ -13322,10 +13412,16 @@ struct Params {
   escT1: f32,
   escM2: vec3f,
   escT2: f32,
-  // (kind, w, derivGrowth, logEstimate) — the head link's quartet, frozen
-  // ballast the bodies read no link from EXCEPT its .w lane:
-  // the chain-level estimate form, 0 linear and 1 Bottcher. One
-  // number per CHAIN, which is why it rides here and not the maps binding.
+  // (twist, w, derivGrowth, logEstimate) — the CHAIN-LEVEL word, frozen
+  // ballast the bodies read no link from EXCEPT its two live lanes: .x
+  // is the chain twist's on-flag (the rows above are the twist's matrix
+  // rows, .w lanes its offset — the head-link ballast repurposed, since
+  // the bodies read every link from the maps binding), and .w is the
+  // chain-level estimate form, 0 linear and 1 Bottcher. Both are one
+  // number per CHAIN, which is why they ride here and not the maps
+  // binding. Flag 0 runs the untwisted lines verbatim, and the packer
+  // keeps the head-link bytes in the rows then — absence renders
+  // byte-identically.
   escParams: vec4f,
   // The fold-lens lengths' 272..287 slot, PAD here. This core has
   // no lens (escape+lens throws) and its links carry their own lengths on
@@ -16274,7 +16370,12 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   let steps = params.maxDepth * n;
   var link = 0u;${trapGeometryDecl}
   for (var i = 0u; i < steps; i++) {
-    if (r > params.boundingRadius) {
+    // The ORBIT BAILOUT, not the marching ball: the set is defined by the
+    // orbit staying inside ESCAPE_TIME_RADIUS, while boundingRadius is
+    // the QUERY-space ball the tracer enters/exits against — grown by the
+    // chain twist's offset length, so it cannot double as this test.
+    // escape-de.ts's MARCHING BALL paragraph carries the argument.
+    if (r > params.escapeRadius) {
       break;
     }
     // The chain's cycle: link i mod n, which is the single map itself at
@@ -16331,7 +16432,21 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
     // The Mandelbrot form's offset — the QUERY POINT (folded before the
     // orbit), not the document's t (which stays the pre-fold offset
     // inside y above). The link's own POST-AFFINE, forward, before it.
-    v = linkPostForward(L, L.p0.y * y) + q;
+    // The CHAIN TWIST wraps the whole sum — v <- R(f(v) + q + off) —
+    // reading the twist rows + offset the packer put in the variant
+    // block's lanes (the head-link ballast repurposed; escParams.x is
+    // the on-flag, escParams.w stays the estimate form). Untwisted
+    // sessions pack flag 0 and run the original line verbatim.
+    let s = linkPostForward(L, L.p0.y * y) + q;
+    if (params.escParams.x != 0.0) {
+      v = vec3f(
+        dot(params.escM0, s) + params.escT0,
+        dot(params.escM1, s) + params.escT1,
+        dot(params.escM2, s) + params.escT2,
+      );
+    } else {
+      v = s;
+    }
     dr = L.p0.z * localL * dr + 1.0;
     r = length(v);${trapGeometryStep("v", "i")}
     link++;
@@ -16483,7 +16598,11 @@ fn surfaceDE(${tiling ? "qIn: vec4f" : "pIn: vec3f"}, cutoff: f32, li: u32) -> f
   let steps = params.maxDepth * n;
   var link = 0u;${trapGeometryDecl}
   for (var i = 0u; i < steps; i++) {
-    if (r > params.boundingRadius) {
+    // The ORBIT BAILOUT, not the marching ball — the 3D core's rule
+    // (escape-de.ts's MARCHING BALL paragraph): boundingRadius is the
+    // query-space ball, grown by the chain twist's offset, and the set
+    // is defined against ESCAPE_TIME_RADIUS.
+    if (r > params.escapeRadius) {
       break;
     }
     // The chain's cycle: link i mod n. GpuMap4 rows carry the FORWARD
@@ -16527,8 +16646,22 @@ fn surfaceDE(${tiling ? "qIn: vec4f" : "pIn: vec3f"}, cutoff: f32, li: u32) -> f
       );
     }
     // The Mandelbrot form's offset — the QUERY POINT, folded and lifted.
-    // The link's own POST-AFFINE, forward, before the +q offset.
-    v = linkPostForward4(L, L.p0.y * y) + q;
+    // The link's own POST-AFFINE, forward, before the +q offset. The
+    // CHAIN TWIST wraps the whole sum — v <- R(f(v) + q + off) — over the
+    // SO(4) rows + offset the packer put in the lens4-region lanes
+    // (480..559; esc4Params.y is the on-flag, esc4Params.x stays the
+    // estimate form). Flag 0 runs the original line verbatim.
+    let s = linkPostForward4(L, L.p0.y * y) + q;
+    if (params.esc4Params.y != 0.0) {
+      v = vec4f(
+        dot(params.esc4TwistR0, s) + params.esc4TwistB.x,
+        dot(params.esc4TwistR1, s) + params.esc4TwistB.y,
+        dot(params.esc4TwistR2, s) + params.esc4TwistB.z,
+        dot(params.esc4TwistR3, s) + params.esc4TwistB.w,
+      );
+    } else {
+      v = s;
+    }
     dr = L.p0.z * localL * dr + 1.0;
     r = length(v);${trapGeometryStep("v.xyz", "i")}
     link++;
