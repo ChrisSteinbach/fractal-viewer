@@ -68,3 +68,16 @@ export function fourDWorkerViewNeedsRebuild(
   if (sameFourDWorkerView(current, next)) return false;
   return !sameFourDWorkerSpatialView(current, next) || relativeColorIsActive;
 }
+
+/** Exact equality of two row-major camera `projection * view` matrices (the
+ * flat flame session's frozen camera) — the same "the same settled endpoint"
+ * idiom as {@link sameFourDWorkerView}, one family over: the motion-clip
+ * export's `setProjection` commit no-ops on an unchanged camera instead of
+ * discarding a converging frame for nothing. Element-wise `===`, like the
+ * rotor comparison above. */
+export function sameProjection(current: number[], next: number[]): boolean {
+  return (
+    current.length === next.length &&
+    current.every((value, index) => value === next[index])
+  );
+}

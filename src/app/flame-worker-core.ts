@@ -104,6 +104,7 @@ import { wSupport } from "./rotor4";
 import {
   sameFourDWorkerView,
   sameFourDWorkerSpatialView,
+  sameProjection,
   type FourDWorkerView,
 } from "./four-d-worker-view";
 import type {
@@ -408,6 +409,21 @@ export type FlameWorkerCommand =
        * this command.
        */
       view: FourDWorkerView;
+    }
+  | {
+      type: "setProjection";
+      /**
+       * A settled FLAT camera endpoint — the motion-clip export's per-frame
+       * commit, the 3D sibling of `setFourDView`: the worker replaces the
+       * camera projection the `start` froze and restarts the accumulation,
+       * so the next chunk re-projects the attractor from the new angle. A
+       * 4D session refuses (its composed rotor+camera projection is
+       * `setFourDView`'s subject — a camera change there is a design
+       * question, and the export driver never posts one). The LIVE flame
+       * view stays frozen: no gesture or camera drag routes here — only the
+       * record path commits, deliberately, one full restart per frame.
+       */
+      projection: Mat4;
     }
   | {
       type: "setSymmetry";
@@ -1602,6 +1618,9 @@ export class FlameWorkerSession {
       case "setFourDView":
         this.setFourDView(command.view);
         break;
+      case "setProjection":
+        this.setProjection(command.projection);
+        break;
       case "setSymmetry":
         this.setSymmetry(command.order, command.plane, command.twist ?? 0);
         break;
@@ -2267,6 +2286,33 @@ export class FlameWorkerSession {
     }
 
     this.applyPointTilingViewPolicy();
+    this.startAccumulation(
+      this.lastRequestedSupersample ?? this.effectiveSupersample,
+    );
+  }
+
+  /**
+   * The motion-clip export's flat camera commit: replace the projection the
+   * `start` command froze and restart the accumulation, so the next chunk
+   * re-projects the attractor from the new camera (`this.projection` is read
+   * at backend-creation time, exactly where the restart re-creates it). The
+   * 3D sibling of `setFourDView`'s restart, and refused symmetrically: a 4D
+   * session's camera is composed into `projection4` and owned by
+   * `setFourDView`, and a session without geometry has nothing to
+   * re-project. An unchanged projection no-ops — the driver only posts
+   * frames whose camera actually moved, but the equality guard keeps a
+   * redundant post from discarding a converging frame for nothing.
+   */
+  private setProjection(projection: Mat4): void {
+    if (
+      this.is4D ||
+      !this.hasGeometry() ||
+      this.projection === null ||
+      sameProjection(this.projection, projection)
+    ) {
+      return;
+    }
+    this.projection = projection;
     this.startAccumulation(
       this.lastRequestedSupersample ?? this.effectiveSupersample,
     );

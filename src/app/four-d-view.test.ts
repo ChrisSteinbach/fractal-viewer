@@ -124,6 +124,50 @@ describe("FourDView", () => {
     });
   });
 
+  describe("step", () => {
+    it("composes exactly what tick() composes while the tumble is running", () => {
+      const ticked = new FourDView();
+      ticked.reset(true);
+      ticked.tick(0.5);
+
+      const stepped = new FourDView();
+      stepped.reset(true);
+      stepped.step(0.5);
+
+      expect(stepped.matrix()).toEqual(ticked.matrix());
+    });
+
+    it("composes even while the tumble is paused — the motion clip's unconditional advance", () => {
+      const view = new FourDView();
+      view.reset(true);
+      view.tumbleOn = false;
+
+      // tick() is a no-op here; step() is the clip's advance and must move.
+      view.tick(10);
+      expectMatClose(view.matrix(), IDENTITY);
+      view.step(10);
+
+      expect(maxDeviationFromIdentity(view.matrix())).toBeGreaterThan(0.01);
+    });
+
+    it("carries the tumbleSpeed multiplier like tick does", () => {
+      const base = new FourDView();
+      base.reset(true);
+      base.tumbleOn = false;
+      base.step(1);
+
+      const fast = new FourDView();
+      fast.reset(true);
+      fast.tumbleOn = false;
+      fast.tumbleSpeed = 2;
+      fast.step(1);
+
+      const baseDeviation = Math.abs(base.matrix()[1] - IDENTITY[1]);
+      const fastDeviation = Math.abs(fast.matrix()[1] - IDENTITY[1]);
+      expect(fastDeviation).toBeGreaterThan(baseDeviation);
+    });
+  });
+
   describe("rotate", () => {
     it("changes the rotor when given a non-zero xw delta", () => {
       const view = new FourDView();
