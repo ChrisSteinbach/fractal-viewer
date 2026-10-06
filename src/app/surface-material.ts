@@ -10035,8 +10035,8 @@ export function setEscapeSystem(
   // flag 0 runs the bodies' untwisted lines verbatim.
   u.uEscTwist.value = de.twistM !== null ? 1 : 0;
   const twistM = de.twistM;
-  (u.uEscTwistM.value as THREE.Matrix3).set(
-    ...(twistM !== null
+  const twistRows =
+    twistM !== null
       ? [
           twistM[0],
           twistM[1],
@@ -10048,10 +10048,23 @@ export function setEscapeSystem(
           twistM[7],
           twistM[8],
         ]
-      : [1, 0, 0, 0, 1, 0, 0, 0, 1]),
+      : [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  (u.uEscTwistM.value as THREE.Matrix3).set(
+    twistRows[0],
+    twistRows[1],
+    twistRows[2],
+    twistRows[3],
+    twistRows[4],
+    twistRows[5],
+    twistRows[6],
+    twistRows[7],
+    twistRows[8],
   );
+  const twistB = de.twistB;
   (u.uEscTwistB.value as THREE.Vector3).set(
-    ...(de.twistB !== null ? de.twistB : [0, 0, 0]),
+    twistB !== null ? twistB[0] : 0,
+    twistB !== null ? twistB[1] : 0,
+    twistB !== null ? twistB[2] : 0,
   );
   u.uSymOrder.value = de.symmetryOrder;
   u.uSymPlane.value = SYM_PLANE_CODE[de.symmetryPlane];

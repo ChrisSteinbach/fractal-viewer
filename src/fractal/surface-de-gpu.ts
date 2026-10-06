@@ -8267,6 +8267,16 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   // FOLD leaves here, so a fold-only chain reads the constant-factor arm
   // below at every step exactly as it did before.
   var lastPower = 0.0;${trapDecl}
+  // The CHAIN TWIST's per-eval anchor — the value body's hoist, so the
+  // hit-info colors exactly the geometry the value body drew.
+  var twistAnchor = vec3f(0.0);
+  if (params.escParams.x != 0.0) {
+    twistAnchor = vec3f(
+      dot(params.escM0, q) + params.escT0,
+      dot(params.escM1, q) + params.escT1,
+      dot(params.escM2, q) + params.escT2,
+    );
+  }
   for (var i = 0u; i < steps; i++) {
     if (r > params.boundingRadius) {
       escapedAt = i;
@@ -8310,15 +8320,20 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     // escape packer stores the forward post on the lanes). The CHAIN
     // TWIST wraps the whole sum, exactly as the value body applies it —
     // the hit-info colors what the value body's geometry drew.
-    let s = linkPostForward(L, L.p0.y * y) + q;
+    // The link's own POST-AFFINE, forward, before the +q offset (the
+    // escape packer stores the forward post on the lanes). The CHAIN
+    // TWIST wraps the whole sum — R·f + the hoisted anchor — exactly as
+    // the value body applies it (the hit-info colors what the value
+    // body's geometry drew).
+    let f = linkPostForward(L, L.p0.y * y);
     if (params.escParams.x != 0.0) {
       v = vec3f(
-        dot(params.escM0, s) + params.escT0,
-        dot(params.escM1, s) + params.escT1,
-        dot(params.escM2, s) + params.escT2,
-      );
+        dot(params.escM0, f),
+        dot(params.escM1, f),
+        dot(params.escM2, f),
+      ) + twistAnchor;
     } else {
-      v = s;
+      v = f + q;
     }
     r = length(v);
     growth = L.p0.z;
@@ -8386,6 +8401,16 @@ fn surfaceDEHitInfo(${tiling ? "qIn: vec4f" : "p: vec3f"}, li: u32) -> SurfaceHi
   var escapedAt = steps;
   var growth = maps[0].p0.z;
   var lastPower = 0.0;${trapDecl}
+  // The CHAIN TWIST's per-eval anchor — the 4D value body's hoist.
+  var twistAnchor4 = vec4f(0.0);
+  if (params.esc4Params.y != 0.0) {
+    twistAnchor4 = vec4f(
+      dot(params.esc4TwistR0, q) + params.esc4TwistB.x,
+      dot(params.esc4TwistR1, q) + params.esc4TwistB.y,
+      dot(params.esc4TwistR2, q) + params.esc4TwistB.z,
+      dot(params.esc4TwistR3, q) + params.esc4TwistB.w,
+    );
+  }
   for (var i = 0u; i < steps; i++) {
     if (r > params.boundingRadius) {
       escapedAt = i;
@@ -8412,17 +8437,19 @@ fn surfaceDEHitInfo(${tiling ? "qIn: vec4f" : "p: vec3f"}, li: u32) -> SurfaceHi
     }
     // The link's own POST-AFFINE, forward, before the +q offset (the
     // escape packer stores the forward post on the lanes). The CHAIN
-    // TWIST wraps the whole sum, exactly as the value body applies it.
-    let s = linkPostForward4(L, L.p0.y * y) + q;
+    // TWIST wraps the whole sum — R·f + the hoisted anchor — exactly as
+    // the value body applies it (the hit-info colors what the value
+    // body's geometry drew).
+    let f = linkPostForward4(L, L.p0.y * y);
     if (params.esc4Params.y != 0.0) {
       v = vec4f(
-        dot(params.esc4TwistR0, s) + params.esc4TwistB.x,
-        dot(params.esc4TwistR1, s) + params.esc4TwistB.y,
-        dot(params.esc4TwistR2, s) + params.esc4TwistB.z,
-        dot(params.esc4TwistR3, s) + params.esc4TwistB.w,
-      );
+        dot(params.esc4TwistR0, f),
+        dot(params.esc4TwistR1, f),
+        dot(params.esc4TwistR2, f),
+        dot(params.esc4TwistR3, f),
+      ) + twistAnchor4;
     } else {
-      v = s;
+      v = f + q;
     }
     r = length(v);
     growth = L.p0.z;
@@ -16373,6 +16400,18 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   let n = params.mapCount;
   let steps = params.maxDepth * n;
   var link = 0u;${trapGeometryDecl}
+  // The CHAIN TWIST's per-eval anchor — R·q + twistB — hoisted out of the
+  // loop so a step pays one mat-vec and one add, the CPU oracle's own
+  // factoring (escape-de.ts's CHAIN TWIST paragraph; the bench twin
+  // mirrors this hoist). Flag 0 keeps it zero and the step untwisted.
+  var twistAnchor = vec3f(0.0);
+  if (params.escParams.x != 0.0) {
+    twistAnchor = vec3f(
+      dot(params.escM0, q) + params.escT0,
+      dot(params.escM1, q) + params.escT1,
+      dot(params.escM2, q) + params.escT2,
+    );
+  }
   for (var i = 0u; i < steps; i++) {
     // The ORBIT BAILOUT, not the marching ball: the set is defined by the
     // orbit staying inside ESCAPE_TIME_RADIUS, while boundingRadius is
@@ -16436,20 +16475,19 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
     // The Mandelbrot form's offset — the QUERY POINT (folded before the
     // orbit), not the document's t (which stays the pre-fold offset
     // inside y above). The link's own POST-AFFINE, forward, before it.
-    // The CHAIN TWIST wraps the whole sum — v <- R(f(v) + q + off) —
-    // reading the twist rows + offset the packer put in the variant
-    // block's lanes (the head-link ballast repurposed; escParams.x is
-    // the on-flag, escParams.w stays the estimate form). Untwisted
-    // sessions pack flag 0 and run the original line verbatim.
-    let s = linkPostForward(L, L.p0.y * y) + q;
+    // The CHAIN TWIST wraps the whole sum — v <- R(f(v) + q + off) — as
+    // R·f + (R·q + twistB): one mat-vec on the link's own output plus the
+    // hoisted anchor, the CPU oracle's factoring. Untwisted sessions pack
+    // flag 0 and run the original line verbatim.
+    let f = linkPostForward(L, L.p0.y * y);
     if (params.escParams.x != 0.0) {
       v = vec3f(
-        dot(params.escM0, s) + params.escT0,
-        dot(params.escM1, s) + params.escT1,
-        dot(params.escM2, s) + params.escT2,
-      );
+        dot(params.escM0, f),
+        dot(params.escM1, f),
+        dot(params.escM2, f),
+      ) + twistAnchor;
     } else {
-      v = s;
+      v = f + q;
     }
     dr = L.p0.z * localL * dr + 1.0;
     r = length(v);${trapGeometryStep("v", "i")}
@@ -16601,6 +16639,18 @@ fn surfaceDE(${tiling ? "qIn: vec4f" : "pIn: vec3f"}, cutoff: f32, li: u32) -> f
   let n = params.mapCount;
   let steps = params.maxDepth * n;
   var link = 0u;${trapGeometryDecl}
+  // The CHAIN TWIST's per-eval anchor — R·q + twistB over the SO(4) rows —
+  // hoisted out of the loop, the 3D core's factoring (the bench twin
+  // mirrors this hoist). Flag 0 keeps it zero and the step untwisted.
+  var twistAnchor4 = vec4f(0.0);
+  if (params.esc4Params.y != 0.0) {
+    twistAnchor4 = vec4f(
+      dot(params.esc4TwistR0, q) + params.esc4TwistB.x,
+      dot(params.esc4TwistR1, q) + params.esc4TwistB.y,
+      dot(params.esc4TwistR2, q) + params.esc4TwistB.z,
+      dot(params.esc4TwistR3, q) + params.esc4TwistB.w,
+    );
+  }
   for (var i = 0u; i < steps; i++) {
     // The ORBIT BAILOUT, not the marching ball — the 3D core's rule
     // (escape-de.ts's MARCHING BALL paragraph): boundingRadius is the
@@ -16651,20 +16701,19 @@ fn surfaceDE(${tiling ? "qIn: vec4f" : "pIn: vec3f"}, cutoff: f32, li: u32) -> f
     }
     // The Mandelbrot form's offset — the QUERY POINT, folded and lifted.
     // The link's own POST-AFFINE, forward, before the +q offset. The
-    // CHAIN TWIST wraps the whole sum — v <- R(f(v) + q + off) — over the
-    // SO(4) rows + offset the packer put in the lens4-region lanes
-    // (480..559; esc4Params.y is the on-flag, esc4Params.x stays the
-    // estimate form). Flag 0 runs the original line verbatim.
-    let s = linkPostForward4(L, L.p0.y * y) + q;
+    // CHAIN TWIST wraps the whole sum — v <- R(f(v) + q + off) — as
+    // R·f + (R·q + twistB), the 3D core's factoring. Flag 0 runs the
+    // original line verbatim.
+    let f = linkPostForward4(L, L.p0.y * y);
     if (params.esc4Params.y != 0.0) {
       v = vec4f(
-        dot(params.esc4TwistR0, s) + params.esc4TwistB.x,
-        dot(params.esc4TwistR1, s) + params.esc4TwistB.y,
-        dot(params.esc4TwistR2, s) + params.esc4TwistB.z,
-        dot(params.esc4TwistR3, s) + params.esc4TwistB.w,
-      );
+        dot(params.esc4TwistR0, f),
+        dot(params.esc4TwistR1, f),
+        dot(params.esc4TwistR2, f),
+        dot(params.esc4TwistR3, f),
+      ) + twistAnchor4;
     } else {
-      v = s;
+      v = f + q;
     }
     dr = L.p0.z * localL * dr + 1.0;
     r = length(v);${trapGeometryStep("v.xyz", "i")}
