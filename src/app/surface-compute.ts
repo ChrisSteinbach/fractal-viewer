@@ -610,50 +610,36 @@ export const SURFACE_COMPUTE_JOB_WATCHDOG_MARGIN = 4;
  * Dispatches one fence may stand behind whatever they measure — and THIS
  * IS NOT A TUNING CONSTANT, it is a MEASURED BROWSER CEILING.
  *
- * **FIREFOX LOSES ITS DEVICE AT FOUR.** Measured on this repository's AMD
- * RX 7900 XTX on `DISPLAY=:0`, the fence gate's own fixture, production
- * build: with four or more dispatches queued behind one
- * `onSubmittedWorkDone`, the settle frame's first march sweep raises
- * `Uncaptured WebGPU error: Not enough memory left`, the device is lost,
- * and the session falls back to the WebGL tracer — reproduced at 4 and at
- * 6, and clean at 1, 2 and 3.
+ * **FIREFOX DIED AT FOUR — and the quantity that killed it is no longer
+ * queued.** The first measurement (this repository's AMD RX 7900 XTX on
+ * `DISPLAY=:0`, the fence gate's own fixture, production build) lost the
+ * device — `Uncaptured WebGPU error: Not enough memory left` — at four or
+ * more dispatches behind one `onSubmittedWorkDone`, reproduced at 4 and 6,
+ * and shipped this cap at 2. `scripts/webgpu-staging-ceiling.repro.mjs`
+ * then settled WHAT dies: not a dispatch COUNT and not the two small
+ * writes each one stages (row C, 0/20 dead with them) but `writeBuffer`
+ * STAGING held behind the fence — and the frame's own MEGABYTE PREFILL
+ * was the app's volume, not the dispatches. `runFrame` no longer stages
+ * that prefill: one `seedFrame` dispatch (`surface-de-gpu.ts`'s
+ * `surfaceComputeSeedWgsl`) seeds `color`, `layer` and `states` on the
+ * device, and the ray lists that still scale with the raster are bounded
+ * per group by {@link SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES}, the
+ * second closing rule.
  *
- * IT IS A VOLUME, NOT A COUNT, and the earlier reading of this same
- * failure — that it counted DISPATCHES, or the two small writes each one
- * stages — is REFUTED by the app-free reproduction in
- * `scripts/webgpu-staging-ceiling.repro.mjs`. Those two writes add
- * nothing: 0/20 dead with them, 0/20 without. Grow them to 4 MB at the
- * SAME dispatch count and it is 13/20, so the exhausted quantity is the
- * `writeBuffer` STAGING outstanding when the fence falls due — and a
- * frame's own PREFILL dominated it. `runFrame` used to stage `color`,
- * `layer` and `states` once per frame, 24 B/ray unlit and 36 B/ray lit:
- * 5.5 and 8.3 MB at 640x360, 22 and 33 MB at 1280x720, MEGABYTES against
- * the dispatches' 128 KB. Firefox reclaims that staging only on a 100 ms poll
- * (`WebGPUParent`'s `POLL_TIME_MS`, the same tick this repository already
- * measured as its fence round-trip), so a wider group is a longer HOLD
- * rather than a bigger count — the same 8 MB kills 7/20 behind a group of
- * four and 0/20 behind a group of one. The failure is a RATE, so "clean
- * at three" was one run of a cell and never a property of three; and
- * losing the device costs a compute-only session (fold-shaped or
- * escape-shaped 4D) its Surface renderer outright, with no way back — a
- * killed device does not come back in that tab (0 of 20 recoveries, at
- * 3 s as at 0).
- *
- * Chrome tolerates eight — the WebGL arm's own
- * `SURFACE_STRIP_FENCE_GROUP_MAX` — and gains nothing measurable from
- * them, so the cap is the SMALLEST stack's rather than a compromise
- * between them. THE FRAME PREFILL IS NOW SEEDED ON THE DEVICE — one
- * `seedFrame` dispatch (`surface-de-gpu.ts`'s `surfaceComputeSeedWgsl`)
- * replaces the three staged uploads — so the quantity that set this cap is
- * no longer queued. THE CAP IS STILL TWO: removing the cause does not
- * measure what the cap can now be, and raising it waits on the fence gate
- * and the staging repro re-run in the app on Firefox. The ray lists that
- * still scale with the raster are bounded per group by
- * {@link SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES}, the second closing rule
- * and what should make raising this safe at any raster. Measured rows:
- * `docs/surface-compute-renderer.md`.
+ * THE RE-MEASUREMENT THE RAISE WAITED ON, 2026-10: the gate's fixture on
+ * Firefox at 640x360 with pinned `?surfacefencegroup=4` and `=6` — the two
+ * counts that died — and `=8`, every run clean on the compute engine and
+ * a hardware adapter across eight sessions (unlit 4/6/8 twice each, 8 a
+ * third time, lit 8 once; fences 55 -> 44-47, settle frame 5006 ->
+ * 4307-4517 ms), and the repro's row-C shape extended to a group of EIGHT,
+ * 0/20 at ten rounds. So the cap rose to 8 — Chrome's own
+ * `SURFACE_STRIP_FENCE_GROUP_MAX`, whose tolerance of eight was already on
+ * record — and the smallest stack's is now the bigger number. On a real
+ * lane the WORK target governs well under this count; the cap binds on
+ * frames of queue-limited slivers, where it is the whole reason they do
+ * not fence one at a time. Measured rows: `docs/surface-compute-renderer.md`.
  */
-export const SURFACE_COMPUTE_FENCE_GROUP_MAX = 2;
+export const SURFACE_COMPUTE_FENCE_GROUP_MAX = 8;
 
 /** The gamma both tracers encode their output with (surface-material.ts's
  * `pow(linBase * lit, 1/2.2)` and its WGSL mirror). Supersampling's
@@ -2215,8 +2201,9 @@ export function surfaceComputeFenceGroupSize(
  *
  * IT ONLY EVER MAKES A GROUP SMALLER, NEVER EMPTY, AND SKIPS NO FENCE: a
  * dispatch whose own writes pass the ceiling still goes out, as a group of
- * one (row E). 1 MiB keeps the grouping this work was built for — two
- * 16 KB dispatches are 3% of it — while sitting far below row D's 8 MB.
+ * one (row E). 1 MiB keeps the grouping the raised count cap was measured
+ * with — eight 16 KB dispatches are 13% of it — while sitting far below
+ * row D's 8 MB.
  * What no group rule can fix is row G: one dispatch whose OWN list is tens
  * of megabytes (4K-class rasters) stages that much behind its own fence.
  */

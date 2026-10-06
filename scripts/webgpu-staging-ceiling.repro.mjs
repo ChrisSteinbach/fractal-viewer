@@ -69,8 +69,11 @@
  * against D: the same megabytes behind a group of one are harmless, so a
  * fence group is HOLD TIME on staging rather than a count of anything. H:
  * memory the device merely holds is not the quantity. B against A:
- * submissions do carry a cost of their own, but it takes EIGHT TIMES the
- * app's cap to reach a rate that 8 MB of staging reaches at four.
+ * submissions do carry a cost of their own, but it takes thirty-two bare
+ * submits — eight times the cap of two this record was written under; the
+ * app's cap has since risen to eight on the re-measurement row C was
+ * extended for (`--arm=frame --groups=8 --prefillMb=0`: 0/20) — to reach a
+ * rate that 8 MB of staging reaches at four.
  *
  * G IS THE ONE NO FENCE GROUP CAN FIX: at a group of ONE it dies 20/20, on
  * the first fence, every run. `surface-compute.ts` stages 24 B/ray of
