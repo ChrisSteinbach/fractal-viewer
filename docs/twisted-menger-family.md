@@ -120,3 +120,20 @@ the GLSL fallback arm, the family's panel section, and the Points-mode
 question (the construction is not an IFS, so the explorer has no attractor
 to chaos-game; the honest options are a carve-sampler or a disclosed
 refusal).
+
+## The shared twist vocabulary
+
+The authored block's rotation/offset/`w` fields, the resolver's validation
+body and the matrix composition now live in `twist.ts` as the ONE shared
+twist vocabulary, and `menger-twist.ts` is the family layer on top of it:
+the carve-depth ceiling, the reference-construction defaults (the family
+pre-fills its ~53° Y rotation before the shared resolver runs — the shared
+vocabulary's own neutral default is the identity, which is what the escape
+chain's absence wants), and the dimension verdict. The second consumer is
+the escape-time chain, which applies the same block to its orbit at every
+link (`v <- R(f(v) + q + off)` — see `docs/escape-time-family.md`'s chain
+twist section for the soundness argument and the certification): one
+authored semantics, two consumers, and the composition
+(`multiply4x4(planes, euler4)` — `affine4.ts`'s convention, the embedded
+upper-left reproducing the 3D matrix exactly) has one definition rather
+than the two a re-derivation would have minted.

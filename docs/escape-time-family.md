@@ -314,6 +314,61 @@ chaos game's cyclic (a cyclic fold is discontinuous and would certify empty
 balls across the seam), free per orbit step, and `SymmetryParams.blend` is
 deliberately unread exactly as in `surface-de.ts`.
 
+## The chain twist
+
+THE CHAIN TWIST applies the shared twist vocabulary (`twist.ts` — one authored
+block, one resolver, one composition, shared with the twisted mod-Menger carve)
+to the orbit itself: at every link the step map becomes
+`v <- R(f(v) + q + off)` — the per-link `+ q` offset add joined by the authored
+offset, the whole sum rotated by the fixed isometry `R`. This is "rotation
+applied to the point p" (KentaYoshii/Raymarcher's phrase for its twisted
+Menger) generalized past the carve: the same block the Menger family reads,
+applied at the chain's own application sites, so every escape-family shape —
+Mandelboxes, Juliaboxes, hybrid chains — twists from one wire addition. The
+build pre-composes `twistM` and `twistB = R·off`, and the per-eval anchor
+`R·q + twistB` hoists out of the hot loop; the step pays one 9-term matrix and
+one add (one 16-term matrix in 4D, whose SO(4) rows are the embedded Euler
+rotation with the `w` plane rotations composed after it).
+
+SOUNDNESS IS THE KALEIDOSCOPE'S ONE MORE TIME, and free where a post-affine is
+not: `R` is an isometry, so the escape test survives (`|R x| = |x|`) and the
+derivative recurrence is UNCHANGED — `dv/dp = R·(df/dv · dv/dp + dg/dp)`, whose
+norm `dr = growth·L·dr + 1` still bounds, the isometry passing through at
+factor 1 where a post-affine pays its `sigma_max`. The `+ 1` keeps its meaning
+(the offset add's own derivative, through the twist), so `ESCAPE_STEP_SCALE`
+0.35 needs no re-measurement — the recurrence's form is what the step-scale
+sweep priced, not its constants. The twist does not touch the query's entry
+path, so the wedge-symmetry argument `E = g^-1(M)` holds verbatim for the
+twisted chain and the kaleidoscope composes.
+
+THE MARCHING BALL GROWS BY THE OFFSET'S LENGTH; the bailout does not. The
+bailout test stays the constant `ESCAPE_TIME_RADIUS` — the set's definition is
+the orbit staying inside that ball — but the set can sit as far from the origin
+as the offset carries it (a member's first step needs only
+`|f(q) + q + off| <= 4`, so a query near `-off` whose fold output cancels the
+shift is a member at `|q| ~ |off|`), so a twisted chain's `boundingRadius` is
+`ESCAPE_TIME_RADIUS + |twistB|` — the same one-line accounting `bulb-de.ts`
+applies to its pre-power offset `t`. On the GPU the value bodies read the ORBIT
+bailout off the wire (the descent cores' dead `escapeRadius` lane repurposed —
+the one per-step test that may not read the grown ball), while the hit-info
+orbit and the rings/sheets normalization keep the grown ball, which is what the
+CPU carrier sample has always mirrored.
+
+CERTIFICATION is the frozen-reference pin: `escape-de.test.ts`'s
+`twistedChainReference` (and its 4D twin) is a verbatim copy of the doc's step
+map across all five link kinds, posts and the symmetry fold, and the estimator
+agrees TO THE BIT with it over probe grids on single maps, chains, posted
+links and a power chain (Böttcher form included). Absence (`twistM = null`) is
+bit-identical — the frozen untwisted references already pinned that — and a
+trivially-authored block collapses back to absence. There is no Menger-style
+carve-symmetric sweep here: a fold map is not invariant under a rotation the
+way the carve pattern is. The exact case that does exist is pinned — a chain
+of origin-centred box folds commutes with any signed permutation, so a 90°
+twist about an axis reproduces the untwisted estimates TO THE BIT (dr
+included) for every on-axis query; in 4D the same holds for an xy-plane twist
+on `(z, w)`-axis queries, and a flat chain with a 3D-only twist estimates
+exactly what the 3D module estimates at `w = 0` (the 3D-lift anchor, `toBe`).
+
 ## Per-link fold lengths
 
 EACH LINK CARRIES ITS OWN FOLD LENGTHS (`EscapeLink`'s
