@@ -1559,6 +1559,105 @@ describe("FlameWorkerSession restarted event", () => {
 });
 
 // ---------------------------------------------------------------------------
+// setProjection: the motion-clip export's flat camera commit
+// ---------------------------------------------------------------------------
+
+/** A translated orthographic camera: xNDC = x + 0.1 — a real Mat4 that
+ * differs from ORTHOGRAPHIC in one entry, so a restart consuming it is
+ * observable through the accumulate spy's projection argument. */
+// prettier-ignore
+const ORTHOGRAPHIC_SHIFTED: Mat4 = [
+  1, 0, 0, 0.1,
+  0, 1, 0, 0,
+  0, 0, 1, 0,
+  0, 0, 0, 1,
+];
+
+describe("FlameWorkerSession setProjection", () => {
+  function projectionSpy(): {
+    accumulate: typeof accumulateFlame;
+    projections: Mat4[];
+  } {
+    const projections: Mat4[] = [];
+    const accumulate: typeof accumulateFlame = (...args) => {
+      projections.push(args[1]);
+      return accumulateFlame(...args);
+    };
+    return { accumulate, projections };
+  }
+
+  it("restarts a flat session's accumulation with the new camera, emitting restarted first", () => {
+    const { accumulate, projections } = projectionSpy();
+    const { session, events, scheduler } = harness({ accumulate });
+    session.handle(
+      startCommand({ projection: ORTHOGRAPHIC, iterationsBudget: 40 }),
+    );
+    scheduler.drain();
+    expect(projections).toHaveLength(1);
+    expect(projections[0]).toEqual(ORTHOGRAPHIC);
+    const framesBefore = progressEvents(events).length;
+
+    session.handle({ type: "setProjection", projection: ORTHOGRAPHIC_SHIFTED });
+    // Synchronously, before the restarted render's first chunk — the
+    // restarted-event contract every live command shares.
+    expect(restartedEvents(events).at(-1)).toEqual({
+      type: "restarted",
+      iterationsBudget: 40,
+    });
+    expect(progressEvents(events)).toHaveLength(framesBefore);
+
+    scheduler.drain();
+    const projectionArgs = projections.slice(1);
+    expect(projectionArgs.length).toBeGreaterThan(0);
+    for (const projection of projectionArgs) {
+      expect(projection).toEqual(ORTHOGRAPHIC_SHIFTED);
+    }
+  });
+
+  it("no-ops on an unchanged projection instead of discarding a converging frame", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 10 });
+    session.handle(
+      startCommand({ projection: ORTHOGRAPHIC, iterationsBudget: 40 }),
+    );
+    scheduler.drain();
+    const framesBefore = progressEvents(events).length;
+    const restartsBefore = restartedEvents(events).length;
+
+    session.handle({ type: "setProjection", projection: [...ORTHOGRAPHIC] });
+    expect(restartedEvents(events)).toHaveLength(restartsBefore);
+    scheduler.drain();
+    expect(progressEvents(events).length).toBe(framesBefore);
+  });
+
+  it("is ignored by a 4D session — its camera is setFourDView's subject", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 10 });
+    session.handle(
+      startCommand({ fourD: defaultFourD(), iterationsBudget: 40 }),
+    );
+    scheduler.drain();
+    const framesBefore = progressEvents(events).length;
+    const restartsBefore = restartedEvents(events).length;
+
+    session.handle({ type: "setProjection", projection: ORTHOGRAPHIC_SHIFTED });
+    expect(restartedEvents(events)).toHaveLength(restartsBefore);
+    scheduler.drain();
+    // The 4D accumulation continues undisturbed: no restart fired, so the
+    // completed budget's readout was never reset (already met its 40).
+    expect(progressEvents(events)).toHaveLength(framesBefore);
+    expect(progressEvents(events).at(-1)!.iterationsDone).toBe(40);
+  });
+
+  it("is ignored before a session has geometry", () => {
+    const { session, events } = harness({ initialChunkSize: 10 });
+    session.handle({
+      type: "setProjection",
+      projection: ORTHOGRAPHIC_SHIFTED,
+    });
+    expect(events).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // OOM guard: reactive ratchet-and-retry
 // ---------------------------------------------------------------------------
 

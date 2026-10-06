@@ -236,17 +236,28 @@ export class FourDView {
    * ZW-plane base rates * tumbleSpeed into the rotor. */
   tick(dt: number): void {
     if (this.tumbleOn) {
-      this.pair = rotateInPlane(
-        this.pair,
-        "xy",
-        dt * FOUR_D_XY_RATE * this.tumbleSpeed,
-      );
-      this.pair = rotateInPlane(
-        this.pair,
-        "zw",
-        dt * FOUR_D_ZW_RATE * this.tumbleSpeed,
-      );
+      this.step(dt);
     }
+  }
+
+  /** The tumble's two-plane composition WITHOUT the pause gate — the motion
+   * clip export's advance. An explicitly requested clip animates
+   * deliberately (the build-replay stance: an explicitly requested animation
+   * is exactly the motion a reduced-motion preference preserves), so the
+   * driver composes the same XY+ZW base rates × tumbleSpeed whether or not
+   * the ambient tumble is paused; the speed slider remains the motion's own
+   * rate knob. */
+  step(dt: number): void {
+    this.pair = rotateInPlane(
+      this.pair,
+      "xy",
+      dt * FOUR_D_XY_RATE * this.tumbleSpeed,
+    );
+    this.pair = rotateInPlane(
+      this.pair,
+      "zw",
+      dt * FOUR_D_ZW_RATE * this.tumbleSpeed,
+    );
   }
 
   /** Compose the given w-plane drag/wheel deltas (radians) onto the rotor;
