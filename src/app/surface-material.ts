@@ -12,6 +12,7 @@ import type { EscapeDE } from "../fractal/escape-de";
 import {
   ESCAPE_STEP_SCALE,
   ESCAPE_TIME_ITERATIONS,
+  ESCAPE_TIME_RADIUS,
 } from "../fractal/escape-de";
 import {
   SHAPE_TRAP_GEOMETRY_LEVEL_MAX,
@@ -3260,6 +3261,21 @@ ${sphereInversionArmGlsl()}
    * ride that tail). */
   uniform int uEscLogForm;
 
+  /** The CHAIN TWIST's pre-composed isometry — twist.ts's block, the
+   * shared vocabulary the twisted Menger family reads — as the orbit
+   * applies it: v <- R(f(v) + q + off) at EVERY link (escape-de.ts's
+   * CHAIN TWIST paragraph). uEscTwistM rows + uEscTwistB in q <- R q + b
+   * form (b = R·off), uEscTwist the on-flag; the per-eval anchor
+   * R·q + twistB is folded into the bodies at runtime from these (the
+   * CPU hoists it once per query, and so do the bodies below). One set
+   * per CHAIN — the twist is chain-level, like uEscLogForm — declared
+   * INSIDE the arm so no other variant pays the bytes. Flag 0 runs the
+   * untwisted line verbatim, and the uploader fills identity/zero rows
+   * then, so the uniforms never carry an uninitialized word. */
+  uniform int uEscTwist;
+  uniform mat3 uEscTwistM;
+  uniform vec3 uEscTwistB;
+
 #if SURFACE_SHAPE_TRAP
   /** The shape trap's LIVE pose/mode quantities (escape-de.ts's
    * resolveShapeTrap fields; the shape GEOMETRY is baked below at
@@ -3422,8 +3438,20 @@ ${sphereInversionArmGlsl()}
 #if SURFACE_TRAP_GEOMETRY
     float trapDistance = 1.0e30;
 #endif
+    // The CHAIN TWIST's per-eval anchor — R·q + b — hoisted out of the
+    // loop so a step pays one mat-vec and one add, the CPU oracle's own
+    // factoring (escape-de.ts's CHAIN TWIST paragraph). Flag 0 skips it.
+    vec3 twistAnchor = uEscTwist != 0
+      ? uEscTwistM * q + uEscTwistB
+      : vec3(0.0);
     for (int i = 0; i < steps; i++) {
-      if (r > uBoundingRadius) {
+      // The ORBIT BAILOUT, not the marching ball: the set is defined by
+      // the orbit staying inside ESCAPE_TIME_RADIUS, while
+      // uBoundingRadius is the QUERY-space ball the tracer enters/exits
+      // against — grown by the chain twist's offset length, so it cannot
+      // double as this test (escape-de.ts's MARCHING BALL paragraph; the
+      // WGSL core's value body reads the same lane).
+      if (r > uEscapeRadius) {
         break;
       }
       vec4 prm = uEscParams[li];
@@ -3468,15 +3496,23 @@ ${sphereInversionArmGlsl()}
         y = vec3(y.x * y.x - y.y * y.y - y.z * y.z, 2.0 * y.x * y.y, 2.0 * y.x * y.z);
       }
 #if SURFACE_POST
-      // A live link post sits between the weighted fold output and the
-      // query offset, the CPU orbit's rule.
-      v = applyMapPost(li, prm.y * y) + q;
+      // The link's own POST-AFFINE, forward, before the +q offset — the
+      // CPU orbit's rule.
+      vec3 fOut = applyMapPost(li, prm.y * y);
 #else
-      // The Mandelbrot form's offset — the QUERY POINT (folded before the
-      // orbit), not the document's t (which stays the pre-fold offset
-      // inside y above).
-      v = prm.y * y + q;
+      vec3 fOut = prm.y * y;
 #endif
+      // The Mandelbrot form's offset — the QUERY POINT (folded before
+      // the orbit), not the document's t (which stays the pre-fold offset
+      // inside y above). The CHAIN TWIST wraps the whole sum —
+      // v <- R(f(v) + q + off) — reading the twist's rows + offset with
+      // the anchor hoisted above; the untwisted else is the original
+      // line, verbatim.
+      if (uEscTwist != 0) {
+        v = uEscTwistM * fOut + twistAnchor;
+      } else {
+        v = fOut + q;
+      }
       // EVERY LINK CONTRIBUTES ITS OWN FACTOR to the one shared dr, and
       // the "+ 1" — the per-link offset's own derivative — floors it once
       // per link rather than once per pass.
@@ -3548,6 +3584,10 @@ ${sphereInversionArmGlsl()}
     int steps = uMaxDepth * n;
     int li = 0;
     int escapedAt = steps;
+    // The CHAIN TWIST's per-eval anchor — the value form's hoist.
+    vec3 twistAnchor = uEscTwist != 0
+      ? uEscTwistM * q + uEscTwistB
+      : vec3(0.0);
     // The growth factor of the link whose application produced the current
     // r — the head link's until a step has run, so a one-link document
     // reads uEscParams[0].z at every step exactly as it did before the
@@ -3565,6 +3605,10 @@ ${sphereInversionArmGlsl()}
 #endif
 #endif
     for (int i = 0; i < steps; i++) {
+      // The HIT-INFO orbit iterates to the GROWN ball, not the bailout —
+      // its rings/sheets/escFrac read uBoundingRadius below and the
+      // WGSL hit-info and the CPU carrier sample test the same ball (the
+      // value form's ORBIT BAILOUT comment names the split).
       if (r > uBoundingRadius) {
         escapedAt = i;
         break;
@@ -3613,10 +3657,18 @@ ${sphereInversionArmGlsl()}
 #if SURFACE_POST
       // The link's own POST-AFFINE, forward, before the +q offset — the
       // value form's rule above (hit-info shares the orbit's arithmetic).
-      v = applyMapPost(li, prm.y * y) + q;
+      vec3 fOut = applyMapPost(li, prm.y * y);
 #else
-      v = prm.y * y + q;
+      vec3 fOut = prm.y * y;
 #endif
+      // The CHAIN TWIST wraps the whole sum, exactly as the value body
+      // applies it — the hit-info colors what the value body's geometry
+      // drew.
+      if (uEscTwist != 0) {
+        v = uEscTwistM * fOut + twistAnchor;
+      } else {
+        v = fOut + q;
+      }
       dr = prm.z * localL * dr + 1.0;
       r = length(v);
       growth = prm.z;
@@ -7748,6 +7800,12 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       // the fold-only chain always read, so a stale read is the old
       // behaviour.
       uEscLogForm: { value: 0 },
+      // The chain twist's rows + offset + on-flag — inert unless
+      // SURFACE_ESCAPE, and flag 0 with identity rows is the untwisted
+      // behaviour the bodies then run verbatim.
+      uEscTwist: { value: 0 },
+      uEscTwistM: { value: new THREE.Matrix3() },
+      uEscTwistB: { value: new THREE.Vector3() },
       // Mandelbulb render: inert defaults; alive only under the
       // SURFACE_BULB define (sigmaMax 1 and a bailout of 1 so a stray
       // enabled read could never divide by zero or take log of zero).
@@ -9972,6 +10030,29 @@ export function setEscapeSystem(
   // The chain's estimate form — one number per CHAIN, resolved by the
   // oracle so the six mirrors cannot each decide it differently.
   u.uEscLogForm.value = de.logEstimate ? 1 : 0;
+  // The chain twist — rows + offset + on-flag, one set per CHAIN. Null
+  // fills identity/zero rows with flag 0 (never an uninitialized word);
+  // flag 0 runs the bodies' untwisted lines verbatim.
+  u.uEscTwist.value = de.twistM !== null ? 1 : 0;
+  const twistM = de.twistM;
+  (u.uEscTwistM.value as THREE.Matrix3).set(
+    ...(twistM !== null
+      ? [
+          twistM[0],
+          twistM[1],
+          twistM[2],
+          twistM[3],
+          twistM[4],
+          twistM[5],
+          twistM[6],
+          twistM[7],
+          twistM[8],
+        ]
+      : [1, 0, 0, 0, 1, 0, 0, 0, 1]),
+  );
+  (u.uEscTwistB.value as THREE.Vector3).set(
+    ...(de.twistB !== null ? de.twistB : [0, 0, 0]),
+  );
   u.uSymOrder.value = de.symmetryOrder;
   u.uSymPlane.value = SYM_PLANE_CODE[de.symmetryPlane];
   (u.uSymStep.value as THREE.Vector2).set(1, 0);
@@ -9980,7 +10061,13 @@ export function setEscapeSystem(
   // now so a later pattern-enabled shade variant cannot inherit the previous
   // system's fitted ball center when render families switch in place.
   (u.uBoundCenter.value as THREE.Vector3).set(0, 0, 0);
-  u.uEscapeRadius.value = de.boundingRadius * 2;
+  // The per-step ORBIT BAILOUT — ESCAPE_TIME_RADIUS, the constant the
+  // set is defined by. The descent uploaders pack their own outer-sphere
+  // 2R into this same slot; the escape session's value body reads it as
+  // the bailout, which must NOT be the twist-grown marching ball
+  // (escape-de.ts's MARCHING BALL paragraph — the WGSL escape packer's
+  // identical decision).
+  u.uEscapeRadius.value = ESCAPE_TIME_RADIUS;
   u.uMaxDepth.value = ESCAPE_TIME_ITERATIONS;
   u.uStepScale.value = ESCAPE_STEP_SCALE;
   u.uVisibleRadius.value = de.boundingRadius;

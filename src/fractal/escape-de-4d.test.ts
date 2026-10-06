@@ -1364,7 +1364,7 @@ describe("the 4D chain twist", () => {
         label: "4D chain, offset with a fourth component",
         transforms: [
           canonicalMandelbox(),
-          canonicalMandelbox({ id: 1, w: { offset: 0.2 } }),
+          canonicalMandelbox({ id: 1, w: { position: 0.2 } }),
         ],
         twist: { offset: [0.6, -0.1, 0.3], w: { offset: 0.25 } },
       },
@@ -1388,9 +1388,9 @@ describe("the 4D chain twist", () => {
           canonicalMandelbox({
             id: 1,
             w: { rotation: { xw: 0.3 } },
-            post4: {
-              m: [1, 0, 0, 0, 0, 0.9, 0, 0.1, 0, 0, 1, 0, 0, -0.1, 0, 0.9],
-              t: [0, 0.05, 0, 0],
+            post: {
+              m: [1, 0, 0, 0, 0.9, 0.1, 0, -0.1, 0.9],
+              t: [0, 0.05, 0],
             },
           }),
         ],

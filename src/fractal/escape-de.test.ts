@@ -2568,10 +2568,7 @@ describe("the chain twist", () => {
     const rng = mulberry32(0x0be5);
     for (let i = 0; i < 40; i++) {
       const p: Vec3 = [rng() * 8 - 4, rng() * 8 - 4, rng() * 8 - 4];
-      const trap = resolveShapeTrap({
-        mode: "rings",
-        shape: PEACE_SIGN_SHAPE,
-      });
+      const trap = resolveShapeTrap({ shape: PEACE_SIGN_SHAPE });
       const coordinate = escapeShapeTrap(de, trap, p);
       expect(Number.isFinite(coordinate)).toBe(true);
       // Membership reads the same twisted orbit the estimate ran, and the
