@@ -3121,6 +3121,35 @@
           <button class="btn btn-ghost" id="recordVideoBtn" type="button">
             ● Record video
           </button>
+          <!-- The frame-exact motion clip: records the active render's
+             automatic view motion (the 4D tumble, or the 3D auto-orbit
+             turntable) one fully-converged frame at a time — see
+             motion-export.ts. -->
+          <div id="recordMotionRow">
+            <label class="select-label">
+              <span class="control-label-line">
+                <span
+                  >Clip length:
+                  <span id="motionClipDurationLabel">8s</span></span
+                >
+              </span>
+              <input
+                type="range"
+                id="motionClipDurationSlider"
+                min="2"
+                max="60"
+                step="1"
+                value="8"
+              />
+            </label>
+          </div>
+          <button class="btn btn-ghost" id="recordMotionBtn" type="button">
+            🎞 Record motion
+          </button>
+          <p class="flame-hint" id="recordMotionHint">
+            Records Flame or Surface automatic motion, one fully rendered frame
+            at a time.
+          </p>
         </details>
 
         <!-- Share: the current scene as a portable DOCUMENT — link, JSON
