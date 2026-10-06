@@ -533,6 +533,18 @@ export const GATE_MAP: GateMapEntry[] = [
     ],
   },
   {
+    name: "motion-export",
+    kind: "gate",
+    cost: "lifecycle",
+    modules: [
+      "src/app/motion-export.ts",
+      "src/app/four-d-view.ts",
+      "src/app/four-d-worker-view.ts",
+      "src/app/flame-worker-core.ts",
+      "src/app/main.ts",
+    ],
+  },
+  {
     name: "flame-teardown",
     kind: "gate",
     cost: "lifecycle",
