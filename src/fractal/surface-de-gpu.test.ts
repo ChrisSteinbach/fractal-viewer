@@ -96,6 +96,7 @@ import {
   ESCAPE_LINK_MANDELBOX,
   ESCAPE_LINK_QSQUARE,
   ESCAPE_STEP_SCALE,
+  ESCAPE_TIME_RADIUS,
   ESCAPE_TIME_ITERATIONS,
 } from "./escape-de";
 import { resolveShapeTrap } from "./shape-trap";
@@ -3114,7 +3115,7 @@ describe("groundPlane wrapper", () => {
         kernelOpts({ mode: "shade", core, width: 12, groundPlane: true }),
       );
       const tail =
-        core === "escape4" ? "padE4: array<vec4f, 6>," : "lens4Fold: vec4f";
+        core === "escape4" ? "esc4TwistB: vec4f," : "lens4Fold: vec4f";
       expect(wgsl.indexOf(tail)).toBeGreaterThan(0);
       expect(wgsl.indexOf("groundY: f32,")).toBeGreaterThan(wgsl.indexOf(tail));
       expect(wgsl).toContain("fn shadeGroundPlane(");
@@ -3196,7 +3197,11 @@ describe("groundPlane wrapper", () => {
     expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS_PLANE_BYTES);
     expect(new Uint8Array(buf, 0, SURFACE_GPU_PARAMS_BYTES)).toEqual(plain);
     const view = new DataView(buf);
-    expect(view.getFloat32(256, true)).toBe(Math.fround(de.kind));
+    // The kernel reads escParams.x as the chain twist's on-flag now, so
+    // the untwisted packer zeroes that lane (the head link's kind was
+    // ballast there — never zero — and would have flag-twisted every
+    // untwisted session; the packer doc names the catch).
+    expect(view.getFloat32(256, true)).toBe(0);
     expect(view.getFloat32(260, true)).toBe(Math.fround(de.w));
     expect(view.getFloat32(288, true)).toBe(Math.fround(gp.y));
     expect(view.getFloat32(292, true)).toBe(Math.fround(gp.fadeStart));
@@ -3807,7 +3812,7 @@ describe("packEscapeGpuParams", () => {
     expect(view.getFloat32(36, true)).toBe(0);
   });
 
-  it("packs the frozen scalar offsets: zero boundCenter, the bailout ball doubling as bounding/visible radius, the dead 2R escapeRadius, ESCAPE_STEP_SCALE, and symmetry pinned off", () => {
+  it("packs the frozen scalar offsets: zero boundCenter, the bailout ball as bounding/visible radius, the orbit bailout at escapeRadius, ESCAPE_STEP_SCALE, and symmetry pinned off", () => {
     const de = buildEscapeDE([canonicalMandelbox()]);
     const view = new DataView(packEscapeGpuParams(de, { itemCount: 1 }));
 
@@ -3816,9 +3821,13 @@ describe("packEscapeGpuParams", () => {
     expect(view.getFloat32(4, true)).toBe(0);
     expect(view.getFloat32(8, true)).toBe(0);
     expect(view.getFloat32(12, true)).toBe(Math.fround(de.boundingRadius));
-    // escapeRadius packs the GLSL's dead 2R so the wire never carries an
-    // uninitialized word (module doc) — nothing reads it in this core.
-    expect(view.getFloat32(16, true)).toBe(Math.fround(de.boundingRadius * 2));
+    // escapeRadius packs the ORBIT BAILOUT, not the outer sphere: the value
+    // body's per-step escape test reads this lane, and the chain twist
+    // grows boundingRadius by its offset's length (the packer doc). The
+    // value is value-identical to the old dead 2R lane's reader-less fill
+    // only in being unread before; now it is read, as the constant the
+    // set is defined by.
+    expect(view.getFloat32(16, true)).toBe(Math.fround(ESCAPE_TIME_RADIUS));
     expect(view.getFloat32(20, true)).toBe(Math.fround(ESCAPE_STEP_SCALE));
     // visibleRadius is the SAME bailout ball as boundingRadius.
     expect(view.getFloat32(24, true)).toBe(Math.fround(de.boundingRadius));
@@ -3990,7 +3999,11 @@ describe("packEscapeGpuParams", () => {
     expect(view.getFloat32(244, true)).toBe(Math.fround(de.m[7]));
     expect(view.getFloat32(248, true)).toBe(Math.fround(de.m[8]));
     expect(view.getFloat32(252, true)).toBe(Math.fround(de.t[2]));
-    expect(view.getFloat32(256, true)).toBe(Math.fround(de.kind));
+    // The kernel reads escParams.x as the chain twist's on-flag now, so
+    // the untwisted packer zeroes that lane (the head link's kind was
+    // ballast there — never zero — and would have flag-twisted every
+    // untwisted session; the packer doc names the catch).
+    expect(view.getFloat32(256, true)).toBe(0);
     expect(view.getFloat32(260, true)).toBe(Math.fround(de.w));
     expect(view.getFloat32(264, true)).toBe(Math.fround(de.derivGrowth));
     // The quartet's tail is the chain-level estimate-form flag, 0 on a
@@ -4020,16 +4033,16 @@ describe("packEscapeGpuParams", () => {
     }
   });
 
-  it("reads the flag off the CHAIN and not the head link — a fold head with a power tail still packs 1", () => {
-    // The head link's own kind stays a fold at offset 256, so a packer
-    // that derived the form from the flat (head-link) fields would read 0
-    // here and the kernel would march the linear estimate under a
-    // super-exponential orbit.
+  it("reads the estimate form off the CHAIN and not the head link — a fold head with a power tail still packs 1", () => {
+    // The form is one number per CHAIN: it rides offset 268, read off the
+    // links, so a packer that derived it from the flat (head-link) fields
+    // would read 0 here and the kernel would march the linear estimate
+    // under a super-exponential orbit. The twist flag lane at 256 stays 0
+    // for this untwisted chain (the kind-lane hazard the packer doc names).
     const chain = buildEscapeDE([canonicalMandelbox(), bulbLink()]);
     const view = new DataView(packEscapeGpuParams(chain, { itemCount: 1 }));
-    expect(view.getFloat32(256, true)).toBe(Math.fround(chain.links[0].kind));
-    expect(view.getFloat32(256, true)).toBeLessThan(4);
     expect(view.getFloat32(268, true)).toBe(1);
+    expect(view.getFloat32(256, true)).toBe(0);
   });
 });
 
@@ -4099,7 +4112,11 @@ describe("packEscapeGpuMaps (the formula chain)", () => {
     const view = new DataView(packEscapeGpuParams(de, { itemCount: 1 }));
     expect(maps[0]).toBe(view.getFloat32(208, true));
     expect(maps[3]).toBe(view.getFloat32(220, true));
-    expect(maps[12]).toBe(view.getFloat32(256, true));
+    // The kind lane no longer carries the head link: the kernel reads
+    // escParams.x as the chain twist's on-flag and the untwisted packer
+    // zeroes it (the packer doc names the catch).
+    expect(maps[12]).not.toBe(view.getFloat32(256, true));
+    expect(view.getFloat32(256, true)).toBe(0);
     expect(maps[13]).toBe(view.getFloat32(260, true));
     expect(maps[14]).toBe(view.getFloat32(264, true));
   });
@@ -4192,8 +4209,14 @@ describe("surfaceDeKernelWgsl escape core (core)", () => {
     // The bailout test sits at the head of the SINGLE-LINK step, and the
     // Mandelbrot offset lands per link — never once per pass (chaining
     // fattens the set to 37.1% of the bailout ball at six links, against
-    // cycling's 0.2%).
-    expect(wgsl).toContain("v = linkPostForward(L, L.p0.y * y) + q;");
+    // cycling's 0.2%). The step sum is `linkPostForward(...) + q` in a
+    // `let s` the chain twist then conditionally rotates (the untwisted
+    // else runs it verbatim).
+    expect(wgsl).toContain("let s = linkPostForward(L, L.p0.y * y) + q;");
+    expect(wgsl).toContain("if (params.escParams.x != 0.0) {");
+    // The per-step escape test reads the ORBIT BAILOUT lane, not the
+    // (twist-grown) marching ball.
+    expect(wgsl).toContain("if (r > params.escapeRadius) {");
   });
 
   it("mode 'eval' folds the query into the kaleidoscope's wedge ONCE before the orbit, dihedrally", () => {
@@ -7413,13 +7436,15 @@ describe("packEscape4GpuParams frozen-block scalars", () => {
     expect(view.byteLength).toBe(SURFACE_GPU_PARAMS4_ESCAPE_BYTES);
   });
 
-  it("packs the bailout ball at boundingRadius (12), escapeRadius as 2R (16), ESCAPE_STEP_SCALE (20), the link count at mapCount (48) and maxDepth (52, overridable by run.maxDepth)", () => {
+  it("packs the bailout ball at boundingRadius (12), the orbit bailout at escapeRadius (16), ESCAPE_STEP_SCALE (20), the link count at mapCount (48) and maxDepth (52, overridable by run.maxDepth)", () => {
     const de = buildEscapeDE4([escape4Mandelbox(), escape4RotatedBoxfold()]);
     const view = new DataView(
       packEscape4GpuParams(de, view4(), { itemCount: 1 }),
     );
     expect(view.getFloat32(12, true)).toBe(Math.fround(de.boundingRadius));
-    expect(view.getFloat32(16, true)).toBe(Math.fround(de.boundingRadius * 2));
+    // The ORBIT BAILOUT — the 3D escape packer's rule (the value body's
+    // per-step test, which may not read the twist-grown marching ball).
+    expect(view.getFloat32(16, true)).toBe(Math.fround(ESCAPE_TIME_RADIUS));
     expect(view.getFloat32(20, true)).toBe(Math.fround(ESCAPE_STEP_SCALE));
     expect(view.getUint32(48, true)).toBe(de.links.length);
     expect(view.getUint32(48, true)).toBe(2);
