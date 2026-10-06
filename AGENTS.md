@@ -1041,13 +1041,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     coordinates, but that factoring needs ONE `M` and a chain has n.
     THE ESTIMATE FORM FOLLOWS THE CHAIN'S ESCAPE LAW
     (`EscapeDE.logEstimate`, ONE flag per chain resolved at build and
-    carried on both wires rather than re-decided in six mirrors): folds
-    escape exponentially and read the linear `r/dr`; a power link makes
-    the chain super-exponential and it reads the Böttcher
-    `0.5·r·ln r/dr`. That does NOT reopen the sweep that refused the log
-    form for the FOLD family — its dimensional argument (the folds are
-    uniform-rescale equivariant) cannot reach a map with
-    `V(λy) = λ^d V(y)`.
+    carried on both wires): folds escape exponentially and read the linear
+    `r/dr`; a power link makes the chain super-exponential and it reads
+    the Böttcher `0.5·r·ln r/dr`. That does NOT reopen the sweep that
+    refused the log form for the FOLD family — uniform-rescale equivariance
+    cannot reach a map with `V(λy) = λ^d V(y)`.
     THE PREDICTED STIFFNESS HAZARD DOES NOT REPRODUCE (the power-link
     work's most useful result: the prediction's blank-frame figures are
     the PROTOTYPE's CHAINING arm's, and cycling re-tethers the query after
@@ -1081,21 +1079,16 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     link and the per-link `+ 1` floors `dr`.
     EMPTY CHAINS ARE REACHABLE inside the gate — a big enough pre-scale
     escapes everywhere on the first pass and the mode renders a blank
-    frame — so `escapeSetContains` (membership, from the same orbit the
-    estimate reads) and `probeEscapeFill` (a seeded sample of the bailout
-    ball) exist to say so. `probeEscapeFill` MEASURES VOLUME AND MUST NOT
-    BE READ AS "WILL IT RENDER": these sets are often thin fractals — a
-    slice can have LITERALLY ZERO members and still draw a coherent
-    shaded object, since a slice through a set of shells is itself a set
-    of surfaces no volume statistic can see. The signal fires off the
-    FIRST completed settle's own hit
-    count instead (main.ts's `surfaceBlankNotice`, off BOTH engines'): a
-    frame that drew essentially nothing at the entry pose IS blank by the
-    renderer's own arithmetic, so it cannot disagree with what the user
-    sees. The bar is `SURFACE_BLANK_HIT_FRACTION` (0.001) and NOT zero,
-    because the marcher accepts at `uAcceptPixelEps`. It reports, never
-    refuses, and neither probe is wired into `analyzeEscapeSystem` or
-    `buildEscapeDE`, which stay cheap.
+    frame — so `escapeSetContains` (membership) and `probeEscapeFill` (a
+    seeded sample of the bailout ball) exist to say so. THE PROBE MEASURES
+    VOLUME AND MUST NOT BE READ AS "WILL IT RENDER": thin sets render
+    coherent objects at zero measured volume (a slice through shells is a
+    set of surfaces no volume statistic sees). The signal fires off the
+    FIRST completed settle's own hit count instead (main.ts's
+    `surfaceBlankNotice`, off BOTH engines'); the bar is
+    `SURFACE_BLANK_HIT_FRACTION` (0.001) and NOT zero (the marcher accepts
+    at `uAcceptPixelEps`). It reports, never refuses, and neither probe is
+    wired into `analyzeEscapeSystem`/`buildEscapeDE`, which stay cheap.
     KALEIDOSCOPE is a query-space wedge fold (`foldQueryIntoSector`), not
     an orbit operation: `g` is 1-Lipschitz and an isometry per sector,
     the orbit is seeded AND offset by `g(p)`, so the set is exactly
@@ -1103,6 +1096,13 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     fold is discontinuous and would certify empty balls across the seam),
     free per orbit step, and `SymmetryParams.blend` is deliberately
     unread exactly as in `surface-de.ts`.
+    THE CHAIN TWIST (`twist.ts`, one block the twisted Menger also reads)
+    is an ORBIT operation at every link: `v <- R(f(v) + q + off)`, the
+    offset joining the per-link add and the rotation wrapping it. The
+    isometry is free in derivative terms (dr recurrence unchanged) and the
+    marching ball grows by `|twistB|` while the bailout stays 4; live
+    twists disclose and refuse tiling/traps; a `w` extension lifts a flat
+    chain to escape4. Certified by frozen references toBe, both dimensions.
     EACH LINK CARRIES its resolved fold lengths and optional
     `postM`/`postT`. The forward post runs after the weighted fold/power and
     before `+ p`; `derivGrowth` multiplies base/post sigma-max bounds around
@@ -1148,9 +1148,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `bulb` link (`bulb-de.ts`'s model refusal, unchanged by dimension —
     triplex numbers have no fourth component, so a lifted triplex power
     carries `w` untouched and its `dr` would be computed on the other
-    three); a TWIST (a double rotation's fundamental domain is not a
-    wedge, so there is no sector retraction — the `w`-PLANE it admits, and
-    `foldQueryIntoSector4` folds all six); and a SLAB at any thickness (a
+    three); a SYMMETRY twist (a double rotation's fundamental domain is
+    not a wedge, so there is no sector retraction — the `w`-PLANE it
+    admits, and `foldQueryIntoSector4` folds all six; the CHAIN twist
+    composes and is the bullet above); and a SLAB at any thickness (a
     forward orbit has no branch enumeration, so a segment straddling a box
     fold's wall maps to a bent polyline in one step — `surface-de-4d.ts`'s
     `slabExact4` refusal for a stronger reason no fold kind escapes). The
