@@ -396,7 +396,8 @@ offset depend on the floor toggle and split one document across two wires.
 The lens wrapper added the second core, the escape port the third and — its
 4D cut — the fourth, the 4D fold-branch port the fifth, the Mandelbulb the
 sixth, the 4D escape chain the seventh, and the sphere-inversion family the
-eighth and ninth.
+eighth and ninth. The twisted mod-Menger carve family added the tenth and
+eleventh (`core:"menger"`/`core:"menger4"`, below).
 
 ### `core:"affine"`
 
@@ -759,6 +760,58 @@ two axes by name.
 
 `lens`/`balloon` throw, `groundPlane` composes, and there is no fragment
 mirror at all.
+
+### `core:"menger"` / `core:"menger4"` (the twisted mod-Menger carve family)
+
+The carve chain of `menger-de.ts`/`menger-de-4d.ts` — the twisted
+mod-Menger sponge's single-chain estimator, for the sessions the
+`mengerTwist` block routes (the block REPLACES the transform system as
+the scene's subject; `docs/twisted-menger-family.md` carries the family
+record, the soundness argument and the measured step scale 1.0).
+Structurally the bulb core's shape one family over: bindingless (no maps
+binding is declared; the construction rides the params VARIANT block), no
+orbit, no bailout, `cutoff` accepted for signature parity and ignored —
+the carve chain is bounded work by construction (`maxDepth` LEVELS of
+sawtooth + carve).
+
+- 3D variant block: the twist's rows in the escape head-link interleave
+  (208..255 — `menM0..2`/`menT0..2`, `twistB = R·off` pre-composed) and
+  the `(levels, twistFlag, 0, 0)` word at 256. The rows ALWAYS pack (they
+  are the construction; the family's default twist is never the
+  identity); the flag reads 0 exactly when the resolved twist is trivial
+  (the classic sponge) — the flag-lane lesson's own rule — and the
+  body's skip branch is value-exact against the oracle's unconditional
+  application (the identity mat-vec is exact).
+- `menParams.x` is the FULL level count because the hit-info's trap
+  normalizes the winning level by it (`mengerTrap`'s own convention) —
+  the preview-clamped `maxDepth` in the frozen block is the LOOP budget,
+  a different number under the preview tier, which is why the word
+  exists.
+- 4D: the lens4 region one occupant over — `(levels, twistFlag, 0, 0)`
+  at 464, the SO(4) rows at 480..543 (row-major bytes of the matrix the
+  body applies), the offset at 544..559, 560..575 pad — sized to
+  `SURFACE_GPU_PARAMS4_ESCAPE_BYTES` so the shared plane block keeps its
+  frozen 576. The core sits behind the shared view lift (`liftMenger4`,
+  `liftEscape4`'s own shape) and packs `sliceHalfW` 0, a nonzero one
+  THROWING at pack (the carve estimator has no segment cover).
+- The 4D carve term is the max over the six coordinate pairs of the
+  pair's MIN — "at least two of four coordinates in middle thirds", the
+  3D median's mirror image; `menger-de-4d.ts`'s module doc carries the
+  order-statistic argument.
+- `lens`, `balloon`, tiling, a shape trap, condensation/schedule/xaos and
+  a nonzero footprint THROW, each with its reason; the ground plane
+  composes (3D) and the 4D core's slab is held at zero
+  (`MENGER_SLAB_REFUSAL`'s wording at the eligibility).
+- The hit-info trap is the WINNING level's fraction; rings/sheets are the
+  twisted orbit's closest radial/y-plane approaches (the escape/bulb
+  bodies' vocabulary on the carve's twisted orbit), normalized by the box
+  ball. `firstChoice` stays 0 — the carve chooses no map.
+
+NOT a forward orbit and not chaotic: the M9/M10 bench legs gate fail=0
+with NO ensemble/ring/flip classifier — the escape/bulb legs' discipline
+deliberately does not apply — and the f32 twins' own twin-vs-oracle
+agreement is the legs' extra gate (a carve row over tolerance is a bug,
+never noise). The digest fixture carries both cores.
 
 ### `core:"sphereInv"` / `core:"sphereInv4"` (the sphere-inversion family)
 

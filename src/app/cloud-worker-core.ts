@@ -62,6 +62,15 @@ import {
   SPHERE_INVERSION_POINTS_MAX,
 } from "../fractal/sphere-inversion-sample";
 import type { SphereInversionSampler } from "../fractal/sphere-inversion-sample";
+import { buildMengerDE } from "../fractal/menger-de";
+import { buildMengerDE4 } from "../fractal/menger-de-4d";
+import {
+  MENGER_POINTS_MAX,
+  sampleMengerCloud,
+  sampleMengerCloud4,
+} from "../fractal/menger-sample";
+import { resolveMengerTwist } from "../fractal/menger-twist";
+import type { MengerTwistAuthored } from "../fractal/menger-twist";
 import type {
   Bounds,
   Bounds4,
@@ -132,6 +141,16 @@ export interface CloudRequest {
    * mid-morph, like `schedule`: the block never interpolates, so a
    * replace-load's target block applies from the first intermediate. */
   sphereInversion?: SphereInversionAuthored | null;
+  /** The raw authored Menger-carve block, or `null`/absent. When present
+   * (and no sphere-inversion block took the subject first) it REPLACES the
+   * transform system as the cloud's subject: the worker resolves it in its
+   * own realm and draws `menger-sample.ts`'s rejection boundary sample of
+   * the carved surface instead of running the chaos game (a refused block
+   * draws nothing), and `fourD` is the block's dimension
+   * (`scene-dimension.ts`). Read from the LIVE document even mid-morph,
+   * like `schedule`: the block never interpolates, so a replace-load's
+   * target block applies from the first intermediate. */
+  mengerTwist?: MengerTwistAuthored | null;
   /** 3D color bake inputs (`buildColors`); unused on the 4D path, where color
    * is shader-owned or rebaked main-side per mode (see main.ts's
    * `applyFourDColor`). */
@@ -339,6 +358,9 @@ export function generateCloud(request: CloudRequest): CloudResult {
   // no mesh, tiling plan or chaos-game stream is built for it.
   if (request.sphereInversion) {
     return generateSphereInversionCloud(request, request.sphereInversion);
+  }
+  if (request.mengerTwist) {
+    return generateMengerCloud(request, request.mengerTwist);
   }
 
   // Guard the raw authored wire before mesh installation, session fitting,
@@ -787,6 +809,104 @@ function generateSphereInversionCloud(
     ...disclosure,
   };
 }
+
+/**
+ * A Menger-carve document's cloud: `menger-sample.ts`'s rejection boundary
+ * sample of the construction's carved surface, at most
+ * {@link MENGER_POINTS_MAX} points from the request's own seed, shaped
+ * exactly like a chaos-game result so every downstream consumer (upload,
+ * framing, 4D projection) is unchanged. Each point's winning carve level
+ * rides `transformIndices` — the color slot — and `generationCount` says so
+ * (one slot per level, the sphere-inversion sample's exact convention). A
+ * refused block draws an EMPTY cloud of the request's dimension (the
+ * Surface gate's note says why), and an authored tiling block is disclosed
+ * as refused rather than silently dropped.
+ */
+function generateMengerCloud(
+  request: CloudRequest,
+  authored: MengerTwistAuthored,
+): CloudResult {
+  const resolution = resolveMengerTwist(authored);
+  const construction = resolution.ok ? resolution.construction : null;
+  const fourD = construction?.dim === 4;
+  if (construction && fourD !== request.fourD) {
+    throw new Error(
+      "menger-carve cloud request's fourD disagrees with its block",
+    );
+  }
+  const generationCount = construction?.levels ?? 1;
+  const cap = Math.min(request.numPoints, MENGER_POINTS_MAX);
+  const rng = mulberry32(request.seed);
+  const cloud = construction
+    ? fourD
+      ? sampleMengerCloud4(buildMengerDE4(construction), cap, rng)
+      : sampleMengerCloud(buildMengerDE(construction), cap, rng)
+    : null;
+  const count = cloud?.count ?? 0;
+  const positions = cloud?.positions ?? new Float32Array(0);
+  const transformIndices = cloud?.levels ?? new Uint8Array(0);
+  const disclosure = request.tiling
+    ? {
+        pointTiling: {
+          availability: "refused",
+          note: MENGER_POINT_TILING_NOTE,
+        } satisfies PointTilingOutcome,
+      }
+    : {};
+  if (request.fourD) {
+    const w =
+      cloud && "w" in cloud ? (cloud.w as Float32Array) : new Float32Array(0);
+    const { bounds, center, radius, originRadius } = sampledBounds4(
+      positions,
+      w,
+      count,
+    );
+    return {
+      id: request.id,
+      fourD: true,
+      positions,
+      w,
+      transformIndices,
+      count,
+      bounds,
+      center,
+      radius,
+      originRadius,
+      frameRadius: framingRadius4(positions, w, count, center),
+      generationCount,
+      ...disclosure,
+    };
+  }
+  const result: ChaosGameResult = {
+    positions,
+    transformIndices,
+    count,
+    bounds: sampledBounds3(positions, count),
+  };
+  const colors = buildColors(
+    result,
+    sphereInversionColorSlots(generationCount),
+    request.colorMode,
+    request.colorGamma,
+    request.rampPalette,
+    request.positionAxisColors,
+  );
+  return {
+    id: request.id,
+    fourD: false,
+    ...result,
+    colors,
+    frameBounds: framingBounds(positions, count),
+    generationCount,
+    ...disclosure,
+  };
+}
+
+/** The tiling refusal a Menger-carve Points cloud discloses
+ * (`surface-eligibility.ts`'s combination policy: no tiling wrapper covers
+ * the family). The cloud is the untiled carve's boundary. */
+export const MENGER_POINT_TILING_NOTE =
+  "Space tiling is not available with a Menger carve; Points draws the untiled carve.";
 
 /**
  * The buffers to move (zero-copy ownership transfer, not clone) when posting

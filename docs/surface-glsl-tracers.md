@@ -781,6 +781,23 @@ one:
 | 4D balloon            | 68865      | 17274     | yes      |
 | 4D plane              | 70150      | 18159     | yes      |
 
+The SURFACE_MENGER arm's rows (2026-10-07, the carve family's landing), the
+same two questions against the two thresholds:
+
+| variant         | resolved B | emitted B | stripped |
+| --------------- | ---------- | --------- | -------- |
+| 3D menger       | 39017      | 39017     | no       |
+| 3D menger+plane | 46883      | 12512     | yes      |
+
+The carve arm is the smallest alternative in the file — a carve chain: no
+maps arrays, no orbit, no estimator branches — with 25 KB of resolved
+headroom, and it composes with nothing but the ground plane (the resolver
+refuses every other pairing: the arm sits beside escape/bulb in the
+alternatives chain, so a second variant on would resolve the menger's text
+away or leave the session expecting machinery the arm deleted). menger4 has
+no fragment mirror at all (the escape4 verdict); the 4D carve is
+compute-only.
+
 This table supersedes the three module comments above and the 64667 B /
 869 B escape+balloon figure two paragraphs up: a comment correction inside
 the escape and bulb arms' own GLSL template text cost each arm +14 B,

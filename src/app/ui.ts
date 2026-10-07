@@ -185,6 +185,20 @@ import {
 const MENGER_CONTROLS_MODE_REASON =
   "Flame and Solid cannot draw a Menger carve. Use Points or Surface.";
 const MENGER_DORMANT_REASON = "Turn off Menger carve to edit.";
+/** The chain-twist section's ten slider ids — the bulb session's disable
+ * pass walks them (the menger section's own list one subject over). */
+const CHAIN_TWIST_CONTROL_IDS: readonly string[] = [
+  "chainTwistRotationXSlider",
+  "chainTwistRotationYSlider",
+  "chainTwistRotationZSlider",
+  "chainTwistOffsetXSlider",
+  "chainTwistOffsetYSlider",
+  "chainTwistOffsetZSlider",
+  "chainTwistXWSlider",
+  "chainTwistYWSlider",
+  "chainTwistZWSlider",
+  "chainTwistWOffsetSlider",
+];
 const MENGER_TWIST_CONTROL_IDS: readonly string[] = [
   "mengerTwistEnabledCheckbox",
   "mengerLevelsSlider",
@@ -202,6 +216,7 @@ const MENGER_TWIST_CONTROL_IDS: readonly string[] = [
 import type { SurfaceOpticsOutlook } from "./surface-optics-backend";
 import {
   BALLOON_CENTRE_REFUSAL_REASON,
+  CHAIN_TWIST_BULB_REFUSAL_REASON,
   resolvePanelApplicability,
   type PanelContext,
   type SurfaceSessionKind,
@@ -2823,6 +2838,9 @@ export class Ui {
   private readonly chainTwistSection: HTMLDetailsElement;
   private readonly chainTwist4DRows: HTMLElement;
   private readonly chainTwistHint: HTMLElement;
+  /** The hint's static copy, captured once — the bulb session's disable
+   * reason swaps it in place and this restores it. */
+  private chainTwistHintStatic = "";
   // The Menger carve section (the second subject block): the owner's
   // checkbox + field sliders, the Flame/Solid refusal note, and the 4D rows
   // the block's own w extension reaches.
@@ -3680,6 +3698,7 @@ export class Ui {
     this.chainTwistSection = this.byId<HTMLDetailsElement>("chainTwistSection");
     this.chainTwist4DRows = this.byId("chainTwist4DRows");
     this.chainTwistHint = this.byId("chainTwistHint");
+    this.chainTwistHintStatic = this.chainTwistHint.textContent ?? "";
     this.mengerTwistSection =
       this.byId<HTMLDetailsElement>("mengerTwistSection");
     this.mengerTwistControls = this.byId("mengerTwistControls");
@@ -6049,16 +6068,29 @@ export class Ui {
     );
     this.surfaceTrapControls.classList.toggle("hidden", !state.shapeTrap);
     // The chain twist's section, one applicability read beside the trap's:
-    // visible while an escape-shaped session marches (escape4 reports kind
-    // "escape"), hidden otherwise. Its 4D rows show when the SET is 4D —
+    // visible while an escape-shaped or bulb session marches (escape4
+    // reports kind "escape"). Its 4D rows show when the SET is 4D —
     // the document is non-flat, or the authored block already carries a w
     // extension — and hide on a flat 3D chain, where those sliders would
     // silently author an unreachable lift. The eligibility note beside the
-    // gate carries the dormant/refused scope; the hint stays static.
+    // gate carries the dormant/refused scope; the hint is STATIC except on
+    // a bulb session, where the disable reason replaces it (see below).
     this.chainTwistSection.classList.toggle(
       "hidden",
       resolvePanelApplicability("chainTwist", panelContext).kind !== "enabled",
     );
+    // On a bulb session the w extension refuses outright (no fourth axis
+    // for it to act on), so the sliders disable beside that reason
+    // instead of hiding the feature and its way out alike (the
+    // dormant-capability contract, the trap section's shape). An escape
+    // session restores them enabled with the static hint.
+    const chainTwistOnBulb = panelContext.surfaceKind === "bulb";
+    for (const id of CHAIN_TWIST_CONTROL_IDS) {
+      this.setScalarDisabled(id, chainTwistOnBulb);
+    }
+    this.chainTwistHint.textContent = chainTwistOnBulb
+      ? CHAIN_TWIST_BULB_REFUSAL_REASON
+      : this.chainTwistHintStatic;
     this.chainTwist4DRows.classList.toggle(
       "hidden",
       !nonFlat && !twistWIsNonTrivial(state.chainTwist ?? {}),

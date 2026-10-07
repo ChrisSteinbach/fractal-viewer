@@ -3070,7 +3070,11 @@ async function main(): Promise<void> {
       // cloud's subject (the worker samples its seed orbit), so it reads the
       // LIVE document like the schedule — never interpolated, the target's
       // block pops at a replace-load's first push — and decides `fourD`.
+      // The Menger-carve block is the second subject block, after it (the
+      // derivation's own order): Points draws menger-sample.ts's rejection
+      // boundary sample of the carved surface.
       sphereInversion: state.sphereInversion ?? null,
+      mengerTwist: state.mengerTwist ?? null,
       fourD: scenePartsAreNonFlat(
         transforms,
         finalTransform,

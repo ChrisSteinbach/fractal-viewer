@@ -61,6 +61,14 @@ export function matchesPanelConsumers(
 export const BALLOON_CENTRE_REFUSAL_REASON =
   "Balloon unavailable — this solid fills its enclosing-ball centre.";
 
+/** The chain-twist sliders' disable reason on a bulb session: the twist's
+ * w extension refuses the lone Mandelbulb route outright (no fourth axis
+ * for it to act on), while the 3D rows would silently do nothing there —
+ * the panel-ia dormant-capability contract disables beside the reason
+ * instead of hiding the feature and its way out alike. */
+export const CHAIN_TWIST_BULB_REFUSAL_REASON =
+  "Unavailable on the Mandelbulb render — the twist composes with an escape-time chain.";
+
 /** Semantic applicability for the first foundation controls. Document and
  * runtime predicates (emitter weight, authored traps, conformal folds) remain
  * with their feature owner and compose with this three-axis answer in ui.ts. */
@@ -87,10 +95,12 @@ export const PANEL_APPLICABILITY_SPECS = {
     // The twist composes with the escape-time chain AND, since the bulb
     // core's lift, with the lone Mandelbulb render — so its section shows
     // while either is what Surface marches (escape4 sessions report kind
-    // "escape" — one kind covers both dimensions' chain). Dormant
-    // elsewhere: the IFS routes disclose the dormancy on the eligibility
-    // note, and this section stays hidden beside a subject it cannot
-    // touch.
+    // "escape" — one kind covers both dimensions' chain). On the bulb the
+    // w extension refuses outright, so ui.ts DISABLES the sliders beside
+    // CHAIN_TWIST_BULB_REFUSAL_REASON — hiding would hide the feature and
+    // its way out alike. The IFS routes disclose the dormancy on the
+    // eligibility note, and this section stays hidden beside a subject it
+    // cannot touch.
     consumers: [{ renderModes: ["surface"], surfaceKinds: ["escape", "bulb"] }],
     otherwise: { kind: "hidden" },
   },

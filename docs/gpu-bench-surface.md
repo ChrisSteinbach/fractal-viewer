@@ -118,6 +118,25 @@ point sampler; the flat 4D row reuses the identical rounded 3D query set. The
 ordinary agreement gate requires `fail=0`, and the 4D continuity-exclusion cap
 is unchanged.
 
+The twisted mod-Menger carve family adds the M9 (3D) and M10 (4D) agreement
+legs and three/five fixtures — `mengerCarveReference`, `mengerCarveOffset`
+(the capture-era offset, the twist's b lanes carrying real values) and
+`mengerCarveCrust` in 3D; `menger4CarveReference` and `menger4CarveTilted`
+(the pose rotor turned, the w offset live) in 4D. The carve is NOT a
+forward orbit and NOT chaotic — it is certified sound at every twist
+(`docs/twisted-menger-family.md`) — so the legs deliberately carry NO
+ensemble/ring/flip classifier: the plain comparator pins all 700 queries
+per fixture at fail=0, exactly the descent legs' gate, with the query mix
+re-bracketed against the carve DE (`mengerQueries`/`menger4Queries`:
+uniform cube + `DE < 0.005 R` bisection shell + origin cluster). The 4D
+rows compare against the COMPOSED f64 oracle (view lift, then
+`estimateMengerDistance4`) and the f32 twin carries the same lift. The
+twins' twin-vs-oracle agreement is additionally GATED in the systems loop
+— a carve row over tolerance is a bug or a tolerance-sized discontinuity,
+never orbit noise — and each system's measured realization noise is noted.
+The cores are bindingless, so both legs borrow the forward legs' buffer
+helper with one zero maps stride.
+
 `marchUnprojectChaos` and `computeFrameChaos` apply the schedule rows' same
 anti-vacuity discipline to that graph. The march must dispatch, complete,
 agree on every included ray and produce a nonempty/non-full hit mix on both
