@@ -957,3 +957,22 @@ excluded 9-76/700, flips 0-1, against caps 140/7); the flag-lane fix
 verified end-to-end by the escape-family and 4D-lift verify gates, both
 `verdict=pass` on the real driver after the fix. What remains owed: ONE
 complete clean `bench:surface` verdict on a machine that survives the leg.
+
+## The emitter-only leg wedges the driver on the AMD RX 7900 XTX box (2026-10-07)
+
+The same KIND of machine record, one box over: on this machine (Mesa AMD
+Radeon RX 7900 XTX, navi31, kernel 7.0.0-29) every full `--display=:0` run
+— three in a row, machine quiet throughout (`contended: false`, GPU busy
+3-5%) — dies with `device.lost` ("A valid external Instance reference no
+longer exists") at exactly THE EMITTER-ONLY eval/hit-info/shade agreement
+leg, with the canary tripping there and the section correctly refusing to
+certify (`verdict=device-unreliable`, exit 2). The legs BEFORE it —
+including that day's new M9/M10 menger legs — complete with clean canaries,
+and the wedge reproduces at the PRE-menger commit `d19d8638` in a clean
+worktree build, so it is pre-existing machine state and NOT a regression of
+the carve family's landing; the Iris Xe record above is the precedent
+(deterministic per-leg driver wedge, mechanism unresolved). Per the
+bench's own rule the numeric rows from such a run are NOT evidence; the
+menger legs' figures are therefore provisional until one complete clean
+verdict lands on a machine that survives the leg — the same debt that
+record's final line already carries.
