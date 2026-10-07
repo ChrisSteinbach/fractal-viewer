@@ -8494,3 +8494,74 @@ describe("chain-twist codec (the escape chain's twist block)", () => {
     expect(encodeScene(toSnapshot(cleared))).toBe(encodeScene(baseSnapshot()));
   });
 });
+
+describe("menger-twist codec (the carve family's block)", () => {
+  it("encodes a scene without the block byte-identically to one predating the field", () => {
+    const s = baseSnapshot();
+    const withUndefined = { ...s, mengerTwist: undefined };
+    expect(encodeScene(withUndefined)).toBe(encodeScene(s));
+    expect(decodeScene(encodeScene(s))!.mengerTwist).toBeUndefined();
+  });
+
+  it("round-trips a live block verbatim, w extension included", () => {
+    const block = {
+      levels: 6,
+      rotation: [0.1, -0.9272952180016122, 0.3] as Vec3,
+      offset: [0.4, 0.5, 0.6] as Vec3,
+      w: { rotation: { yw: 0.7 }, offset: -0.25 },
+    };
+    const hash = encodeScene({ ...baseSnapshot(), mengerTwist: block });
+    expect(decodeScene(hash)!.mengerTwist).toEqual(block);
+    expect(encodeScene(decodeScene(hash)!)).toBe(hash);
+  });
+
+  it("preserves a refused block verbatim through decode then encode (unknown key, bad level, future field)", () => {
+    const block = {
+      levels: 99,
+      rotation: [0.1, "nope", 0.3],
+      bogus: 1,
+      w: { future: [1, { nested: null }] },
+    } as unknown as SceneSnapshot["mengerTwist"];
+    const hash = encodeScene({ ...baseSnapshot(), mengerTwist: block });
+    const decoded = decodeScene(hash)!;
+    expect(decoded.mengerTwist).toEqual(block);
+    expect(encodeScene(decoded)).toBe(hash);
+  });
+
+  it("drops a value that cannot be a block (array, scalar, null) to absent without rejecting the scene", () => {
+    for (const raw of [[1, 2], 5, "carve", null]) {
+      const body = encodeScene(baseSnapshot())
+        .slice(3)
+        .replace(/-/g, "+")
+        .replace(/_/g, "/");
+      const json = JSON.parse(
+        atob(body + "=".repeat((4 - (body.length % 4)) % 4)),
+      ) as Record<string, unknown>;
+      json.mengerTwist = raw;
+      const hash =
+        "v1=" +
+        btoa(JSON.stringify(json))
+          .replace(/\+/g, "-")
+          .replace(/\//g, "_")
+          .replace(/=+$/, "");
+      const decoded = decodeScene(hash);
+      expect(decoded, JSON.stringify(raw)).not.toBeNull();
+      expect(decoded!.mengerTwist).toBeUndefined();
+    }
+  });
+
+  it("clears the block when restoring a legacy snapshot without one", () => {
+    const base = initialState(true);
+    const withBlock = fromSnapshot(
+      {
+        ...baseSnapshot(),
+        mengerTwist: { levels: 4, rotation: [0.3, 0, 0] as Vec3 },
+      },
+      base,
+    );
+    expect(withBlock.mengerTwist).toEqual({ levels: 4, rotation: [0.3, 0, 0] });
+    const cleared = fromSnapshot(baseSnapshot(), base);
+    expect(cleared.mengerTwist).toBeUndefined();
+    expect(encodeScene(toSnapshot(cleared))).toBe(encodeScene(baseSnapshot()));
+  });
+});

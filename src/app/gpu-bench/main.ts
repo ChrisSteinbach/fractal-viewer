@@ -127,6 +127,17 @@ import {
   estimateBulbDistance,
 } from "../../fractal/bulb-de";
 import type { BulbDE } from "../../fractal/bulb-de";
+import { buildMengerDE, estimateMengerDistance } from "../../fractal/menger-de";
+import type { MengerDE } from "../../fractal/menger-de";
+import {
+  buildMengerDE4,
+  estimateMengerDistance4,
+} from "../../fractal/menger-de-4d";
+import type { MengerDE4 } from "../../fractal/menger-de-4d";
+import {
+  resolveMengerTwist,
+  type MengerTwistAuthored,
+} from "../../fractal/menger-twist";
 import {
   analyzeEscapeSystem,
   buildEscapeDE,
@@ -278,6 +289,8 @@ import {
   SURFACE_GPU_TRANSPORT_UNRESOLVED,
   SURFACE_GPU_UNIFORM_MAP_SLOTS,
   packBulbGpuParams,
+  packMenger4GpuParams,
+  packMengerGpuParams,
   packEscape4GpuMaps,
   packEscape4GpuParams,
   packEscapeGpuMaps,
@@ -3882,7 +3895,16 @@ interface SurfaceKernelConfig {
    * take — a FORWARD core and a 4D one at once — so it inherits escape's
    * inert `variant`/`stage2`/`width` exactly (the generator ignores all
    * three) and affine4's fixed-width, always-gating row rule. */
-  core: "fold" | "affine" | "escape" | "bulb" | "affine4" | "fold4" | "escape4";
+  core:
+    | "fold"
+    | "affine"
+    | "escape"
+    | "bulb"
+    | "affine4"
+    | "fold4"
+    | "escape4"
+    | "menger"
+    | "menger4";
   variant: SurfaceVariant;
   width: number;
   stage2: boolean;
@@ -3912,7 +3934,16 @@ interface SurfaceAgreementOutlier {
 
 interface SurfaceAgreementRow {
   system: string;
-  core: "fold" | "affine" | "escape" | "bulb" | "affine4" | "fold4" | "escape4";
+  core:
+    | "fold"
+    | "affine"
+    | "escape"
+    | "bulb"
+    | "affine4"
+    | "fold4"
+    | "escape4"
+    | "menger"
+    | "menger4";
   variant: SurfaceVariant;
   width: number;
   stage2: boolean;
@@ -6229,6 +6260,144 @@ function escape4Queries(
   return out;
 }
 
+/**
+ * The menger eval leg's query mix — `escapeQueries`' recipe RE-BRACKETED
+ * against the carve DE (`bulbQueries`' own move): 400 uniform cube points
+ * out to 1.2 R, 200 bisected onto the `DE < 0.005 R` near-boundary shell
+ * (the region a distance estimator most needs to be right in — for the
+ * carve the boundary is the walls' own surface, exact per level), and 100
+ * clustered near the origin, which for the twisted carve is INSIDE the
+ * box's central void (the level-0 carve term governs there — the exact
+ * 1/3 wall-distance point the CPU tests pin). 700 total, every component
+ * `Math.fround`ed — see `surfaceQueries`' doc for why. NOT a chaotic
+ * orbit: no ensemble/ring/flip classifier runs on these rows (the carve
+ * estimator is certified sound; the leg gates fail=0 like the descents).
+ */
+function mengerQueries(de: MengerDE, seed: number): Vec3[] {
+  const R = de.boundingRadius;
+  const rng = mulberry32(seed);
+  const out: Vec3[] = [];
+  const half = 1.2 * R;
+  const uniformCubePoint = (): Vec3 => [
+    Math.fround((rng() - 0.5) * 2 * half),
+    Math.fround((rng() - 0.5) * 2 * half),
+    Math.fround((rng() - 0.5) * 2 * half),
+  ];
+  for (let i = 0; i < 400; i++) {
+    out.push(uniformCubePoint());
+  }
+  const nearBoundary = (p: Vec3): boolean =>
+    estimateMengerDistance(de, p) < 0.005 * R;
+  for (let i = 0; i < 200; i++) {
+    let a: Vec3 = [
+      (rng() - 0.5) * 1.2,
+      (rng() - 0.5) * 1.2,
+      (rng() - 0.5) * 1.2,
+    ];
+    let b = uniformCubePoint();
+    const pa = nearBoundary(a);
+    for (let step = 0; step < 24; step++) {
+      const mid: Vec3 = [
+        (a[0] + b[0]) / 2,
+        (a[1] + b[1]) / 2,
+        (a[2] + b[2]) / 2,
+      ];
+      if (nearBoundary(mid) === pa) {
+        a = mid;
+      } else {
+        b = mid;
+      }
+    }
+    // The final `a` — see `escapeQueries`' doc.
+    out.push([Math.fround(a[0]), Math.fround(a[1]), Math.fround(a[2])]);
+  }
+  for (let i = 0; i < 100; i++) {
+    const s = rng() * 0.5;
+    out.push([
+      Math.fround((rng() - 0.5) * s),
+      Math.fround((rng() - 0.5) * s),
+      Math.fround((rng() - 0.5) * s),
+    ]);
+  }
+  return out;
+}
+
+/**
+ * The menger4 leg's composed f64 oracle — `estimateSurface4Composed`'s
+ * shape (view lift + estimator) for the carve: the f64 lift of the query
+ * through the view rotor, then `estimateMengerDistance4`.
+ */
+function estimateMenger4Composed(
+  de: MengerDE4,
+  view4: SurfaceGpu4View,
+  p: Vec3,
+): number {
+  const q: Vec4 = [p[0], p[1], p[2], view4.w0];
+  const r = view4.rotor;
+  const lifted: Vec4 = [
+    r[0] * q[0] + r[1] * q[1] + r[2] * q[2] + r[3] * q[3],
+    r[4] * q[0] + r[5] * q[1] + r[6] * q[2] + r[7] * q[3],
+    r[8] * q[0] + r[9] * q[1] + r[10] * q[2] + r[11] * q[3],
+    r[12] * q[0] + r[13] * q[1] + r[14] * q[2] + r[15] * q[3],
+  ];
+  return estimateMengerDistance4(de, lifted);
+}
+
+/** The menger4 leg's query mix — `mengerQueries` one dimension up,
+ * bracketed against the COMPOSED oracle (the lift is an isometry, so the
+ * near-boundary shell is the same shell the kernel sees). */
+function menger4Queries(
+  de: MengerDE4,
+  view4: SurfaceGpu4View,
+  seed: number,
+): Vec3[] {
+  const R = de.boundingRadius;
+  const rng = mulberry32(seed);
+  const out: Vec3[] = [];
+  const half = 1.2 * R;
+  const uniformCubePoint = (): Vec3 => [
+    Math.fround((rng() - 0.5) * 2 * half),
+    Math.fround((rng() - 0.5) * 2 * half),
+    Math.fround((rng() - 0.5) * 2 * half),
+  ];
+  for (let i = 0; i < 400; i++) {
+    out.push(uniformCubePoint());
+  }
+  const nearBoundary = (p: Vec3): boolean =>
+    estimateMenger4Composed(de, view4, p) < 0.005 * R;
+  for (let i = 0; i < 200; i++) {
+    let a: Vec3 = [
+      (rng() - 0.5) * 1.2,
+      (rng() - 0.5) * 1.2,
+      (rng() - 0.5) * 1.2,
+    ];
+    let b = uniformCubePoint();
+    const pa = nearBoundary(a);
+    for (let step = 0; step < 24; step++) {
+      const mid: Vec3 = [
+        (a[0] + b[0]) / 2,
+        (a[1] + b[1]) / 2,
+        (a[2] + b[2]) / 2,
+      ];
+      if (nearBoundary(mid) === pa) {
+        a = mid;
+      } else {
+        b = mid;
+      }
+    }
+    out.push([Math.fround(a[0]), Math.fround(a[1]), Math.fround(a[2])]);
+  }
+  for (let i = 0; i < 100; i++) {
+    const s = rng() * 0.5;
+    out.push([
+      Math.fround((rng() - 0.5) * s),
+      Math.fround((rng() - 0.5) * s),
+      Math.fround((rng() - 0.5) * s),
+    ]);
+  }
+  return out;
+}
+
 /** The affine4 leg's tolerance/query radius rule: the lens GROWS or shrinks
  * the visible set, so error scales from the set the DE actually describes —
  * M0's `foldFinal ? visibleBoundingRadius : boundingRadius` analog one
@@ -7210,6 +7379,265 @@ function estimateBulbDistanceF32(de: BulbDE, p: Vec3): number {
   // The ln|y| clamp below 1 — a converging orbit reaches it, and a
   // negative estimate would march the tracer backwards.
   return r <= 1 ? 0 : f(f(f(0.5 * r) * f(Math.log(r))) / dr);
+}
+
+/**
+ * The bench's f32 twin of `estimateMengerDistance` — the carve chain's
+ * fround mirror (the escape twin's discipline, no orbit to diverge: the
+ * carve is bounded work, so this twin's job is isolating f32 realization
+ * noise, not chaos). The twist flag mirrors the kernel's skip branch
+ * (`packMengerGpuParams`'s trivialTwist lane): flag 0 skips the identity
+ * mat-vec value-exactly.
+ */
+/**
+ * The bench's f32 twin of `estimateMengerDistance` — the carve chain's
+ * fround mirror (the escape twin's discipline, no orbit to diverge: the
+ * carve is bounded work, so this twin's job is isolating f32 realization
+ * noise, not chaos). The twist flag mirrors the kernel's skip branch
+ * (`packMengerGpuParams`'s trivialTwist lane): flag 0 skips the identity
+ * mat-vec value-exactly.
+ */
+function mengerTwistIsTrivialF64(m: number[], b: number[]): boolean {
+  if (m.length === 16) {
+    return (
+      m[0] === 1 &&
+      m[1] === 0 &&
+      m[2] === 0 &&
+      m[3] === 0 &&
+      m[4] === 0 &&
+      m[5] === 1 &&
+      m[6] === 0 &&
+      m[7] === 0 &&
+      m[8] === 0 &&
+      m[9] === 0 &&
+      m[10] === 1 &&
+      m[11] === 0 &&
+      m[12] === 0 &&
+      m[13] === 0 &&
+      m[14] === 0 &&
+      m[15] === 1 &&
+      b[0] === 0 &&
+      b[1] === 0 &&
+      b[2] === 0 &&
+      b[3] === 0
+    );
+  }
+  return (
+    m[0] === 1 &&
+    m[1] === 0 &&
+    m[2] === 0 &&
+    m[3] === 0 &&
+    m[4] === 1 &&
+    m[5] === 0 &&
+    m[6] === 0 &&
+    m[7] === 0 &&
+    m[8] === 1 &&
+    b[0] === 0 &&
+    b[1] === 0 &&
+    b[2] === 0
+  );
+}
+
+function estimateMengerDistanceF32(de: MengerDE, p: Vec3): number {
+  const f = Math.fround;
+  const m = de.twistM.map(f);
+  const b = de.twistB.map(f);
+  const twist = !mengerTwistIsTrivialF64(m, b);
+  const px = f(p[0]);
+  const py = f(p[1]);
+  const pz = f(p[2]);
+  let d = mengerBoxDistanceF32(px, py, pz);
+  let qx = px;
+  let qy = py;
+  let qz = pz;
+  let s = 1;
+  for (let i = 0; i < de.levels; i++) {
+    if (twist) {
+      const tx = qx;
+      const ty = qy;
+      const tz = qz;
+      qx = f(f(f(f(m[0] * tx) + f(m[1] * ty)) + f(m[2] * tz)) + b[0]);
+      qy = f(f(f(f(m[3] * tx) + f(m[4] * ty)) + f(m[5] * tz)) + b[1]);
+      qz = f(f(f(f(m[6] * tx) + f(m[7] * ty)) + f(m[8] * tz)) + b[2]);
+    }
+    const ax = f(mengerSawtoothF32(f(f(qx * s)))) - 1;
+    const ay = f(mengerSawtoothF32(f(f(qy * s)))) - 1;
+    const az = f(mengerSawtoothF32(f(f(qz * s)))) - 1;
+    s = f(s * 3);
+    const rx = f(Math.abs(f(f(1 - f(3 * Math.abs(ax))))));
+    const ry = f(Math.abs(f(f(1 - f(3 * Math.abs(ay))))));
+    const rz = f(Math.abs(f(f(1 - f(3 * Math.abs(az))))));
+    const da = f(Math.max(rx, ry));
+    const db = f(Math.max(ry, rz));
+    const dc = f(Math.max(rz, rx));
+    const c = f(f(f(Math.min(da, Math.min(db, dc))) - 1) / s);
+    if (c > d) {
+      d = c;
+    }
+  }
+  return d;
+}
+
+/**
+ * The bench's f32 twin of `estimateMengerDistance`'s helpers, frounded
+ * exactly as the twin calls them.
+ */
+function mengerSawtoothF32(x: number): number {
+  return Math.fround(x - 2 * Math.floor(x / 2));
+}
+function mengerBoxDistanceF32(px: number, py: number, pz: number): number {
+  const f = Math.fround;
+  const qx = f(Math.abs(px) - 1);
+  const qy = f(Math.abs(py) - 1);
+  const qz = f(Math.abs(pz) - 1);
+  const mx = f(Math.max(qx, 0));
+  const my = f(Math.max(qy, 0));
+  const mz = f(Math.max(qz, 0));
+  return f(
+    f(Math.sqrt(f(f(f(mx * mx) + f(my * my)) + f(mz * mz)))) +
+      f(Math.min(Math.max(qx, Math.max(qy, qz)), 0)),
+  );
+}
+
+/** sdBox(p, 1) in R4, frounded — the 4D twin's own box helper. */
+function mengerBoxDistance4F32(
+  qx: number,
+  qy: number,
+  qz: number,
+  qw: number,
+): number {
+  const f = Math.fround;
+  const ax = f(Math.abs(qx) - 1);
+  const ay = f(Math.abs(qy) - 1);
+  const az = f(Math.abs(qz) - 1);
+  const aw = f(Math.abs(qw) - 1);
+  const mx = f(Math.max(ax, 0));
+  const my = f(Math.max(ay, 0));
+  const mz = f(Math.max(az, 0));
+  const mw = f(Math.max(aw, 0));
+  return f(
+    f(Math.sqrt(f(f(f(f(mx * mx) + f(my * my)) + f(mz * mz)) + f(mw * mw)))) +
+      f(Math.min(Math.max(Math.max(ax, ay), Math.max(az, aw)), 0)),
+  );
+}
+
+/**
+ * The f32 twin one dimension up: the rotor lift (frounded rows — the
+ * packer's transpose dance) then the 4D carve chain, frounded per op.
+ */
+function estimateMengerDistance4F32(
+  de: MengerDE4,
+  p: Vec3,
+  view4: SurfaceGpu4View,
+): number {
+  const f = Math.fround;
+  const rot = view4.rotor;
+  const w0 = f(view4.w0);
+  const px = f(p[0]);
+  const py = f(p[1]);
+  const pz = f(p[2]);
+  const pvx = f(px);
+  const pvy = f(py);
+  const pvz = f(pz);
+  const pvw = w0;
+  const liftedX = f(
+    f(
+      f(f(f(rot[0] * pvx) + f(rot[1] * pvy)) + f(rot[2] * pvz)) +
+        f(f(rot[3] * pvw) + 0),
+    ),
+  );
+  const liftedY = f(
+    f(
+      f(f(f(rot[4] * pvx) + f(rot[5] * pvy)) + f(rot[6] * pvz)) +
+        f(f(rot[7] * pvw) + 0),
+    ),
+  );
+  const liftedZ = f(
+    f(
+      f(f(f(rot[8] * pvx) + f(rot[9] * pvy)) + f(rot[10] * pvz)) +
+        f(f(rot[11] * pvw) + 0),
+    ),
+  );
+  const liftedW = f(
+    f(
+      f(f(f(rot[12] * pvx) + f(rot[13] * pvy)) + f(rot[14] * pvz)) +
+        f(f(rot[15] * pvw) + 0),
+    ),
+  );
+  const m = de.twistM.map(f);
+  const b = de.twistB.map(f);
+  const twist = !mengerTwistIsTrivialF64(m, b);
+  let qx = liftedX;
+  let qy = liftedY;
+  let qz = liftedZ;
+  let qw = liftedW;
+  let d = mengerBoxDistance4F32(qx, qy, qz, qw);
+  let s = 1;
+  for (let i = 0; i < de.levels; i++) {
+    if (twist) {
+      const tx = qx;
+      const ty = qy;
+      const tz = qz;
+      const tw = qw;
+      qx = f(
+        f(
+          f(f(f(f(m[0] * tx) + f(m[1] * ty)) + f(m[2] * tz)) + f(m[3] * tw)) +
+            b[0],
+        ),
+      );
+      qy = f(
+        f(
+          f(f(f(f(m[4] * tx) + f(m[5] * ty)) + f(m[6] * tz)) + f(m[7] * tw)) +
+            b[1],
+        ),
+      );
+      qz = f(
+        f(
+          f(f(f(f(m[8] * tx) + f(m[9] * ty)) + f(m[10] * tz)) + f(m[11] * tw)) +
+            b[2],
+        ),
+      );
+      qw = f(
+        f(
+          f(
+            f(f(f(m[12] * tx) + f(m[13] * ty)) + f(m[14] * tz)) + f(m[15] * tw),
+          ) + b[3],
+        ),
+      );
+    }
+    const ax = f(mengerSawtoothF32(f(f(qx * s)))) - 1;
+    const ay = f(mengerSawtoothF32(f(f(qy * s)))) - 1;
+    const az = f(mengerSawtoothF32(f(f(qz * s)))) - 1;
+    const aw = f(mengerSawtoothF32(f(f(qw * s)))) - 1;
+    s = f(s * 3);
+    const rx = f(Math.abs(f(f(1 - f(3 * Math.abs(ax))))));
+    const ry = f(Math.abs(f(f(1 - f(3 * Math.abs(ay))))));
+    const rz = f(Math.abs(f(f(1 - f(3 * Math.abs(az))))));
+    const rw = f(Math.abs(f(f(1 - f(3 * Math.abs(aw))))));
+    const c = f(
+      f(
+        f(
+          Math.max(
+            f(Math.min(rx, ry)),
+            Math.max(
+              f(Math.min(rx, rz)),
+              Math.max(
+                f(Math.min(rx, rw)),
+                Math.max(
+                  f(Math.min(ry, rz)),
+                  Math.max(f(Math.min(ry, rw)), f(Math.min(rz, rw))),
+                ),
+              ),
+            ),
+          ),
+        ) - 1,
+      ) / s,
+    );
+    if (c > d) {
+      d = c;
+    }
+  }
+  return d;
 }
 
 /**
@@ -15300,18 +15728,33 @@ function destroySurfaceEvalBuffers(sys: SurfaceSystemState): void {
 
 /** {@link ensureSurfaceEvalBuffers}'s FORWARD-core twin (made
  * core-agnostic for the bulb, which passes the packed params in rather
- * than naming a packer): the same lazy-create-once contract, with the
- * caller passing BOTH packed buffers — the escape core's formula chain
- * rides the maps binding (`packEscapeGpuMaps`), while the bulb
- * core's single map still rides the params variant block and takes one
- * zero stride here (see {@link surfaceForwardBindGroupLayout}). */
-async function ensureSurfaceForwardEvalBuffers<TDe>(
+ * than naming a packer; widened further for the menger legs, whose
+ * states carry the plain comparator's `cpu` rather than the forward
+ * pair): the same lazy-create-once contract, with the caller passing
+ * BOTH packed buffers — the escape core's formula chain rides the maps
+ * binding (`packEscapeGpuMaps`), while the bulb/menger cores' single
+ * construction rides the params variant block and takes one zero stride
+ * here (see {@link surfaceForwardBindGroupLayout}). */
+async function ensureSurfaceForwardEvalBuffers<
+  TSys extends {
+    name: string;
+    queries: Vec3[];
+    buffers?: {
+      params: GPUBuffer;
+      maps: GPUBuffer;
+      input: GPUBuffer;
+      output: GPUBuffer;
+      staging: GPUBuffer;
+      bindGroup: GPUBindGroup;
+    };
+  },
+>(
   device: GPUDevice,
   layout: GPUBindGroupLayout,
-  sys: SurfaceForwardSystemState<TDe>,
+  sys: TSys,
   paramsData: ArrayBuffer,
   mapsData: Float32Array,
-): Promise<NonNullable<SurfaceForwardSystemState<TDe>["buffers"]>> {
+): Promise<NonNullable<TSys["buffers"]>> {
   if (sys.buffers) return sys.buffers;
   const n = sys.queries.length;
   const inputData = new Float32Array(n * 4);
@@ -15367,9 +15810,19 @@ async function ensureSurfaceForwardEvalBuffers<TDe>(
   return sys.buffers;
 }
 
-function destroySurfaceForwardEvalBuffers<TDe>(
-  sys: SurfaceForwardSystemState<TDe>,
-): void {
+function destroySurfaceForwardEvalBuffers<
+  TSys extends {
+    name: string;
+    buffers?: {
+      params: GPUBuffer;
+      maps: GPUBuffer;
+      input: GPUBuffer;
+      output: GPUBuffer;
+      staging: GPUBuffer;
+      bindGroup: GPUBindGroup;
+    };
+  },
+>(sys: TSys): void {
   if (!sys.buffers) return;
   sys.buffers.params.destroy();
   sys.buffers.maps.destroy();
@@ -15940,7 +16393,17 @@ async function createSurfaceCanary(
 }
 
 function compareSurfaceAgreement(
-  sys: SurfaceSystemState,
+  sys: {
+    name: string;
+    de: { boundingRadius: number };
+    cpu: number[];
+    // Optional extras the balloon helper's spread carries — the
+    // comparator reads none of them.
+    queries?: Vec3[];
+    stable?: boolean[];
+    view4?: SurfaceGpu4View | null;
+    buffers?: unknown;
+  },
   cfg: SurfaceKernelConfig,
   gpu: Float32Array,
 ): SurfaceAgreementRow {
@@ -21216,6 +21679,213 @@ async function runSurfaceDeSection(
     render();
   }
 
+  // ----- Menger carve systems (M9/M10): the carve family's own gate -----
+  // The twisted mod-Menger's construction — NOT an IFS and NOT a forward
+  // orbit, so neither the descent defs (a chaos-game query mix needs an
+  // attractor; the placeholder transforms would sample the wrong set) nor
+  // the forward machinery (no orbit, no ensemble/ring/flip classifier —
+  // the carve is certified sound and its leg gates fail=0 like the
+  // descents') applies. One def list per dimension, the resolver-gated
+  // build, `mengerQueries`' re-bracketed mix, and the plain comparator.
+  const mengerSystemDefs: {
+    name: string;
+    seed: number;
+    twist: MengerTwistAuthored;
+  }[] = [
+    {
+      // The reference construction — 4 levels, the ma rotation, no
+      // offset. Every row carries the block explicitly: the kernel's
+      // variant block is the construction, so the fixture exercises
+      // exactly the wire the app packs.
+      name: "mengerCarveReference",
+      seed: 701,
+      twist: { levels: 4, rotation: [0, -0.9272952180016122, 0] },
+    },
+    {
+      // The capture-era offset — the chunky displaced-carve look, and the
+      // twist's b lanes carrying real values.
+      name: "mengerCarveOffset",
+      seed: 702,
+      twist: {
+        levels: 4,
+        rotation: [0, -0.9272952180016122, 0],
+        offset: [1.4, 1.4, 1.4],
+      },
+    },
+    {
+      // A general non-axis twist at 5 levels — every Euler axis live.
+      name: "mengerCarveCrust",
+      seed: 703,
+      twist: {
+        levels: 5,
+        rotation: [0.35, -0.9272952180016122, 0.21],
+        offset: [0.4, -0.3, 0.2],
+      },
+    },
+  ];
+  const mengerSystems: {
+    name: string;
+    de: MengerDE;
+    queries: Vec3[];
+    cpu: number[];
+  }[] = [];
+  let mengerGateFail = false;
+  for (const def of mengerSystemDefs) {
+    status(`cpu oracle: ${def.name}…`);
+    activity.setState("cpu", `Surface menger CPU oracle — ${def.name}`);
+    await new Promise<void>((resolve) => setTimeout(resolve));
+    try {
+      const resolution = resolveMengerTwist(def.twist);
+      if (!resolution.ok) {
+        results.notes.push(
+          `${def.name}: skipped — ${resolution.reasons.join("; ")}`,
+        );
+      } else {
+        const de = buildMengerDE(resolution.construction);
+        const queries = mengerQueries(de, def.seed);
+        const cpu = queries.map((q) => estimateMengerDistance(de, q));
+        // The f32 twin's own agreement with the f64 oracle — the
+        // realization-noise figure the leg's tolerance must dominate. The
+        // carve is not chaotic, so a twin row over tolerance is a BUG in
+        // the twin or a tolerance-sized discontinuity, not noise.
+        const R = de.boundingRadius;
+        let twinMaxAbsErr = 0;
+        for (let i = 0; i < cpu.length; i++) {
+          const err = Math.abs(
+            estimateMengerDistanceF32(de, queries[i]) - cpu[i],
+          );
+          if (err > twinMaxAbsErr) twinMaxAbsErr = err;
+          if (err > surfaceEvalTol(cpu[i], R)) {
+            mengerGateFail = true;
+            results.notes.push(
+              `${def.name}: the f32 twin disagrees with the f64 oracle at ` +
+                `query ${String(i)} (maxAbs ${err.toExponential(2)}, tol ` +
+                `${surfaceEvalTol(cpu[i], R).toExponential(2)})`,
+            );
+            break;
+          }
+        }
+        results.notes.push(
+          `${def.name}: f32 twin realization noise maxAbs ${twinMaxAbsErr.toExponential(2)}`,
+        );
+        mengerSystems.push({
+          name: def.name,
+          de,
+          queries,
+          cpu,
+        });
+      }
+    } catch (e) {
+      results.notes.push(`${def.name}: skipped — ${describeError(e)}`);
+    }
+    render();
+  }
+
+  const menger4SystemDefs: {
+    name: string;
+    seed: number;
+    twist: MengerTwistAuthored;
+    view4: () => SurfaceGpu4View;
+  }[] = [
+    {
+      // The hyper-Menger at the identity view: the block's own xw twist
+      // is the only w-mixing in play.
+      name: "menger4CarveReference",
+      seed: 711,
+      twist: {
+        levels: 4,
+        rotation: [0, -0.9272952180016122, 0],
+        w: { rotation: { xw: 0.3 }, offset: 0 },
+      },
+      view4: () => ({
+        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        w0: 0,
+        sliceHalfW: 0,
+      }),
+    },
+    {
+      // The pose rotor turned, the w offset live: the lift AND the
+      // construction's fourth-axis degrees of freedom both in play, and
+      // the slice gate reading a nonzero |w0|.
+      name: "menger4CarveTilted",
+      seed: 712,
+      twist: {
+        levels: 5,
+        rotation: [0.2, -0.9272952180016122, 0.1],
+        offset: [0.3, 0, 0],
+        w: { rotation: { xw: 0.3, yw: -0.2 }, offset: 0.25 },
+      },
+      view4: () => {
+        const m = symmetryRotation4("xw", 0.55);
+        return {
+          rotor: m,
+          w0: 0.3,
+          sliceHalfW: 0,
+        };
+      },
+    },
+  ];
+  const menger4Systems: {
+    name: string;
+    de: MengerDE4;
+    view4: SurfaceGpu4View;
+    queries: Vec3[];
+    cpu: number[];
+  }[] = [];
+  let menger4GateFail = false;
+  for (const def of menger4SystemDefs) {
+    status(`cpu oracle: ${def.name}…`);
+    activity.setState("cpu", `Surface menger4 CPU oracle — ${def.name}`);
+    await new Promise<void>((resolve) => setTimeout(resolve));
+    try {
+      const resolution = resolveMengerTwist(def.twist);
+      if (!resolution.ok) {
+        results.notes.push(
+          `${def.name}: skipped — ${resolution.reasons.join("; ")}`,
+        );
+      } else {
+        const de = buildMengerDE4(resolution.construction);
+        const view4 = def.view4();
+        const queries = menger4Queries(de, view4, def.seed);
+        // The COMPOSED oracle: the f64 lift, then the estimator — the
+        // exact function the kernel computes (the M3/M7 discipline) — and
+        // the f32 twin's own agreement gate, the 3D loop's rule one
+        // dimension up.
+        const cpu = queries.map((q) => estimateMenger4Composed(de, view4, q));
+        const R = de.boundingRadius;
+        let twinMaxAbsErr = 0;
+        for (let i = 0; i < cpu.length; i++) {
+          const err = Math.abs(
+            estimateMengerDistance4F32(de, queries[i], view4) - cpu[i],
+          );
+          if (err > twinMaxAbsErr) twinMaxAbsErr = err;
+          if (err > surfaceEvalTol(cpu[i], R)) {
+            menger4GateFail = true;
+            results.notes.push(
+              `${def.name}: the f32 twin disagrees with the f64 oracle at ` +
+                `query ${String(i)} (maxAbs ${err.toExponential(2)}, tol ` +
+                `${surfaceEvalTol(cpu[i], R).toExponential(2)})`,
+            );
+            break;
+          }
+        }
+        results.notes.push(
+          `${def.name}: f32 twin realization noise maxAbs ${twinMaxAbsErr.toExponential(2)}`,
+        );
+        menger4Systems.push({
+          name: def.name,
+          de,
+          view4,
+          queries,
+          cpu,
+        });
+      }
+    } catch (e) {
+      results.notes.push(`${def.name}: skipped — ${describeError(e)}`);
+    }
+    render();
+  }
+
   // ----- Affine4 (4D) systems (M3): a THIRD separate gate -----
   // `buildSurfaceDE` has no 4D shape at all — these systems live behind
   // `analyzeSurfaceSystem4`/`buildSurfaceDE4` and the kernel's view lift,
@@ -25469,6 +26139,157 @@ async function runSurfaceDeSection(
 
     await canaryCheck("the M7 escape4 agreement leg");
 
+    // ----- M9: the MENGER core's agreement leg — GATING -----
+    // The carve family's own leg, the descent legs' gate shape (fail=0,
+    // no exclusions — the carve estimator is certified sound and NOT a
+    // chaotic orbit, so no ensemble/ring/flip classifier applies) with the
+    // forward legs' buffer helper (the core is bindingless, so it passes
+    // its packed params and one zero stride like the bulb does).
+    if (mengerSystems.length > 0) {
+      const mengerEvalConfig: SurfaceKernelConfig = {
+        core: "menger",
+        variant: "private",
+        width: SURFACE_FOLD_BEAM_WIDTH,
+        stage2: false,
+        wg: surfaceWgFor(config, "private"),
+      };
+      const label = configLabel(mengerEvalConfig);
+      status(`agreement: compiling ${label}…`);
+      activity.setState("gpu", `Surface DE agreement — ${label}`);
+      const mengerLayout = surfaceForwardBindGroupLayout(device);
+      const mengerPipelineLayout = device.createPipelineLayout({
+        label: "surface-de menger pipeline layout",
+        bindGroupLayouts: [mengerLayout],
+      });
+      let mengerPipeline: GPUComputePipeline | null = null;
+      try {
+        const code = surfaceDeKernelWgsl({
+          mode: "eval",
+          core: "menger",
+          width: mengerEvalConfig.width,
+          workgroupSize: mengerEvalConfig.wg,
+          sharedFrontier: false,
+          bnbStage2: false,
+        });
+        ({ pipeline: mengerPipeline } = await buildSurfacePipeline(
+          device,
+          mengerPipelineLayout,
+          code,
+          "evalQueries",
+          `surface-de eval ${label}`,
+        ));
+      } catch (e) {
+        compileFailed = true;
+        results.notes.push(`agreement ${label}: ${describeError(e)}`);
+      }
+      if (mengerPipeline !== null) {
+        const pipeline = mengerPipeline;
+        for (const sys of mengerSystems) {
+          status(`agreement: ${label} × ${sys.name}…`);
+          await ensureSurfaceForwardEvalBuffers(
+            device,
+            mengerLayout,
+            sys,
+            packMengerGpuParams(sys.de, {
+              itemCount: sys.queries.length,
+              cutoff: 0,
+            }),
+            // One zero stride: the menger kernel declares no maps binding.
+            new Float32Array(SURFACE_GPU_MAP_VEC4 * 4),
+          );
+          const gpu = await runSurfaceEvalDispatch(
+            device,
+            pipeline,
+            sys,
+            mengerEvalConfig.wg,
+          );
+          results.agreement.push(
+            compareSurfaceAgreement(sys, mengerEvalConfig, gpu),
+          );
+          render();
+          await new Promise<void>((resolve) => setTimeout(resolve));
+        }
+      }
+      render();
+    }
+
+    await canaryCheck("the M9 menger agreement leg");
+
+    // ----- M10: the MENGER4 core's agreement leg — GATING -----
+    // The carve one dimension up, behind the view lift — the composed
+    // oracle (the f64 lift, then the estimator) and the f32 twin carrying
+    // the same lift, exactly the M3/M7 discipline. No exclusions: the
+    // carve is not chaotic and the lift is an isometry.
+    if (menger4Systems.length > 0) {
+      const menger4EvalConfig: SurfaceKernelConfig = {
+        core: "menger4",
+        variant: "private",
+        width: SURFACE_FOLD_BEAM_WIDTH,
+        stage2: false,
+        wg: surfaceWgFor(config, "private"),
+      };
+      const label = configLabel(menger4EvalConfig);
+      status(`agreement: compiling ${label}…`);
+      activity.setState("gpu", `Surface DE agreement — ${label}`);
+      const menger4Layout = surfaceForwardBindGroupLayout(device);
+      const menger4PipelineLayout = device.createPipelineLayout({
+        label: "surface-de menger4 pipeline layout",
+        bindGroupLayouts: [menger4Layout],
+      });
+      let menger4Pipeline: GPUComputePipeline | null = null;
+      try {
+        const code = surfaceDeKernelWgsl({
+          mode: "eval",
+          core: "menger4",
+          width: menger4EvalConfig.width,
+          workgroupSize: menger4EvalConfig.wg,
+          sharedFrontier: false,
+          bnbStage2: false,
+        });
+        ({ pipeline: menger4Pipeline } = await buildSurfacePipeline(
+          device,
+          menger4PipelineLayout,
+          code,
+          "evalQueries",
+          `surface-de eval ${label}`,
+        ));
+      } catch (e) {
+        compileFailed = true;
+        results.notes.push(`agreement ${label}: ${describeError(e)}`);
+      }
+      if (menger4Pipeline !== null) {
+        const pipeline = menger4Pipeline;
+        for (const sys of menger4Systems) {
+          status(`agreement: ${label} × ${sys.name}…`);
+          await ensureSurfaceForwardEvalBuffers(
+            device,
+            menger4Layout,
+            sys,
+            packMenger4GpuParams(sys.de, sys.view4, {
+              itemCount: sys.queries.length,
+              cutoff: 0,
+            }),
+            // One zero stride: the menger4 kernel declares no maps binding.
+            new Float32Array(SURFACE_GPU_MAP_VEC4 * 4),
+          );
+          const gpu = await runSurfaceEvalDispatch(
+            device,
+            pipeline,
+            sys,
+            menger4EvalConfig.wg,
+          );
+          results.agreement.push(
+            compareSurfaceAgreement(sys, menger4EvalConfig, gpu),
+          );
+          render();
+          await new Promise<void>((resolve) => setTimeout(resolve));
+        }
+      }
+      render();
+    }
+
+    await canaryCheck("the M10 menger4 agreement leg");
+
     // ----- The SHAPE-TRAP agreement legs (escape/bulb/escape4 + trap) -----
     // The trap is COLOR ONLY, so the CPU oracle values are the plain legs'
     // own — what these rows pin is everything the channel appends to the
@@ -27692,6 +28513,8 @@ async function runSurfaceDeSection(
       escapeGateFail ||
       bulbGateFail ||
       escape4GateFail ||
+      mengerGateFail ||
+      menger4GateFail ||
       affine4GateFail ||
       fold4GateFail ||
       fold4SlabExtFailed ||
@@ -27726,37 +28549,39 @@ async function runSurfaceDeSection(
                     ? "bulb agreement leg excluded too many queries from its f32-stability gate — see notes"
                     : escape4GateFail
                       ? "escape4 agreement leg excluded too many queries from its f32-stability gate — see notes"
-                      : affine4GateFail
-                        ? "affine4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
-                        : fold4GateFail
-                          ? "fold4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
-                          : fold4SlabExtFailed
-                            ? "fold4 slabExt A/B: slab/no-slab kernels disagree beyond tolerance at sliceHalfW 0 — see notes"
-                            : lens4GateFail
-                              ? "lens4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
-                              : lens4PackGuardFailed
-                                ? "lens4 pack-guard: packSurface4GpuParams did not refuse a swirl-final slab query — see notes"
-                                : cover4GateFail
-                                  ? "cover4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
-                                  : cover4IdentityFailed
-                                    ? "cover4 identity A/B: the cover's h=0 branch disagrees with the point kernel beyond tolerance — see notes"
-                                    : emitterOnlyFailed
-                                      ? "emitter-only eval/hit-info/shade agreement failure — see notes"
-                                      : tilingAbiFailed
-                                        ? "finite-tiling compile/bind/numeric ABI agreement failure — see notes"
-                                        : latticeTilingAbiFailed
-                                          ? "lattice-tiling eval compile/bind/numeric ABI agreement failure — see notes"
-                                          : latticeFrameFailed
-                                            ? "lattice carrier frame failure — see notes"
-                                            : transportGateFail
-                                              ? "transport agreement failure — see notes"
-                                              : finitePrimaryGateFail
-                                                ? "finite primary status/depth agreement failure — see finitePrimaryAgreement/notes"
-                                                : transportEnvelopeGateFail
-                                                  ? "transport envelope failure — see transportEnvelope/notes"
-                                                  : sphereInversionFailed
-                                                    ? "sphere-inversion compile/eval/march/frame failure — see sphereInversion and notes"
-                                                    : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
+                      : mengerGateFail || menger4GateFail
+                        ? "menger agreement leg: the f32 twin disagrees with the f64 oracle — the carve is not chaotic, so this is a bug or a tolerance-sized discontinuity — see notes"
+                        : affine4GateFail
+                          ? "affine4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
+                          : fold4GateFail
+                            ? "fold4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
+                            : fold4SlabExtFailed
+                              ? "fold4 slabExt A/B: slab/no-slab kernels disagree beyond tolerance at sliceHalfW 0 — see notes"
+                              : lens4GateFail
+                                ? "lens4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
+                                : lens4PackGuardFailed
+                                  ? "lens4 pack-guard: packSurface4GpuParams did not refuse a swirl-final slab query — see notes"
+                                  : cover4GateFail
+                                    ? "cover4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
+                                    : cover4IdentityFailed
+                                      ? "cover4 identity A/B: the cover's h=0 branch disagrees with the point kernel beyond tolerance — see notes"
+                                      : emitterOnlyFailed
+                                        ? "emitter-only eval/hit-info/shade agreement failure — see notes"
+                                        : tilingAbiFailed
+                                          ? "finite-tiling compile/bind/numeric ABI agreement failure — see notes"
+                                          : latticeTilingAbiFailed
+                                            ? "lattice-tiling eval compile/bind/numeric ABI agreement failure — see notes"
+                                            : latticeFrameFailed
+                                              ? "lattice carrier frame failure — see notes"
+                                              : transportGateFail
+                                                ? "transport agreement failure — see notes"
+                                                : finitePrimaryGateFail
+                                                  ? "finite primary status/depth agreement failure — see finitePrimaryAgreement/notes"
+                                                  : transportEnvelopeGateFail
+                                                    ? "transport envelope failure — see transportEnvelope/notes"
+                                                    : sphereInversionFailed
+                                                      ? "sphere-inversion compile/eval/march/frame failure — see sphereInversion and notes"
+                                                      : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
     } else if (gatingRows.length === 0 && !unprojRan) {
       // Informational-only rows (all widths ≠ SURFACE_FOLD_BEAM_WIDTH) and
       // no march-unproject gate verify nothing against a like-for-like
@@ -27790,6 +28615,8 @@ async function runSurfaceDeSection(
     for (const sys of escapeSystems) destroySurfaceForwardEvalBuffers(sys);
     for (const sys of bulbSystems) destroySurfaceForwardEvalBuffers(sys);
     for (const sys of escape4Systems) destroySurfaceForwardEvalBuffers(sys);
+    for (const sys of mengerSystems) destroySurfaceForwardEvalBuffers(sys);
+    for (const sys of menger4Systems) destroySurfaceForwardEvalBuffers(sys);
     for (const sys of affine4Systems) destroySurface4EvalBuffers(sys);
     destroySurface4EvalBuffers(scheduledSystem4);
     destroySurface4EvalBuffers(chaosSystem4);
@@ -28062,22 +28889,26 @@ async function runScratchProbe(
           ? bulbQueries(de as BulbDE, SCRATCH_PROBE_SEED)
           : core === "escape4"
             ? escape4Queries(de as EscapeDE4, view4, SCRATCH_PROBE_SEED)
-            : core === "affine4" || core === "fold4"
-              ? affine4Queries(
-                  de as SurfaceDE4,
-                  view4,
-                  SCRATCH_PROBE_SEED,
-                  core === "affine4",
-                )
-              : surfaceQueries(
-                  transforms,
-                  (de as SurfaceDE).foldFinal
-                    ? (de as SurfaceDE).visibleBoundingRadius
-                    : (de as SurfaceDE).boundingRadius,
-                  finalTransform,
-                  symmetry,
-                  schedule ?? undefined,
-                );
+            : core === "menger"
+              ? mengerQueries(de as MengerDE, SCRATCH_PROBE_SEED)
+              : core === "menger4"
+                ? menger4Queries(de as MengerDE4, view4, SCRATCH_PROBE_SEED)
+                : core === "affine4" || core === "fold4"
+                  ? affine4Queries(
+                      de as SurfaceDE4,
+                      view4,
+                      SCRATCH_PROBE_SEED,
+                      core === "affine4",
+                    )
+                  : surfaceQueries(
+                      transforms,
+                      (de as SurfaceDE).foldFinal
+                        ? (de as SurfaceDE).visibleBoundingRadius
+                        : (de as SurfaceDE).boundingRadius,
+                      finalTransform,
+                      symmetry,
+                      schedule ?? undefined,
+                    );
     const n = queries.length;
     // CPU oracle at the same points — informational, per-core form.
     const cpu: number[] = queries.map((q) => {
@@ -28090,26 +28921,34 @@ async function runScratchProbe(
           return estimateEscapeDistance(de as EscapeDE, q);
         case "bulb":
           return estimateBulbDistance(de as BulbDE, q);
+        case "menger":
+          return estimateMengerDistance(de as MengerDE, q);
         case "affine4":
           return estimateSurface4Composed(de as SurfaceDE4, view4, q, true);
         case "fold4":
           return estimateSurface4Composed(de as SurfaceDE4, view4, q, false);
         case "escape4":
           return estimateEscape4Composed(de as EscapeDE4, view4, q);
+        case "menger4":
+          return estimateMenger4Composed(de as MengerDE4, view4, q);
         default:
           throw new Error("unreachable");
       }
     });
     const isForward =
       core === "escape" || core === "bulb" || core === "escape4";
+    // The menger cores are bindingless (the forward cores' layout, no
+    // orbit): same 3-binding layout, the params carrying the whole
+    // construction.
+    const isBindingless = isForward || core === "menger" || core === "menger4";
     const is4DDescent = core === "affine4" || core === "fold4";
-    const layout = isForward
+    const layout = isBindingless
       ? surfaceForwardBindGroupLayout(device)
       : surfaceBindGroupLayout(device);
     const pipelineLayout = device.createPipelineLayout({
       bindGroupLayouts: [layout],
     });
-    const code = isForward
+    const code = isBindingless
       ? surfaceDeKernelWgsl({
           mode: "eval",
           core,
@@ -28153,7 +28992,7 @@ async function runScratchProbe(
       };
       await ensureSurface4EvalBuffers(device, layout, sys);
       dispatchSys = sys;
-    } else if (isForward) {
+    } else if (isForward || isBindingless) {
       const sys: SurfaceEscapeSystemState = {
         name: "scratch",
         de: de as EscapeDE,
@@ -28169,10 +29008,20 @@ async function runScratchProbe(
           ? packEscapeGpuParams(de as EscapeDE, { itemCount: n, cutoff: 0 })
           : core === "bulb"
             ? packBulbGpuParams(de as BulbDE, { itemCount: n, cutoff: 0 })
-            : packEscape4GpuParams(de as EscapeDE4, view4, {
-                itemCount: n,
-                cutoff: 0,
-              });
+            : core === "menger"
+              ? packMengerGpuParams(de as MengerDE, {
+                  itemCount: n,
+                  cutoff: 0,
+                })
+              : core === "menger4"
+                ? packMenger4GpuParams(de as MengerDE4, view4, {
+                    itemCount: n,
+                    cutoff: 0,
+                  })
+                : packEscape4GpuParams(de as EscapeDE4, view4, {
+                    itemCount: n,
+                    cutoff: 0,
+                  });
       const mapsData =
         core === "escape"
           ? packEscapeGpuMaps(de as EscapeDE)
@@ -28282,12 +29131,16 @@ async function runScratchFrame(
                 ? { kind: "sphereInversion", de: de as SphereInversionDE }
                 : route.kind === "sphereInversion4"
                   ? { kind: "sphereInversion4", de: de as SphereInversionDE }
-                  : route.kind === "finiteSolid"
-                    ? { kind: "finite", level: route.finiteLevel ?? 2 }
-                    : {
-                        kind: "finite4",
-                        level: route.finiteLevel ?? 2,
-                      };
+                  : route.kind === "menger"
+                    ? { kind: "menger", de: de as MengerDE }
+                    : route.kind === "menger4"
+                      ? { kind: "menger4", de: de as MengerDE4 }
+                      : route.kind === "finiteSolid"
+                        ? { kind: "finite", level: route.finiteLevel ?? 2 }
+                        : {
+                            kind: "finite4",
+                            level: route.finiteLevel ?? 2,
+                          };
   const colors: Vec3[] =
     route.kind === "sphereInversion" || route.kind === "sphereInversion4"
       ? sphereInversionShadeSlots(
@@ -28299,6 +29152,8 @@ async function runScratchFrame(
       : route.kind === "escape" ||
           route.kind === "bulb" ||
           route.kind === "escape4" ||
+          route.kind === "menger" ||
+          route.kind === "menger4" ||
           route.kind === "finiteSolid" ||
           route.kind === "finiteSolid4"
         ? [[0.8, 0.5, 0.2]]
@@ -28314,6 +29169,8 @@ async function runScratchFrame(
       : route.kind === "escape" ||
           route.kind === "bulb" ||
           route.kind === "escape4" ||
+          route.kind === "menger" ||
+          route.kind === "menger4" ||
           route.kind === "finiteSolid" ||
           route.kind === "finiteSolid4"
         ? [0]
@@ -28344,9 +29201,11 @@ async function runScratchFrame(
         ? ESCAPE_TIME_ITERATIONS
         : route.kind === "sphereInversion" || route.kind === "sphereInversion4"
           ? (de as SphereInversionDE).depth
-          : route.kind === "finiteSolid" || route.kind === "finiteSolid4"
-            ? 2
-            : (de as SurfaceDE).maxDepth;
+          : route.kind === "menger" || route.kind === "menger4"
+            ? (de as MengerDE | MengerDE4).maxDepth
+            : route.kind === "finiteSolid" || route.kind === "finiteSolid4"
+              ? 2
+              : (de as SurfaceDE).maxDepth;
     const spec: SurfaceComputeFrameSpec = {
       width: res,
       height: res,
@@ -28376,7 +29235,8 @@ async function runScratchFrame(
       ...(route.kind === "ifs4" ||
       route.kind === "escape4" ||
       route.kind === "sphereInversion4" ||
-      route.kind === "finiteSolid4"
+      route.kind === "finiteSolid4" ||
+      route.kind === "menger4"
         ? { view4 }
         : {}),
     };

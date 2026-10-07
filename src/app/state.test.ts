@@ -190,6 +190,8 @@ import {
   sceneIsNonFlat,
   setChainTwist,
   setChainTwistField,
+  setMengerTwist,
+  setMengerTwistField,
   setSphereInversion,
   updateTransform,
 } from "./state";
@@ -3012,6 +3014,82 @@ describe("setChainTwist / setChainTwistField (the escape chain's twist block)", 
     // An unknown field path is a no-op too.
     expect(setChainTwistField(withOffset, "bogus", 1).chainTwist).toEqual(
       withOffset.chainTwist,
+    );
+  });
+});
+
+describe("setMengerTwist / setMengerTwistField (the carve family's block)", () => {
+  it("stores the block as authored and clears it with null", () => {
+    const block = {
+      levels: 5,
+      rotation: [0.1, 0.2, 0.3] as Vec3,
+      offset: [0.4, 0, 0] as Vec3,
+    };
+    const withBlock = setMengerTwist(initialState(true), block);
+    expect(withBlock.mengerTwist).toEqual(block);
+    const cleared = setMengerTwist(withBlock, null);
+    expect(cleared.mengerTwist).toBeUndefined();
+  });
+
+  it("merges one field at a time with NO collapse-on-trivial (a trivial twist is the classic sponge, not absence)", () => {
+    const base = initialState(true);
+    // No block: a no-op — the checkbox authors presence (the
+    // sphere-inversion sliders' rule).
+    expect(
+      setMengerTwistField(base, "rotation.y", -0.5).mengerTwist,
+    ).toBeUndefined();
+    const rotated = setMengerTwistField(
+      setMengerTwist(base, {}),
+      "rotation.y",
+      -0.5,
+    );
+    expect(rotated.mengerTwist).toEqual({ rotation: [0, -0.5, 0] });
+    const zeroed = setMengerTwistField(
+      setMengerTwistField(rotated, "rotation.y", 0),
+      "rotation.x",
+      0,
+    );
+    // Every value at neutral and the block SURVIVES — presence is the
+    // checkbox's alone, because the block replaces the subject.
+    expect(zeroed.mengerTwist).toEqual({ rotation: [0, 0, 0] });
+  });
+
+  it("fills absent vector fields from the family defaults, so a displayed default is stable while one axis moves", () => {
+    const base = initialState(true);
+    // No block: a no-op (the checkbox authors presence).
+    expect(
+      setMengerTwistField(base, "rotation.x", 0.5).mengerTwist,
+    ).toBeUndefined();
+    // An absent rotation merges into the FAMILY default (the ~53° Y), not
+    // the neutral zero — the slider's displayed value stays honest.
+    const withBlock = setMengerTwist(base, {});
+    const rotatedX = setMengerTwistField(withBlock, "rotation.x", 0.25);
+    expect(rotatedX.mengerTwist).toEqual({
+      rotation: [0.25, -0.9272952180016122, 0],
+    });
+  });
+
+  it("merges levels and the w extension's fields; refuses nothing here (the resolver gates later)", () => {
+    const base = initialState(true);
+    const withBlock = setMengerTwist(base, {});
+    const leveled = setMengerTwistField(withBlock, "levels", 6);
+    expect(leveled.mengerTwist).toEqual({ levels: 6 });
+    const lifted = setMengerTwistField(leveled, "w.rotation.yw", 0.4);
+    expect(lifted.mengerTwist).toEqual({
+      levels: 6,
+      w: { rotation: { yw: 0.4 } },
+    });
+    const withOffset = setMengerTwistField(lifted, "w.offset", -0.5);
+    expect(withOffset.mengerTwist).toEqual({
+      levels: 6,
+      w: { rotation: { yw: 0.4 }, offset: -0.5 },
+    });
+    // A non-finite slider value and an unknown path are no-ops.
+    expect(
+      setMengerTwistField(withOffset, "rotation.x", Number.NaN).mengerTwist,
+    ).toEqual(withOffset.mengerTwist);
+    expect(setMengerTwistField(withOffset, "bogus", 1).mengerTwist).toEqual(
+      withOffset.mengerTwist,
     );
   });
 });

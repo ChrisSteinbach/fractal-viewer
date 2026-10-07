@@ -1566,6 +1566,36 @@ describe("the fold's authored lengths in the GLSL tracer", () => {
     expect(surfaceFragmentResolvedFor(0, 0, 0, 0, 1).length).toBeLessThan(
       SURFACE_GLSL_STRIP_BYTES,
     );
+    // The menger arm resolves to 39017 B — the smallest arm in the file
+    // (a carve chain: no maps arrays, no orbit, no estimator branches),
+    // with 25 KB of headroom. Pinned beside the forward arms because it
+    // is the same property (commentary survives into a driver log).
+    expect(
+      surfaceFragmentResolvedFor(
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        null,
+        false,
+        0,
+        0,
+        0,
+        null,
+        0,
+        0,
+        0,
+        0,
+        0,
+        false,
+        1,
+      ).length,
+    ).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
   });
 });
 
