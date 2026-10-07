@@ -58,10 +58,9 @@ at the LENS approximation below rather than at the affine carve:
 What the image's shape IS: the curled, cell-tiled BALL — the sphere-folded
 sponge — which is exactly the shape the refusal table below measured for
 the Menger-through-spherefold-final-lens approximation, shipped as the
-`twistedSponge` preset. Loading that preset reproduces the README image's
-geometry (the "By Transform" coloring aside). The affine carve family this
-page documents reproduces the COMMITTED shader's math, not the README's
-picture.
+`twistedSponge` preset (tuned to the reference per the section below). The
+affine carve family this page documents reproduces the COMMITTED shader's
+math, not the README's picture.
 
 ## Why no IFS or per-map rotation expresses it
 
@@ -84,6 +83,58 @@ shared marcher, 2026-10-05):
 | Menger + spherefold final lens                                  | Curled, cell-tiled ball — the closest _look_; shipped as the `twistedSponge` presets            |
 
 The exact construction ships as its own family instead.
+
+## The lens approximation, tuned to the reference image (2026-10-08)
+
+The `twistedSponge` presets are the lens-family approximation OF the
+KentaYoshii README image, and the shipped 2026-10-05 parameters were picked
+off a comparison sheet but never tuned against it. The tuning session did,
+with the production compute renderer (`gpu:scratch`, 1024 px, AMD RX 7900
+XTX `--display=:0`) and a fine-edge instrument (`scripts/image-metrics.mjs`:
+the fraction of lit pixels whose luminance jumps > 18 against the neighbour
+4 px to the left — resolution-bound, so all rows compare at the same
+raster). The reference measures fine-edge 0.448 (bright spans 414/583/770/
+664/390 px at the 10/25/50/75/90% rows, lit 0.268); the shipped lens-only
+preset measured 0.288 — the crust the bead called "shallower than the
+reference".
+
+The tuned composition is NOT the lens alone: the two halves of the reference's
+look are (measured ablation, fine-edge):
+
+| Composition (over the 20-map sponge)               | Fine-edge | Read                                                          |
+| -------------------------------------------------- | --------- | ------------------------------------------------------------- |
+| Lens only (shipped 2026-10-05 params)              | 0.288     | Round ball, big smooth lobes, shallow holes                   |
+| Lens only, tuned rotation + radii                  | 0.325     | Round ball, level-1/2 cells legible, faces still flat         |
+| Shared Ry(53.13°) map twist + shipped lens         | 0.374     | Curved brick chains, boxy outline, magnified plates           |
+| Shared Ry(53.13°) map twist + tuned lens (SHIPPED) | 0.448     | Round crusty ball, curved brick chains in arc bands — matched |
+
+The reference's own `ma` matrix is the twist the maps now share
+(`twistedSpongeMaps`: every map carries Ry(atan2(0.8, 0.6)) — the columnar
+twist row of the refusal table above, whose box-outline defect the lens
+exists to bend away). The lens's tuned values: fold radii mR 0.8/fR 0.9 —
+the classic 0.5/1.0 pair magnifies the fold's centre fR²/mR² = 4×, which is
+what inflated the sponge's level-1 lobes into giant smooth plates (mR 0.7 →
+0.413, 0.75 → 0.421, 0.8 → 0.447) — and a strong off-axis rotation
+(0.35, 0.9273, 0.55) landing the involution obliquely on the sponge's
+faces. Position, scale and weight stay the shipped ones: RECENTRING the
+fold rounds the silhouette but CALMS the crust (0.411 at position 0 —
+the off-centre fold is load-bearing), and weight 0.85 reads identical to
+weight 1 (0.449), so the weight stays 1. The 4D twin inherits every tuned
+value through `twistedSponge4Lens`'s spread and carries the same map twist
+over the 48-map hyper-Menger (`twistedSponge4Maps`); verified in the real
+app's Solid render (the hyper-Menger exceeds the 4D surface tracer's cap,
+so the explorer renders are the 4D evidence): the shipped preset's crumpled
+box-blob becomes a round ball with curved brick-arc bands.
+
+Honest limits: the exact band layout and brick-size mix differ from the
+reference's (its own camera is unknown, and its construction — a query-point
+twist inside the carve — is not an IFS, which is why this is the lens
+family at all); the tuned render's largest plates remain bigger than the
+reference's and its silhouette is slightly less round. The verdict is
+"matched as closely as the lens family allows": round crusty ball, curved
+brick chains, deep multi-scale crust, fine-edge fraction matched
+(0.448 vs 0.448). Regenerate the side-by-side with `scripts/make-sheet.mjs`
+(frames under `scripts/out/`, gitignored).
 
 ## Soundness and exactness
 
@@ -145,7 +196,8 @@ general non-axis twist (the churning crust), and a depth-7 carve. Output:
 Landed: the vocabulary and resolver, both CPU estimators, their tests, the
 sheet, and the `twistedSponge`/`twistedSponge4` presets (the lens-based
 approximation, which is a plot-time composition over ordinary IFS
-machinery — `PRESET_FINALS`). Also landed, as the carve family's own
+machinery — `PRESET_FINALS` — tuned to the reference image per the section
+above: the shared map twist plus the bent lens). Also landed, as the carve family's own
 routing stage: the `mengerTwist` block's AppState field, verbatim
 persistence and scene-dimension wiring (the block REPLACES the transform
 system as the subject, the `sphereInversion` precedent, checked after it);
