@@ -141,7 +141,7 @@ npm run build         # Production build → dist/app/
 npm run smoke         # Headless WebGL smoke test (SwiftShader) — boots the app, asserts it renders
 npm run verify        # Warm gate runner (docs/gate-velocity.md): one build+preview+browser per gate batch
 npm run bench:gpu     # Headless WebGPU flame agreement/bench (real Chrome) — pins the WGSL kernels to their CPU oracles; run after touching flame-gpu*.ts kernels (CI runs it on SwiftShader)
-npm run bench:surface # WebGPU fold-DE kernel agreement/timing — pins surface-de-gpu.ts (all seven cores) to its CPU oracles; add --display=:0 for real-driver timing. Run it QUIET (below), never beside the test suite: a contended software device corrupts mid-run readbacks; the canary reports verdict=device-unreliable (exit 2, rerun). JUDGE THE ESCAPE ROWS ON --display=:0 — escChainKaleido's known SwiftShader-only false failure is the realization-coin-flip class the forward legs' boundary rings exclude pre-hoc; the flip cap stays untouched. Fixtures, caps, rows: docs/gpu-bench-surface.md
+npm run bench:surface # WebGPU fold-DE kernel agreement/timing — pins surface-de-gpu.ts (all cores, the seven descents/forwards plus the sphere-inversion, finite-solid and menger pairs) to its CPU oracles; add --display=:0 for real-driver timing (WITHOUT it the run is headless SwiftShader — this box's headless runs die at the emitter-only leg, recorded in docs/gpu-bench-surface.md). Run it QUIET (below), never beside the test suite: a contended software device corrupts mid-run readbacks; the canary reports verdict=device-unreliable (exit 2, rerun). JUDGE THE ESCAPE ROWS ON --display=:0 — escChainKaleido's known SwiftShader-only false failure is the realization-coin-flip class the forward legs' boundary rings exclude pre-hoc; the flip cap stays untouched. Fixtures, caps, rows: docs/gpu-bench-surface.md
 npm run gpu:scratch   # Seconds-scale kernel-edit loop (docs/gate-velocity.md): one scene, one production frame + eval probe; never a gate
 npm run bench:mesh-sdf # 64³ trefoil cold-bake vs its 2s budget, BVH-vs-exact agreement
 npm run verify:pattern-release # Owner gate: drives the built app -> blinded owner deck; verify:pattern-release-review scores it, only "approve" passes
@@ -522,7 +522,17 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     (`menger-de.ts`/`-4d.ts`) are the single-chain carve oracles, sound at
     every twist (isometry), step scale 1.0 measured (0/62,400 overshoots);
     the 4D term is max-of-mins (second-largest of four). Record:
-    `docs/twisted-menger-family.md`; routing/mirrors: next stage.
+    `docs/twisted-menger-family.md`. ROUTED: the block REPLACES the
+    transform system as the scene's subject (`scene-dimension.ts`, checked
+    after the sphere-inversion block); Surface kinds `menger`/`menger4`
+    (tiling/trap refused, ground plane composes, the transform system and
+    a co-present chain twist disclosed dormant, menger4 compute-only);
+    WGSL cores `core:"menger"`/`"menger4"` bindingless (the construction
+    on the frozen variant blocks; winning-level trap; bench-pinned by the
+    M9/M10 legs — fail=0, no orbit classifier, AMD-pass), the 3D
+    `SURFACE_MENGER` GLSL fallback; Points draws `menger-sample.ts`'s
+    rejection boundary shell (winning level = the color slot, 500k cap);
+    the panel section + `mengerCarve`/`mengerCarve4` presets ship it.
   - `inversion.ts` — sphere inversion's ONE shared identity:
     `inversionBallScale`, the Möbius factor `R²/(|c|² − r²)` that takes a
     ball to a ball exactly, returning 0 — "no information", so a caller's
