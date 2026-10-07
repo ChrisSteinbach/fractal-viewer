@@ -111,15 +111,48 @@ churning crust), and a depth-7 carve. Output: `scripts/out/twisted-menger.png`.
 Landed: the vocabulary and resolver, both CPU estimators, their tests, the
 sheet, and the `twistedSponge`/`twistedSponge4` presets (the lens-based
 approximation, which is a plot-time composition over ordinary IFS
-machinery — `PRESET_FINALS`). Not yet wired: the `mengerTwist` block's
-AppState/persistence/routing (the `sphereInversion` block's
-replace-the-subject pattern), the WGSL cores beside `core:"escape"`/
-`core:"bulb"` (no maps binding; the variant params block fits the 3D
-head-link region exactly — three matrix rows plus an offset/levels word),
-the GLSL fallback arm, the family's panel section, and the Points-mode
-question (the construction is not an IFS, so the explorer has no attractor
-to chaos-game; the honest options are a carve-sampler or a disclosed
-refusal).
+machinery — `PRESET_FINALS`). Also landed, as the carve family's own
+routing stage: the `mengerTwist` block's AppState field, verbatim
+persistence and scene-dimension wiring (the block REPLACES the transform
+system as the subject, the `sphereInversion` precedent, checked after it);
+the Surface gate's `menger`/`menger4` kinds (tiling and shape traps
+refused, the ground plane composing, the transform system's kaleidoscope /
+lens / finishes and a co-present chain twist disclosed dormant, the 4D
+route compute-only); the `core:"menger"`/`core:"menger4"` WGSL cores beside
+escape/bulb — bindingless, the construction riding the frozen variant
+blocks (3D: the escape head-link interleave at 208..255 plus the
+(levels, flag, 0, 0) word at 256; 4D: the lens4 region's word + SO(4)
+rows + offset), bench-pinned by the M9/M10 legs; the tiny
+`SURFACE_MENGER` GLSL fallback arm (3D only — 4D has no fragment mirror,
+the escape4 verdict); the Scene/Look panel section (enabled checkbox +
+eleven sliders + the 4D rows) with the transform sections dormant beside
+their reason; and the `mengerCarve`/`mengerCarve4` presets
+(`PRESET_MENGER_TWISTS`, absent-means-clear). The bench's menger legs gate
+fail=0 with NO chaotic-orbit classifier — the carve is certified sound and
+not an orbit — and the f32 twins' twin-vs-oracle agreement is its own gate.
+
+## Points: the carve-sampler decision
+
+The family is not an IFS (above), so the explorer has no attractor to
+chaos-game; the carve-SAMPLER is the shipped answer (the sphere-inversion
+family's exact-boundary-sampler role, one family over, by the same
+plumbing — a present block replaces the cloud's subject,
+`cloud-worker-core.ts` routes on it): `menger-sample.ts` rejection-samples
+the construction's own box and keeps points inside the
+`MENGER_SAMPLE_SHELL` (0.012) band around the surface, where the certified
+DE vanishes — the set boundary is exactly the zero level set, and unlike
+the escape chains the box contributes its own walls at every setting, so
+there is no empty-set hole. Measured on the reference construction (4
+levels, the `ma` rotation): **1.2M points/s placed** (50k in ~41 ms), all
+sampled points within the shell, level histogram
+2.7k/4.1k/11.6k/31.6k over 50k — the surface area concentrates in the deep
+carves, as the construction says it must. The color slot is the winning
+carve level (the surface trap's own channel, one slot per level via
+`generationCount`); the 4D half samples the hyper-Menger's boundary in R⁴
+and rides the standard 4D projection path (no slice of its own — the
+projection IS the display, and Points never balloons the carve). The
+sampler is capped at `MENGER_POINTS_MAX` (500k), the sphere-inversion
+family's own two-seconds class.
 
 ## The shared twist vocabulary
 
