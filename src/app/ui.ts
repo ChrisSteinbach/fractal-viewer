@@ -171,12 +171,34 @@ import {
   type SphereInversionNoteRow,
 } from "./sphere-inversion-controls";
 import {
+  MENGER_SLAB_REFUSAL,
   SPHERE_INVERSION_SLAB_REFUSAL,
   surfaceTrapGeometryRestriction,
   type SurfaceEligibilityRecovery,
   type SurfaceEligibilityResult,
   type SurfaceRouteKind,
 } from "./surface-eligibility";
+
+/** The Menger-carve section's shared wordings — the Flame/Solid mode
+ * refusal and the dormancy pass's canonical reason (the sphere-inversion
+ * pair's shape, one subject over). */
+const MENGER_CONTROLS_MODE_REASON =
+  "Flame and Solid cannot draw a Menger carve. Use Points or Surface.";
+const MENGER_DORMANT_REASON = "Turn off Menger carve to edit.";
+const MENGER_TWIST_CONTROL_IDS: readonly string[] = [
+  "mengerTwistEnabledCheckbox",
+  "mengerLevelsSlider",
+  "mengerTwistRotationXSlider",
+  "mengerTwistRotationYSlider",
+  "mengerTwistRotationZSlider",
+  "mengerTwistOffsetXSlider",
+  "mengerTwistOffsetYSlider",
+  "mengerTwistOffsetZSlider",
+  "mengerTwistXWSlider",
+  "mengerTwistYWSlider",
+  "mengerTwistZWSlider",
+  "mengerTwistWOffsetSlider",
+];
 import type { SurfaceOpticsOutlook } from "./surface-optics-backend";
 import {
   BALLOON_CENTRE_REFUSAL_REASON,
@@ -2801,6 +2823,20 @@ export class Ui {
   private readonly chainTwistSection: HTMLDetailsElement;
   private readonly chainTwist4DRows: HTMLElement;
   private readonly chainTwistHint: HTMLElement;
+  // The Menger carve section (the second subject block): the owner's
+  // checkbox + field sliders, the Flame/Solid refusal note, and the 4D rows
+  // the block's own w extension reaches.
+  private readonly mengerTwistSection: HTMLDetailsElement;
+  private readonly mengerTwistControls: HTMLElement;
+  private readonly mengerTwistNote: HTMLElement;
+  private readonly mengerTwist4DRows: HTMLElement;
+  /** Whether the DOCUMENT carries a Menger-carve block — keys the transform
+   * sections' dormancy (the sphereInversion pass's shape, one subject over)
+   * and the Points/Surface dimension. */
+  private mengerTwistPresent = false;
+  /** Whether {@link applyMengerDormancy} has disabled anything the release
+   * pass must restore. */
+  private mengerDormancyApplied = false;
   /** The render-mode segmented control's three buttons, keyed by the mode
    * each one switches to — the single entry/exit surface that replaced the
    * flame/solid modal islands' four separate buttons. */
@@ -3072,6 +3108,7 @@ export class Ui {
     | "condensation"
     | "sphereInversion"
     | "finiteSolid"
+    | "menger"
     | null = null;
   /**
    * The ACTIVE surface session's shape: `"escape"` for the escape-time fold
@@ -3643,6 +3680,11 @@ export class Ui {
     this.chainTwistSection = this.byId<HTMLDetailsElement>("chainTwistSection");
     this.chainTwist4DRows = this.byId("chainTwist4DRows");
     this.chainTwistHint = this.byId("chainTwistHint");
+    this.mengerTwistSection =
+      this.byId<HTMLDetailsElement>("mengerTwistSection");
+    this.mengerTwistControls = this.byId("mengerTwistControls");
+    this.mengerTwistNote = this.byId("mengerTwistNote");
+    this.mengerTwist4DRows = this.byId("mengerTwist4DRows");
     this.surfaceRendererLightingGroup = this.byId(
       "surfaceRendererLightingGroup",
     );
@@ -4829,24 +4871,26 @@ export class Ui {
           "supports its zero-thickness slices."
         : this.fourDSlabRefusal === "sphereInversion"
           ? `Slab thickness is unavailable in a sphere-inversion scene: ${SPHERE_INVERSION_SLAB_REFUSAL}. A zero-thickness slice remains available.`
-          : this.fourDSlabRefusal === "finiteSolid"
-            ? "Slab thickness is unavailable in a finite-solid scene: the " +
-              "exact cell walk threads one w-plane, and a segment has no " +
-              "cell walk. A zero-thickness slice remains available."
-            : this.fourDSlabRefusal === "condensation"
-              ? "Slab thickness is unavailable with a condensation shape: its " +
-                "carried solid needs its own set-distance evaluator for a " +
-                "segment. A zero-thickness slice remains available."
-              : this.fourDSlabRefusal === "tiling"
-                ? "Slab thickness is unavailable with lattice Space tiling: its " +
-                  "mirror walls need their own segment enumeration. A " +
-                  "zero-thickness slice remains available."
-                : this.surfaceSessionKind === "escape"
-                  ? "Slab thickness is unavailable in the escape-time render: its " +
-                    "orbit runs the maps FORWARD, with no branches to thread a " +
-                    "segment through, so a slab has no certificate at any fold " +
-                    "family. The IFS surface render keeps it."
-                  : "";
+          : this.fourDSlabRefusal === "menger"
+            ? `Slab thickness is unavailable in a Menger-carve scene: ${MENGER_SLAB_REFUSAL}. A zero-thickness slice remains available.`
+            : this.fourDSlabRefusal === "finiteSolid"
+              ? "Slab thickness is unavailable in a finite-solid scene: the " +
+                "exact cell walk threads one w-plane, and a segment has no " +
+                "cell walk. A zero-thickness slice remains available."
+              : this.fourDSlabRefusal === "condensation"
+                ? "Slab thickness is unavailable with a condensation shape: its " +
+                  "carried solid needs its own set-distance evaluator for a " +
+                  "segment. A zero-thickness slice remains available."
+                : this.fourDSlabRefusal === "tiling"
+                  ? "Slab thickness is unavailable with lattice Space tiling: its " +
+                    "mirror walls need their own segment enumeration. A " +
+                    "zero-thickness slice remains available."
+                  : this.surfaceSessionKind === "escape"
+                    ? "Slab thickness is unavailable in the escape-time render: its " +
+                      "orbit runs the maps FORWARD, with no branches to thread a " +
+                      "segment through, so a slab has no certificate at any fold " +
+                      "family. The IFS surface render keeps it."
+                    : "";
     this.fourDSliceThicknessUnavailableNote.textContent =
       this.fourDSliceThicknessRow.title;
     this.fourDSliceThicknessUnavailableNote.classList.toggle(
@@ -4902,6 +4946,7 @@ export class Ui {
       | "condensation"
       | "sphereInversion"
       | "finiteSolid"
+      | "menger"
       | null = null,
   ): void {
     if (
@@ -5219,6 +5264,98 @@ export class Ui {
         | HTMLTextAreaElement
       >("input, select, button, textarea"),
     ).filter((control) => control.id !== "autoUpdate");
+  }
+
+  /**
+   * Paint the Menger carve section from the document. The table-driven sync
+   * has already put every value on its control; this adds the checkbox's
+   * and sliders' Flame/Solid refusal (the family renders in neither — the
+   * sphere-inversion section's own refusal, one family over) and the
+   * controls' visibility behind the checkbox.
+   */
+  private syncMengerTwistSection(state: AppState, nonFlat: boolean): void {
+    const block = state.mengerTwist;
+    const refusedMode =
+      state.renderMode === "flame" || state.renderMode === "solid";
+    this.setScalarDisabled("mengerTwistEnabledCheckbox", refusedMode);
+    this.mengerTwistControls.classList.toggle("hidden", !block);
+    for (const id of MENGER_TWIST_CONTROL_IDS) {
+      if (id !== "mengerTwistEnabledCheckbox") {
+        this.setScalarDisabled(id, refusedMode || !block);
+      }
+    }
+    this.setReasonNote(
+      this.mengerTwistNote,
+      refusedMode ? MENGER_CONTROLS_MODE_REASON : "",
+    );
+    this.mengerTwistPresent = block !== undefined;
+    // The transform sections' dormancy rides the same pass the
+    // sphere-inversion subject runs — the two subject blocks share it.
+    if (this.mengerTwistPresent) this.applyMengerDormancy();
+    else this.releaseMengerDormancy();
+    if (!refusedMode) return;
+    // In Flame/Solid the whole section is inert beside its reason — the
+    // panel-ia disable-with-adjacent-reason contract.
+    for (const id of MENGER_TWIST_CONTROL_IDS) {
+      this.setScalarDisabled(id, true);
+    }
+    if (nonFlat) {
+      // A 4D block in a transforms-following renderer: the refusal note
+      // already names the mode's inability, nothing more to say.
+    }
+  }
+
+  /**
+   * Disable the replaced transform system's sections while a Menger-carve
+   * block is the subject (refused blocks included) — {@link
+   * applySphereInversionDormancy}'s pass, one subject over: every control
+   * stays visible, is disabled, and is described by the section's one
+   * shared canonical reason naming the action that re-enables it.
+   */
+  private applyMengerDormancy(): void {
+    if (!this.mengerTwistPresent) return;
+    for (const { section, note } of this.sphereInversionDormantSections) {
+      this.setReasonNote(note, MENGER_DORMANT_REASON);
+      note.classList.remove("hidden");
+      for (const control of this.dormantSectionControls(section)) {
+        if (!control.disabled) {
+          control.disabled = true;
+          control.dataset.mengerDormant = "true";
+        }
+        const ids = (control.getAttribute("aria-describedby") ?? "")
+          .split(/\s+/)
+          .filter(Boolean);
+        if (!ids.includes(note.id)) {
+          control.setAttribute("aria-describedby", [...ids, note.id].join(" "));
+        }
+      }
+    }
+    this.mengerDormancyApplied = true;
+  }
+
+  /** Undo {@link applyMengerDormancy}: re-enable what it marked and drop
+   * its reason from every description. */
+  private releaseMengerDormancy(): void {
+    if (!this.mengerDormancyApplied) return;
+    for (const { section, note } of this.sphereInversionDormantSections) {
+      this.setReasonNote(note, "");
+      note.classList.add("hidden");
+      for (const control of this.dormantSectionControls(section)) {
+        if (control.dataset.mengerDormant !== undefined) {
+          control.disabled = false;
+          delete control.dataset.mengerDormant;
+        }
+        const ids = (control.getAttribute("aria-describedby") ?? "")
+          .split(/\s+/)
+          .filter((id) => id && id !== note.id);
+        if (ids.length > 0) {
+          control.setAttribute("aria-describedby", ids.join(" "));
+        } else {
+          control.removeAttribute("aria-describedby");
+        }
+      }
+    }
+    this.mengerDormancyApplied = false;
   }
 
   /**
@@ -5925,6 +6062,17 @@ export class Ui {
     this.chainTwist4DRows.classList.toggle(
       "hidden",
       !nonFlat && !twistWIsNonTrivial(state.chainTwist ?? {}),
+    );
+    // The Menger carve's section — always reachable (it AUTHORS the second
+    // subject block), its controls disabled beside the mode reason in
+    // Flame/Solid, whose renders refuse the family. Its 4D rows show when
+    // the block already carries a w extension (the same both-ways rule the
+    // chain twist's 4D rows read; the block IS the scene's dimension, so
+    // nonFlat alone would be circular with it).
+    this.syncMengerTwistSection(state, nonFlat);
+    this.mengerTwist4DRows.classList.toggle(
+      "hidden",
+      !nonFlat && !twistWIsNonTrivial(state.mengerTwist ?? {}),
     );
     this.syncAuthoredShapeEditor(
       this.surfaceTrapPrimitiveEditor,

@@ -2,6 +2,7 @@ import { composeAffine } from "./affine";
 import type { FlamePaletteId, PaletteSelection } from "./palette";
 import type { Rng } from "./rng";
 import type { FiniteSolidAuthored } from "./finite-solid";
+import type { MengerTwistAuthored } from "./menger-twist";
 import { GEAR_SHAPE, PEACE_SIGN_SHAPE, STAR_PRISM_SHAPE } from "./shapes";
 import type { SphereInversionAuthored } from "./sphere-inversion";
 import type { TilingSpec } from "./tiling";
@@ -2944,6 +2945,16 @@ const PRESETS = {
   // flat placeholder like every other block preset's.
   glassPearls: sierpinskiTetrahedron,
   glassPearls4: sierpinskiTetrahedron,
+  // The twisted mod-Menger CARVE family's showcases — the exact
+  // construction the `twistedSponge` pair approximates with a lens. The
+  // SUBJECT is the PRESET_MENGER_TWISTS block, which replaces the transform
+  // system as the scene's subject in Surface (the sphere-inversion presets'
+  // placeholder shape: the Sierpinski tetrahedron, the smallest contracting
+  // system every gate admits, and FLAT, so the block's own w extension
+  // alone decides whether the scene is 3D or 4D). Removing the block later
+  // (the next preset load clears it) leaves an ordinary, valid scene.
+  mengerCarve: sierpinskiTetrahedron,
+  mengerCarve4: sierpinskiTetrahedron,
 } as const satisfies Record<string, () => Transform[]>;
 
 export type Preset = keyof typeof PRESETS;
@@ -3007,6 +3018,12 @@ export const PRESET_RENDER_HINTS: Partial<
   glassMenger4: "surface",
   glassPearls: "surface",
   glassPearls4: "surface",
+  // The carve family's payoff is the twisted sponge Surface renders (the
+  // explorer cloud is the placeholder transforms' attractor, disclosed
+  // beside the block). mengerCarve4 is compute-only, like every 4D
+  // escape-family route.
+  mengerCarve: "surface",
+  mengerCarve4: "surface",
   // Flat 2D sheets in the XY plane: the flame's log-density
   // exposure is what turns an IIM Julia set's tip-heavy point density into
   // a legible curve instead of a faint, mostly-empty sparkle.
@@ -3595,6 +3612,45 @@ export const PRESET_SPHERE_INVERSIONS: Partial<
   }),
 };
 
+/**
+ * The MENGER-CARVE block a preset IS — the family's authored form
+ * (`menger-twist.ts`), which replaces the transform system as the scene's
+ * subject in Surface. {@link PRESET_FINALS}' ABSENT-MEANS-CLEAR rule: the
+ * block is installed by its own preset and CLEARED on every other preset
+ * load, because every other preset names a transform-system subject a
+ * leftover block would replace. Factories, like the sphere-inversion
+ * table's, so the document never aliases the table.
+ *
+ * Every entry authors every field its kind reads, even where the value is
+ * the family's default: the block persists verbatim, so the preset document
+ * reads as the construction it is — the reference twist is EXPLICIT, not
+ * the resolver's default fill, because an absent rotation is a different
+ * document from an authored zero and the panel's sliders display authored
+ * values.
+ */
+export const PRESET_MENGER_TWISTS: Partial<
+  Record<Preset, () => MengerTwistAuthored>
+> = {
+  // The reference construction itself: four levels and the
+  // KentaYoshii/Raymarcher `ma` rotation, no offset — the pure twist the
+  // family's module doc names.
+  mengerCarve: () => ({
+    levels: 4,
+    rotation: [0, -0.9272952180016122, 0],
+    offset: [0, 0, 0],
+  }),
+  // The 4D hyper-Menger: the same reference twist plus an authored xw
+  // plane turn, so the SO(4) degrees of freedom are in play (the w = 0
+  // slice alone reduces to the 3D carve — the w axis indicator sits at 2
+  // there, never in a middle third).
+  mengerCarve4: () => ({
+    levels: 4,
+    rotation: [0, -0.9272952180016122, 0],
+    offset: [0, 0, 0],
+    w: { rotation: { xw: 0.3 }, offset: 0 },
+  }),
+};
+
 /** A preset's authored camera: where the eye is, what it looks at, and the
  * vertical field of view in degrees (`orbit.ts`'s `CameraPose.fov`). */
 export interface PresetCameraView {
@@ -3690,6 +3746,19 @@ export const PRESET_VIEWS: Partial<Record<Preset, PresetView>> = {
   glassPearls4: {
     camera: { eye: [0.92, 0.67, 1.09], target: [0, 0, 0], fov: 62 },
     fourD: { rotation: [["xw", 0.3]], w0: 0.1 },
+  },
+  // The carve family's pair, framed outside the construction's own box
+  // [-1,1]^dim with the reference twist visible: a three-quarter oblique,
+  // the camera distance a little over the circumscribed ball (sqrt(3) in
+  // 3D, 2 in 4D). The 4D twin's rotor pose is one xw turn — the same
+  // plane its block twists — so the slice shadows the twist instead of
+  // reading as the plain sponge.
+  mengerCarve: {
+    camera: { eye: [1.9, 1.4, 2.4], target: [0, 0, 0], fov: 55 },
+  },
+  mengerCarve4: {
+    camera: { eye: [2.2, 1.6, 2.8], target: [0, 0, 0], fov: 55 },
+    fourD: { rotation: [["xw", 0.45]], w0: 0 },
   },
   // Both glass constructions use the dielectric study's accepted camera:
   // eye/target in world units, tan(vertical FOV / 2) = 0.39.

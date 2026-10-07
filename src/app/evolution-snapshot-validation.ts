@@ -387,6 +387,7 @@ const SCENE_FIELDS = {
   groundPlane: true,
   finiteSolid: true,
   chainTwist: true,
+  mengerTwist: true,
 } satisfies Fields<SceneSnapshot>;
 
 function object(
@@ -908,6 +909,18 @@ function chainTwistBlock(value: unknown, path: string): void {
   jsonValue(value, path, 0);
 }
 
+/**
+ * The Menger-carve block's verbatim twin: same contract, same reasoning —
+ * `menger-twist.ts`'s `resolveMengerTwist` refuses rather than throws, so
+ * the crossover carries the block through untouched.
+ */
+function mengerTwistBlock(value: unknown, path: string): void {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError(`${path} must be an object`);
+  }
+  jsonValue(value, path, 0);
+}
+
 function jsonValue(value: unknown, path: string, depth: number): void {
   if (depth > 32) throw new RangeError(`${path} nests too deeply`);
   if (
@@ -1381,6 +1394,9 @@ export function assertValidEvolutionSceneSnapshot(
   }
   if (scene.chainTwist !== undefined) {
     chainTwistBlock(scene.chainTwist, "snapshot.chainTwist");
+  }
+  if (scene.mengerTwist !== undefined) {
+    mengerTwistBlock(scene.mengerTwist, "snapshot.mengerTwist");
   }
 
   param(

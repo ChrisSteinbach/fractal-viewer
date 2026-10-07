@@ -1530,6 +1530,168 @@
           </div>
         </details>
 
+        <!-- The Menger carve is the second subject block: when enabled it
+             REPLACES the transform system as the scene's subject (the
+             sphere-inversion checkbox's shape), and Surface renders the
+             twisted mod-Menger sponge through its own carve estimator.
+             Document state read at render entry, so edits restart the
+             session; the transform sections go dormant beside their reason
+             while the block is the subject. -->
+        <details
+          class="panel-section"
+          id="mengerTwistSection"
+          name="panel-section"
+        >
+          <summary>Menger carve</summary>
+          <p id="mengerTwistHint" class="flame-hint">
+            Replaces the transforms in Surface; edits restart it.
+          </p>
+          <details class="panel-explainer">
+            <summary>What the carve does</summary>
+            <p>
+              The classic Menger sponge carve with a fixed rotation applied to
+              the query point between levels — the exact construction the
+              twisted-sponge presets approximate. A w turn or offset lifts it to
+              the 4D hyper-Menger.
+            </p>
+          </details>
+          <label class="checkbox-label">
+            <input
+              type="checkbox"
+              id="mengerTwistEnabledCheckbox"
+              aria-describedby="mengerTwistHint mengerTwistNote"
+            />
+            Menger carve (replaces the transforms)
+          </label>
+          <div id="mengerTwistControls" class="hidden">
+            <label class="select-label">
+              Levels: <span id="mengerLevelsLabel">4</span>
+              <input
+                type="range"
+                id="mengerLevelsSlider"
+                min="1"
+                max="8"
+                step="1"
+                value="4"
+                aria-describedby="mengerTwistHint"
+              />
+            </label>
+            <label class="select-label">
+              Rotation X: <span id="mengerTwistRotationXLabel">0.00</span>
+              <input
+                type="range"
+                id="mengerTwistRotationXSlider"
+                min="-3.141592653589793"
+                max="3.141592653589793"
+                step="0.01"
+                value="0"
+              />
+            </label>
+            <label class="select-label">
+              Rotation Y: <span id="mengerTwistRotationYLabel">0.00</span>
+              <input
+                type="range"
+                id="mengerTwistRotationYSlider"
+                min="-3.141592653589793"
+                max="3.141592653589793"
+                step="0.01"
+                value="-0.93"
+              />
+            </label>
+            <label class="select-label">
+              Rotation Z: <span id="mengerTwistRotationZLabel">0.00</span>
+              <input
+                type="range"
+                id="mengerTwistRotationZSlider"
+                min="-3.141592653589793"
+                max="3.141592653589793"
+                step="0.01"
+                value="0"
+              />
+            </label>
+            <label class="select-label">
+              Offset X: <span id="mengerTwistOffsetXLabel">0.00</span>
+              <input
+                type="range"
+                id="mengerTwistOffsetXSlider"
+                min="-2"
+                max="2"
+                step="0.01"
+                value="0"
+              />
+            </label>
+            <label class="select-label">
+              Offset Y: <span id="mengerTwistOffsetYLabel">0.00</span>
+              <input
+                type="range"
+                id="mengerTwistOffsetYSlider"
+                min="-2"
+                max="2"
+                step="0.01"
+                value="0"
+              />
+            </label>
+            <label class="select-label">
+              Offset Z: <span id="mengerTwistOffsetZLabel">0.00</span>
+              <input
+                type="range"
+                id="mengerTwistOffsetZSlider"
+                min="-2"
+                max="2"
+                step="0.01"
+                value="0"
+              />
+            </label>
+            <div id="mengerTwist4DRows" class="hidden">
+              <label class="select-label">
+                XW turn: <span id="mengerTwistXWLabel">0.00</span>
+                <input
+                  type="range"
+                  id="mengerTwistXWSlider"
+                  min="-3.141592653589793"
+                  max="3.141592653589793"
+                  step="0.01"
+                  value="0"
+                />
+              </label>
+              <label class="select-label">
+                YW turn: <span id="mengerTwistYWLabel">0.00</span>
+                <input
+                  type="range"
+                  id="mengerTwistYWSlider"
+                  min="-3.141592653589793"
+                  max="3.141592653589793"
+                  step="0.01"
+                  value="0"
+                />
+              </label>
+              <label class="select-label">
+                ZW turn: <span id="mengerTwistZWLabel">0.00</span>
+                <input
+                  type="range"
+                  id="mengerTwistZWSlider"
+                  min="-3.141592653589793"
+                  max="3.141592653589793"
+                  step="0.01"
+                  value="0"
+                />
+              </label>
+              <label class="select-label">
+                W offset: <span id="mengerTwistWOffsetLabel">0.00</span>
+                <input
+                  type="range"
+                  id="mengerTwistWOffsetSlider"
+                  min="-2"
+                  max="2"
+                  step="0.01"
+                  value="0"
+                />
+              </label>
+            </div>
+          </div>
+          <p id="mengerTwistNote" class="flame-note hidden"></p>
+        </details>
+
         <!-- Space tiling is authored Scene / Look geometry: the kind chooser
              picks the finite reflection group or the mirrored lattice; the
              independent ShapeSpec clip can only trim content inside the
@@ -3051,6 +3213,10 @@
                 <option value="glassMenger4">Glass Hyper-Menger (4D)</option>
                 <option value="glassPearls">Glass Pearls</option>
                 <option value="glassPearls4">Glass Cross Pearls (4D)</option>
+              </optgroup>
+              <optgroup label="Menger carve">
+                <option value="mengerCarve">Twisted Menger Carve</option>
+                <option value="mengerCarve4">Twisted Hyper-Menger (4D)</option>
               </optgroup>
               <!-- Complete lit compositions, minted from
                    SURFACE_LIGHTING_STARTERS so their ids and labels keep one

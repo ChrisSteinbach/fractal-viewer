@@ -27,6 +27,8 @@ import {
   type ResolvedShapeTrap,
 } from "./shape-trap";
 import { SYM_PLANE_CODE4, type EscapeDE4 } from "./escape-de-4d";
+import { MENGER_STEP_SCALE, type MengerDE } from "./menger-de";
+import type { MengerDE4 } from "./menger-de-4d";
 import {
   SHAPE_MARCH_SAFETY,
   shapeMeshIds,
@@ -1880,7 +1882,9 @@ export interface SurfaceGpuKernelOptions {
     | "sphereInv"
     | "sphereInv4"
     | "finite"
-    | "finite4";
+    | "finite4"
+    | "menger"
+    | "menger4";
   /** Emit the FOLD FINAL-transform lens wrapper (`descendLens`, the
    * pure-fold final lens's vocabulary; the 4D arm lifts it to the 4D
    * cores as `descendLens4`): the descent body (any core but
@@ -3207,6 +3211,273 @@ export function packBulbGpuParams(
   }
   if (tilingInfo) {
     writeSurfaceTilingBlock(view, baseBytes, tilingInfo);
+  }
+  return buf;
+}
+
+/**
+ * Pack the params uniform for the MENGER core — the twisted mod-Menger
+ * carve's own kernel, structurally the bulb packer's sibling: bindingless
+ * (the carve chain carries no maps), no orbit, no symmetry, and the whole
+ * construction rides the 208..271 VARIANT block. `boundingRadius` is the
+ * construction's own box ball sqrt(3) — TWIST-INDEPENDENT, unlike the
+ * escape chains' grown ball, because the twist is an isometry that cannot
+ * move a point out of the frame whose box bounds the set — so
+ * `escapeRadius` (16) packs the GLSL's dead `2R` outer sphere (the wire
+ * never carries an uninitialized word) and there is no per-step bailout
+ * lane at all: the carve chain is bounded work by construction
+ * (`maxDepth` levels, ~30 flops each). `maxDepth` is the LEVEL BUDGET
+ * (preview-clamped by `run.maxDepth`); the FULL level count rides
+ * `menParams.x` as f32, because the hit-info's trap normalizes the
+ * winning level by the full count while the loop budget is clamped — the
+ * two are different numbers under the preview tier, which is why the
+ * variant word exists. The twist's on-flag rides `menParams.y`, a lane
+ * packed 0 exactly when the resolved twist is trivial (identity rotation,
+ * zero offset — the classic sponge): the flag-lane lesson's own rule, and
+ * the body's skip branch, since applying the identity matrix is
+ * value-exact to skipping it.
+ *
+ * `footprint` packs 0 and a nonzero one THROWS (the carve has no cone cap);
+ * tiling and a shape trap THROW (the eligibility refuses both — no wrapper
+ * or accumulator certificate covers the carve yet); the ground plane
+ * appends at the frozen 288 exactly as every 3D core's does.
+ */
+export function packMengerGpuParams(
+  de: MengerDE,
+  run: SurfaceGpuRunParams,
+  groundPlane: SurfaceGpuGroundPlane | null = null,
+  shapeTrap: ResolvedShapeTrap | null = null,
+  tiling: ResolvedTiling | null = null,
+): ArrayBuffer {
+  if (shapeTrap) {
+    throw new Error(
+      "surface-de-gpu: a shape trap is excluded from the menger core (no trap accumulator covers the carve)",
+    );
+  }
+  if (tiling) {
+    throw new Error(
+      "surface-de-gpu: space tiling is excluded from the menger core (no tiling wrapper certifies a carve estimator yet)",
+    );
+  }
+  if ((run.footprint ?? 0) !== 0) {
+    throw new Error(
+      "surface-de-gpu: the menger core takes no footprint cap (the carve chain is bounded work)",
+    );
+  }
+  const baseBytes = groundPlane
+    ? SURFACE_GPU_PARAMS_PLANE_BYTES
+    : SURFACE_GPU_PARAMS_BYTES;
+  const buf = new ArrayBuffer(baseBytes);
+  const view = new DataView(buf);
+  const R = de.boundingRadius;
+  view.setFloat32(12, R, true);
+  view.setFloat32(16, R * 2, true);
+  view.setFloat32(20, MENGER_STEP_SCALE, true);
+  view.setFloat32(24, de.visibleBoundingRadius, true);
+  view.setFloat32(28, 1, true);
+  view.setFloat32(32, 1, true);
+  view.setUint32(40, 1, true);
+  view.setUint32(44, 1, true);
+  view.setUint32(48, 1, true);
+  view.setUint32(52, run.maxDepth ?? de.levels, true);
+  view.setUint32(56, run.itemCount, true);
+  view.setUint32(60, run.stepsThisPass ?? 0, true);
+  view.setFloat32(64, run.cutoff ?? 0, true);
+  view.setUint32(72, run.marchSteps ?? 0, true);
+  const pose = run.pose;
+  view.setFloat32(76, pose?.pixelEps ?? 0, true);
+  view.setFloat32(80, R * (run.hitFloor ?? SURFACE_GPU_HIT_FLOOR), true);
+  view.setUint32(84, pose?.rasterWidth ?? 0, true);
+  view.setUint32(88, pose?.rasterHeight ?? 0, true);
+  view.setFloat32(92, run.focusDepth ?? 0, true);
+  writeVec3(view, 96, [1, 0, 0]);
+  writeVec3(view, 112, [0, 1, 0]);
+  writeVec3(view, 128, [0, 0, 1]);
+  writeVec3(view, 144, pose?.ro ?? [0, 0, 0]);
+  view.setFloat32(156, 1, true);
+  writeVec3(view, 160, pose?.right ?? [1, 0, 0]);
+  view.setFloat32(172, pose?.tanHalf ?? 0, true);
+  writeVec3(view, 176, pose?.up ?? [0, 1, 0]);
+  view.setFloat32(188, pose?.aspect ?? 1, true);
+  writeVec3(view, 192, pose?.fwd ?? [0, 0, 1]);
+  view.setFloat32(204, run.fogDensity ?? 1, true);
+  // The VARIANT block: the twist's rows in the escape interleave —
+  // 208 vec3f row0 + 220 twistB.x, 224 row1 + 236 twistB.y, 240 row2 +
+  // 252 twistB.z — and the (levels, on-flag, 0, 0) word at 256. The
+  // rows ALWAYS pack (they are the construction), and the flag reads 0
+  // exactly when the twist is the identity: the lane the packer leaves
+  // zero when the twist is trivial, which the body skips value-exactly.
+  const m = de.twistM;
+  const b = de.twistB;
+  writeVec3(view, 208, [m[0], m[1], m[2]]);
+  view.setFloat32(220, b[0], true);
+  writeVec3(view, 224, [m[3], m[4], m[5]]);
+  view.setFloat32(236, b[1], true);
+  writeVec3(view, 240, [m[6], m[7], m[8]]);
+  view.setFloat32(252, b[2], true);
+  const trivialTwist =
+    m[0] === 1 &&
+    m[1] === 0 &&
+    m[2] === 0 &&
+    m[3] === 0 &&
+    m[4] === 1 &&
+    m[5] === 0 &&
+    m[6] === 0 &&
+    m[7] === 0 &&
+    m[8] === 1 &&
+    b[0] === 0 &&
+    b[1] === 0 &&
+    b[2] === 0;
+  view.setFloat32(256, de.levels, true);
+  view.setFloat32(260, trivialTwist ? 0 : 1, true);
+  if (groundPlane) {
+    writeGroundPlane(view, groundPlane);
+  }
+  return buf;
+}
+
+/**
+ * Pack the params uniform for the MENGER4 core — the 3D menger packer
+ * and the 4D one crossed, which is what this core is.
+ *
+ * From the 4D packer: the rotor rows (the packer performs the one real
+ * transpose — pose rotor → world-to-attractor — exactly
+ * {@link packEscape4GpuParams}'s dance), `w0`, the slice-ADJUSTED
+ * `visibleRadius` so the shared march entry's sphere gate is textually
+ * unchanged, and `sliceHalfW` packing 0 with a nonzero one THROWS — the
+ * carve estimator has no segment cover
+ * ({@link MENGER_SLAB_REFUSAL}'s reason at the eligibility), so a slab
+ * session is refused rather than bounded badly. `stepBack4` and
+ * `final4M`/`final4T` pack IDENTITY (no sector sweep, no lens), and the
+ * radius band packs `(0, 0, 1/R)` over the box ball — the carve has no
+ * probe-fit band, exactly the escape chain's shape.
+ *
+ * The 464..575 VARIANT block holds the (levels, on-flag, 0, 0) word —
+ * `men4Params.x` the FULL level count the trap normalizes by, `men4Params.y`
+ * the twist on-flag — and the twist's SO(4) rows + offset at 480..559, the
+ * lens4 block's region behind the word (560..575 stays pad). Sized to the
+ * lens4 block ({@link SURFACE_GPU_PARAMS4_ESCAPE_BYTES}) so the shared
+ * plane block below lands at 576 for every 4D core. The rows ALWAYS pack;
+ * the flag reads 0 exactly when the twist is trivial, the 3D packer's own
+ * rule one dimension up.
+ */
+export function packMenger4GpuParams(
+  de: MengerDE4,
+  view4: SurfaceGpu4View,
+  run: SurfaceGpuRunParams,
+  groundPlane: SurfaceGpuGroundPlane | null = null,
+): ArrayBuffer {
+  if (view4.sliceHalfW !== 0) {
+    throw new Error(
+      "surface-de-gpu: the menger4 core takes no slab — the carve estimator " +
+        "has no segment cover; clamp sliceHalfW to 0 for this session",
+    );
+  }
+  if ((run.footprint ?? 0) !== 0) {
+    throw new Error(
+      "surface-de-gpu: the menger4 core takes no footprint cap (the carve chain is bounded work)",
+    );
+  }
+  const baseBytes = groundPlane
+    ? SURFACE_GPU_PARAMS4_PLANE_BYTES
+    : SURFACE_GPU_PARAMS4_ESCAPE_BYTES;
+  const buf = new ArrayBuffer(baseBytes);
+  const view = new DataView(buf);
+  const R = de.boundingRadius;
+  view.setFloat32(12, R, true);
+  view.setFloat32(16, R * 2, true);
+  view.setFloat32(20, MENGER_STEP_SCALE, true);
+  // The slice-adjusted marching ball: |(p, w0)| <= R implies |p| <= this,
+  // the affine4 packer's own line at sliceHalfW 0.
+  const minW = Math.abs(view4.w0);
+  const sliceR = Math.sqrt(Math.max(R * R - minW * minW, 0));
+  view.setFloat32(24, sliceR, true);
+  view.setFloat32(28, 1, true);
+  view.setFloat32(32, 1, true);
+  view.setUint32(40, 1, true);
+  view.setUint32(44, 0, true);
+  view.setUint32(48, 1, true);
+  view.setUint32(52, run.maxDepth ?? de.levels, true);
+  view.setUint32(56, run.itemCount, true);
+  view.setUint32(60, run.stepsThisPass ?? 0, true);
+  view.setFloat32(64, run.cutoff ?? 0, true);
+  view.setUint32(72, run.marchSteps ?? 0, true);
+  const pose = run.pose;
+  view.setFloat32(76, pose?.pixelEps ?? 0, true);
+  view.setFloat32(80, R * (run.hitFloor ?? SURFACE_GPU_HIT_FLOOR), true);
+  view.setUint32(84, pose?.rasterWidth ?? 0, true);
+  view.setUint32(88, pose?.rasterHeight ?? 0, true);
+  view.setFloat32(92, run.focusDepth ?? 0, true);
+  writeVec3(view, 96, [1, 0, 0]);
+  writeVec3(view, 112, [0, 1, 0]);
+  writeVec3(view, 128, [0, 0, 1]);
+  writeVec3(view, 144, pose?.ro ?? [0, 0, 0]);
+  view.setFloat32(156, 1, true);
+  writeVec3(view, 160, pose?.right ?? [1, 0, 0]);
+  view.setFloat32(172, pose?.tanHalf ?? 0, true);
+  writeVec3(view, 176, pose?.up ?? [0, 1, 0]);
+  view.setFloat32(188, pose?.aspect ?? 1, true);
+  writeVec3(view, 192, pose?.fwd ?? [0, 0, 1]);
+  view.setFloat32(204, run.fogDensity ?? 1, true);
+  const rot = view4.rotor;
+  for (let i = 0; i < 4; i++) {
+    const at = 208 + i * 16;
+    view.setFloat32(at, rot[i], true);
+    view.setFloat32(at + 4, rot[4 + i], true);
+    view.setFloat32(at + 8, rot[8 + i], true);
+    view.setFloat32(at + 12, rot[12 + i], true);
+  }
+  // stepBack4 and final4M pack IDENTITY: this core sweeps no sectors and
+  // carries no lens, and the packers' never-uninitialized convention says
+  // a slot the body might read holds the value that makes it a no-op.
+  for (let i = 0; i < 4; i++) {
+    view.setFloat32(272 + i * 20, 1, true);
+    view.setFloat32(336 + i * 20, 1, true);
+  }
+  view.setFloat32(416, view4.w0, true);
+  view.setFloat32(424, 1, true);
+  view.setFloat32(428, R, true);
+  view.setFloat32(452, 1 / R, true);
+  // The VARIANT word: (levels, on-flag, 0, 0) at 464, then the twist's
+  // SO(4) rows + offset at 480..559 — ROW-MAJOR bytes of the matrix the
+  // body applies (the DE's own twistM), applied per level as
+  // q <- R q + b. 560..575 stays pad.
+  const m = de.twistM;
+  const b = de.twistB;
+  const trivialTwist =
+    m[0] === 1 &&
+    m[1] === 0 &&
+    m[2] === 0 &&
+    m[3] === 0 &&
+    m[4] === 0 &&
+    m[5] === 1 &&
+    m[6] === 0 &&
+    m[7] === 0 &&
+    m[8] === 0 &&
+    m[9] === 0 &&
+    m[10] === 1 &&
+    m[11] === 0 &&
+    m[12] === 0 &&
+    m[13] === 0 &&
+    m[14] === 0 &&
+    m[15] === 1 &&
+    b[0] === 0 &&
+    b[1] === 0 &&
+    b[2] === 0 &&
+    b[3] === 0;
+  view.setFloat32(464, de.levels, true);
+  view.setFloat32(468, trivialTwist ? 0 : 1, true);
+  for (let i = 0; i < 4; i++) {
+    view.setFloat32(480 + i * 16, m[i * 4], true);
+    view.setFloat32(484 + i * 16, m[i * 4 + 1], true);
+    view.setFloat32(488 + i * 16, m[i * 4 + 2], true);
+    view.setFloat32(492 + i * 16, m[i * 4 + 3], true);
+  }
+  for (let i = 0; i < 4; i++) {
+    view.setFloat32(544 + i * 4, b[i], true);
+  }
+  if (groundPlane) {
+    writeGroundPlane4(view, groundPlane);
   }
   return buf;
 }
@@ -5213,7 +5484,8 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
     core === "fold4" ||
     core === "escape4" ||
     core === "sphereInv4" ||
-    core === "finite4";
+    core === "finite4" ||
+    core === "menger4";
   // The FORWARD cores (escape, bulb and escape4): a forward orbit
   // rather than a descent, so none of the
   // descent helpers and no frontier. The shared header/entry
@@ -5278,6 +5550,48 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // (the general word tree — the maps ride the source the way the tiling
   // clip's roots do, so the params wire stays byte-identical).
   const finiteCore = core === "finite" || core === "finite4";
+  // The MENGER cores: neither a descent (no inverse maps, no frontier) nor
+  // a forward orbit (no `+ p`, no bailout) — the carve chain is bounded
+  // work by construction. Bindingless like "bulb"; the whole construction
+  // rides the params variant block (twist rows + levels word). The DE is
+  // the MengerDE/MengerDE4 the packers take.
+  const mengerCore = core === "menger" || core === "menger4";
+  if (mengerCore) {
+    const refusals: [boolean, string][] = [
+      [
+        !!opts.lens,
+        "a fold-final lens (the carve has no final transform — MengerDE carries none)",
+      ],
+      [
+        !!opts.balloon,
+        "balloon (no balloon certificate covers the carve estimator yet)",
+      ],
+      [
+        (opts.tiling ?? null) !== null,
+        "space tiling (no tiling wrapper certifies a carve estimator yet)",
+      ],
+      [
+        (opts.shapeTrap ?? null) !== null ||
+          opts.shapeTrapGeometry?.geometry === true,
+        "a shape trap (the carve has no trap accumulator)",
+      ],
+      [
+        (opts.condensation?.emitters.length ?? 0) > 0 ||
+          (opts.schedule?.scheduleMapCount ?? 0) > 0 ||
+          (opts.chaos?.activeStateCount ?? 0) > 0,
+        "condensation, a hybrid schedule or xaos (transform-system features)",
+      ],
+      [
+        !!opts.slabCover,
+        "a slab cover (the carve estimator has no segment cover)",
+      ],
+    ];
+    for (const [refused, what] of refusals) {
+      if (refused) {
+        throw new Error(`surface-de-gpu: the ${core} core refuses ${what}`);
+      }
+    }
+  }
   const finiteGeneral = finiteCore ? (opts.finiteSolid?.general ?? null) : null;
   const finiteLevel = finiteCore ? opts.finiteSolid?.level : undefined;
   if (finiteCore) {
@@ -5560,7 +5874,9 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // exactly what that binding is for. Bulb is the one bindingless core
   // left: its single map still rides the params variant block.
   const mapsBinding =
-    (!forward && !finiteCore) || core === "escape" || core === "escape4";
+    (!forward && !finiteCore && !mengerCore) ||
+    core === "escape" ||
+    core === "escape4";
   // Does any body in this kernel enumerate the fold's INVERSE
   // branches, and so need `foldRadiiOf`? The fold cores do, and so does the
   // lens wrapper around ANY descent core (a fold FINAL is still a fold).
@@ -6287,15 +6603,16 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
       condensationShapes !== null ||
       schedule !== null ||
       chaos !== null ||
-      (tiling !== null && core === "escape4"));
-  // The slab's register-pressure probe (option doc).
+      (tiling !== null && core === "escape4")); // The slab's register-pressure probe (option doc).
   // Meaningful only under the 4D DESCENT cores — every other core reads
   // `true` unconditionally, so `opts.slabExt` is never even consulted for
   // them and the inertness is structural, not just documented. The
   // escape4 core is 4D and takes no slab at all (a forward orbit cannot
   // thread a segment), so it sits with the 3D cores here.
   const slabExt =
-    core4 && !forward && !siCore && !finiteCore ? (opts.slabExt ?? true) : true;
+    core4 && !forward && !siCore && !finiteCore && !mengerCore
+      ? (opts.slabExt ?? true)
+      : true;
   // The nonlinear slab cover (option doc). Structurally inert outside the
   // 4D descent cores, exactly like slabExt — but a 4D request must be
   // coherent: the cover IS the slab answer, so it requires slabExt on.
@@ -6304,7 +6621,7 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
   // own crossing enumeration and bounded work, which no finite-root
   // table supplies.
   const slabCover =
-    core4 && !forward && !siCore && !finiteCore
+    core4 && !forward && !siCore && !finiteCore && !mengerCore
       ? (opts.slabCover ?? false)
       : false;
   if (slabCover && !slabExt) {
@@ -6390,7 +6707,7 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
   // The maps-load probe (option doc). Same structural inertness
   // as slabExt — only the 4D descent cores ever consult it.
   const mapsUniform =
-    core4 && !forward && !siCore && !finiteCore
+    core4 && !forward && !siCore && !finiteCore && !mengerCore
       ? (opts.mapsUniform ?? false)
       : false;
   if (!Number.isInteger(width) || width < 1) {
@@ -8569,6 +8886,126 @@ ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
   return info;
 }`;
 
+  // The menger hit-info: the carve chain's colors-only twin — the
+  // winning level's fraction (mengerTrap, normalized by the FULL level
+  // count in menParams.x, not the clamped maxDepth), plus the
+  // escape/bulb bodies' rings/sheets vocabulary on the carve's twisted
+  // orbit: the closest radial and y-plane approaches of the twisted
+  // coordinate, measured AFTER the twist and BEFORE the fold at every
+  // level, normalized by the box ball. firstChoice stays 0 — the carve
+  // chooses no map (the chain applies no per-map selection). The
+  // liftMenger4/mengerBoxDistance4/mengerSawtooth4 helpers are emitted
+  // inside the menger4 descent block only; WGSL allows the module-scope
+  // forward reference (the escape4 hit-info's own liftEscape4 call).
+  const mengerHitInfoText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg});
+  var d = mengerBoxDistance(p);
+  var qx = p.x;
+  var qy = p.y;
+  var qz = p.z;
+  var s = 1.0;
+  var level = 0u;
+  let twist = params.menParams.y != 0.0;
+  for (var i = 0u; i < params.maxDepth; i++) {
+    if (twist) {
+      let t = vec3f(qx, qy, qz);
+      qx = dot(params.menM0, t) + params.menT0;
+      qy = dot(params.menM1, t) + params.menT1;
+      qz = dot(params.menM2, t) + params.menT2;
+    }
+    info.rings = min(info.rings, length(vec3f(qx, qy, qz)) / params.boundingRadius);
+    info.sheets = min(info.sheets, abs(qy) / params.boundingRadius);
+    let ax = mengerSawtooth(qx * s) - 1.0;
+    let ay = mengerSawtooth(qy * s) - 1.0;
+    let az = mengerSawtooth(qz * s) - 1.0;
+    s *= 3.0;
+    let rx = abs(1.0 - 3.0 * abs(ax));
+    let ry = abs(1.0 - 3.0 * abs(ay));
+    let rz = abs(1.0 - 3.0 * abs(az));
+    let da = max(rx, ry);
+    let db = max(ry, rz);
+    let dc = max(rz, rx);
+    let c = (min(da, min(db, dc)) - 1.0) / s;
+    if (c > d) {
+      d = c;
+      level = i;
+    }
+  }
+  // The winning level's fraction — the CPU oracle's mengerTrap, which
+  // normalizes by the FULL level count (de.levels) while the loop above
+  // runs the preview-clamped maxDepth. 0 for a single-level carve, both
+  // here and there.
+  info.trap = params.menParams.x > 1.5
+    ? clamp(f32(level) / (params.menParams.x - 1.0), 0.0, 1.0)
+    : 0.0;
+  info.rings = clamp(info.rings, 0.0, 1.0);
+  info.sheets = clamp(info.sheets, 0.0, 1.0);
+${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
+  return info;
+}`;
+
+  // The menger4 hit-info: the 3D one behind the view lift — the same
+  // winning-level trap (the FULL level count in men4Params.x), rings and
+  // sheets off the twisted orbit's closest approaches. `sheets` still
+  // reads q.y: the carve runs in the ATTRACTOR frame, exactly as the 4D
+  // escape orbit's own does.
+  const menger4HitInfoText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${tilingCtorArg}${balloonCtorArg});
+  let p4 = liftMenger4(p);
+  var d = mengerBoxDistance4(p4);
+  var qx = p4.x;
+  var qy = p4.y;
+  var qz = p4.z;
+  var qw = p4.w;
+  var s = 1.0;
+  var level = 0u;
+  let twist = params.men4Params.y != 0.0;
+  for (var i = 0u; i < params.maxDepth; i++) {
+    if (twist) {
+      let t = vec4f(qx, qy, qz, qw);
+      qx = dot(params.men4TwistR0, t) + params.men4TwistB.x;
+      qy = dot(params.men4TwistR1, t) + params.men4TwistB.y;
+      qz = dot(params.men4TwistR2, t) + params.men4TwistB.z;
+      qw = dot(params.men4TwistR3, t) + params.men4TwistB.w;
+    }
+    info.rings = min(info.rings, length(vec4f(qx, qy, qz, qw)) / params.boundingRadius);
+    info.sheets = min(info.sheets, abs(qy) / params.boundingRadius);
+    let ax = mengerSawtooth4(qx * s) - 1.0;
+    let ay = mengerSawtooth4(qy * s) - 1.0;
+    let az = mengerSawtooth4(qz * s) - 1.0;
+    let aw = mengerSawtooth4(qw * s) - 1.0;
+    s *= 3.0;
+    let rx = abs(1.0 - 3.0 * abs(ax));
+    let ry = abs(1.0 - 3.0 * abs(ay));
+    let rz = abs(1.0 - 3.0 * abs(az));
+    let rw = abs(1.0 - 3.0 * abs(aw));
+    let c =
+      (max(
+        min(rx, ry),
+        max(
+          min(rx, rz),
+          max(
+            min(rx, rw),
+            max(min(ry, rz), max(min(ry, rw), min(rz, rw))),
+          ),
+        ),
+      ) -
+        1.0) /
+      s;
+    if (c > d) {
+      d = c;
+      level = i;
+    }
+  }
+  info.trap = params.men4Params.x > 1.5
+    ? clamp(f32(level) / (params.men4Params.x - 1.0), 0.0, 1.0)
+    : 0.0;
+  info.rings = clamp(info.rings, 0.0, 1.0);
+  info.sheets = clamp(info.sheets, 0.0, 1.0);
+${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
+  return info;
+}`;
+
   // Lens hit-info wrapper (the GLSL lens hit overload
   // term for term): re-run the branch sweep with FULL-width zero-cutoff
   // core calls, tracking the ARGMIN branch's core query (identity-branch
@@ -9510,11 +9947,15 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
             ? escape4HitInfoText
             : core === "bulb"
               ? bulbHitInfoText
-              : core === "affine4"
-                ? affine4HitInfoText(bodySlabExt, core4ExternalLift)
-                : core === "fold4"
-                  ? fold4HitInfoText(bodySlabExt, core4ExternalLift)
-                  : foldHitInfoText;
+              : core === "menger"
+                ? mengerHitInfoText
+                : core === "menger4"
+                  ? menger4HitInfoText
+                  : core === "affine4"
+                    ? affine4HitInfoText(bodySlabExt, core4ExternalLift)
+                    : core === "fold4"
+                      ? fold4HitInfoText(bodySlabExt, core4ExternalLift)
+                      : foldHitInfoText;
   const coreHitInfoText = scheduleCoreSource(rawCoreHitInfoText, true);
   const lensedHitInfoText = lens
     ? `${coreHitInfoText.replace(
@@ -13433,8 +13874,37 @@ struct Params {
   padE4: array<vec4f, 1>,`
       : ""
   }`
-        : core === "finite4"
+        : core === "menger4"
           ? /* wgsl */ `
+  // (levels, twist, 0, 0) — the CONSTRUCTION word: .x is the FULL carve
+  // level count the hit-info's trap normalizes the winning level by (the
+  // loop budget is the preview-clamped maxDepth, a different number under
+  // the preview tier — which is why this word exists), .y the twist's
+  // on-flag, 0 exactly when the resolved twist is trivial (the classic
+  // sponge): the flag-lane lesson's own rule, and the body's skip branch.
+  men4Params: vec4f,
+  // The carve twist's SO(4) rows + offset, riding the lens4 block's
+  // region behind the construction word (480..559 — the twist needs
+  // exactly five vec4s of it). UNCONDITIONAL members — the body reads
+  // them whether or not the shared 4D tail block is declared, and a
+  // smaller struct reading the larger buffer is valid WebGPU. The rows
+  // are the ROW-MAJOR bytes of the matrix the body applies (the DE's own
+  // twistM), applied per level as q <- R q + b.
+  men4TwistR0: vec4f,
+  men4TwistR1: vec4f,
+  men4TwistR2: vec4f,
+  men4TwistR3: vec4f,
+  men4TwistB: vec4f,${
+    tail4Block
+      ? /* wgsl */ `
+  // 560..575, PAD — the lens4 block's remaining region, which this core
+  // can never use (menger4+lens throws) and which exists so the shared
+  // plane block below lands at ONE offset across every 4D core.
+  padMen4: array<vec4f, 1>,`
+      : ""
+  }`
+          : core === "finite4"
+            ? /* wgsl */ `
   // 464..479, the FINITE-SOLID block (surface-finite-solid-gpu.ts): the
   // authored construction — the half extent, the level 0..2 and the grid
   // size 3^level the integer arithmetic reads. The 4D pose rides the
@@ -13443,15 +13913,15 @@ struct Params {
   finiteLevel: u32,
   finiteGrid: u32,
   finitePad: f32,${groundPlane ? padFin4Fields : ""}`
-          : // The lens4 block, APPENDED past the 4D tail
-            // (464..575). Declared under the lens, and under anything
-            // appended past it, so the shared
-            // block keeps one offset. A smaller struct reading a larger
-            // buffer is valid WebGPU, so keeping it struct-conditional
-            // otherwise is what keeps every plain 4D kernel's text
-            // byte-identical.
-            lens || tail4Block
-            ? /* wgsl */ `
+            : // The lens4 block, APPENDED past the 4D tail
+              // (464..575). Declared under the lens, and under anything
+              // appended past it, so the shared
+              // block keeps one offset. A smaller struct reading a larger
+              // buffer is valid WebGPU, so keeping it struct-conditional
+              // otherwise is what keeps every plain 4D kernel's text
+              // byte-identical.
+              lens || tail4Block
+              ? /* wgsl */ `
   lens4MR0: vec4f,
   lens4MR1: vec4f,
   lens4MR2: vec4f,
@@ -13462,7 +13932,7 @@ struct Params {
   // radii are dimension-free (SurfaceFoldRadii is SHARED by the two
   // oracles), so this is the same quartet at the 4D block's own offset.
   lens4Fold: vec4f,`
-            : ""
+              : ""
   }${balloon ? balloonStructFields : ""}${
     groundPlane || shapeTrap ? planeStructFields : ""
   }${shapeTrap ? trapStructFields : ""}${
@@ -13514,8 +13984,33 @@ struct Params {
   padF: vec4f,${groundPlane || shapeTrap ? planeStructFields : ""}${
     shapeTrap ? trapStructFields : ""
   }`
-            : core === "finite"
+            : core === "menger"
               ? /* wgsl */ `
+  // The carve's variant block: the twist's rows in the escape head-link
+  // lanes' interleave — 208 vec3f row0 + 220 twistB.x, 224 row1 +
+  // 236 twistB.y, 240 row2 + 252 twistB.z — and the (levels, twist, 0, 0)
+  // word at 256. .x is the FULL carve level count the hit-info's trap
+  // normalizes the winning level by (the loop budget is the
+  // preview-clamped maxDepth, a different number under the preview tier —
+  // which is why this word exists); .y the twist's on-flag, 0 exactly
+  // when the resolved twist is trivial (the classic sponge): the
+  // flag-lane lesson's own rule, and the body's skip branch. The rows
+  // ALWAYS pack (they are the construction — unlike the escape core's,
+  // which repurpose ballast the twist only sometimes occupies).
+  menM0: vec3f,
+  menT0: f32,
+  menM1: vec3f,
+  menT1: f32,
+  menM2: vec3f,
+  menT2: f32,
+  menParams: vec4f,
+  // The fold-lens lengths' 272..287 slot, PAD here. This core has no
+  // lens (menger+lens throws) and no fold at all — the slot exists so
+  // the shared plane/balloon block lands at ONE offset (288) across
+  // every 3D core.
+  padF: vec4f,${groundPlane ? planeStructFields : ""}`
+              : core === "finite"
+                ? /* wgsl */ `
   // 208..223, the FINITE-SOLID block (surface-finite-solid-gpu.ts): the
   // authored construction — the half extent, the level 0..2 and the grid
   // size 3^level the integer arithmetic reads. The 3D pose is the
@@ -13524,14 +14019,14 @@ struct Params {
   finiteLevel: u32,
   finiteGrid: u32,
   finitePad: f32,${groundPlane ? `${padFin3Fields}${planeStructFields}` : ""}`
-              : lens ||
-                  balloon ||
-                  groundPlane ||
-                  condensationShapes ||
-                  schedule ||
-                  chaos ||
-                  tiling
-                ? /* wgsl */ `
+                : lens ||
+                    balloon ||
+                    groundPlane ||
+                    condensationShapes ||
+                    schedule ||
+                    chaos ||
+                    tiling
+                  ? /* wgsl */ `
   lensM0: vec3f,
   lensT0: f32,
   lensM1: vec3f,
@@ -13549,7 +14044,7 @@ struct Params {
   }${condensationShapes ? condensationStructFields : ""}${
     schedule ? scheduleStructFields : ""
   }${chaos ? chaosStructFields : ""}`
-                : ""
+                  : ""
   }
 ${
   tiling
@@ -16858,6 +17353,171 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   return 0.5 * r * log(r) / dr;
 }`;
 
+  // The MENGER cores: menger-de.ts / menger-de-4d.ts's carve chain —
+  // the twisted mod-Menger sponge's single-chain estimator, the
+  // SURFACE_MENGER GLSL arm's f32 formulation (surface-material.ts, the
+  // fallback this core replaces on the compute route). Structurally the
+  // bulb core: no descent, no frontier, no orbit, so cutoff is accepted
+  // for signature parity and ignored (every return IS the cutoff-0
+  // result, trivially the cutoff contract) and li never indexes
+  // anything. Plain params.maxDepth — the LEVEL budget; no footprint
+  // cap, like the GLSL arm. NOT a forward orbit and NOT chaotic: the
+  // carve is an isometry per level over a bounded chain, so no
+  // ensemble/ring/flip classifier exists for its leg — the descent
+  // legs' fail=0 gate pins it (the bench's M9/M10).
+  const mengerDescentText = /* wgsl */ `
+// GLSL mod(x, 2): x - 2*floor(x/2) — the sawtooth cell fold's
+// coordinate, duplicated from menger-de.ts under the twin-file
+// convention (the estimator is the text the mirrors are written
+// against).
+fn mengerSawtooth(x: f32) -> f32 {
+  return x - 2.0 * floor(x / 2.0);
+}
+
+// sdBox(p, 1) — the construction's own box, read UNTWISTED: the twist
+// applies between levels, exactly as KentaYoshii/Raymarcher's loop does
+// (menger-de.ts's THE ESTIMATE paragraph).
+fn mengerBoxDistance(p: vec3f) -> f32 {
+  let q3 = abs(p) - vec3f(1.0);
+  let m = max(q3, vec3f(0.0));
+  return length(m) + min(max(q3.x, max(q3.y, q3.z)), 0.0);
+}
+
+// menger-de.ts's runMengerChain, statement for statement: the box, then
+// per level q <- R q + b (the twist, an isometry of R3 — which is what
+// makes the running max a true lower bound at every twist), the
+// sawtooth cell fold, s *= 3, the middle-third indicators, and
+// (median(r) - 1)/s — the level's carve. The twist flag skips the
+// identity mat-vec value-exactly (the packer's trivialTwist lane —
+// 1.0*q + 0.0*other + 0.0 is q exactly, so both arms of the branch
+// agree with the CPU's unconditional application).
+fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+  var d = mengerBoxDistance(pIn);
+  var qx = pIn.x;
+  var qy = pIn.y;
+  var qz = pIn.z;
+  var s = 1.0;
+  let twist = params.menParams.y != 0.0;
+  for (var i = 0u; i < params.maxDepth; i++) {
+    if (twist) {
+      let t = vec3f(qx, qy, qz);
+      qx = dot(params.menM0, t) + params.menT0;
+      qy = dot(params.menM1, t) + params.menT1;
+      qz = dot(params.menM2, t) + params.menT2;
+    }
+    let ax = mengerSawtooth(qx * s) - 1.0;
+    let ay = mengerSawtooth(qy * s) - 1.0;
+    let az = mengerSawtooth(qz * s) - 1.0;
+    s *= 3.0;
+    let rx = abs(1.0 - 3.0 * abs(ax));
+    let ry = abs(1.0 - 3.0 * abs(ay));
+    let rz = abs(1.0 - 3.0 * abs(az));
+    // The level's carve term: (median(r) - 1)/s — the min of the three
+    // pair-maxima, the field's form, kept rather than a sort because
+    // the CPU oracle writes exactly this expression.
+    let da = max(rx, ry);
+    let db = max(ry, rz);
+    let dc = max(rz, rx);
+    let c = (min(da, min(db, dc)) - 1.0) / s;
+    if (c > d) {
+      d = c;
+    }
+  }
+  return d;
+}`;
+
+  // The MENGER4 core: the carve chain one dimension up
+  // (menger-de-4d.ts's runMengerChain4) behind the 4D cores' view lift —
+  // the estimator the (absent, by decision) 4D GLSL fallback would
+  // march. The one genuinely new part is the FOURTH carve axis, whose
+  // term is the max over the six coordinate pairs of the pair's MIN —
+  // "at least two of four coordinates in middle thirds", the 3D
+  // median's mirror image (there three axes make both forms the
+  // median; here only max-of-mins reads the right order statistic).
+  const menger4DescentText = /* wgsl */ `
+// The view lift, INLINED rather than reaching for rotorInvApply4: that
+// helper is emitted for the 4D DESCENT cores only (liftEscape4's own
+// reasoning). A rotation is an isometry, so the estimate survives the
+// lift untouched. No half-extent register — the packer pins sliceHalfW
+// to 0 for this core (the carve estimator has no segment cover).
+fn liftMenger4(pIn: vec3f) -> vec4f {
+  let pv = vec4f(pIn, params.w0);
+  return vec4f(
+    dot(params.rotorInvR0, pv),
+    dot(params.rotorInvR1, pv),
+    dot(params.rotorInvR2, pv),
+    dot(params.rotorInvR3, pv),
+  );
+}
+
+// GLSL mod(x, 2) — the 3D menger core's sawtooth, one dimension up
+// (the twin-file convention: the vector arithmetic is duplicated, the
+// constants are not).
+fn mengerSawtooth4(x: f32) -> f32 {
+  return x - 2.0 * floor(x / 2.0);
+}
+
+// sdBox(p, 1) in R4 — the construction's own box.
+fn mengerBoxDistance4(p: vec4f) -> f32 {
+  let q4 = abs(p) - vec4f(1.0);
+  let m = max(q4, vec4f(0.0));
+  return length(m) + min(max(max(q4.x, q4.y), max(q4.z, q4.w)), 0.0);
+}
+
+// menger-de-4d.ts's runMengerChain4, statement for statement — the 3D
+// body's loop with the fourth axis carried through the twist, the
+// sawtooth and the indicators, and the 4D carve term's max-of-mins.
+// The twist flag skips the identity mat-vec value-exactly (the packer's
+// trivialTwist lane).
+fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+  let p4 = liftMenger4(pIn);
+  var d = mengerBoxDistance4(p4);
+  var qx = p4.x;
+  var qy = p4.y;
+  var qz = p4.z;
+  var qw = p4.w;
+  var s = 1.0;
+  let twist = params.men4Params.y != 0.0;
+  for (var i = 0u; i < params.maxDepth; i++) {
+    if (twist) {
+      let t = vec4f(qx, qy, qz, qw);
+      qx = dot(params.men4TwistR0, t) + params.men4TwistB.x;
+      qy = dot(params.men4TwistR1, t) + params.men4TwistB.y;
+      qz = dot(params.men4TwistR2, t) + params.men4TwistB.z;
+      qw = dot(params.men4TwistR3, t) + params.men4TwistB.w;
+    }
+    let ax = mengerSawtooth4(qx * s) - 1.0;
+    let ay = mengerSawtooth4(qy * s) - 1.0;
+    let az = mengerSawtooth4(qz * s) - 1.0;
+    let aw = mengerSawtooth4(qw * s) - 1.0;
+    s *= 3.0;
+    let rx = abs(1.0 - 3.0 * abs(ax));
+    let ry = abs(1.0 - 3.0 * abs(ay));
+    let rz = abs(1.0 - 3.0 * abs(az));
+    let rw = abs(1.0 - 3.0 * abs(aw));
+    // The level's carve term in R4: (second-largest(r) - 1)/s — the
+    // max over the six coordinate pairs of the pair's MIN, the pair of
+    // the two largest values' min being the second-largest.
+    let c =
+      (max(
+        min(rx, ry),
+        max(
+          min(rx, rz),
+          max(
+            min(rx, rw),
+            max(min(ry, rz), max(min(ry, rw), min(rz, rw))),
+          ),
+        ),
+      ) -
+        1.0) /
+      s;
+    if (c > d) {
+      d = c;
+    }
+  }
+  return d;
+}`;
+
   const rawDescentBlock = siCore
     ? `// The sphere-inversion seed-orbit estimator (surface-sphere-inversion-gpu.ts),
 // ${core === "sphereInv4" ? "native 4D behind the view lift" : "3D"}.
@@ -16901,16 +17561,25 @@ ${escape4DescentText}`
               ? `// estimateBulbDistance (bulb-de.ts) — the forward triplex-power
 // orbit's Mandelbulb estimator, the SURFACE_BULB GLSL arm's twin.
 ${bulbDescentText}`
-              : core === "affine4"
-                ? `// estimateDistance4Refined (surface-de-4d.ts) behind the view lift —
+              : core === "menger"
+                ? `// estimateMengerDistance (menger-de.ts) — the twisted mod-Menger
+// carve's single-chain estimator, the SURFACE_MENGER GLSL arm's twin.
+${mengerDescentText}`
+                : core === "menger4"
+                  ? `// estimateMengerDistance4 (menger-de-4d.ts) behind the 4D cores'
+// view lift — the carve chain one dimension up. No fragment mirror:
+// the 4D carve is compute-only (the escape4 verdict).
+${menger4DescentText}`
+                  : core === "affine4"
+                    ? `// estimateDistance4Refined (surface-de-4d.ts) behind the view lift —
 // the estimator the 4D GLSL tracer marches (surface-material-4d.ts), in
 // that mirror's f32 formulation. Fixed width 4.
 ${affine4DescentText(bodySlabExt, core4ExternalLift)}`
-                : core === "fold4"
-                  ? `// descendFold4's refine=false path (surface-de-4d.ts) behind the same
+                    : core === "fold4"
+                      ? `// descendFold4's refine=false path (surface-de-4d.ts) behind the same
 // view lift — the 4D fold-branch frontier, f32.
 ${fold4DescentFnText(width, bodySlabExt, core4ExternalLift)}${probe4DeFns}`
-                  : `// descendFold's refine=false path (surface-de.ts), the estimator the
+                      : `// descendFold's refine=false path (surface-de.ts), the estimator the
 // fold GLSL marches, in that mirror's f32 formulation.
 ${descentFnText(W, privateDecls)}${probeDeFns}`;
   const descentBlock = scheduleCoreSource(rawDescentBlock, false);

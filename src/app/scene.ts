@@ -92,6 +92,7 @@ import {
   setSurfaceGrid as packSurfaceGrid,
   setSurfaceGridEnabled as packSurfaceGridEnabled,
   setBulbSystem as packBulbSystem,
+  setMengerSystem as packMengerSystem,
   setSphereInversionSystem as packSphereInversionSystem,
   sphereInversionHitFloor,
   setEscapeSystem as packEscapeSystem,
@@ -149,6 +150,7 @@ import { ESCAPE_TIME_ITERATIONS } from "../fractal/escape-de";
 import { resolveShapeTrap } from "../fractal/shape-trap";
 import { FINITE_SOLID_MAX_LEVEL } from "../fractal/finite-solid";
 import type { BulbDE } from "../fractal/bulb-de";
+import type { MengerDE } from "../fractal/menger-de";
 import { BULB_ITERATIONS } from "../fractal/bulb-de";
 import type { SurfaceDE } from "../fractal/surface-de";
 import { condensationTraversalDepth } from "../fractal/condensation-de";
@@ -5031,6 +5033,44 @@ export class FractalScene {
   }
 
   /**
+   * The MENGER carve's WebGL entry — the WebGL fallback arm's installer
+   * ({@link setBulbSystem}'s twin one family over). The carve is a FILLED
+   * solid like the escape families, so no balloon ball here either (the
+   * route refuses balloon outright); the floor composes, the depth clamp
+   * is the level budget, and the strip evidence resets (a non-fold class —
+   * the carve is bounded work, cheaper per eval than the fold mode).
+   */
+  setMengerSystem(de: MengerDE, color: Vec3): void {
+    this.renderNeeded = true;
+    this.dropSurfaceGridTexture();
+    // The trap is refused at the route; the installer forces the channel
+    // off — this line keeps the stored block from resurrecting it.
+    this.surfaceShapeTrap = null;
+    this.surfaceShapeTrapLive = false;
+    packMengerSystem(this.surfaceMaterial, de, color);
+    this.surfaceLightingBoundRadius = de.boundingRadius;
+    this.surfaceFocusBall = {
+      center: [0, 0, 0],
+      radius: de.boundingRadius,
+    };
+    this.surfaceBalloonBall = null;
+    this.applySurfaceBalloon();
+    this.surfaceGroundBall = { center: [0, 0, 0], radius: de.boundingRadius };
+    this.applySurfaceGroundPlane();
+    this.activeSurfaceMaterial = this.surfaceMaterial;
+    this.surfaceQuad.material = this.surfaceMaterial;
+    this.installSurfaceDepth(de.levels, null);
+    // Bounded work per eval (a carve chain, no orbit) — the plain anchor
+    // entry and the legacy strip probe are right here too.
+    this.surfacePreviewGovernor.reset();
+    this.surfacePreviewPxCostMs = null;
+    this.surfaceFullPxCostMs = null;
+    this.surfaceDeFoldClass = false;
+    this.stripEvidence.reset();
+    this.flushStripBacklog();
+  }
+
+  /**
    * Turn the surface balloon on or off at a normalized radius
    * `rMult` (multiples of the raw DE-ball radius — buildBalloon's rMult,
    * the same continuous parameter as the explorer echo's slider). Applies
@@ -5810,6 +5850,43 @@ export class FractalScene {
    * as the other 4D kinds' do.
    */
   enterSurfaceComputeSphereInversionSession(
+    fourD: boolean,
+    groundPlane: boolean,
+    ballRadius: number,
+    depth: number,
+  ): void {
+    this.renderNeeded = true;
+    this.surfaceComputeActive = true;
+    this.surfaceCompute4 = fourD;
+    this.surfaceComputeShapeTrap = false;
+    this.surfaceShapeTrapLive = false;
+    this.surfaceLightingBoundRadius = ballRadius;
+    this.surfaceFocusBall = { center: [0, 0, 0], radius: ballRadius };
+    this.surfaceBalloonBall = null;
+    this.surfaceComputeBalloon = false;
+    this.surfaceGroundBall = groundPlane
+      ? { center: [0, 0, 0], radius: ballRadius }
+      : null;
+    this.surfaceComputeGroundPlane = groundPlane;
+    this.installSurfaceDepth(depth, null);
+    this.surfacePreviewGovernor.reset();
+    this.surfacePreviewPxCostMs = null;
+    this.flushStripBacklog();
+  }
+
+  /**
+   * The MENGER compute entry, both dimensions — the twisted mod-Menger
+   * carve's construction fixed at create, marched by `core: "menger"` /
+   * `"menger4"`. The sphere-inversion entry's sibling: one origin-centred
+   * ball (the construction's own box ball — sqrt(3) in 3D, 2 in 4D, the
+   * FULL 4D radius in 4D so the floor does not slide as the slice
+   * scrubs), no balloon ever (the session door refuses it), no trap
+   * channel (the gate refuses it), and a plain governor reset. The depth
+   * clamp is the construction's own LEVEL BUDGET (`de.maxDepth`), which is
+   * what the kernel packs regardless of the run's depth; a 4D session's
+   * rotor/slice rides every frame spec exactly as the other 4D kinds' do.
+   */
+  enterSurfaceComputeMengerSession(
     fourD: boolean,
     groundPlane: boolean,
     ballRadius: number,

@@ -89,6 +89,7 @@ function mockEffects(shared = false): ControlEffects {
     setSurfaceLatticeScale: vi.fn(),
     restartSurfaceRender: vi.fn(),
     syncSphereInversion: vi.fn(),
+    syncMengerTwist: vi.fn(),
     applyBackground: vi.fn(),
     trackAutoBackground: vi.fn(),
     cancelBalloonSweep: vi.fn(),
