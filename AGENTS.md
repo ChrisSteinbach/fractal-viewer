@@ -548,8 +548,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     Kaleidoscope/lens/per-transform finishes DORMANT; tiling, balloon, trap,
     slab REFUSE. POINTS draws the same set; Flame/Solid REFUSE. CONTROLS:
     Scene / Look (`sphere-inversion-controls.ts`); replaced sections
-    DISABLE. Record: `docs/sphere-inversion-family.md`,
-    `docs/sphere-inversion-gpu.md`.
+    DISABLE. Record: docs/sphere-inversion-family.md + -gpu.md.
   - `morph.ts` — pure interpolation (`lerpSystem`): endpoint-exact at t=0/1,
     rotation lerped nearest-turn, transform-count mismatches fade surplus by
     weight, flat↔4D continuous via derived w-scale, kaleidoscope crossfade
