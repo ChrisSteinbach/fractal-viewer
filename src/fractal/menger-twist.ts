@@ -17,10 +17,16 @@
  * at each level the coordinate is first mapped `q <- R(q + b)` (a fixed
  * rotation about the origin and a fixed offset), then the level's
  * sawtooth fold and bar carve read the TWISTED coordinate. The
- * construction — and its README image "Menger Sponge with rotation
- * applied to point p" — is KentaYoshii/Raymarcher's `sdMengerSponge`
+ * construction is KentaYoshii/Raymarcher's `sdMengerSponge`
  * (`resources/raymarch.frag`), whose `ma` is a constant ~53.13°
- * rotation about Y and whose animated `off` is this block's offset.
+ * rotation about Y and whose animated `off` is this block's offset. THE
+ * REPO'S README IMAGE IS NOT THIS SHADER'S OUTPUT — it is byte-identical
+ * to the 2023-12-01 commit where the twist lines are commented out, and
+ * its round silhouette + curved brick bands are impossible under the
+ * affine twist (the box is read untwisted; per-level affine maps cannot
+ * curve straight walls) — its shape is the sphere-folded sponge, which
+ * the `twistedSponge` presets approximate and
+ * docs/twisted-menger-family.md's correction section records.
  *
  * NOT AN IFS, and no per-map rotation is a substitute (the
  * `twistedSponge` presets carry that verdict): the level-m carve pattern

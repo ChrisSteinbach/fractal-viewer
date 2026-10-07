@@ -28,8 +28,40 @@ for (int m = 0; m < 4; m++) {
 
 `ani` and `off` animate over `iTime`: `ani` is 1 (full twist) for
 `t ∈ [3.54+4πk, 9.02+4πk]`, and `off = 1.5·sin(0.01·t)` broadcast to all
-three axes reaches ≈1.4 per axis at the `t ≈ 192s` capture era. The README
-image is the fully-twisted state at a capture-era offset.
+three axes reaches ≈1.4 per axis at the `t ≈ 192s` capture era.
+
+## The README image is NOT this shader's output — corrected 2026-10-07
+
+The first draft of this page claimed "the README image is the fully-twisted
+state at a capture-era offset". That is wrong, three ways, and the
+correction matters because it re-points the family's shape reproducibility
+at the LENS approximation below rather than at the affine carve:
+
+1. The image (`output/fractals/mengersponge1.png`, 1142×854) is
+   **byte-identical** to the commit that added it (2023-12-01, "add menger
+   sponge fractal"), where the twist lines are **commented out** — the
+   capture predates the affine twist entirely (the sibling
+   `mengersponge0.png` is the face-on unit-sponge scene,
+   `scenefiles/simple/unit_mengersponge.json`).
+2. The committed shader reads the enclosing box UNTWISTED
+   (`d = sdBox(p, vec3(1))` before the loop, exactly as our estimator
+   mirrors it), so its output always carries the box silhouette. The
+   image's silhouette is round — measured off the pixels: bright spans
+   413/582/769/663/389 px across the rows at 10/25/50/75/90% height, a
+   circular profile. Impossible at every `t` and both `ani` extremes.
+3. Each level's carve under the affine twist is an affine image of the
+   standard pattern, and perspective projection preserves straight lines —
+   the image's menger-brick chains are **genuinely curved** (the zoomed
+   crop shows chains bending through tens of degrees), which no per-level
+   affine map can produce.
+
+What the image's shape IS: the curled, cell-tiled BALL — the sphere-folded
+sponge — which is exactly the shape the refusal table below measured for
+the Menger-through-spherefold-final-lens approximation, shipped as the
+`twistedSponge` preset. Loading that preset reproduces the README image's
+geometry (the "By Transform" coloring aside). The affine carve family this
+page documents reproduces the COMMITTED shader's math, not the README's
+picture.
 
 ## Why no IFS or per-map rotation expresses it
 
@@ -102,9 +134,11 @@ with this sheet re-run.
 ## The family's parameter face
 
 The sheet renders four constructions: the default twist (4 levels, the
-`ma` rotation, no offset), the repo's capture-era frame (`off ≈ 1.4` per
-axis — the chunky displaced-carve look), a general non-axis twist (the
-churning crust), and a depth-7 carve. Output: `scripts/out/twisted-menger.png`.
+`ma` rotation, no offset), the shader's capture-era state (`off ≈ 1.4` per
+axis — the chunky displaced-carve look; the state the first draft of this
+page wrongly attributed the README image to, see the correction above), a
+general non-axis twist (the churning crust), and a depth-7 carve. Output:
+`scripts/out/twisted-menger.png`.
 
 ## Status and remaining work
 
