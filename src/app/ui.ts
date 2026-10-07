@@ -2517,6 +2517,7 @@ export class Ui {
   private readonly recordVideoBtn: HTMLButtonElement;
   private readonly recordMotionBtn: HTMLButtonElement;
   private readonly motionClipDurationSlider: HTMLInputElement;
+  private readonly motionClipDurationNumeric: RangeNumberControl;
   private readonly motionClipDurationLabel: HTMLElement;
   private readonly saveSceneFileBtn: HTMLButtonElement;
   private readonly saveSceneFileTitle: string;
@@ -3900,6 +3901,23 @@ export class Ui {
       },
       onCommit: () => this.handlers?.onFourDSliceCommit(),
     });
+    this.motionClipDurationNumeric = enhanceRangeWithNumber(
+      this.motionClipDurationSlider,
+      {
+        min: 2,
+        max: 60,
+        step: 1,
+        ariaLabel: "Clip length exact value",
+        // The FIELD reads the bare number; the "Ns" unit is the label's.
+        formatValue: (value) => String(Math.round(value)),
+        onInput: (value, source) => {
+          if (source !== "number") return;
+          const seconds = Math.round(value);
+          this.motionClipDurationLabel.textContent = `${String(seconds)}s`;
+          this.handlers?.onMotionClipDurationInput(seconds);
+        },
+      },
+    );
     this.fourDSliceThicknessNumeric = enhanceRangeWithNumber(
       this.fourDSliceThicknessSlider,
       {
@@ -6811,6 +6829,9 @@ export class Ui {
    * speed's label). */
   setMotionClipDuration(seconds: number): void {
     this.motionClipDurationLabel.textContent = `${String(Math.round(seconds))}s`;
+    this.motionClipDurationNumeric.setValue(Math.round(seconds), {
+      force: true,
+    });
   }
 
   /**

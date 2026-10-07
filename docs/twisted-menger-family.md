@@ -130,6 +130,13 @@ their reason; and the `mengerCarve`/`mengerCarve4` presets
 (`PRESET_MENGER_TWISTS`, absent-means-clear). The bench's menger legs gate
 fail=0 with NO chaotic-orbit classifier — the carve is certified sound and
 not an orbit — and the f32 twins' twin-vs-oracle agreement is its own gate.
+MEASURED on the AMD RX 7900 XTX (`--display=:0`, the section's whole
+verdict `pass`): all five menger rows fail=0 (maxAbsErr 1.5e-7..6.0e-7
+over 700 queries each, zero exclusions), production frames clean on both
+cores, and the twisted-vs-classic A/B renders the bent carve against the
+textbook sponge. gpu:scratch's catches are on record: the bindingless
+cores emit no descent helpers, WGSL has no ternary, and the 4D composed
+oracle applies the packer's transposed rotor.
 
 ## Points: the carve-sampler decision
 

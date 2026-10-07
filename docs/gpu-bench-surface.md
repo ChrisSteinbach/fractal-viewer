@@ -137,6 +137,15 @@ never orbit noise — and each system's measured realization noise is noted.
 The cores are bindingless, so both legs borrow the forward legs' buffer
 helper with one zero maps stride.
 
+MEASURED on the AMD RX 7900 XTX (`--display=:0`, the run whose overall
+section verdict was `pass`): all five menger rows fail=0, maxAbsErr
+1.5e-7..6.0e-7 over 700 queries each, zero exclusions — the scratch's
+transposed-rotor oracle fix (the composed oracle and the f32 twin apply
+the packer's own transpose) was caught and fixed by the gpu:scratch A/B
+before this run; the production frames completed with zero
+exhausted/active rays on both cores, and the twisted-vs-classic A/B
+renders the bent carve against the textbook sponge.
+
 `marchUnprojectChaos` and `computeFrameChaos` apply the schedule rows' same
 anti-vacuity discipline to that graph. The march must dispatch, complete,
 agree on every included ray and produce a nonempty/non-full hit mix on both
@@ -958,21 +967,23 @@ verified end-to-end by the escape-family and 4D-lift verify gates, both
 `verdict=pass` on the real driver after the fix. What remains owed: ONE
 complete clean `bench:surface` verdict on a machine that survives the leg.
 
-## The emitter-only leg wedges the driver on the AMD RX 7900 XTX box (2026-10-07)
+## The emitter-only leg dies under SwiftShader headless (2026-10-07)
 
-The same KIND of machine record, one box over: on this machine (Mesa AMD
-Radeon RX 7900 XTX, navi31, kernel 7.0.0-29) every full `--display=:0` run
-— three in a row, machine quiet throughout (`contended: false`, GPU busy
-3-5%) — dies with `device.lost` ("A valid external Instance reference no
-longer exists") at exactly THE EMITTER-ONLY eval/hit-info/shade agreement
-leg, with the canary tripping there and the section correctly refusing to
-certify (`verdict=device-unreliable`, exit 2). The legs BEFORE it —
-including that day's new M9/M10 menger legs — complete with clean canaries,
-and the wedge reproduces at the PRE-menger commit `d19d8638` in a clean
-worktree build, so it is pre-existing machine state and NOT a regression of
-the carve family's landing; the Iris Xe record above is the precedent
-(deterministic per-leg driver wedge, mechanism unresolved). Per the
-bench's own rule the numeric rows from such a run are NOT evidence; the
-menger legs' figures are therefore provisional until one complete clean
-verdict lands on a machine that survives the leg — the same debt that
-record's final line already carries.
+A correction of this section's own first draft, which blamed the machine: a
+run WITHOUT the `--display=:0` flag is a HEADLESS SWIFTSHADER run, and on
+this box three consecutive headless runs — machine quiet throughout
+(`contended: false`, GPU busy 3-16%) — die with `device.lost` ("A valid
+external Instance reference no longer exists") at the emitter-only
+eval/hit-info/shade leg, `verdict=device-unreliable` (exit 2), with
+agreement rows empty (the run died before any row landed; the CPU-only
+systems loops, the menger twins' noise figures included, still ran). The
+same commit's PRE-menger worktree reproduced it, so it is not the carve
+family's regression; and the run that FINISHED the escape/escape4 rows the
+same morning (the fr-u3uw.1 record above) was a REAL-DRIVER run — the
+distinction matters exactly as the known-SwiftShader record two sections
+up says it does. The REAL-DRIVER verdict for the menger legs is the
+--display=:0 run's (`verdict=pass`, the menger paragraph above; the
+emitter-only rows themselves all clean on that run) — the headless wedge
+is recorded here because it is the same KIND of finding: a leg that cannot
+be certified on a given stack, its numeric content unproven either way
+there, and no verdict to read from it.
