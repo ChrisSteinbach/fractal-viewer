@@ -6323,22 +6323,22 @@ function mengerQueries(de: MengerDE, seed: number): Vec3[] {
 }
 
 /**
- * The menger4 leg's composed f64 oracle — `estimateSurface4Composed`'s
- * shape (view lift + estimator) for the carve: the f64 lift of the query
- * through the view rotor, then `estimateMengerDistance4`.
+ * The menger4 leg's composed f64 oracle — `estimateEscape4Composed`'s
+ * exact shape (view lift + estimator) for the carve: the lift applies the
+ * pose rotor's TRANSPOSE (rot[4k+i] indexing — the same world→attractor
+ * matrix the kernel's stored rows apply), then `estimateMengerDistance4`.
  */
 function estimateMenger4Composed(
   de: MengerDE4,
   view4: SurfaceGpu4View,
   p: Vec3,
 ): number {
-  const q: Vec4 = [p[0], p[1], p[2], view4.w0];
-  const r = view4.rotor;
+  const rot = view4.rotor;
   const lifted: Vec4 = [
-    r[0] * q[0] + r[1] * q[1] + r[2] * q[2] + r[3] * q[3],
-    r[4] * q[0] + r[5] * q[1] + r[6] * q[2] + r[7] * q[3],
-    r[8] * q[0] + r[9] * q[1] + r[10] * q[2] + r[11] * q[3],
-    r[12] * q[0] + r[13] * q[1] + r[14] * q[2] + r[15] * q[3],
+    rot[0] * p[0] + rot[4] * p[1] + rot[8] * p[2] + rot[12] * view4.w0,
+    rot[1] * p[0] + rot[5] * p[1] + rot[9] * p[2] + rot[13] * view4.w0,
+    rot[2] * p[0] + rot[6] * p[1] + rot[10] * p[2] + rot[14] * view4.w0,
+    rot[3] * p[0] + rot[7] * p[1] + rot[11] * p[2] + rot[15] * view4.w0,
   ];
   return estimateMengerDistance4(de, lifted);
 }
@@ -7522,8 +7522,12 @@ function mengerBoxDistance4F32(
 }
 
 /**
- * The f32 twin one dimension up: the rotor lift (frounded rows — the
- * packer's transpose dance) then the 4D carve chain, frounded per op.
+ * The f32 twin one dimension up: the rotor lift (frounded rows, the
+ * packer's transpose dance — the kernel's own `dot(row, v)` realization,
+ * rows of the TRANSPOSED pose rotor) then the 4D carve chain, frounded
+ * per op. `liftEscape4F32` is the escape twin's own lift; this inlines
+ * the same product so the twin and the composed f64 oracle apply the
+ * same matrix.
  */
 function estimateMengerDistance4F32(
   de: MengerDE4,
@@ -7536,41 +7540,27 @@ function estimateMengerDistance4F32(
   const px = f(p[0]);
   const py = f(p[1]);
   const pz = f(p[2]);
-  const pvx = f(px);
-  const pvy = f(py);
-  const pvz = f(pz);
-  const pvw = w0;
-  const liftedX = f(
-    f(
-      f(f(f(rot[0] * pvx) + f(rot[1] * pvy)) + f(rot[2] * pvz)) +
-        f(f(rot[3] * pvw) + 0),
-    ),
+  // The lift: the pose rotor's TRANSPOSE applied to vec4f(p, w0),
+  // frounded per multiply-add — the kernel's dot(row, v) realization.
+  const qx0 = f(
+    f(f(f(rot[0] * px) + f(rot[4] * py)) + f(rot[8] * pz)) + f(rot[12] * w0),
   );
-  const liftedY = f(
-    f(
-      f(f(f(rot[4] * pvx) + f(rot[5] * pvy)) + f(rot[6] * pvz)) +
-        f(f(rot[7] * pvw) + 0),
-    ),
+  const qy0 = f(
+    f(f(f(rot[1] * px) + f(rot[5] * py)) + f(rot[9] * pz)) + f(rot[13] * w0),
   );
-  const liftedZ = f(
-    f(
-      f(f(f(rot[8] * pvx) + f(rot[9] * pvy)) + f(rot[10] * pvz)) +
-        f(f(rot[11] * pvw) + 0),
-    ),
+  const qz0 = f(
+    f(f(f(rot[2] * px) + f(rot[6] * py)) + f(rot[10] * pz)) + f(rot[14] * w0),
   );
-  const liftedW = f(
-    f(
-      f(f(f(rot[12] * pvx) + f(rot[13] * pvy)) + f(rot[14] * pvz)) +
-        f(f(rot[15] * pvw) + 0),
-    ),
+  const qw0 = f(
+    f(f(f(rot[3] * px) + f(rot[7] * py)) + f(rot[11] * pz)) + f(rot[15] * w0),
   );
   const m = de.twistM.map(f);
   const b = de.twistB.map(f);
   const twist = !mengerTwistIsTrivialF64(m, b);
-  let qx = liftedX;
-  let qy = liftedY;
-  let qz = liftedZ;
-  let qw = liftedW;
+  let qx = qx0;
+  let qy = qy0;
+  let qz = qz0;
+  let qw = qw0;
   let d = mengerBoxDistance4F32(qx, qy, qz, qw);
   let s = 1;
   for (let i = 0; i < de.levels; i++) {

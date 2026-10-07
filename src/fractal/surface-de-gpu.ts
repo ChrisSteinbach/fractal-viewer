@@ -8992,9 +8992,11 @@ ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
   // normalizes by the FULL level count (de.levels) while the loop above
   // runs the preview-clamped maxDepth. 0 for a single-level carve, both
   // here and there.
-  info.trap = params.menParams.x > 1.5
-    ? clamp(f32(level) / (params.menParams.x - 1.0), 0.0, 1.0)
-    : 0.0;
+  info.trap = select(
+    0.0,
+    clamp(f32(level) / (params.menParams.x - 1.0), 0.0, 1.0),
+    params.menParams.x > 1.5,
+  );
   info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
 ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
@@ -9054,9 +9056,11 @@ ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
       level = i;
     }
   }
-  info.trap = params.men4Params.x > 1.5
-    ? clamp(f32(level) / (params.men4Params.x - 1.0), 0.0, 1.0)
-    : 0.0;
+  info.trap = select(
+    0.0,
+    clamp(f32(level) / (params.men4Params.x - 1.0), 0.0, 1.0),
+    params.men4Params.x > 1.5,
+  );
   info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
 ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
@@ -10295,20 +10299,26 @@ ${tilingSlabCoverHitInfoWrapText}`
         ? `u = clamp(hi.colorPos.y / visR * 0.5 + 0.5, 0.0, 1.0);`
         : `u = clamp(pos.y / visR * 0.5 + 0.5, 0.0, 1.0);`;
   const shadeRadiusU =
-    core === "escape4" || core === "sphereInv4"
+    core === "escape4" || core === "sphereInv4" || core === "menger4"
       ? // The same attractor-frame radius ramp, through this
         // core's own lift (it emits none of the descents' 4D helpers, and
         // its slab is pinned to 0 so there is no sStar term to add). The
         // packer fills the band with (0, 0, 1/visRadius4), so the ramp is
-        // |q4| over the bailout ball — an escape chain has no probe-fit
-        // band to normalize against.
+        // |q4| over the bounding ball — neither an escape chain nor the
+        // carve has a probe-fit band to normalize against.
         tiling
         ? `let q4c = hi.tilingPoint;
       u = clamp(
         (length(q4c - params.radiusCenter4) - params.radiusMinD) *
           params.radiusInvRange,
         0.0, 1.0);`
-        : `let q4c = ${core === "sphereInv4" ? "liftSphereInv4" : "liftEscape4"}(pos);
+        : `let q4c = ${
+            core === "sphereInv4"
+              ? "liftSphereInv4"
+              : core === "menger4"
+                ? "liftMenger4"
+                : "liftEscape4"
+          }(pos);
       u = clamp(
         (length(q4c - params.radiusCenter4) - params.radiusMinD) *
           params.radiusInvRange,
@@ -14222,7 +14232,7 @@ struct GpuMap {
   }
 ${io}
 ${frontierBlock}${
-    forward || siCore || finiteCore
+    forward || siCore || finiteCore || mengerCore
       ? ""
       : core4
         ? /* wgsl */ `
