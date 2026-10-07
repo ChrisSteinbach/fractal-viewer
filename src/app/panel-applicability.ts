@@ -8,7 +8,7 @@ export type PanelDimension = "flat" | "nonFlat";
  * separate from SurfaceRouteKind: active-session applicability and predicted
  * next-entry routing are different facts. */
 export type SurfaceSessionKind =
-  "ifs" | "escape" | "bulb" | "sphereInversion" | "finiteSolid";
+  "ifs" | "escape" | "bulb" | "sphereInversion" | "finiteSolid" | "menger";
 
 export interface PanelContext {
   renderMode: RenderMode;

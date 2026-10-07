@@ -39,9 +39,13 @@ import type { TwistAuthored } from "../../fractal/twist";
 import type { EscapeDE4 } from "../../fractal/escape-de-4d";
 import type { BulbDE } from "../../fractal/bulb-de";
 import type { SphereInversionDE } from "../../fractal/sphere-inversion";
+import type { MengerDE } from "../../fractal/menger-de";
+import type { MengerDE4 } from "../../fractal/menger-de-4d";
+import { resolveMengerTwist } from "../../fractal/menger-twist";
 import {
   PRESET_FINALS,
   PRESET_FINITE_SOLIDS,
+  PRESET_MENGER_TWISTS,
   PRESET_NAMES,
   PRESET_SCHEDULES,
   PRESET_SPHERE_INVERSIONS,
@@ -58,6 +62,9 @@ import type {
   SphereInversionConstruction,
 } from "../../fractal/sphere-inversion";
 import type { FiniteSolidAuthored } from "../../fractal/finite-solid";
+import type { MengerTwistAuthored } from "../../fractal/menger-twist";
+import { buildMengerDE } from "../../fractal/menger-de";
+import { buildMengerDE4 } from "../../fractal/menger-de-4d";
 import type { CondensationDepthBand } from "../../fractal/condensation-de";
 import type {
   HybridSchedule,
@@ -95,7 +102,9 @@ export type ScratchCore =
   | "sphereInv"
   | "sphereInv4"
   | "finite"
-  | "finite4";
+  | "finite4"
+  | "menger"
+  | "menger4";
 
 export const SCRATCH_CORES: readonly ScratchCore[] = [
   "affine",
@@ -109,6 +118,8 @@ export const SCRATCH_CORES: readonly ScratchCore[] = [
   "sphereInv4",
   "finite",
   "finite4",
+  "menger",
+  "menger4",
 ];
 
 /** The cores with an eval-probe leg. The two extra compute families have no
@@ -122,6 +133,8 @@ const PROBE_CORES: ReadonlySet<ScratchCore> = new Set([
   "affine4",
   "fold4",
   "escape4",
+  "menger",
+  "menger4",
 ]);
 
 /** The scene the scratch renders: the Surface-relevant projection of a
@@ -140,6 +153,9 @@ export interface ScratchScene {
   /** The chain twist's authored block, as decoded — the escape/escape4
    * builders' fourth argument. */
   chainTwist: TwistAuthored | null;
+  /** The Menger-carve block's authored form, as decoded — the route's
+   * subject block when present. */
+  mengerTwist: MengerTwistAuthored | null;
   /** The scene's own 4D view pose when it carries one — the preset's
    * authored rotor + world `w0`, or the decoded document's `FourDPose`
    * (world `sliceW` preferred, the persisted convention). Null → identity
@@ -214,6 +230,7 @@ export function scratchPresetScene(name: string): ScratchScene | null {
     sphereInversion: PRESET_SPHERE_INVERSIONS[preset]?.() ?? null,
     finiteSolid: PRESET_FINITE_SOLIDS[preset] ?? null,
     chainTwist: null,
+    mengerTwist: PRESET_MENGER_TWISTS[preset]?.() ?? null,
     view4: view?.fourD
       ? { rotor: rotorMatrix(presetRotorPair(view.fourD)), w0: view.fourD.w0 }
       : null,
@@ -249,6 +266,7 @@ export function scratchDocScene(payload: string): ScratchScene {
     sphereInversion: snapshot.sphereInversion ?? null,
     finiteSolid: snapshot.finiteSolid ?? null,
     chainTwist: snapshot.chainTwist ?? null,
+    mengerTwist: snapshot.mengerTwist ?? null,
     view4: pose
       ? {
           rotor: rotorMatrix(pose.pair),
@@ -272,6 +290,8 @@ export interface ScratchRoute {
     | SurfaceDE4
     | EscapeDE4
     | SphereInversionDE
+    | MengerDE
+    | MengerDE4
     | null;
   view4: SurfaceGpu4View;
   /** A shaped finite-solid block's construction + displayed level (the
@@ -300,6 +320,7 @@ export function deriveScratchRoute(scene: ScratchScene): ScratchRoute {
     scene.sphereInversion,
     scene.finiteSolid,
     scene.chainTwist,
+    scene.mengerTwist,
   );
   if (eligibility.status === "ineligible" || eligibility.kind === null) {
     throw new Error(
@@ -387,6 +408,27 @@ export function deriveScratchRoute(scene: ScratchScene): ScratchRoute {
         ),
         view4,
       };
+    case "menger":
+    case "menger4": {
+      const block = scene.mengerTwist;
+      if (!block) {
+        throw new Error("menger-carve route without the block");
+      }
+      const resolution = resolveMengerTwist(block);
+      if (!resolution.ok) {
+        throw new Error(resolution.reasons.join("; "));
+      }
+      const construction = resolution.construction;
+      return {
+        kind,
+        core: construction.dim === 4 ? "menger4" : "menger",
+        de:
+          construction.dim === 4
+            ? buildMengerDE4(construction)
+            : buildMengerDE(construction),
+        view4,
+      };
+    }
     case "sphereInversion":
     case "sphereInversion4": {
       const block = scene.sphereInversion;

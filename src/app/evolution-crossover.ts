@@ -149,6 +149,7 @@ const SCENE_FIELDS = {
   sphereInversion: "primary",
   finiteSolid: "primary",
   chainTwist: "primary",
+  mengerTwist: "primary",
   numPoints: "primary",
   pointSize: "primary",
   colorMode: "primary",
@@ -955,14 +956,20 @@ function buildSnapshot(
   copyOptionalSceneField(snapshot, primary, "fogTintStrength");
   copyOptionalSceneField(snapshot, primary, "groundPlane");
 
+  // The Menger-carve block is one authored subject, never mixed: it rides
+  // whole from the primary parent, like the other subject blocks above.
+  copyOptionalSceneField(snapshot, primary, "mengerTwist");
+
   // The 4D pose is Saved-view framing for the SCENE's dimension, which a
-  // copied sphere-inversion block decides (scene-dimension.ts).
+  // copied sphere-inversion block decides (scene-dimension.ts) — the
+  // Menger-carve block after it, the same subject-block shape.
   if (
     scenePartsAreNonFlat(
       transforms,
       finalTransform ?? null,
       symmetry,
       snapshot.sphereInversion,
+      snapshot.mengerTwist,
     )
   ) {
     if (primary.fourD !== undefined) {

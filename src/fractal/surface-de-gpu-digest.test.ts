@@ -1,16 +1,15 @@
 /**
- * THE SEVEN SHIPPED CORES' GENERATED WGSL, PINNED BY DIGEST.
+ * THE SHIPPED CORES' GENERATED WGSL, PINNED BY DIGEST.
  *
  * `surfaceDeKernelWgsl` is one generator whose every emitted text is a
  * function of `opts.core` through ternary chains and derived predicates.
- * Adding a core adds an arm to each chain, and the claim that the seven
- * existing values still emit the same text is exactly the kind of claim an
- * argument gets wrong by one missed site. So it is PINNED against the
- * module as it stood BEFORE the sphere-inversion cores existed: the
- * fixture beside this file records a SHA-256 digest of the generated source
- * (or of the thrown message, so a refusal is pinned too) for each of the
- * seven cores × three modes × the option sweep below, and this test
- * recomputes every one.
+ * Adding a core adds an arm to each chain, and the claim that the existing
+ * values still emit the same text is exactly the kind of claim an argument
+ * gets wrong by one missed site. So it is PINNED against the module as it
+ * stood BEFORE the sphere-inversion cores existed: the fixture beside this
+ * file records a SHA-256 digest of the generated source (or of the thrown
+ * message, so a refusal is pinned too) for each core × three modes × the
+ * option sweep below, and this test recomputes every one.
  *
  * A failure here means an existing kernel's text moved. That is never an
  * incidental change: fix the generator, or — for a deliberate change to a
@@ -35,6 +34,8 @@ const CORES = [
   "affine4",
   "fold4",
   "escape4",
+  "menger",
+  "menger4",
 ] as const;
 const MODES = ["eval", "march", "shade"] as const;
 
@@ -108,7 +109,7 @@ function sweepDigests(): Record<string, string> {
   return out;
 }
 
-describe("surfaceDeKernelWgsl seven-core digest pin", () => {
+describe("surfaceDeKernelWgsl core digest pin", () => {
   const current = sweepDigests();
 
   if (process.env.SURFACE_GPU_DIGEST_RECORD === "1") {

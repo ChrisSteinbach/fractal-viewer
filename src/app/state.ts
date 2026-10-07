@@ -31,6 +31,8 @@ import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
 import type { FiniteSolidAuthored } from "../fractal/finite-solid";
 import { resolveTwist, twistIsTrivial } from "../fractal/twist";
 import type { TwistAuthored } from "../fractal/twist";
+import type { MengerTwistAuthored } from "../fractal/menger-twist";
+import { MENGER_TWIST_DEFAULTS } from "../fractal/menger-twist";
 import {
   SHAPE_TRAP_GEOMETRY_LEVEL_MAX,
   resolveShapeTrap,
@@ -568,6 +570,28 @@ export interface AppState {
    * that scope.
    */
   chainTwist?: TwistAuthored;
+  /**
+   * Optional Menger-carve block (`menger-twist.ts`'s authored form). When
+   * present the block REPLACES the transform system as the scene's subject —
+   * the sphereInversion block's shape — and Surface renders the twisted
+   * mod-Menger carve through its own single-chain estimator (the maps are a
+   * flat placeholder, disclosed on the eligibility note); the block's own
+   * `w` extension decides the scene's dimension
+   * (`mengerTwistAuthoredDimension`), a non-trivial one lifting the set to
+   * the 4D hyper-Menger. Stored EXACTLY as authored or decoded — a block
+   * the resolver refuses (an unknown key, a non-finite angle) is kept
+   * verbatim and surfaces its refusal through the Surface gate, never
+   * clamped or dropped. Absent ⇒ byte-identical to every document
+   * predating the field, and every renderer reads the plain IFS attractor.
+   * Presence/absence is SEMANTIC here, unlike the chain twist's: every
+   * present block renders a Menger object (a trivial twist is the classic
+   * sponge, not "nothing"), so the panel gates it behind an enabled
+   * checkbox and nothing collapses it implicitly. Scene content: persists
+   * and rides shared links; morphs never interpolate it (it is read once
+   * per render enter). Only the Surface routes read it; Points/Flame/Solid
+   * keep the transforms' own render (disclosed beside the checkbox).
+   */
+  mengerTwist?: MengerTwistAuthored;
   numPoints: number;
   /** Multiplier on each render style's base point size; 1 = as authored. */
   pointSize: number;
@@ -2388,6 +2412,63 @@ function finishChainTwist(state: AppState, block: TwistAuthored): AppState {
     : { ...state, chainTwist: block };
 }
 
+/**
+ * Install/replace the Menger-carve block, or clear it with `null` —
+ * {@link setSphereInversion}'s shape: stored AS AUTHORED with no
+ * normalization, because the resolver refuses rather than clamps and the
+ * Surface gate must describe the block the document actually carries.
+ * DELIBERATELY NO collapse-on-trivial (the chain twist's rule): the block
+ * REPLACES the scene's subject, so a trivial twist is the CLASSIC sponge —
+ * a real object — and never "renders nothing"; presence/absence belongs
+ * to the panel's enabled checkbox alone.
+ */
+export function setMengerTwist(
+  state: AppState,
+  mengerTwist: MengerTwistAuthored | null,
+): AppState {
+  if (!mengerTwist) return { ...state, mengerTwist: undefined };
+  return { ...state, mengerTwist };
+}
+
+/** One Menger-carve field's merge edit — {@link setChainTwistField}'s
+ * dotted-path merge with the family's own absent-means-DEFAULT fills:
+ * an absent vector field merges into the family's reference-construction
+ * default (the ~53° Y rotation, zero offset), so dragging one axis of a
+ * block that displays the family default does not silently zero the axes
+ * it did not touch. Sliders write only when the block is present (the
+ * enabled checkbox authors it), so a missing block is a no-op. No
+ * collapse: presence is the checkbox's (see {@link setMengerTwist}). */
+export function setMengerTwistField(
+  state: AppState,
+  field: string,
+  value: number,
+): AppState {
+  if (!Number.isFinite(value)) return state;
+  if (!state.mengerTwist) return state;
+  const base: MengerTwistAuthored = { ...state.mengerTwist };
+  const [head, mid, leaf] = field.split(".");
+  if (head === "levels" && mid === undefined && leaf === undefined) {
+    return { ...state, mengerTwist: { ...base, levels: value } };
+  }
+  if (head === "w" && mid && leaf === undefined) {
+    // w.offset — the fourth offset component.
+    const w = { ...base.w, [mid]: value };
+    return { ...state, mengerTwist: { ...base, w } };
+  }
+  if (head === "w" && mid === "rotation" && leaf !== undefined) {
+    const rotation = { ...base.w?.rotation, [leaf]: value };
+    return { ...state, mengerTwist: { ...base, w: { ...base.w, rotation } } };
+  }
+  if ((head === "rotation" || head === "offset") && mid !== undefined) {
+    const axis = mid;
+    const idx = axis === "x" ? 0 : axis === "y" ? 1 : 2;
+    const vec = [...(base[head] ?? [...MENGER_TWIST_DEFAULTS[head]])];
+    vec[idx] = value;
+    return { ...state, mengerTwist: { ...base, [head]: vec } };
+  }
+  return state;
+}
+
 export function setNumPoints(state: AppState, numPoints: number): AppState {
   return { ...state, numPoints: clampToSpec(PARAM.numPoints, numPoints) };
 }
@@ -3224,8 +3305,9 @@ export function systemIsNonFlat(state: AppState): boolean {
 /**
  * Whether the SCENE's Surface subject is native 4D — `scene-dimension.ts`'s
  * {@link scenePartsAreNonFlat} over this state: a present sphere-inversion
- * block's arrangement decides, otherwise {@link systemIsNonFlat}. The Surface
- * gate and the Surface session door read the parts form directly.
+ * block's arrangement decides, then a present Menger-carve block's `w`
+ * extension, otherwise {@link systemIsNonFlat}. The Surface gate and the
+ * Surface session door read the parts form directly.
  */
 export function sceneIsNonFlat(state: AppState): boolean {
   return scenePartsAreNonFlat(
@@ -3233,6 +3315,7 @@ export function sceneIsNonFlat(state: AppState): boolean {
     state.finalTransform ?? null,
     state.symmetry,
     state.sphereInversion,
+    state.mengerTwist,
   );
 }
 

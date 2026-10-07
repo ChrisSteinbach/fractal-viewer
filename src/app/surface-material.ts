@@ -8,6 +8,8 @@ import type { SurfaceLighting } from "../fractal/surface-lighting";
 import { condensationTraversalDepth } from "../fractal/condensation-de";
 import type { BulbDE } from "../fractal/bulb-de";
 import { BULB_ITERATIONS, BULB_STEP_SCALE } from "../fractal/bulb-de";
+import type { MengerDE } from "../fractal/menger-de";
+import { MENGER_STEP_SCALE } from "../fractal/menger-de";
 import type { EscapeDE } from "../fractal/escape-de";
 import {
   ESCAPE_STEP_SCALE,
@@ -4092,6 +4094,129 @@ ${sphereInversionArmGlsl()}
   }
 #else
 
+#if SURFACE_MENGER
+  /** Menger carve render: the construction's own twist — one mat3, one
+   * offset, the (levels, twistFlag, unused, unused) word. Declared INSIDE
+   * the arm, the SURFACE_BULB precedent: the other variants would pay
+   * these EMITTED bytes (uniforms are live tokens; they survive the
+   * strip) for uniforms they can never read. The twist is the
+   * CONSTRUCTION — the rows always pack, and the flag reads 0 exactly
+   * when the resolved twist is trivial (the classic sponge): the lane the
+   * packer leaves zero, the flag-lane lesson's own rule, and the body's
+   * skip branch, since applying the identity matrix is value-exact to
+   * skipping it. */
+  uniform mat3 uMenM;
+  uniform vec3 uMenB;
+  uniform vec4 uMenParams;
+  bool uMenTwistFlag() {
+    return uMenParams.y != 0.0;
+  }
+
+  /** GLSL mod(x, 2): x - 2*floor(x/2) — the sawtooth cell fold's
+   * coordinate, duplicated from menger-de.ts under the twin-file
+   * convention (the estimator is the text the mirrors are written
+   * against). */
+  float mengerSawtooth(float x) {
+    return x - 2.0 * floor(x / 2.0);
+  }
+
+  /** sdBox(p, 1) — the construction's own box, read UNTWISTED: the twist
+   * applies between levels, exactly as KentaYoshii/Raymarcher's loop
+   * does (menger-de.ts's THE ESTIMATE paragraph). */
+  float mengerBoxDistance(vec3 p) {
+    vec3 q3 = abs(p) - vec3(1.0);
+    vec3 m = max(q3, vec3(0.0));
+    return length(m) + min(max(q3.x, max(q3.y, q3.z)), 0.0);
+  }
+
+  /**
+   * Menger DE, mirroring menger-de.ts's estimateMengerDistance: the box,
+   * then per level q <- R q + b (the twist, an isometry of R3 — which is
+   * what makes the running max a true lower bound at every twist), the
+   * sawtooth cell fold, s *= 3, the middle-third indicators, and
+   * (median(r) - 1)/s — the level's carve. uMaxDepth (the level budget,
+   * preview-clamped) iterations per evaluation, no frontier, no orbit,
+   * no bailout — the carve chain is bounded work by construction. cutoff
+   * is accepted for signature parity and ignored: the loop is
+   * fixed-cost, so the full value is always returned, trivially
+   * satisfying the cutoff contract.
+   */
+  float surfaceDE(vec3 p, float cutoff) {
+    float d = mengerBoxDistance(p);
+    vec3 q = p;
+    float s = 1.0;
+    for (int i = 0; i < uMaxDepth; i++) {
+      if (uMenTwistFlag()) {
+        q = uMenM * q + uMenB;
+      }
+      vec3 a = vec3(
+        mengerSawtooth(q.x * s),
+        mengerSawtooth(q.y * s),
+        mengerSawtooth(q.z * s)
+      ) - 1.0;
+      s *= 3.0;
+      vec3 r = abs(1.0 - 3.0 * abs(a));
+      float c =
+        (min(max(r.x, r.y), min(max(r.y, r.z), max(r.z, r.x))) - 1.0) / s;
+      if (c > d) {
+        d = c;
+      }
+    }
+    return d;
+  }
+
+  float surfaceDE(vec3 p) {
+    return surfaceDE(p, 0.0);
+  }
+
+  /** Hit-shading overload: the same loop, with the carve family's
+   * extras — trap is the WINNING level's fraction (mengerTrap, normalized
+   * by the FULL level count in uMenParams.x, not the clamped uMaxDepth),
+   * rings/sheets the twisted orbit's closest radial / y-plane approaches,
+   * normalized by the box ball. firstChoice is always 0 (the carve
+   * chooses no map). */
+  float surfaceDE(
+    vec3 p,
+    out int firstChoice,
+    out float trap,
+    out float rings,
+    out float sheets
+  ) {
+    firstChoice = 0;
+    rings = 1.0;
+    sheets = 1.0;
+    float d = mengerBoxDistance(p);
+    vec3 q = p;
+    float s = 1.0;
+    int level = 0;
+    for (int i = 0; i < uMaxDepth; i++) {
+      if (uMenTwistFlag()) {
+        q = uMenM * q + uMenB;
+      }
+      rings = min(rings, length(q) / uBoundingRadius);
+      sheets = min(sheets, abs(q.y) / uBoundingRadius);
+      vec3 a = vec3(
+        mengerSawtooth(q.x * s),
+        mengerSawtooth(q.y * s),
+        mengerSawtooth(q.z * s)
+      ) - 1.0;
+      s *= 3.0;
+      vec3 r = abs(1.0 - 3.0 * abs(a));
+      float c =
+        (min(max(r.x, r.y), min(max(r.y, r.z), max(r.z, r.x))) - 1.0) / s;
+      if (c > d) {
+        d = c;
+        level = i;
+      }
+    }
+    trap = uMenParams.x > 1.5
+      ? clamp(float(level) / (uMenParams.x - 1.0), 0.0, 1.0)
+      : 0.0;
+    rings = clamp(rings, 0.0, 1.0);
+    sheets = clamp(sheets, 0.0, 1.0);
+    return d;
+  }
+#else
 #if SURFACE_FOLD_LENS
   // Compile every descent body below under a CORE name: the fold-lens
   // wrapper past the hit variants owns the public surfaceDE overloads and
@@ -5999,9 +6124,11 @@ ${foldValueFormGlsl(shadeDeWidth)}
   }
 #endif
 
-// Closes SURFACE_BULB's #else arm, then SURFACE_ESCAPE's: everything
-// from the fold-lens rename through the lens wrapper exists only when
-// NEITHER forward-orbit variant (escape, bulb) is on.
+// Closes SURFACE_MENGER's #else arm, then SURFACE_BULB's #else arm, then
+// SURFACE_ESCAPE's: everything from the fold-lens rename through the lens
+// wrapper exists only when NEITHER forward-orbit variant (escape, bulb) nor
+// the menger carve is on.
+#endif
 #endif
 #endif
 #endif
@@ -7836,6 +7963,13 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uBulbParams: { value: new THREE.Vector4(1, 1, 0, 0) },
       uBulbTwistM: { value: new THREE.Matrix3() },
       uBulbTwistC: { value: new THREE.Vector3() },
+      // Menger carve render: inert defaults; alive only under the
+      // SURFACE_MENGER define (levels 1 so a stray enabled read could
+      // never divide by zero; the twist rows are the identity, the flag
+      // 0 — the classic sponge's inert read).
+      uMenM: { value: new THREE.Matrix3() },
+      uMenB: { value: new THREE.Vector3() },
+      uMenParams: { value: new THREE.Vector4(1, 0, 0, 0) },
       // The shape trap's live pose/mode quantities — read only under the
       // SURFACE_SHAPE_TRAP arms (uTrapPose is position.xyz + invScale;
       // uTrapParams is mode/threshold/fade). Identity/off defaults so a
@@ -7958,6 +8092,7 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       SURFACE_FOLD_LENS: 0,
       SURFACE_ESCAPE: 0,
       SURFACE_BULB: 0,
+      SURFACE_MENGER: 0,
       SURFACE_BALLOON: 0,
       SURFACE_GROUND_PLANE: 0,
       SURFACE_FINISH: 0,
@@ -9456,6 +9591,9 @@ export function surfaceFragmentResolvedFor(
   // segment exactness), false keeps the guard form and every existing
   // source byte-identical. Only the 4D tracer's own setters pass it.
   slabCapable = false,
+  // The Menger carve's arm, appended last so every positional caller
+  // keeps its meaning (the sphereInversion flag's own reason).
+  menger = 0,
 ): string {
   if (sphereInversion !== 0) {
     // The arm replaces the descent bodies wholesale (the escape/bulb
@@ -9479,6 +9617,31 @@ export function surfaceFragmentResolvedFor(
     if (clashes.length > 0) {
       throw new RangeError(
         `SURFACE_SPHERE_INVERSION cannot compile with ${clashes.join(", ")}`,
+      );
+    }
+  }
+  if (menger !== 0) {
+    // The carve arm replaces the descent bodies wholesale (the
+    // escape/bulb precedent — it sits beside them in the alternatives
+    // chain, so any of these flags on would resolve the menger's text
+    // away or leave the session expecting machinery the arm deleted).
+    // The WGSL menger core refuses the same set.
+    const clashes = [
+      escape !== 0 && "SURFACE_ESCAPE",
+      bulb !== 0 && "SURFACE_BULB",
+      lens !== 0 && "SURFACE_FOLD_LENS",
+      balloon !== 0 && "SURFACE_BALLOON",
+      trap !== null && "SURFACE_SHAPE_TRAP",
+      condensation !== null && "SURFACE_CONDENSATION",
+      schedule !== 0 && "SURFACE_SCHEDULE",
+      chaos !== 0 && "SURFACE_CHAOS",
+      post !== 0 && "SURFACE_POST",
+      tiling !== null && "SURFACE_TILING",
+      optics !== 0 && "SURFACE_OPTICS",
+    ].filter((clash): clash is string => clash !== false);
+    if (clashes.length > 0) {
+      throw new RangeError(
+        `SURFACE_MENGER cannot compile with ${clashes.join(", ")}`,
       );
     }
   }
@@ -9614,6 +9777,7 @@ export function surfaceFragmentResolvedFor(
   const resolved = resolveVariantArms(gatedSource, {
     SURFACE_ESCAPE: escape,
     SURFACE_BULB: bulb,
+    SURFACE_MENGER: menger,
     SURFACE_FOLD_LENS: lens,
     SURFACE_BALLOON: balloon,
     SURFACE_GROUND_PLANE: plane,
@@ -9753,6 +9917,7 @@ export function surfaceFragmentFor(
   optics = 0,
   opticsBackend = 0,
   slabCapable = false,
+  menger = 0,
 ): string {
   const resolved = surfaceFragmentResolvedFor(
     escape,
@@ -9776,6 +9941,7 @@ export function surfaceFragmentFor(
     optics,
     opticsBackend,
     slabCapable,
+    menger,
   );
   return plane !== 0 || resolved.length > SURFACE_GLSL_STRIP_BYTES
     ? stripGlslSource(resolved)
@@ -10368,6 +10534,165 @@ export function setBulbSystem(
       material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
       0, // sphereInversion — handed back above (forward arms refuse it)
       0, // optics — the forward arms refuse the transport
+    );
+    material.needsUpdate = true;
+  }
+}
+
+/**
+ * Pack a {@link MengerDE} and flip the material onto the MENGER variant —
+ * the forward packers' twin one family over. The IFS-side uniforms the
+ * shared marcher still reads — bounding/visible radii, uMaxDepth (the LEVEL
+ * budget the preview tier clamps through previewMaxDepth), step scale, slot-0
+ * color — are packed to the menger set's values; everything descent-specific
+ * (maps, symmetry, lenses, grid) is reset to inert, and no grid is ever
+ * uploaded for this mode (the empty-space chain's validity argument is
+ * IFS-specific). The construction's twist rides uMenM/uMenB; the flag lane
+ * reads 0 exactly when the resolved twist is trivial (the classic sponge) —
+ * the packer's own rule one render mode over. The shape trap is REFUSED
+ * (no accumulator covers the carve) and forced off; the menger route's own
+ * trap channel is the hit-info's winning-level fraction, a color only.
+ */
+export function setMengerSystem(
+  material: THREE.ShaderMaterial,
+  de: MengerDE,
+  color: Vec3,
+): void {
+  installSurfaceTiling(material, null, false, de.boundingRadius);
+  const postBlockChanged = installSurfacePostBlock(material, false);
+  setSurfaceGrid(material, null);
+  const u = material.uniforms;
+  const m = de.twistM;
+  (u.uMenM.value as THREE.Matrix3).set(
+    m[0],
+    m[1],
+    m[2],
+    m[3],
+    m[4],
+    m[5],
+    m[6],
+    m[7],
+    m[8],
+  );
+  (u.uMenB.value as THREE.Vector3).set(...de.twistB);
+  // The flag lane, 0 exactly when the twist is trivial (the classic
+  // sponge) — the WGSL packer's own trivialTwist rule.
+  const trivialTwist =
+    m[0] === 1 &&
+    m[1] === 0 &&
+    m[2] === 0 &&
+    m[3] === 0 &&
+    m[4] === 1 &&
+    m[5] === 0 &&
+    m[6] === 0 &&
+    m[7] === 0 &&
+    m[8] === 1 &&
+    de.twistB[0] === 0 &&
+    de.twistB[1] === 0 &&
+    de.twistB[2] === 0;
+  (u.uMenParams.value as THREE.Vector4).set(
+    de.levels,
+    trivialTwist ? 0 : 1,
+    0,
+    0,
+  );
+  (u.uMapColor.value as THREE.Vector3[])[0].set(...color);
+  (u.uTrapIndex.value as number[])[0] = 0;
+  u.uMapCount.value = 1;
+  u.uSymOrder.value = 1;
+  u.uSymPlane.value = 1;
+  (u.uSymStep.value as THREE.Vector2).set(1, 0);
+  u.uBoundingRadius.value = de.boundingRadius;
+  // Carve space is origin-anchored; see the escape twin above.
+  (u.uBoundCenter.value as THREE.Vector3).set(0, 0, 0);
+  u.uEscapeRadius.value = de.boundingRadius * 2;
+  u.uMaxDepth.value = de.levels;
+  u.uStepScale.value = MENGER_STEP_SCALE;
+  u.uVisibleRadius.value = de.visibleBoundingRadius;
+  (u.uFinalInvM.value as THREE.Matrix3).identity();
+  (u.uFinalInvT.value as THREE.Vector3).set(0, 0, 0);
+  u.uFinalSigmaMin.value = 1;
+  (u.uLensParams.value as THREE.Vector4).set(0, 1, 1, 1);
+  (u.uLensInvM.value as THREE.Matrix3).identity();
+  (u.uLensInvT.value as THREE.Vector3).set(0, 0, 0);
+  // Preserve the balloon, ground-plane and finish flags exactly like
+  // setEscapeSystem — orthogonal session state their own setters own.
+  const balloon = material.defines.SURFACE_BALLOON === 1 ? 1 : 0;
+  const plane = material.defines.SURFACE_GROUND_PLANE === 1 ? 1 : 0;
+  const finish = material.defines.SURFACE_FINISH === 1 ? 1 : 0;
+  const pattern = material.defines.SURFACE_PATTERN === 1 ? 1 : 0;
+  // A stale optics define cannot survive a swap onto the carve arm — see
+  // setEscapeSystem's note.
+  const opticsStale = material.defines.SURFACE_OPTICS === 1;
+  setSurfaceShapeMeshSdf(material, []);
+  if (
+    material.defines.SURFACE_MENGER !== 1 ||
+    material.defines.SURFACE_ESCAPE !== 0 ||
+    material.defines.SURFACE_BULB !== 0 ||
+    material.defines.SURFACE_FOLDS !== 0 ||
+    material.defines.SURFACE_SPHERE_INVERSION === 1 ||
+    material.defines.SURFACE_FOLD_LENS !== 0 ||
+    material.defines.SURFACE_SCHEDULE === 1 ||
+    material.defines.SURFACE_CHAOS === 1 ||
+    material.defines.SURFACE_CONDENSATION !== 0 ||
+    material.defines.SURFACE_POST === 1 ||
+    material.defines.SURFACE_SHAPE_TRAP !== 0 ||
+    materialTrapGeometry(material) !== 0 ||
+    postBlockChanged ||
+    opticsStale
+  ) {
+    material.defines.SURFACE_MENGER = 1;
+    material.defines.SURFACE_ESCAPE = 0;
+    material.defines.SURFACE_BULB = 0;
+    // A previous sphere-inversion session hands the bodies back too.
+    delete material.defines.SURFACE_SPHERE_INVERSION;
+    installSphereInversionBlock(material, false);
+    delete material.defines.SURFACE_OPTICS;
+    delete material.defines.SURFACE_POST;
+    material.defines.SURFACE_FOLDS = 0;
+    material.defines.SURFACE_FOLD_LENS = 0;
+    delete material.defines.SURFACE_SCHEDULE;
+    delete material.defines.SURFACE_CHAOS;
+    u.uScheduleCount.value = 0;
+    u.uScheduleDepth.value = 0;
+    // The trap is refused: forced off whatever the document carries — the
+    // call site's route already refused it at the gate.
+    material.defines.SURFACE_SHAPE_TRAP = 0;
+    delete material.defines.SURFACE_TRAP_GEOMETRY;
+    material.defines.SURFACE_CONDENSATION = 0;
+    u.uCondCount.value = 0;
+    (
+      material.userData as {
+        surfaceCondensationShapeKey?: string | null;
+        surfaceCondensationShapes?: ShapeSpec[] | null;
+      }
+    ).surfaceCondensationShapeKey = null;
+    (
+      material.userData as { surfaceCondensationShapes?: ShapeSpec[] | null }
+    ).surfaceCondensationShapes = null;
+    material.fragmentShader = surfaceFragmentFor(
+      0,
+      0,
+      balloon,
+      plane,
+      0,
+      finish,
+      pattern,
+      undefined,
+      null,
+      null,
+      false,
+      0,
+      0,
+      0,
+      null,
+      0,
+      material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
+      0, // sphereInversion — handed back above
+      0, // optics — the carve arm refuses the transport
+      0, // opticsBackend
+      false, // slabCapable
+      1, // menger
     );
     material.needsUpdate = true;
   }

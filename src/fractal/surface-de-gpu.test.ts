@@ -4,6 +4,8 @@ import {
   packEscape4GpuParams,
   packEscapeGpuMaps,
   packEscapeGpuParams,
+  packMenger4GpuParams,
+  packMengerGpuParams,
   packSurface4GpuParams,
   packSurfaceGpuMaps,
   packSurfaceGpuMaps4,
@@ -90,6 +92,13 @@ import type {
   SurfaceGpuShadeParams,
 } from "./surface-de-gpu";
 import { buildBulbDE, BULB_ITERATIONS, BULB_STEP_SCALE } from "./bulb-de";
+import { buildMengerDE, MENGER_STEP_SCALE } from "./menger-de";
+import { buildMengerDE4 } from "./menger-de-4d";
+import {
+  resolveMengerTwist,
+  type MengerTwistAuthored,
+  type MengerTwistConstruction,
+} from "./menger-twist";
 import {
   buildEscapeDE,
   ESCAPE_LINK_BULB,
@@ -10999,5 +11008,188 @@ describe("the optical distortion's terminal splice", () => {
     expect(classic).not.toContain("transportSmoothedNormal");
     expect(classic).not.toContain("exitPresent");
     expect(classic).not.toContain("lane1[1]");
+  });
+});
+
+describe("packMengerGpuParams", () => {
+  const constructionOf = (
+    authored: MengerTwistAuthored,
+  ): MengerTwistConstruction => {
+    const resolution = resolveMengerTwist(authored);
+    if (!resolution.ok) throw new Error(resolution.reasons.join("; "));
+    return resolution.construction;
+  };
+  const de = buildMengerDE(
+    constructionOf({ levels: 4, rotation: [0, -0.9272952180016122, 0] }),
+  );
+
+  it("packs the construction's own box ball as bounding/visible radius — twist-independent, the isometry argument", () => {
+    const view = new DataView(packMengerGpuParams(de, { itemCount: 1 }));
+    expect(view.getFloat32(12, true)).toBe(Math.fround(Math.sqrt(3)));
+    expect(view.getFloat32(16, true)).toBe(Math.fround(Math.sqrt(3) * 2));
+    expect(view.getFloat32(24, true)).toBe(Math.fround(Math.sqrt(3)));
+  });
+
+  it("packs MENGER_STEP_SCALE at 20 and the LEVEL BUDGET at maxDepth, preview-clamped by run.maxDepth", () => {
+    const def = new DataView(packMengerGpuParams(de, { itemCount: 1 }));
+    expect(def.getFloat32(20, true)).toBe(Math.fround(MENGER_STEP_SCALE));
+    expect(def.getUint32(52, true)).toBe(4);
+    const clamped = new DataView(
+      packMengerGpuParams(de, { itemCount: 1, maxDepth: 2 }),
+    );
+    expect(clamped.getUint32(52, true)).toBe(2);
+  });
+
+  it("packs the twist rows in the escape interleave at 208..255 and the (levels, flag, 0, 0) word at 256", () => {
+    const view = new DataView(packMengerGpuParams(de, { itemCount: 1 }));
+    const m = de.twistM;
+    expect(view.getFloat32(208, true)).toBe(Math.fround(m[0]));
+    expect(view.getFloat32(212, true)).toBe(Math.fround(m[1]));
+    expect(view.getFloat32(216, true)).toBe(Math.fround(m[2]));
+    // The twistB lanes: b = R·off (offset 0 here → zero lanes).
+    expect(view.getFloat32(220, true)).toBe(0);
+    expect(view.getFloat32(236, true)).toBe(0);
+    expect(view.getFloat32(252, true)).toBe(0);
+    expect(view.getFloat32(256, true)).toBe(Math.fround(4));
+    expect(view.getFloat32(260, true)).toBe(1);
+    expect(view.getFloat32(264, true)).toBe(0);
+    expect(view.getFloat32(268, true)).toBe(0);
+    // The 272..287 padF slot stays zero — the shared plane block's parity.
+    expect(view.getFloat32(272, true)).toBe(0);
+  });
+
+  it("flags a trivial twist 0 — the classic sponge skips the identity mat-vec value-exactly", () => {
+    const classic = buildMengerDE(
+      constructionOf({ levels: 4, rotation: [0, 0, 0] }),
+    );
+    const view = new DataView(packMengerGpuParams(classic, { itemCount: 1 }));
+    expect(view.getFloat32(260, true)).toBe(0);
+    // The rows still pack the identity — the construction, always live.
+    expect(view.getFloat32(208, true)).toBe(1);
+    expect(view.getFloat32(228, true)).toBe(1);
+    expect(view.getFloat32(248, true)).toBe(1);
+  });
+
+  it("packs the ground plane at the frozen 288 and refuses a shape trap and tiling", () => {
+    const gp: SurfaceGpuGroundPlane = {
+      y: -1.5,
+      fadeStart: 2,
+      fadeEnd: 6,
+      ballRadius: 2,
+      ballCenter: [0, 0, 0],
+      albedo: [0.5, 0.5, 0.5],
+    };
+    const buf = packMengerGpuParams(de, { itemCount: 1 }, gp);
+    expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS_PLANE_BYTES);
+    const plain = new Uint8Array(packMengerGpuParams(de, { itemCount: 1 }));
+    const withPlane = new Uint8Array(buf);
+    let identical = true;
+    for (let i = 0; i < plain.length; i++) {
+      if (plain[i] !== withPlane[i]) {
+        identical = false;
+        break;
+      }
+    }
+    expect(identical).toBe(true);
+    expect(() =>
+      packMengerGpuParams(de, { itemCount: 1 }, null, {
+        geometry: false,
+        geometryLevelMin: 0,
+        geometryLevelMax: 0,
+        inverseNorm: 1,
+        normalized: true,
+        enabled: true,
+        band: [0, 1],
+        mode: "color",
+        shape: { kind: "sphere", radius: 1 },
+        pose: [0, 0, 0],
+      } as never),
+    ).toThrow(/shape trap/);
+    expect(() =>
+      packMengerGpuParams(de, { itemCount: 1 }, null, null, {
+        kind: "unknown",
+      } as never),
+    ).toThrow(/tiling/);
+  });
+
+  it("throws on a nonzero footprint — the carve chain is bounded work", () => {
+    expect(() =>
+      packMengerGpuParams(de, { itemCount: 1, footprint: 0.5 }),
+    ).toThrow(/footprint/);
+  });
+});
+
+describe("packMenger4GpuParams", () => {
+  const constructionOf = (
+    authored: MengerTwistAuthored,
+  ): MengerTwistConstruction => {
+    const resolution = resolveMengerTwist(authored);
+    if (!resolution.ok) throw new Error(resolution.reasons.join("; "));
+    return resolution.construction;
+  };
+  const de = buildMengerDE4(
+    constructionOf({
+      levels: 4,
+      rotation: [0, -0.9272952180016122, 0],
+      w: { rotation: { xw: 0.3 } },
+    }),
+  );
+  const view4: SurfaceGpu4View = {
+    rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    w0: 0,
+    sliceHalfW: 0,
+  };
+
+  it("packs the box ball radius 2 as bounding/visible radius and the slice-adjusted march gate", () => {
+    const view = new DataView(
+      packMenger4GpuParams(de, view4, { itemCount: 1 }),
+    );
+    expect(view.getFloat32(12, true)).toBe(Math.fround(2));
+    expect(view.getFloat32(16, true)).toBe(Math.fround(4));
+    expect(view.getFloat32(24, true)).toBe(Math.fround(2));
+  });
+
+  it("packs the twist's SO(4) rows at 480..543, the offset at 544..559, and the (levels, flag, 0, 0) word at 464", () => {
+    const view = new DataView(
+      packMenger4GpuParams(de, view4, { itemCount: 1 }),
+    );
+    const m = de.twistM;
+    for (let i = 0; i < 4; i++) {
+      expect(view.getFloat32(480 + i * 16, true)).toBe(Math.fround(m[i * 4]));
+      expect(view.getFloat32(484 + i * 16, true)).toBe(
+        Math.fround(m[i * 4 + 1]),
+      );
+      expect(view.getFloat32(488 + i * 16, true)).toBe(
+        Math.fround(m[i * 4 + 2]),
+      );
+      expect(view.getFloat32(492 + i * 16, true)).toBe(
+        Math.fround(m[i * 4 + 3]),
+      );
+    }
+    expect(view.getFloat32(544, true)).toBe(0);
+    expect(view.getFloat32(560, true)).toBe(0);
+    expect(view.getFloat32(464, true)).toBe(Math.fround(4));
+    expect(view.getFloat32(468, true)).toBe(1);
+    // Sized to the lens4 block, so the shared plane block keeps 576.
+    expect(SURFACE_GPU_PARAMS4_ESCAPE_BYTES).toBe(576);
+  });
+
+  it("throws on a nonzero sliceHalfW — the carve estimator has no segment cover", () => {
+    expect(() =>
+      packMenger4GpuParams(de, { ...view4, sliceHalfW: 0.1 }, { itemCount: 1 }),
+    ).toThrow(/slab/);
+  });
+
+  it("packs the ground plane at the frozen 576", () => {
+    const gp: SurfaceGpuGroundPlane = {
+      y: -2.5,
+      fadeStart: 2,
+      fadeEnd: 6,
+      ballRadius: 3,
+      ballCenter: [0, 0, 0],
+      albedo: [0.5, 0.5, 0.5],
+    };
+    const buf = packMenger4GpuParams(de, view4, { itemCount: 1 }, gp);
+    expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS4_PLANE_BYTES);
   });
 });

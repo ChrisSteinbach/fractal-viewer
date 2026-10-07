@@ -7,9 +7,14 @@
  * the corrected live material B-lane/source comments in the resolved GLSL,
  * the zero-tap-safe AO identity for provably AO-independent authored
  * finishes, the second fragment output carrying the
- * background-recomposition coverage/fog/beta sidecar, and the SURFACE_BULB
+ * background-recomposition coverage/fog/beta sidecar, the SURFACE_BULB
  * arm's chain-twist pair (uBulbTwistM/uBulbTwistC plus the step-affine
- * branch — the six bulb rows only, the uniforms living inside that arm).
+ * branch — the six bulb rows only, the uniforms living inside that arm),
+ * and the SURFACE_MENGER arm's insertion into the alternatives chain (the
+ * template's closing comment names it; the descent-class rows' RESOLVED
+ * hashes move, their EMITTED hashes do not — the arm resolves away to the
+ * identical token stream, and the stripping variants never carried the
+ * comment).
  * This remains the pattern-OFF baseline the byte-identity tests compare
  * pattern-off emissions against.
  *
@@ -24,51 +29,51 @@ export const PRE_PATTERN_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "3D affine finish0": {
-    resolved: "6da3fdf416df1520",
+    resolved: "f2bbdcc679b87d93",
     emitted: "91d566a8234dee47",
   },
   "3D affine finish1": {
-    resolved: "85b08d82f306f553",
+    resolved: "cc132629850c9c6b",
     emitted: "0678ded3a8ff419b",
   },
   "3D lens finish0": {
-    resolved: "2fd3ebc9b4c036ab",
+    resolved: "31bd45fe2ab1b0e2",
     emitted: "b8b80b22b2b010aa",
   },
   "3D lens finish1": {
-    resolved: "70b96eb5be15d05b",
+    resolved: "c4e59eb6dd09c86e",
     emitted: "d754e88870d23a6f",
   },
   "3D balloon finish0": {
-    resolved: "b6d4a1795457bba7",
+    resolved: "b3d7c243da2fb089",
     emitted: "8a3ca649ed45d7c2",
   },
   "3D balloon finish1": {
-    resolved: "0a9d192b1b6d07a9",
+    resolved: "9d59d6f3e149f3fe",
     emitted: "9fe2b3cadb57aa32",
   },
   "3D plane finish0": {
-    resolved: "52ba6ba840c759c6",
+    resolved: "049c163ec1f6039f",
     emitted: "4ede30dc81198664",
   },
   "3D plane finish1": {
-    resolved: "da2a6ef096fdcf3f",
+    resolved: "7cd47ab406b02572",
     emitted: "71aa043bc0cf3f17",
   },
   "3D lens+balloon finish0": {
-    resolved: "9ef08e144a326dc6",
+    resolved: "16daa7f3813870ae",
     emitted: "e6302065ea497beb",
   },
   "3D lens+balloon finish1": {
-    resolved: "4d64ecd2075ebd09",
+    resolved: "2dc188fcec04d2b0",
     emitted: "fd44f5a17c42aeb3",
   },
   "3D lens+plane finish0": {
-    resolved: "9a3c28197bcfb07b",
+    resolved: "8a7086106d042de8",
     emitted: "1c65d10713495ab7",
   },
   "3D lens+plane finish1": {
-    resolved: "8b033a6f7e2bc528",
+    resolved: "2c860f71626793f2",
     emitted: "9dfff5fed89b0f1d",
   },
   "3D escape finish0": {

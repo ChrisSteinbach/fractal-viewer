@@ -40,6 +40,10 @@ import {
 } from "./bundled-shapes";
 import { isLatticeTilingSpec, TILING_GROUPS } from "../fractal/tiling";
 import { FINITE_SOLID_GENERAL_MAX_LEVEL } from "../fractal/finite-solid";
+import {
+  MENGER_TWIST_DEFAULTS,
+  MENGER_TWIST_MAX_LEVELS,
+} from "../fractal/menger-twist";
 import { SPHERE_INVERSION_SEED_KINDS } from "../fractal/sphere-inversion";
 import {
   defaultSphereInversionBlock,
@@ -126,6 +130,8 @@ import {
   setSurfacePaletteId,
   setFiniteSolid,
   setSphereInversion,
+  setMengerTwist,
+  setMengerTwistField,
   setTiling,
   SOLID_ITERATION_DETENTS,
   SURFACE_ANTIALIAS_DETENTS,
@@ -419,6 +425,13 @@ export interface ControlEffects {
    * the block's authored JSON differs from the one it entered with.
    */
   syncSphereInversion(): void;
+  /**
+   * Settle a Menger-carve block edit everywhere the block reaches outside
+   * the panel: the transform sections' dormancy notes, the 4D rows'
+   * visibility, the Flame/Solid refusal, and a live Surface session
+   * (which restarts — the block is fixed at session create).
+   */
+  syncMengerTwist(): void;
 }
 
 /**
@@ -1108,6 +1121,22 @@ function numericControl(
 function chainTwistEffect(_s: AppState, fx: ControlEffects): void {
   fx.refreshSurfaceEligibility();
   fx.restartSurfaceRender();
+}
+
+/**
+ * The Menger-carve block's edit behavior: document state read at every
+ * render's entry. Points regenerates (following Auto-update — the block
+ * replaces the cloud's subject and decides the scene's dimension); Surface
+ * restarts, its construction fixed at create; Flame/Solid refuse outright,
+ * so only their refusal note moves — that is refreshUi's job through
+ * syncMengerTwist, which this effect calls for the block-authoring edits
+ * (the checkbox, one slider per field).
+ */
+function mengerTwistEffect(_s: AppState, fx: ControlEffects): void {
+  fx.regenerateIfAutoUpdate();
+  fx.refreshSurfaceEligibility();
+  fx.restartSurfaceRender();
+  fx.syncMengerTwist();
 }
 
 /** The twist readout: radians to two decimals (the numeric companion
@@ -3238,6 +3267,256 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     read: (s) => String(s.chainTwist?.w?.offset ?? 0),
     apply: (s, raw) => setChainTwistField(s, "w.offset", Number(raw)),
     effect: chainTwistEffect,
+  },
+  // ——— Menger carve: the second subject block — the sphereInversion
+  // checkbox's shape. Checked authors the DEFAULT block ({} — the family
+  // resolver's reference construction: 4 levels, the ~53° Y rotation),
+  // unchecked clears it; the sliders merge one field each through
+  // setMengerTwistField, whose absent-means-DEFAULT fills keep a displayed
+  // family default stable while one axis moves. NO collapse-on-trivial
+  // (the chain twist's rule): a trivial twist is the classic sponge — a
+  // real object — so presence/absence is the checkbox's alone. ———
+  {
+    kind: "checkbox",
+    id: "mengerTwistEnabledCheckbox",
+    read: (s) => s.mengerTwist !== undefined,
+    apply: (s, checked) =>
+      checked
+        ? s.mengerTwist
+          ? s
+          : setMengerTwist(s, {})
+        : s.mengerTwist
+          ? setMengerTwist(s, null)
+          : s,
+    effect: mengerTwistEffect,
+  },
+  {
+    kind: "range",
+    id: "mengerLevelsSlider",
+    label: {
+      id: "mengerLevelsLabel",
+      text: (s) =>
+        String(s.mengerTwist?.levels ?? MENGER_TWIST_DEFAULTS.levels),
+    },
+    numeric: numericControl(
+      "Menger carve levels",
+      1,
+      MENGER_TWIST_MAX_LEVELS,
+      1,
+      (s) => s.mengerTwist?.levels ?? MENGER_TWIST_DEFAULTS.levels,
+      (s, value) => setMengerTwistField(s, "levels", Math.round(value)),
+      { enforceStep: true },
+    ),
+    read: (s) => String(s.mengerTwist?.levels ?? MENGER_TWIST_DEFAULTS.levels),
+    apply: (s, raw) =>
+      setMengerTwistField(s, "levels", Math.round(Number(raw))),
+    effect: mengerTwistEffect,
+  },
+  {
+    kind: "range",
+    id: "mengerTwistRotationXSlider",
+    label: {
+      id: "mengerTwistRotationXLabel",
+      text: (s) =>
+        twistAngleLabel(
+          s.mengerTwist?.rotation?.[0] ?? MENGER_TWIST_DEFAULTS.rotation[0],
+        ),
+    },
+    numeric: numericControl(
+      "Menger carve rotation X",
+      -Math.PI,
+      Math.PI,
+      0.01,
+      (s) => s.mengerTwist?.rotation?.[0] ?? MENGER_TWIST_DEFAULTS.rotation[0],
+      (s, value) => setMengerTwistField(s, "rotation.x", value),
+    ),
+    read: (s) =>
+      String(s.mengerTwist?.rotation?.[0] ?? MENGER_TWIST_DEFAULTS.rotation[0]),
+    apply: (s, raw) => setMengerTwistField(s, "rotation.x", Number(raw)),
+    effect: mengerTwistEffect,
+  },
+  {
+    kind: "range",
+    id: "mengerTwistRotationYSlider",
+    label: {
+      id: "mengerTwistRotationYLabel",
+      text: (s) =>
+        twistAngleLabel(
+          s.mengerTwist?.rotation?.[1] ?? MENGER_TWIST_DEFAULTS.rotation[1],
+        ),
+    },
+    numeric: numericControl(
+      "Menger carve rotation Y",
+      -Math.PI,
+      Math.PI,
+      0.01,
+      (s) => s.mengerTwist?.rotation?.[1] ?? MENGER_TWIST_DEFAULTS.rotation[1],
+      (s, value) => setMengerTwistField(s, "rotation.y", value),
+    ),
+    read: (s) =>
+      String(s.mengerTwist?.rotation?.[1] ?? MENGER_TWIST_DEFAULTS.rotation[1]),
+    apply: (s, raw) => setMengerTwistField(s, "rotation.y", Number(raw)),
+    effect: mengerTwistEffect,
+  },
+  {
+    kind: "range",
+    id: "mengerTwistRotationZSlider",
+    label: {
+      id: "mengerTwistRotationZLabel",
+      text: (s) =>
+        twistAngleLabel(
+          s.mengerTwist?.rotation?.[2] ?? MENGER_TWIST_DEFAULTS.rotation[2],
+        ),
+    },
+    numeric: numericControl(
+      "Menger carve rotation Z",
+      -Math.PI,
+      Math.PI,
+      0.01,
+      (s) => s.mengerTwist?.rotation?.[2] ?? MENGER_TWIST_DEFAULTS.rotation[2],
+      (s, value) => setMengerTwistField(s, "rotation.z", value),
+    ),
+    read: (s) =>
+      String(s.mengerTwist?.rotation?.[2] ?? MENGER_TWIST_DEFAULTS.rotation[2]),
+    apply: (s, raw) => setMengerTwistField(s, "rotation.z", Number(raw)),
+    effect: mengerTwistEffect,
+  },
+  {
+    kind: "range",
+    id: "mengerTwistOffsetXSlider",
+    label: {
+      id: "mengerTwistOffsetXLabel",
+      text: (s) => twistAngleLabel(s.mengerTwist?.offset?.[0] ?? 0),
+    },
+    numeric: numericControl(
+      "Menger carve offset X",
+      -2,
+      2,
+      0.01,
+      (s) => s.mengerTwist?.offset?.[0] ?? 0,
+      (s, value) => setMengerTwistField(s, "offset.x", value),
+    ),
+    read: (s) => String(s.mengerTwist?.offset?.[0] ?? 0),
+    apply: (s, raw) => setMengerTwistField(s, "offset.x", Number(raw)),
+    effect: mengerTwistEffect,
+  },
+  {
+    kind: "range",
+    id: "mengerTwistOffsetYSlider",
+    label: {
+      id: "mengerTwistOffsetYLabel",
+      text: (s) => twistAngleLabel(s.mengerTwist?.offset?.[1] ?? 0),
+    },
+    numeric: numericControl(
+      "Menger carve offset Y",
+      -2,
+      2,
+      0.01,
+      (s) => s.mengerTwist?.offset?.[1] ?? 0,
+      (s, value) => setMengerTwistField(s, "offset.y", value),
+    ),
+    read: (s) => String(s.mengerTwist?.offset?.[1] ?? 0),
+    apply: (s, raw) => setMengerTwistField(s, "offset.y", Number(raw)),
+    effect: mengerTwistEffect,
+  },
+  {
+    kind: "range",
+    id: "mengerTwistOffsetZSlider",
+    label: {
+      id: "mengerTwistOffsetZLabel",
+      text: (s) => twistAngleLabel(s.mengerTwist?.offset?.[2] ?? 0),
+    },
+    numeric: numericControl(
+      "Menger carve offset Z",
+      -2,
+      2,
+      0.01,
+      (s) => s.mengerTwist?.offset?.[2] ?? 0,
+      (s, value) => setMengerTwistField(s, "offset.z", value),
+    ),
+    read: (s) => String(s.mengerTwist?.offset?.[2] ?? 0),
+    apply: (s, raw) => setMengerTwistField(s, "offset.z", Number(raw)),
+    effect: mengerTwistEffect,
+  },
+  {
+    // The carve's SO(4) rows: the w-mixing planes the 4D hyper-Menger's
+    // estimator applies, plus the fourth offset component. A non-trivial
+    // value here makes the SET 4D (mengerTwistAuthoredDimension) — the
+    // rows show only when that is reachable.
+    kind: "range",
+    id: "mengerTwistXWSlider",
+    label: {
+      id: "mengerTwistXWLabel",
+      text: (s) => twistAngleLabel(s.mengerTwist?.w?.rotation?.xw ?? 0),
+    },
+    numeric: numericControl(
+      "Menger carve XW turn",
+      -Math.PI,
+      Math.PI,
+      0.01,
+      (s) => s.mengerTwist?.w?.rotation?.xw ?? 0,
+      (s, value) => setMengerTwistField(s, "w.rotation.xw", value),
+    ),
+    read: (s) => String(s.mengerTwist?.w?.rotation?.xw ?? 0),
+    apply: (s, raw) => setMengerTwistField(s, "w.rotation.xw", Number(raw)),
+    effect: mengerTwistEffect,
+  },
+  {
+    kind: "range",
+    id: "mengerTwistYWSlider",
+    label: {
+      id: "mengerTwistYWLabel",
+      text: (s) => twistAngleLabel(s.mengerTwist?.w?.rotation?.yw ?? 0),
+    },
+    numeric: numericControl(
+      "Menger carve YW turn",
+      -Math.PI,
+      Math.PI,
+      0.01,
+      (s) => s.mengerTwist?.w?.rotation?.yw ?? 0,
+      (s, value) => setMengerTwistField(s, "w.rotation.yw", value),
+    ),
+    read: (s) => String(s.mengerTwist?.w?.rotation?.yw ?? 0),
+    apply: (s, raw) => setMengerTwistField(s, "w.rotation.yw", Number(raw)),
+    effect: mengerTwistEffect,
+  },
+  {
+    kind: "range",
+    id: "mengerTwistZWSlider",
+    label: {
+      id: "mengerTwistZWLabel",
+      text: (s) => twistAngleLabel(s.mengerTwist?.w?.rotation?.zw ?? 0),
+    },
+    numeric: numericControl(
+      "Menger carve ZW turn",
+      -Math.PI,
+      Math.PI,
+      0.01,
+      (s) => s.mengerTwist?.w?.rotation?.zw ?? 0,
+      (s, value) => setMengerTwistField(s, "w.rotation.zw", value),
+    ),
+    read: (s) => String(s.mengerTwist?.w?.rotation?.zw ?? 0),
+    apply: (s, raw) => setMengerTwistField(s, "w.rotation.zw", Number(raw)),
+    effect: mengerTwistEffect,
+  },
+  {
+    kind: "range",
+    id: "mengerTwistWOffsetSlider",
+    label: {
+      id: "mengerTwistWOffsetLabel",
+      text: (s) => twistAngleLabel(s.mengerTwist?.w?.offset ?? 0),
+    },
+    numeric: numericControl(
+      "Menger carve W offset",
+      -2,
+      2,
+      0.01,
+      (s) => s.mengerTwist?.w?.offset ?? 0,
+      (s, value) => setMengerTwistField(s, "w.offset", value),
+    ),
+    read: (s) => String(s.mengerTwist?.w?.offset ?? 0),
+    apply: (s, raw) => setMengerTwistField(s, "w.offset", Number(raw)),
+    effect: mengerTwistEffect,
   },
 ];
 

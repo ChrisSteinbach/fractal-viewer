@@ -23,6 +23,8 @@ import {
   resolveFiniteSolid,
 } from "../fractal/finite-solid";
 import type { FiniteSolidAuthored } from "../fractal/finite-solid";
+import { resolveMengerTwist } from "../fractal/menger-twist";
+import type { MengerTwistAuthored } from "../fractal/menger-twist";
 import { analyzeEscapeSystem, systemHasPowerLink } from "../fractal/escape-de";
 import { analyzeEscapeSystem4 } from "../fractal/escape-de-4d";
 import {
@@ -93,7 +95,9 @@ export type SurfaceRouteKind =
   | "sphereInversion"
   | "sphereInversion4"
   | "finiteSolid"
-  | "finiteSolid4";
+  | "finiteSolid4"
+  | "menger"
+  | "menger4";
 
 /** A narrowly-scoped action the mode gate can offer to resolve the refusal
  * it is currently disclosing. This is structured analyzer output, never
@@ -136,6 +140,7 @@ export interface SurfaceEligibilityDocument {
   sphereInversion?: SphereInversionAuthored | null;
   finiteSolid?: FiniteSolidAuthored | null;
   chainTwist?: TwistAuthored | null;
+  mengerTwist?: MengerTwistAuthored | null;
 }
 
 /**
@@ -188,6 +193,7 @@ function deriveSphereInversionEligibility(
   shapeTrap: ShapeTrap | null,
   tiling: TilingSpec | null,
   opts: SurfaceEligibilityOptions,
+  mengerTwist: MengerTwistAuthored | null = null,
 ): SurfaceEligibilityResult {
   const resolution = resolveSphereInversion(block);
   if (!resolution.ok) {
@@ -231,6 +237,12 @@ function deriveSphereInversionEligibility(
   disclosures.push(
     ...sphereInversionDormantDisclosures(transforms, finalTransform, symmetry),
   );
+  // A co-present Menger-carve block is the other subject block — dormant
+  // here (the derivation's subject order puts the inversion first), never
+  // silently ignored.
+  if (mengerTwist) {
+    disclosures.push(MENGER_DORMANT_ON_SPHERE_INVERSION);
+  }
   if (dim === 4) disclosures.push(SPHERE_INVERSION_SLAB_REFUSAL);
   // Authored glass the routing will not admit renders OPAQUE; say so here,
   // in the admission's own words (the panel's note beside the Material row
@@ -349,6 +361,26 @@ export const SPHERE_INVERSION_DORMANT_FINISHES =
 export const SPHERE_INVERSION_SLAB_REFUSAL =
   "slice thickness is held at zero: a thick slice has no certified estimator for sphere-inversion scenes";
 
+/** The Menger-carve route's shared wordings — the gate's refusals and the
+ * dormant clauses the panel repeats beside its section (one definition, so
+ * the wording cannot drift between them). */
+export const MENGER_REFUSAL_TILING =
+  "Space tiling is not available with a Menger carve (no tiling wrapper certifies a carve estimator yet)";
+export const MENGER_REFUSAL_TRAP =
+  "a shape trap is not available with a Menger carve (the carve has no trap accumulator)";
+export const MENGER_DORMANT_KALEIDOSCOPE =
+  "the kaleidoscope is not read (the carve is unsymmetrised)";
+export const MENGER_DORMANT_LENS = "the final transform lens is not read";
+export const MENGER_DORMANT_FINISHES = "per-transform finishes are not read";
+export const MENGER_DORMANT_CHAIN_TWIST =
+  "the chain twist composes with an escape-time chain, which this document is not — the carve applies its own twist";
+export const MENGER_DORMANT_ON_SPHERE_INVERSION =
+  "the co-present Menger-carve block is dormant here — the sphere inversion is the subject";
+export const MENGER_BALLOON_REFUSAL =
+  "Balloon is not available with a Menger carve: no balloon certificate covers the carve estimator yet";
+export const MENGER_SLAB_REFUSAL =
+  "slice thickness is held at zero: a thick slice has no certified cover for the carve estimator";
+
 /**
  * The FINITE-SOLID ROUTE. Unlike a sphere-inversion block, the finite-solid
  * block does NOT replace the transform system — it reroutes it. A SHAPED
@@ -378,6 +410,107 @@ export const SPHERE_INVERSION_SLAB_REFUSAL =
  * family over), so without compute the route is refused, never handed to a
  * WebGL tracer that would draw the attractor.
  */
+/**
+ * The MENGER-CARVE ROUTE — the second subject-replacing block
+ * (`menger-twist.ts`'s authored form), checked after the sphere-inversion
+ * branch (the derivation's shipped subject order). The block REPLACES the
+ * transform system as the subject: the maps render nothing under it (a
+ * flat placeholder), the route always names the different object (the
+ * degraded channel's rule), and the block's own `w` extension decides the
+ * dimension — `menger` (3D) or `menger4` (the 4D hyper-Menger), with the
+ * scene's own flatness irrelevant to the routing.
+ *
+ * COMBINATION POLICY (the sphere-inversion gate's shape): refused
+ * (document) — Space tiling and a shape trap, no wrapper/accumulator
+ * certificate covers the carve yet; disclosed DORMANT — the kaleidoscope,
+ * the final lens, per-transform finishes and a live chain twist (the
+ * carve applies its OWN twist, the block's); the resolver's refusals
+ * surface verbatim, refused included, since the block is the subject and
+ * nothing renders beside it. COMPOSES — the ground plane. SESSION
+ * refusals (not this gate's): the balloon and the 4D slab
+ * ({@link MENGER_BALLOON_REFUSAL} / {@link MENGER_SLAB_REFUSAL} — the
+ * carve estimator has neither certificate yet). ENGINE: the 3D route
+ * PREFERS compute (core:"menger") and falls back to the tiny
+ * SURFACE_MENGER fragment arm; the 4D route is COMPUTE-ONLY (no 4D
+ * fragment arm exists — the escape4 verdict), refused without compute.
+ */
+function deriveMengerEligibility(
+  block: MengerTwistAuthored,
+  transforms: Transform[],
+  finalTransform: Transform | null,
+  symmetry: SymmetryParams,
+  tiling: TilingSpec | null,
+  shapeTrap: ShapeTrap | null,
+  opts: SurfaceEligibilityOptions,
+  chainTwist: TwistAuthored | null,
+): SurfaceEligibilityResult {
+  const resolution = resolveMengerTwist(block);
+  if (!resolution.ok) {
+    return {
+      status: "ineligible",
+      note: `Menger carve refused: ${resolution.reasons.join("; ")}`,
+      kind: null,
+    };
+  }
+  const refusals: string[] = [];
+  if (tiling) {
+    refusals.push(MENGER_REFUSAL_TILING);
+  }
+  if (shapeTrap) {
+    refusals.push(MENGER_REFUSAL_TRAP);
+  }
+  if (refusals.length > 0) {
+    return {
+      status: "ineligible",
+      note: `Menger carve refused: ${refusals.join("; ")}`,
+      kind: null,
+    };
+  }
+  // A refused chain twist is refused outright — the document carries a
+  // block the resolver cannot read, whatever renders.
+  const twist = chainTwistGate(chainTwist);
+  if (twist.verdict === "refused") {
+    return {
+      status: "ineligible",
+      note: `chain twist refused: ${twist.reasons.join("; ")}`,
+      kind: null,
+    };
+  }
+  const dim = resolution.construction.dim;
+  // No 4D fragment arm exists (the escape4 verdict one family over), so
+  // without compute the 4D route refuses rather than handing the session
+  // to a tracer that cannot draw it.
+  if (dim === 4 && !opts.computeAvailable) {
+    return {
+      status: "ineligible",
+      note: "the 4D hyper-Menger renders on WebGPU compute, which is unavailable here",
+      kind: null,
+    };
+  }
+  const dormant: string[] = [];
+  if (symmetry.order > 1) {
+    dormant.push(MENGER_DORMANT_KALEIDOSCOPE);
+  }
+  if (finalTransform) {
+    dormant.push(MENGER_DORMANT_LENS);
+  }
+  if (transforms.some((t) => t.finish !== undefined)) {
+    dormant.push(MENGER_DORMANT_FINISHES);
+  }
+  if (twist.verdict === "live") {
+    dormant.push(MENGER_DORMANT_CHAIN_TWIST);
+  }
+  const baseNote =
+    dim === 4
+      ? "Menger carve render: the block's w extension lifts the sponge to the 4D hyper-Menger, whose w-slice Surface marches through its own carve estimator rather than an IFS attractor."
+      : "Menger carve render: Surface marches the twisted mod-Menger sponge through its own carve estimator rather than an IFS attractor.";
+  return {
+    status: "degraded",
+    note: dormant.length > 0 ? `${baseNote} ${dormant.join("; ")}.` : baseNote,
+    kind: dim === 4 ? "menger4" : "menger",
+  };
+}
+
 function deriveFiniteSolidEligibility(
   block: FiniteSolidAuthored,
   transforms: Transform[],
@@ -941,9 +1074,12 @@ export function deriveSurfaceEligibility(
   sphereInversion: SphereInversionAuthored | null = null,
   finiteSolid: FiniteSolidAuthored | null = null,
   chainTwist: TwistAuthored | null = null,
+  mengerTwist: MengerTwistAuthored | null = null,
 ): SurfaceEligibilityResult {
   // A sphere-inversion block replaces the transform system as the subject:
-  // it takes precedence over, and is disjoint from, every gate below.
+  // it takes precedence over, and is disjoint from, every gate below. A
+  // co-present Menger-carve block — the other subject block — rides along
+  // disclosed but dormant (the panel-ia contract: never silently ignored).
   if (sphereInversion) {
     return deriveSphereInversionEligibility(
       sphereInversion,
@@ -953,6 +1089,23 @@ export function deriveSurfaceEligibility(
       shapeTrap,
       tiling,
       opts,
+      mengerTwist,
+    );
+  }
+  // A Menger-carve block is the second subject-replacing block: it takes
+  // precedence over every gate below (the transforms render nothing under
+  // it), sitting after the sphere-inversion branch — the derivation's
+  // shipped subject order, not a new policy.
+  if (mengerTwist) {
+    return deriveMengerEligibility(
+      mengerTwist,
+      transforms,
+      finalTransform,
+      symmetry,
+      tiling,
+      shapeTrap,
+      opts,
+      chainTwist,
     );
   }
   // A finite-solid block reroutes the SAME subject (the transform system,
@@ -1542,5 +1695,11 @@ export function deriveSurfaceDocumentEligibility(
     document.condensationDepthBand,
     document.sphereInversion ?? null,
     document.finiteSolid ?? null,
+    // chainTwist is deliberately NOT passed (the derivation's escape-lift
+    // clause would change evolution admission — its own decision to make);
+    // mengerTwist is: the subject-block precedence is a document-level
+    // routing fact, the same one sphereInversion already rides.
+    null,
+    document.mengerTwist ?? null,
   );
 }

@@ -77,6 +77,7 @@ import {
   isForwardTarget,
   isSphereInversionTarget,
   isFiniteSolidTarget,
+  isMengerTarget,
   setSurfaceComputeSchedulePins,
   setSurfaceComputeTrace,
   SurfaceComputeRenderer,
@@ -133,6 +134,7 @@ import {
 import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
 import type { SurfaceNativeCalibration } from "../fractal/surface-pattern";
 import {
+  MENGER_BALLOON_REFUSAL,
   chainTwistGate,
   deriveSurfaceDocumentEligibility,
   deriveSurfaceEligibility,
@@ -142,6 +144,9 @@ import {
   surfaceEligibilityHasRoute,
   type SurfaceEligibilityResult,
 } from "./surface-eligibility";
+import { resolveMengerTwist } from "../fractal/menger-twist";
+import { buildMengerDE } from "../fractal/menger-de";
+import { buildMengerDE4 } from "../fractal/menger-de-4d";
 import {
   classifyTransformEdit,
   planTransformEdit,
@@ -197,6 +202,7 @@ import {
   PRESET_SCHEDULES,
   PRESET_SPHERE_INVERSIONS,
   PRESET_FINITE_SOLIDS,
+  PRESET_MENGER_TWISTS,
   PRESET_SYMMETRIES,
   PRESET_SURFACE_PALETTES,
   PRESET_SURFACE_ROOMS,
@@ -420,6 +426,7 @@ import {
   setSymmetryTwist,
   setSphereInversion,
   setFiniteSolid,
+  setMengerTwist,
   setTiling,
   setTransforms,
   setTransformEmitter,
@@ -3069,6 +3076,7 @@ async function main(): Promise<void> {
         finalTransform,
         symmetry,
         state.sphereInversion,
+        state.mengerTwist,
       ),
       colorMode: state.colorMode,
       colorGamma: state.colorGamma,
@@ -5368,6 +5376,13 @@ async function main(): Promise<void> {
     } else if (isForwardTarget(target)) {
       slotColors = [escapeSlotColor()];
       slotTraps = [0];
+    } else if (isMengerTarget(target)) {
+      // The carve family: one slot — the hit-info pins firstChoice 0 (the
+      // carve chooses no map), the forward families' exact shape. The
+      // winning-level trap feeds the palette coordinate like the escape
+      // fraction does.
+      slotColors = [escapeSlotColor()];
+      slotTraps = [0];
     } else {
       slotColors = surfaceSlotColors(
         state.transforms,
@@ -6410,6 +6425,7 @@ async function main(): Promise<void> {
         state.sphereInversion ?? null,
         state.finiteSolid ?? null,
         state.chainTwist ?? null,
+        state.mengerTwist ?? null,
       );
       if (sessionEligibility.status === "ineligible") {
         ui.flashToast(
@@ -6690,6 +6706,123 @@ async function main(): Promise<void> {
           // instead opened the oct6 pearls at a quarter of the pane.
           surfaceGrid.cancel();
         } else if (
+          sessionEligibility.kind === "menger" ||
+          sessionEligibility.kind === "menger4"
+        ) {
+          // A MENGER-CARVE block: the scene's subject, replacing the
+          // transform system (whose kaleidoscope, final lens, finishes and
+          // any chain twist stay dormant — the gate's note says so). The
+          // door above has already refused a refused block, tiling and a
+          // shape trap, so this arm reads the gate's kind rather than
+          // re-classifying. Balloon is the session half of the refusal; the
+          // 4D slab is held at zero (the packer throws on any other value).
+          const balloonRefusal = state.balloonEcho
+            ? MENGER_BALLOON_REFUSAL
+            : null;
+          if (balloonRefusal) {
+            ui.flashToast(balloonRefusal);
+            queueMicrotask(() => surfaceSession.exit());
+            return {
+              post: () => {},
+              terminate: () => teardownSurfaceCompute(),
+            };
+          }
+          const mengerBlock = state.mengerTwist!;
+          const mengerResolution = resolveMengerTwist(mengerBlock);
+          if (!mengerResolution.ok) {
+            throw new Error(mengerResolution.reasons.join("; "));
+          }
+          const mengerConstruction = mengerResolution.construction;
+          const menger4D = mengerConstruction.dim === 4;
+          // CONSTRUCTION FIXED AT CREATE: the twist rows and levels pack
+          // from this DE once, and a block edit restarts the session (the
+          // panel's edit-timing contract). Built per dimension so the
+          // compute target's kind/DE pairing narrows.
+          const mengerDe3 = menger4D ? null : buildMengerDE(mengerConstruction);
+          const mengerDe4 = menger4D
+            ? buildMengerDE4(mengerConstruction)
+            : null;
+          const mengerDe = (mengerDe3 ?? mengerDe4)!;
+          surfaceSessionIs4D = menger4D;
+          // The transforms are dormant (the gate's note), so the session is
+          // classic: null — no finish/pattern/optics slot is derived from a
+          // system the render does not draw.
+          sessionMaterials = null;
+          ui.setSurfaceSessionKind("menger");
+          // No empty-set notice: the enclosing box contributes its own
+          // surface at every setting (menger-de.ts's NO MEMBERSHIP HOLE
+          // paragraph), so the family has no blank-frame signal to fire.
+          if (menger4D) {
+            // Thickness is held at zero (MENGER_SLAB_REFUSAL, disclosed on
+            // the row); the packer throws on any other value.
+            surface4SlabAvailable = false;
+            ui.setFourDSlabAvailable(false, "menger");
+          }
+          const mengerR = mengerDe.boundingRadius;
+          if (surfaceComputeAvailable()) {
+            computeTarget =
+              mengerDe3 !== null
+                ? {
+                    kind: "menger",
+                    de: mengerDe3,
+                    groundPlane: state.groundPlane,
+                  }
+                : {
+                    kind: "menger4",
+                    de: mengerDe4!,
+                    groundPlane: state.groundPlane,
+                  };
+            scene.enterSurfaceComputeMengerSession(
+              menger4D,
+              state.groundPlane,
+              mengerR,
+              mengerDe.maxDepth,
+            );
+            if (menger4D) {
+              scene.setSurface4View(fourDView.matrix(), liveSliceCenter(), 0);
+            }
+          } else if (menger4D) {
+            // Reachable only through mid-session compute loss: the gate
+            // refuses ENTRY without compute while no 4D fragment arm
+            // exists (the escape4 verdict one family over).
+            ui.flashToast(
+              "Surface render stopped: the 4D hyper-Menger needs WebGPU compute, which just became unavailable.",
+            );
+            queueMicrotask(() => surfaceSession.exit());
+          } else {
+            // ?surfacegl, no adapter or a device loss in 3D: the
+            // SURFACE_MENGER fragment arm, the WGSL core's GLSL twin.
+            surfaceWebglDetailToken = surfaceWebglDetail({
+              computeShaped: true,
+              supported: SurfaceComputeRenderer.supported(),
+              block: surfaceComputeBlock,
+            });
+            scene.setMengerSystem(
+              mengerDe3 ?? buildMengerDE(mengerConstruction),
+              escapeSlotColor(),
+            );
+          }
+          // The explorer camera was framed on the placeholder transforms'
+          // cloud — for this family the session frames the construction's
+          // own box ball instead (the forward arms' glide, whose cloud is
+          // escape-reset debris inside the solid for the same reason).
+          if (!preserveCamera) {
+            cameraTween.fitToBounds(
+              {
+                minX: -mengerR,
+                maxX: mengerR,
+                minY: -mengerR,
+                maxY: mengerR,
+                minZ: -mengerR,
+                maxZ: mengerR,
+                minR: 0,
+                maxR: mengerR,
+              },
+              { fov: scene.camera.fov, aspect: scene.camera.aspect },
+            );
+          }
+          surfaceGrid.cancel();
+        } else if (
           sessionEligibility.kind === "finiteSolid" ||
           sessionEligibility.kind === "finiteSolid4"
         ) {
@@ -6872,6 +7005,7 @@ async function main(): Promise<void> {
             state.finalTransform ?? null,
             state.symmetry,
             state.sphereInversion,
+            state.mengerTwist,
           ) ||
           // The chain twist's w extension makes the SET 4D even on a
           // flat document — the 4D chain's SO(4) rows are the only
@@ -8240,6 +8374,7 @@ async function main(): Promise<void> {
       state.sphereInversion ?? null,
       state.finiteSolid ?? null,
       state.chainTwist ?? null,
+      state.mengerTwist ?? null,
     );
   }
 
@@ -10846,6 +10981,7 @@ async function main(): Promise<void> {
     // authored JSON (syncSphereInversionSurfaceSession, a no-op when nothing
     // changed), and the transform editor's dormant-material notes.
     syncSphereInversion: () => refreshUi(),
+    syncMengerTwist: () => refreshUi(),
     applyBackground: applyBackgroundNow,
     trackAutoBackground,
     cancelBalloonSweep: () => {
@@ -11205,6 +11341,12 @@ async function main(): Promise<void> {
         // one, because a leftover block would reroute an unrelated system
         // (or refuse it outright).
         state = setFiniteSolid(state, PRESET_FINITE_SOLIDS[preset] ?? null);
+        // The Menger-carve block a preset IS (PRESET_MENGER_TWISTS) — the
+        // sphere-inversion table's absent-means-clear rule: the carve
+        // showcases install their block, and every other preset CLEARS
+        // one, because it names a transform-system subject a leftover
+        // block would replace.
+        state = setMengerTwist(state, PRESET_MENGER_TWISTS[preset]?.() ?? null);
         // The flame palette a preset was composed against
         // (PRESET_PALETTES) — set, never cleared: absent means "the user's
         // palette is fine", which is every preset that predates the table.
