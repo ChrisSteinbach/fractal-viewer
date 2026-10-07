@@ -3171,6 +3171,29 @@ export function packBulbGpuParams(
   view.setFloat32(252, de.t[2], true);
   view.setFloat32(256, de.sigmaMax, true);
   view.setFloat32(260, de.bailout, true);
+  // The CHAIN TWIST rides the frozen block's FINAL-TRANSFORM ballast
+  // (96..143) — dead for this core because the gate refuses a final
+  // transform — with the on-flag in bulbParams.z, a lane left zero when
+  // absent (bulb-de.ts's CHAIN TWIST wire paragraph; the flag-lane
+  // lesson's own rule). Absent, the lanes keep the identity/zero bytes
+  // they always packed and the flag stays 0: byte-identical.
+  if (de.twistStepM !== null && de.twistStepC !== null) {
+    writeVec3(view, 96, [de.twistStepM[0], de.twistStepM[1], de.twistStepM[2]]);
+    view.setFloat32(108, de.twistStepC[0], true);
+    writeVec3(view, 112, [
+      de.twistStepM[3],
+      de.twistStepM[4],
+      de.twistStepM[5],
+    ]);
+    view.setFloat32(124, de.twistStepC[1], true);
+    writeVec3(view, 128, [
+      de.twistStepM[6],
+      de.twistStepM[7],
+      de.twistStepM[8],
+    ]);
+    view.setFloat32(140, de.twistStepC[2], true);
+    view.setFloat32(264, 1, true);
+  }
   // The ground-plane block appends past the bulb variant block
   // at the same frozen 288 the descent cores use — the Mandelbulb on a
   // floor is the same classic look the fold arm carries it for.
@@ -8497,6 +8520,22 @@ ${pattern ? `  info.source4 = ${tiling ? "q" : "liftEscape4(p)"};` : ""}
     dot(params.bulbM1, p) + params.bulbT1,
     dot(params.bulbM2, p) + params.bulbT2,
   );
+  // The CHAIN TWIST's per-step affine, the value body's branch term for
+  // term — the hit-info colors what the value body's geometry drew.
+  var stepM0 = params.bulbM0;
+  var stepM1 = params.bulbM1;
+  var stepM2 = params.bulbM2;
+  var stepC = c;
+  if (params.bulbParams.z != 0.0) {
+    stepM0 = params.finalM0;
+    stepM1 = params.finalM1;
+    stepM2 = params.finalM2;
+    stepC = vec3f(
+      dot(params.finalM0, p) + params.finalT0,
+      dot(params.finalM1, p) + params.finalT1,
+      dot(params.finalM2, p) + params.finalT2,
+    );
+  }
   var y = c;
   var r2 = dot(y, y);
   var r = sqrt(r2);
@@ -8507,7 +8546,7 @@ ${pattern ? `  info.source4 = ${tiling ? "q" : "liftEscape4(p)"};` : ""}
       break;
     }
     let v = bulbPow8(y, r2);
-    y = vec3f(dot(params.bulbM0, v), dot(params.bulbM1, v), dot(params.bulbM2, v)) + c;
+    y = vec3f(dot(stepM0, v), dot(stepM1, v), dot(stepM2, v)) + stepC;
     r2 = dot(y, y);
     r = sqrt(r2);
     info.rings = min(info.rings, r / bail);
@@ -16763,12 +16802,34 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   let sigma = params.bulbParams.x;
   let bail = params.bulbParams.y;
   // y_0 = M p + t — the point the power is applied to, and the
-  // Mandelbrot form's per-iteration offset in y space.
+  // Mandelbrot form's per-iteration offset in y space. Under a twist this
+  // stays the SEED; the per-step affine below swaps to the twist's own
+  // pair.
   let c = vec3f(
     dot(params.bulbM0, pIn) + params.bulbT0,
     dot(params.bulbM1, pIn) + params.bulbT1,
     dot(params.bulbM2, pIn) + params.bulbT2,
   );
+  // The CHAIN TWIST's per-step affine: (M, y_0) untwisted;
+  // (m' = M·R, m'·p + c0) twisted — the final-transform lanes repurposed
+  // (bulb-de.ts's CHAIN TWIST wire paragraph; the gate refuses a final
+  // transform, so the lanes are dead for this core, and the flag lane is
+  // one the packer leaves zero when absent). Absent, both selects read
+  // the shipped values and the loop is byte-identical.
+  var stepM0 = params.bulbM0;
+  var stepM1 = params.bulbM1;
+  var stepM2 = params.bulbM2;
+  var stepC = c;
+  if (params.bulbParams.z != 0.0) {
+    stepM0 = params.finalM0;
+    stepM1 = params.finalM1;
+    stepM2 = params.finalM2;
+    stepC = vec3f(
+      dot(params.finalM0, pIn) + params.finalT0,
+      dot(params.finalM1, pIn) + params.finalT1,
+      dot(params.finalM2, pIn) + params.finalT2,
+    );
+  }
   var y = c;
   // dr bounds |d y_n / d p|, so it starts at |M| rather than 1.
   var dr = sigma;
@@ -16783,7 +16844,7 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
     // FLOORS dr at sigma, load-bearing wherever |y| < 1 (bulb-de.ts).
     dr = ${BULB_POWER}.0 * (r2 * r2 * r2 * r) * sigma * dr + sigma;
     let v = bulbPow8(y, r2);
-    y = vec3f(dot(params.bulbM0, v), dot(params.bulbM1, v), dot(params.bulbM2, v)) + c;
+    y = vec3f(dot(stepM0, v), dot(stepM1, v), dot(stepM2, v)) + stepC;
     r2 = dot(y, y);
     r = sqrt(r2);
   }

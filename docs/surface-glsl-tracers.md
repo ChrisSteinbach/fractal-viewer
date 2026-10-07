@@ -393,7 +393,11 @@ resolved / what the driver actually gets, all under the 64KB
 -> 28944 B (stripped), fold lens 85507 B -> 28708 B (stripped), balloon
 88698 B -> 30305 B (stripped), plane 88532 B -> 31281 B (stripped),
 lens+plane 91755 B -> 31045 B (stripped), escape 55114 B (53.8KB, NOT
-stripped), bulb 38578 B (37.7KB, NOT stripped).
+stripped), bulb 38578 B (37.7KB, NOT stripped). The chain twist's pair
+moved the bulb arm to 42672 B resolved (41.7KB, still NOT stripped) — two
+uniforms plus the step-affine branch in both orbit bodies — and left every
+other arm's bytes untouched (the pattern-off baseline's six bulb rows are
+the only rows that moved).
 
 ## Variant arms
 

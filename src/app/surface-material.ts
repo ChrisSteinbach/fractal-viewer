@@ -3864,7 +3864,7 @@ ${sphereInversionArmGlsl()}
 #else
 #if SURFACE_BULB
   /** Mandelbulb render: the FORWARD affine (M, t) of the single
-   * triplex-power map and (sigma_max(M), bailout, unused, unused).
+   * triplex-power map and (sigma_max(M), bailout, twistFlag, unused).
    * Declared INSIDE the arm, unlike the escape variant's uEsc* trio: the
    * other variants would pay these EMITTED bytes (uniforms are live
    * tokens; they survive the strip) for uniforms they can never read. t is the PRE-power
@@ -3872,10 +3872,22 @@ ${sphereInversionArmGlsl()}
    * 0; the per-iteration offset is derived from the query point (the
    * Mandelbrot form). The BAILOUT rides .y because it is the ORBIT's
    * ball, which — unlike the escape mode's — is NOT uBoundingRadius:
-   * that stays the query-space marching ball. */
+   * that stays the query-space marching ball. The twist's flag rides .z,
+   * a lane packed 0 when absent (the flag-lane lesson's own rule); the
+   * twist's composed pair rides the two uniforms beside, the WGSL bulb
+   * core's final-transform ballast one render mode over. */
   uniform mat3 uBulbM;
   uniform vec3 uBulbT;
   uniform vec4 uBulbParams;
+  /** The chain twist's composed step affine (bulb-de.ts's CHAIN TWIST
+   * paragraph): the step matrix m' = M·R and the constant c0 = M·twistB +
+   * t, so the twisted orbit is the shipped loop with the step's matrix
+   * and offset swapped. */
+  uniform mat3 uBulbTwistM;
+  uniform vec3 uBulbTwistC;
+  bool uBulbTwistFlag() {
+    return uBulbParams.z != 0.0;
+  }
 
 #if SURFACE_SHAPE_TRAP
   /** The shape trap's live quantities — the SURFACE_ESCAPE arm's trio
@@ -3956,8 +3968,14 @@ ${sphereInversionArmGlsl()}
     float sigma = uBulbParams.x;
     float bail = uBulbParams.y;
     // y_0 = M p + t — the point the power is applied to, and the
-    // Mandelbrot form's per-iteration offset in y space.
+    // Mandelbrot form's per-iteration offset in y space. Under a twist
+    // this stays the SEED; the per-step affine below swaps.
     vec3 c = uBulbM * p + uBulbT;
+    // The CHAIN TWIST's per-step affine: (M, y_0) untwisted;
+    // (m' = M·R, m'·p + c0) twisted — the flag packed 0 when absent, so
+    // the branchless line below is the shipped orbit byte for byte.
+    mat3 stepM = uBulbTwistFlag() ? uBulbTwistM : uBulbM;
+    vec3 stepC = uBulbTwistFlag() ? uBulbTwistM * p + uBulbTwistC : c;
     vec3 y = c;
     // dr bounds |d y_n / d p|, so it starts at |M| rather than 1.
     float dr = sigma;
@@ -3975,7 +3993,7 @@ ${sphereInversionArmGlsl()}
       // radius).
       dr = 8.0 * (r2 * r2 * r2 * r) * sigma * dr + sigma;
       vec3 v = bulbPow8(y, r2);
-      y = uBulbM * v + c;
+      y = stepM * v + stepC;
       r2 = dot(y, y);
       r = sqrt(r2);
     }
@@ -4013,6 +4031,10 @@ ${sphereInversionArmGlsl()}
     float sigma = uBulbParams.x;
     float bail = uBulbParams.y;
     vec3 c = uBulbM * p + uBulbT;
+    // The CHAIN TWIST's per-step affine, the value body's branch term for
+    // term — the hit-info colors what the value body's geometry drew.
+    mat3 stepM = uBulbTwistFlag() ? uBulbTwistM : uBulbM;
+    vec3 stepC = uBulbTwistFlag() ? uBulbTwistM * p + uBulbTwistC : c;
     vec3 y = c;
     float dr = sigma;
     float r2 = dot(y, y);
@@ -4029,7 +4051,7 @@ ${sphereInversionArmGlsl()}
       }
       dr = 8.0 * (r2 * r2 * r2 * r) * sigma * dr + sigma;
       vec3 v = bulbPow8(y, r2);
-      y = uBulbM * v + c;
+      y = stepM * v + stepC;
       r2 = dot(y, y);
       r = sqrt(r2);
       rings = min(rings, r / bail);
@@ -7812,6 +7834,8 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uBulbM: { value: new THREE.Matrix3() },
       uBulbT: { value: new THREE.Vector3() },
       uBulbParams: { value: new THREE.Vector4(1, 1, 0, 0) },
+      uBulbTwistM: { value: new THREE.Matrix3() },
+      uBulbTwistC: { value: new THREE.Vector3() },
       // The shape trap's live pose/mode quantities — read only under the
       // SURFACE_SHAPE_TRAP arms (uTrapPose is position.xyz + invScale;
       // uTrapParams is mode/threshold/fade). Identity/off defaults so a
@@ -10222,7 +10246,32 @@ export function setBulbSystem(
     m[8],
   );
   (u.uBulbT.value as THREE.Vector3).set(...de.t);
-  (u.uBulbParams.value as THREE.Vector4).set(de.sigmaMax, de.bailout, 0, 0);
+  (u.uBulbParams.value as THREE.Vector4).set(
+    de.sigmaMax,
+    de.bailout,
+    de.twistStepM !== null && de.twistStepC !== null ? 1 : 0,
+    0,
+  );
+  // The chain twist's composed step affine (bulb-de.ts's CHAIN TWIST
+  // paragraph), uploaded and RESET like the escape arm's uEscTwist trio —
+  // a live twist must never outlive its system.
+  if (de.twistStepM !== null && de.twistStepC !== null) {
+    (u.uBulbTwistM.value as THREE.Matrix3).set(
+      de.twistStepM[0],
+      de.twistStepM[1],
+      de.twistStepM[2],
+      de.twistStepM[3],
+      de.twistStepM[4],
+      de.twistStepM[5],
+      de.twistStepM[6],
+      de.twistStepM[7],
+      de.twistStepM[8],
+    );
+    (u.uBulbTwistC.value as THREE.Vector3).set(...de.twistStepC);
+  } else {
+    (u.uBulbTwistM.value as THREE.Matrix3).identity();
+    (u.uBulbTwistC.value as THREE.Vector3).set(0, 0, 0);
+  }
   (u.uMapColor.value as THREE.Vector3[])[0].set(...color);
   (u.uTrapIndex.value as number[])[0] = 0;
   u.uMapCount.value = 1;

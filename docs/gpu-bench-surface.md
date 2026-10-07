@@ -358,15 +358,17 @@ kept the SwiftShader diagnosis honest; the one-ULP population keeps its
 own counter (`stabilityExcluded`) and cap, and the rings' population gets
 its own (`boundaryExcluded`, capped by
 `SURFACE_ESCAPE_BOUNDARY_EXCLUDED_CAP` — structural 20% of 700). The rule
-runs on the escape and
-escape4 legs; the bulb leg keeps the un-widened ensemble (its rows gate
-clean on this adapter, and its budget is calibrated against the
-un-widened population — the twisted-bulb work can turn the rings on for
-its own fixtures with the same argument when it lands).
+runs on the escape, escape4 and — since the bulb core's chain twist
+landed its own fixture — bulb legs (the twisted-bulb row rides the same
+bisection-parked class; the bulb rows' measured boundary populations came
+in at 0-2 of 700, the short 16-step orbit far less chaos-amplifying than
+the chains' 60, so the widening costs the leg almost nothing).
 
 THE FULL-SWEEP VERDICT ON THE SAME ADAPTER, with the final ladder: the
 section's first `--display=:0` PASS on AMD RX 7900 XTX — all six
-chain-twist fixtures at fail=0 flips=0 (`escChainTwisted` maxAbs 8.8e-7,
+chain-twist fixtures at fail=0 flips=0 and (the bulb twist's own sweep)
+the `bulbTwisted` row the same way at maxAbs 1.0e-5 with zero boundary
+exclusions (`escChainTwisted` maxAbs 8.8e-7,
 `escChainTwistedRotation` 4.7e-7, `escChainTwistedCommuting` 5.3e-7,
 `escChainTwistKaleido` 4.1e-6, `esc4ChainTwisted` 6.7e-7,
 `esc4ChainTwistKaleido` 1.9e-6), every forward row's remaining flip

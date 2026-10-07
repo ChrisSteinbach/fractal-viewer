@@ -84,13 +84,14 @@ export const PANEL_APPLICABILITY_SPECS = {
     otherwise: { kind: "hidden" },
   },
   chainTwist: {
-    // The twist composes ONLY with the escape-time chain, so its section
-    // shows while an escape-shaped session is what Surface marches
-    // (escape4 sessions report kind "escape" — one kind covers both
-    // dimensions' chain). Dormant elsewhere: the IFS routes disclose the
-    // dormancy on the eligibility note, and this section stays hidden
-    // beside a subject it cannot touch.
-    consumers: [{ renderModes: ["surface"], surfaceKinds: ["escape"] }],
+    // The twist composes with the escape-time chain AND, since the bulb
+    // core's lift, with the lone Mandelbulb render — so its section shows
+    // while either is what Surface marches (escape4 sessions report kind
+    // "escape" — one kind covers both dimensions' chain). Dormant
+    // elsewhere: the IFS routes disclose the dormancy on the eligibility
+    // note, and this section stays hidden beside a subject it cannot
+    // touch.
+    consumers: [{ renderModes: ["surface"], surfaceKinds: ["escape", "bulb"] }],
     otherwise: { kind: "hidden" },
   },
   surfaceCondensation: {
