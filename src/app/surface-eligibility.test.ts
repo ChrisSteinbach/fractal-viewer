@@ -2406,7 +2406,7 @@ describe("the chain twist's routing", () => {
     expect(result.note).toContain("triplex");
   });
 
-  it("refuses the twist beside the lone Mandelbulb route (no chain to twist)", () => {
+  it("discloses the twist on the lone Mandelbulb route once the bulb core applies it", () => {
     const bulb: Transform[] = [
       {
         id: 0,
@@ -2417,8 +2417,25 @@ describe("the chain twist's routing", () => {
       },
     ];
     const result = derive(bulb, { rotation: [0.3, 0, 0] });
+    expect(result.status).toBe("degraded");
+    expect(result.kind).toBe("bulb");
+    expect(result.note).toContain("Mandelbulb");
+    expect(result.note).toContain("twist");
+  });
+
+  it("still refuses a w-bearing twist on the bulb route (no fourth axis to act on)", () => {
+    const bulb: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "bulb", weight: 1 }],
+      },
+    ];
+    const result = derive(bulb, { rotation: [0.3, 0, 0], w: { offset: 0.2 } });
     expect(result.status).toBe("ineligible");
-    expect(result.note).toContain("lone Mandelbulb");
+    expect(result.note).toContain("w extension");
   });
 
   it("discloses a dormant twist on an IFS route", () => {

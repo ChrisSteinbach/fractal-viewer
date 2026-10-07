@@ -160,12 +160,12 @@ const BALLOON_PALETTE_SOURCE_HASHES: Record<
     emitted: "dcdc93e811623797",
   },
   "3D bulb+balloon finish0": {
-    resolved: "c24a193a838a914c",
-    emitted: "c24a193a838a914c",
+    resolved: "f154b9993153245f",
+    emitted: "f154b9993153245f",
   },
   "3D bulb+balloon finish1": {
-    resolved: "3b887af98f33271d",
-    emitted: "3b887af98f33271d",
+    resolved: "0bcd0910c9a9bea6",
+    emitted: "0bcd0910c9a9bea6",
   },
 };
 
@@ -244,16 +244,16 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
     emitted: "2fd606033f825428",
   },
   "3D bulb finish0": {
-    resolved: "04c0733e93674a47",
-    emitted: "04c0733e93674a47",
+    resolved: "934401b39b9527d3",
+    emitted: "934401b39b9527d3",
   },
   "3D bulb+balloon finish0": {
-    resolved: "c24a193a838a914c",
-    emitted: "c24a193a838a914c",
+    resolved: "f154b9993153245f",
+    emitted: "f154b9993153245f",
   },
   "3D bulb+plane finish0": {
-    resolved: "cf36cbd96c32d42d",
-    emitted: "eb151df9f1dee18a",
+    resolved: "b1f566e878e0006a",
+    emitted: "c66d896d94e7df3c",
   },
   "3D affine finish1": {
     resolved: "85b08d82f306f553",
@@ -292,16 +292,16 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
     emitted: "ecb2c1f99e7c0b1b",
   },
   "3D bulb finish1": {
-    resolved: "cbda974981f5b6c0",
-    emitted: "cbda974981f5b6c0",
+    resolved: "9981ffc5aba156b6",
+    emitted: "9981ffc5aba156b6",
   },
   "3D bulb+balloon finish1": {
-    resolved: "3b887af98f33271d",
-    emitted: "3b887af98f33271d",
+    resolved: "0bcd0910c9a9bea6",
+    emitted: "0bcd0910c9a9bea6",
   },
   "3D bulb+plane finish1": {
-    resolved: "f03446ae14bcc693",
-    emitted: "6788e0be529e5ba3",
+    resolved: "8a5bffac9313765f",
+    emitted: "26e0f64606c50865",
   },
 };
 
@@ -3624,9 +3624,11 @@ describe("SURFACE_BULB variant", () => {
     // The affine/folds split stays a driver-side conditional.
     expect(resolved).toContain("#if SURFACE_FOLDS");
     // The per-map POST-AFFINE stage added ~250 resolved bytes (one
-    // un-post line per descent site + the two uniforms) — still half
-    // the ~80KB Mesa cliff the margin guards.
-    expect(resolved.length).toBeLessThan(41 * 1024);
+    // un-post line per descent site + the two uniforms), and the chain
+    // twist's pair added ~700 more (two uniforms + the step-affine
+    // branch in both orbit bodies) — still roughly half the ~80KB Mesa
+    // cliff the margin guards.
+    expect(resolved.length).toBeLessThan(43 * 1024);
   });
 
   it("carries the three terms an identity-map fixture cannot see: the sigma seed, the sigma floor, and the ln|y| clamp", () => {

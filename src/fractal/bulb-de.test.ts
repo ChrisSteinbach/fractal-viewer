@@ -7,6 +7,7 @@ import {
   BULB_STEP_SCALE,
 } from "./bulb-de";
 import type { BulbDE } from "./bulb-de";
+import type { TwistAuthored } from "./twist";
 import { analyzeEscapeSystem } from "./escape-de";
 import { mulberry32 } from "./rng";
 import { resolveShapeTrap } from "./shape-trap";
@@ -85,6 +86,33 @@ function orbitStaysBounded(de: BulbDE, p: Vec3, budget = 400): boolean {
     x = m[0] * vx + m[1] * vy + m[2] * vz + cx;
     y = m[3] * vx + m[4] * vy + m[5] * vz + cy;
     z = m[6] * vx + m[7] * vy + m[8] * vz + cz;
+    const r = Math.hypot(x, y, z);
+    if (!Number.isFinite(r) || r > 64) return false;
+  }
+  return true;
+}
+
+/** The twisted membership twin: seed `y_0 = M p + t`, then
+ * `y <- m'·V(y) + (m'·p + c0)` — bulb-de.ts's twisted orbit written from
+ * the module doc's own constants, through the SAME power implementation
+ * (the same thin-shell chaos caveat as the untwisted oracle applies). */
+function twistedOrbitStaysBounded(de: BulbDE, p: Vec3, budget = 400): boolean {
+  const tsm = de.twistStepM;
+  const tsc = de.twistStepC;
+  if (tsm === null || tsc === null) return false;
+  const m = de.m;
+  let [x, y, z] = [
+    m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + de.t[0],
+    m[3] * p[0] + m[4] * p[1] + m[5] * p[2] + de.t[1],
+    m[6] * p[0] + m[7] * p[1] + m[8] * p[2] + de.t[2],
+  ];
+  const stepC = (i: number): number =>
+    tsm[i] * p[0] + tsm[i + 1] * p[1] + tsm[i + 2] * p[2] + tsc[i / 3];
+  for (let i = 0; i < budget; i++) {
+    const [vx, vy, vz] = triplexPow8(x, y, z);
+    x = tsm[0] * vx + tsm[1] * vy + tsm[2] * vz + stepC(0);
+    y = tsm[3] * vx + tsm[4] * vy + tsm[5] * vz + stepC(3);
+    z = tsm[6] * vx + tsm[7] * vy + tsm[8] * vz + stepC(6);
     const r = Math.hypot(x, y, z);
     if (!Number.isFinite(r) || r > 64) return false;
   }
@@ -278,6 +306,137 @@ describe("buildBulbDE", () => {
     expect(() => buildBulbDE([bulbSystem(), bulbSystem({ id: 2 })])).toThrow(
       /no Mandelbulb estimator/,
     );
+  });
+});
+
+describe("the bulb's chain twist", () => {
+  // The general twisted fixture the frozen reference pins: an off-axis
+  // rotation with a live offset, on a rotated/scaled map — every wire lane
+  // load-bearing.
+  const TWISTED_MAP = bulbSystem({
+    position: [0.1, -0.05, 0.2],
+    rotation: [0.2, 0.1, -0.15],
+    scale: [1.1, 1.1, 1.1],
+  });
+  const TWIST: TwistAuthored = {
+    rotation: [0.5, -0.3, 0.9],
+    offset: [0.6, -0.4, 0.3],
+  };
+
+  it("stays absent on every DE built without a twist, bit for bit", () => {
+    const de = buildBulbDE([bulbSystem({ position: [0.1, 0.2, 0.3] })]);
+    expect(de.twistStepM).toBeNull();
+    expect(de.twistStepC).toBeNull();
+    // And the estimates are the pre-twist pinned values (the describe
+    // blocks above pin them; this asserts the wiring added no branch).
+    expect(estimateBulbDistance(de, [0.1, 0.2, -0.15])).toBeCloseTo(
+      estimateBulbDistance(
+        buildBulbDE([bulbSystem({ position: [0.1, 0.2, 0.3] })]),
+        [0.1, 0.2, -0.15],
+      ),
+      15,
+    );
+  });
+
+  it("collapses a trivially authored twist to absence", () => {
+    const de = buildBulbDE([bulbSystem()], null, undefined, {
+      rotation: [0, 0, 0],
+      offset: [0, 0, 0],
+    });
+    expect(de.twistStepM).toBeNull();
+    expect(de.twistStepC).toBeNull();
+  });
+
+  it("refuses a w-bearing twist: the bulb route is 3D-only", () => {
+    expect(() =>
+      buildBulbDE([bulbSystem()], null, undefined, {
+        rotation: [0.2, 0, 0],
+        w: { rotation: { xw: 0.4 } },
+      }),
+    ).toThrow(/4D bulb twist/);
+  });
+
+  it("refuses a malformed twist with the resolver's reasons verbatim", () => {
+    expect(() =>
+      buildBulbDE([bulbSystem()], null, undefined, {
+        rotation: [Number.NaN, 0, 0],
+      } as never),
+    ).toThrow(/refused bulb twist/);
+  });
+
+  it("certifies the twisted orbit against a frozen reference", () => {
+    const de = buildBulbDE([TWISTED_MAP], null, undefined, TWIST);
+    expect(de.twistStepM).not.toBeNull();
+    // The composed step affine, pinned (the wire's own bytes).
+    expect(de.twistStepM).toEqual([
+      0.7996469004240645, -0.692070530514771, -0.30266023101026895,
+      0.441281001744899, 0.7857339988215094, -0.6307877302191118,
+      0.613054575173536, 0.33713567578789994, 0.8488248488173703,
+    ]);
+    expect(de.twistStepC).toEqual([
+      0.7658182831572665, -0.2887613175473979, 0.6876259294341727,
+    ]);
+    expect(de.boundingRadius).toBeCloseTo(1.3747507671313983, 15);
+    expect(estimateBulbDistance(de, [0.1, 0.2, -0.15])).toBeCloseTo(
+      0.0627180155032096,
+      14,
+    );
+    expect(estimateBulbDistance(de, [-0.3, 0.05, 0.1])).toBeCloseTo(
+      0.024647763487514858,
+      14,
+    );
+    expect(estimateBulbDistance(de, [0.4, 0.4, 0.4])).toBeCloseTo(
+      0.09001144890132093,
+      14,
+    );
+  });
+
+  it("reproduces the untwisted estimates under a z-axis twist", () => {
+    // The triplex power conjugates a z-rotation to its 8th power
+    // (V(Ru) = R^8·V(u)), so the twist's own R·p offset keeps the whole
+    // orbit a ROTATING copy of the untwisted one — same radii, same dr,
+    // the estimate to f64 rounding. Any off-axis rotation genuinely
+    // deforms the object instead, which is the fixture above.
+    const classic = buildBulbDE([bulbSystem()]);
+    const twisted = buildBulbDE([bulbSystem()], null, undefined, {
+      rotation: [0, 0, Math.PI / 2],
+    });
+    const rng = seeded(97);
+    for (let i = 0; i < 400; i++) {
+      const p: Vec3 = [rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1];
+      const a = estimateBulbDistance(classic, p);
+      const b = estimateBulbDistance(twisted, p);
+      expect(Math.abs(a - b)).toBeLessThanOrEqual(1e-14 + 1e-12 * Math.abs(a));
+    }
+  });
+
+  it("contains the twisted set inside the ball it advertises", () => {
+    const de = buildBulbDE([TWISTED_MAP], null, undefined, TWIST);
+    const rng = seeded(61);
+    let outsideBall = 0;
+    for (let i = 0; i < 6000; i++) {
+      const p: Vec3 = [rng() * 6 - 3, rng() * 6 - 3, rng() * 6 - 3];
+      if (
+        Math.hypot(...p) > de.boundingRadius &&
+        twistedOrbitStaysBounded(de, p, 200)
+      ) {
+        outsideBall++;
+      }
+    }
+    expect(outsideBall).toBe(0);
+  });
+
+  it("grows the marching ball for a live offset and keeps the textbook ball for absence", () => {
+    const untwisted = buildBulbDE([TWISTED_MAP]);
+    const twisted = buildBulbDE([TWISTED_MAP], null, undefined, TWIST);
+    expect(twisted.boundingRadius).toBeGreaterThan(untwisted.boundingRadius);
+    // The absence ball is the shipped (escR + |t|)/sigma_min formula,
+    // unchanged by the feature — recomputed here from the map's own
+    // sigmas rather than pinned, so the formula and the test can't drift
+    // apart silently.
+    const escR = (2 / 1.1) ** (1 / 7);
+    const tLen = Math.hypot(0.1, -0.05, 0.2);
+    expect(untwisted.boundingRadius).toBeCloseTo((escR + tLen) / 1.1, 12);
   });
 });
 

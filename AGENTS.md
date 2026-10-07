@@ -1179,6 +1179,19 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     settled verdict: the Mandelbrot form and `y`-space orbit, the Böttcher
     estimate with the `dr` floor, measured step scale 1.0, the
     lone-bulb/escape-chain split, the post refusal, the mirrors' warning.
+    THE CHAIN TWIST rides it as the chain's placement one factoring over:
+    the y-space orbit's step constants become `m' = M·R` and `c0 =
+M·twistB + t` (composed ONCE at build onto the DE), leaving the `dr`
+    recurrence, the seed, the bailout, the escape radius and the estimate
+    form untouched — `sigma_max(M·R) = sigma_max(M)`. The marching ball's
+    re-derived form grows as the offset's 1/7 root (the `|y|^8` crushes
+    it); absence keeps the shipped formula. The z-axis twist IS the
+    commuting control (the power conjugates `R` to `R^8`, so the twisted
+    orbit is the untwisted one rotating — estimates match to rounding);
+    off-axis twists deform. The WGSL bulb core's wire rides the frozen
+    final-transform ballast (dead — the gate refuses a final transform)
+    with the flag on `bulbParams.z`; the bulb route DISCLOSES a live twist
+    and still refuses a `w`-bearing one (3D-only).
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
     `FOUR_D_COLOR_MODES`/`SYMMETRY_PLANES` const arrays (single source of

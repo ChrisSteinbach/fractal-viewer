@@ -367,7 +367,12 @@ export function deriveScratchRoute(scene: ScratchScene): ScratchRoute {
       return {
         kind,
         core: "bulb",
-        de: buildBulbDE(scene.transforms, scene.finalTransform, scene.symmetry),
+        de: buildBulbDE(
+          scene.transforms,
+          scene.finalTransform,
+          scene.symmetry,
+          scene.chainTwist,
+        ),
         view4,
       };
     case "escape4":

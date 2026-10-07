@@ -7439,6 +7439,7 @@ async function main(): Promise<void> {
               state.transforms,
               state.finalTransform ?? null,
               state.symmetry,
+              twistLive ? (state.chainTwist ?? null) : null,
             );
             // Lattice: the bulb's query-space marching ball is the
             // estimator authority; the clip pose is the bailout ball's.

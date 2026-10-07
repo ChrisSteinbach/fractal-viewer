@@ -1383,9 +1383,13 @@ export function deriveSurfaceEligibility(
       analyzeBulbSystem(transforms, finalTransform, symmetry).status ===
       "eligible"
     ) {
-      // The twist on a LONE power map: the bulb route has no chain for the
-      // per-link wrap to join (the vocabulary's rule — a consumer without
-      // the application sites refuses rather than silently ignoring).
+      // The twist on a LONE power map: the bulb core now applies the same
+      // per-step wrap (bulb-de.ts's CHAIN TWIST paragraph — the y-space
+      // factoring of the chain's v-space placement), so a live twist
+      // DISCLOSES instead of refusing, under the same combination policy
+      // as the chain arms. A `w` extension still refuses outright: the
+      // bulb route is 3D-only (triplex numbers have no fourth axis), and
+      // there is no 4D estimator to lift to.
       const bulbTwist = chainTwistGate(chainTwist);
       if (bulbTwist.verdict === "refused") {
         return {
@@ -1395,11 +1399,30 @@ export function deriveSurfaceEligibility(
         };
       }
       if (bulbTwist.verdict === "live") {
-        return {
-          status: "ineligible",
-          note: "the chain twist composes with an escape-time chain, not the lone Mandelbulb render — clear the twist to render it",
-          kind: null,
-        };
+        if (twistWIsNonTrivial(chainTwist!)) {
+          return {
+            status: "ineligible",
+            note: "the twist's w extension has no fourth axis to act on in the Mandelbulb render (triplex numbers are R³) — clear the twist's w rows to render it",
+            kind: null,
+          };
+        }
+        const twistRefusals = chainTwistRefusals(tiling, shapeTrap);
+        if (twistRefusals.length > 0) {
+          return {
+            status: "ineligible",
+            note: `Mandelbulb twist refused: ${twistRefusals.join("; ")}`,
+            kind: null,
+          };
+        }
+        return withSurfaceShapeSourceBudget(
+          {
+            status: "degraded",
+            note: `Mandelbulb render: Surface marches the escape-time set of this triplex power — the classic Mandelbulb — rather than an IFS attractor. The chain twist rotates the orbit point between steps.`,
+            kind: "bulb",
+          },
+          [],
+          null,
+        );
       }
       if (shapeTrap?.geometry === true) {
         return {

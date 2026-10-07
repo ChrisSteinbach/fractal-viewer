@@ -7119,6 +7119,38 @@ function estimateBulbDistanceF32(de: BulbDE, p: Vec3): number {
   const cx = f(f(f(f(m[0] * px) + f(m[1] * py)) + f(m[2] * pz)) + t[0]);
   const cy = f(f(f(f(m[3] * px) + f(m[4] * py)) + f(m[5] * pz)) + t[1]);
   const cz = f(f(f(f(m[6] * px) + f(m[7] * py)) + f(m[8] * pz)) + t[2]);
+  // The CHAIN TWIST's composed step affine (bulb-de.ts's CHAIN TWIST
+  // paragraph): the packer composes m' = M·R and c0 = M·twistB + t in f64
+  // and transfers them f32, so this twin frounds the same composed
+  // values — the lanes the kernel reads. Null runs the shipped lines.
+  const tsm = de.twistStepM;
+  const tsc = de.twistStepC;
+  const twisted = tsm !== null && tsc !== null;
+  const stepM = twisted ? tsm.map(f) : m;
+  const stepCx = twisted
+    ? f(
+        f(
+          f(f(f(stepM[0] * px) + f(stepM[1] * py)) + f(stepM[2] * pz)) +
+            f(tsc[0]),
+        ),
+      )
+    : cx;
+  const stepCy = twisted
+    ? f(
+        f(
+          f(f(f(stepM[3] * px) + f(stepM[4] * py)) + f(stepM[5] * pz)) +
+            f(tsc[1]),
+        ),
+      )
+    : cy;
+  const stepCz = twisted
+    ? f(
+        f(
+          f(f(f(stepM[6] * px) + f(stepM[7] * py)) + f(stepM[8] * pz)) +
+            f(tsc[2]),
+        ),
+      )
+    : cz;
   let yx = cx;
   let yy = cy;
   let yz = cz;
@@ -7163,9 +7195,15 @@ function estimateBulbDistanceF32(de: BulbDE, p: Vec3): number {
     const v8 = f(f(2 * u4) * v4);
     const vx = f(f(rho * s) * u8);
     const vy = f(f(rho * s) * v8);
-    yx = f(f(f(f(m[0] * vx) + f(m[1] * vy)) + f(m[2] * vz)) + cx);
-    yy = f(f(f(f(m[3] * vx) + f(m[4] * vy)) + f(m[5] * vz)) + cy);
-    yz = f(f(f(f(m[6] * vx) + f(m[7] * vy)) + f(m[8] * vz)) + cz);
+    yx = f(
+      f(f(f(f(stepM[0] * vx) + f(stepM[1] * vy)) + f(stepM[2] * vz)) + stepCx),
+    );
+    yy = f(
+      f(f(f(f(stepM[3] * vx) + f(stepM[4] * vy)) + f(stepM[5] * vz)) + stepCy),
+    );
+    yz = f(
+      f(f(f(f(stepM[6] * vx) + f(stepM[7] * vy)) + f(stepM[8] * vz)) + stepCz),
+    );
     r2 = f(f(f(yx * yx) + f(yy * yy)) + f(yz * yz));
     r = f(Math.sqrt(r2));
   }
@@ -21032,6 +21070,9 @@ async function runSurfaceDeSection(
     name: string;
     transforms: Transform[];
     seed: number;
+    /** The chain twist (`twist.ts`'s authored block) the DE builds with —
+     * absent on every row that predates the field. */
+    twist?: TwistAuthored;
   }[] = [
     {
       name: "bulbClassic",
@@ -21085,6 +21126,29 @@ async function runSurfaceDeSection(
         },
       ],
     },
+    {
+      // The chain twist on the bulb core — the reference construction's
+      // twist (both the rotation and the offset load-bearing: the offset
+      // grows the marching ball, the off-axis rotation genuinely deforms
+      // the object since the triplex power is only z-equivariant).
+      // bulb-de.ts's CHAIN TWIST paragraph is this fixture's design
+      // record; the wire rides the frozen final-transform ballast.
+      name: "bulbTwisted",
+      seed: 605,
+      twist: {
+        rotation: [0, -0.9272952180016122, 0],
+        offset: [1.4, 1.4, 1.4],
+      },
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "bulb", weight: 1 }],
+        },
+      ],
+    },
   ];
   const bulbSystems: SurfaceBulbSystemState[] = [];
   for (const def of bulbSystemDefs) {
@@ -21098,22 +21162,43 @@ async function runSurfaceDeSection(
           `${def.name}: skipped — ${eligibility.reasons.join("; ")}`,
         );
       } else {
-        const de = buildBulbDE(def.transforms);
+        const de = buildBulbDE(
+          def.transforms,
+          null,
+          undefined,
+          def.twist ?? null,
+        );
         const queries = bulbQueries(de, def.seed);
         const cpu64 = queries.map((q) => estimateBulbDistance(de, q));
         const cpu32 = queries.map((q) => estimateBulbDistanceF32(de, q));
         const R = de.boundingRadius;
-        // The identical seven-orbit ensemble gate the escape leg uses —
-        // the fround twin at the query plus its six one-ULP neighbors,
-        // all agreeing with the f64 oracle.
-        const stable = cpu64.map((c64, i) =>
+        // The identical ensemble gate the escape leg uses — the fround
+        // twin at the query plus its six one-ULP neighbors, all agreeing
+        // with the f64 oracle — PLUS the boundary rings: the twisted-bulb
+        // fixture rides the same bisection-parked discontinuity class the
+        // escape rows measured, and one classifier across the forward
+        // legs is the point (boundaryRingUnstable's doc records the
+        // bulb leg's original un-widened verdict and what changed it).
+        const bulbEvalF32 = (q: Vec3): number => estimateBulbDistanceF32(de, q);
+        const ensembleStable = cpu64.map((c64, i) =>
           forwardQueryStable(
-            (q) => estimateBulbDistanceF32(de, q),
+            bulbEvalF32,
             queries[i],
             c64,
             surfaceEvalTol(c64, R),
           ),
         );
+        const boundaryUnstable = cpu64.map(
+          (c64, i) =>
+            ensembleStable[i] &&
+            boundaryRingUnstable(
+              bulbEvalF32,
+              queries[i],
+              c64,
+              surfaceEvalTol(c64, R),
+            ),
+        );
+        const stable = ensembleStable.map((s, i) => s && !boundaryUnstable[i]);
         bulbSystems.push({
           name: def.name,
           de,
@@ -21121,10 +21206,8 @@ async function runSurfaceDeSection(
           cpu64,
           cpu32,
           stable,
-          stabilityExcluded: stable.filter((s) => !s).length,
-          // No boundary rings on the bulb leg (boundaryRingUnstable's
-          // doc): the population is zero by construction.
-          boundaryExcluded: 0,
+          stabilityExcluded: ensembleStable.filter((s) => !s).length,
+          boundaryExcluded: boundaryUnstable.filter((b) => b).length,
         });
       }
     } catch (e) {

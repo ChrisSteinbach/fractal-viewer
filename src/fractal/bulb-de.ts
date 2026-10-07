@@ -159,6 +159,96 @@
  * Mandelbulb presets route it. A lone bulb with a non-identity post is
  * REFUSED: the frozen bulb params wire has no post rows; pairing it with
  * a fold routes the posted power through the chain instead.
+ *
+ * THE CHAIN TWIST (2026-10-06, the bulb route's lift of the escape-chain
+ * twist). The user-facing question was scoping, not mathematics: the
+ * Mandelbulb presets sit in the same Escape-time menu group as the chain
+ * presets, so the rigid twist had to apply here too or the panel would
+ * hide the feature and its way out alike. WHERE THE TWIST RIDES is the
+ * one design decision this module owes, and it is settled as follows.
+ *
+ * THE PLACEMENT IS THE CHAIN'S, ONE FACTORING OVER. The bulb's orbit
+ * state is `y`, but its V-space form is `v <- V(M v + t) + p` (substitute
+ * `y = M v + t`; the Mandelbrot offset is the query itself), and the
+ * chain's per-site map `v <- R(f(v) + q + off)` applies verbatim with
+ * `f = V ∘ (M·+t)`, `q = p`:
+ *
+ *     v <- R·V(y) + (R·p + twistB)          twistB = R·off
+ *
+ * — the anchor hoisted per eval exactly as the chain's is. A y-space
+ * placement (twisting inside the power's argument, or rotating only the
+ * affine) would need its own derivative argument for a recurrence whose
+ * `dr` tracks `d y / d p`, and would not be the vocabulary the chain and
+ * the Menger already share. The chosen placement keeps the estimate
+ * SOUND by the same isometry argument, and better: substituting
+ * `y_n = M v_n + t` turns the twisted orbit into
+ *
+ *     y_0  = M p + t                       (the UNtwisted affine's seed)
+ *     y_(n+1) = (M·R)·V(y_n) + (M·R)·p + (M·twistB + t)
+ *
+ * — the SAME loop shape with two per-eval constants composed once: the
+ * step matrix `m' = M·R` and the constant `c0 = M·twistB + t` (the
+ * per-step offset is `m'·p + c0`; the seed does NOT equal the offset
+ * under a twist, which is the structural difference from the untwisted
+ * orbit). Singular values are invariant under right-multiplication by a
+ * rotation, so `sigma_max(m') = sigma_max(M)` and `sigma_min(m') =
+ * sigma_min(M)`: the `dr` recurrence `8|y|⁷·sigma_max·dr + sigma_max`,
+ * the `dr` seed, the bailout, the escape radius and the Böttcher estimate
+ * form are ALL unchanged — the twist costs the orbit two composed
+ * constants and the step's matrix swap, nothing else. The DE therefore
+ * carries the composed pair (`twistStepM`, `twistStepC`) rather than the
+ * raw rotation, so the four consumers (CPU orbit, GPU packer, f32 twin,
+ * GLSL arm upload) read one value instead of composing four times.
+ *
+ * THE COMMUTING CONTROL: the triplex power is equivariant under
+ * rotations about the z axis (the spherical product's polar axis), so a
+ * z-axis twist on the classic map (`M = I, t = 0`) renders the UNtwisted
+ * object rigidly rotated — same radii, same derivative — and the
+ * certification pins the estimate reproducing the untwisted one to
+ * rounding across random queries. Any twist off the z axis genuinely
+ * deforms the object (the power is not rotation-equivariant), which is
+ * the feature.
+ *
+ * THE MARCHING BALL under a twist: the shipped derivation (`boundingRadius
+ * = (escR + |t|)/sigma_min`) leans on the untwisted identity that the
+ * per-step offset IS the seed `y_0`, so the step-0 crossing fires from
+ * `|y_0|` alone. Under a twist the offset is `m'·p + c0` and that
+ * identity breaks; the ball is re-derived from step 1 instead. Every
+ * member's `|y_1| <= bailout`, and `|m'·V(y_0)| >= sigma_min·|y_0|^8`
+ * with `|V(y)| = |y|^8` exact, so
+ *
+ *     sigma_min·|y_0|^8 <= |m'·p + c0| + bailout
+ *                       <= sigma_max·|p| + |c0| + bailout
+ *
+ * (reverse triangles; `|y_0| >= |sigma_min|p| - |t||` for either sign of
+ * the inner term, so `|y_0|^8 >= (sigma_min|p| - |t|)^8` unconditionally).
+ * With `P = sigma_min|p| - |t|`, `k = sigma_max/sigma_min` and
+ * `D = k|t| + |c0| + bailout`, members satisfy
+ * `sigma_min·P^8 <= k·P + D`; `P >= 1` gives `P^7 <= (k + D)/sigma_min`,
+ * `P < 1` bounds `|p| < (1 + |t|)/sigma_min`, and the ball is
+ *
+ *     max((1 + |t|)/sigma_min, (((k + D)/sigma_min)^(1/7) + |t|)/sigma_min)
+ *
+ * — always looser than the shipped `(escR + |t|)/sigma_min` (`D >= bailout
+ * >= 4` makes the 1/7 root exceed `escR`), so absence keeps the shipped
+ * formula byte-identically and presence takes the derived one. The 1/7 is
+ * the 8th power's own root minus the `P` the inequality carries: an
+ * offset is crushed by `|y|^8` far faster than the chain's linear maps
+ * could, which is why the bulb's ball grows by tenths where the chain's
+ * grows by the offset's whole length.
+ *
+ * WIRE. The bulb core's params wire gains no bytes: the twist rides the
+ * frozen block's FINAL-TRANSFORM ballast (96..143 and 108/124/140), dead
+ * for this core because the gate refuses a final transform — the same
+ * class of argument as the escape core's head-link lanes, with the same
+ * flag discipline (`bulbParams.z`, a lane the packer leaves zero when
+ * absent, so the flag-lane lesson holds): the packer writes the composed
+ * `m'` rows into the `finalM` lanes and `c0` into the `finalT` lanes when
+ * the flag is live, and the body's step selects `(m', m'·p + c0)` over
+ * `(M, y_0)` on it. The 4D story is the module refusal it has always
+ * been: triplex numbers are R³ and the bulb route is 3D-only, so a
+ * `w`-bearing twist is REFUSED here exactly as the 3D chain refuses one
+ * — the twist vocabulary's `w` extension has no fourth axis to act on.
  */
 import { composeAffine, isIdentityAffine } from "./affine";
 import { isFlatTransform } from "./affine4";
@@ -184,6 +274,14 @@ import type {
   SurfaceNativeCarrierSample,
 } from "./surface-pattern";
 import { transformSigmas } from "./surface-de";
+import {
+  resolveTwist,
+  twistIsTrivial,
+  twistMatrices3,
+  twistWIsNonTrivial,
+  type TwistAuthored,
+  type TwistConstruction,
+} from "./twist";
 import type { SymmetryParams, Transform, Variation, Vec3 } from "./types";
 
 /**
@@ -272,6 +370,14 @@ export interface BulbDE {
   /** Camera-independent p03/p97 normalization of the shader's bailout-
    * normalized radial and y-plane traps. */
   patternCalibration: SurfaceNativeCalibration;
+  /** The chain twist's per-step affine in y space (module doc's CHAIN
+   * TWIST paragraph): the composed step matrix `m' = M·R` (row-major) and
+   * the constant `c0 = M·twistB + t`, so the twisted orbit is the shipped
+   * loop with the step's matrix and offset swapped. Both null = absence,
+   * bit-identical; a `w`-bearing twist is refused at build (the bulb
+   * route is 3D-only). */
+  twistStepM: number[] | null;
+  twistStepC: Vec3 | null;
 }
 
 type BulbCalibrationDE = Omit<BulbDE, "patternCalibration">;
@@ -400,6 +506,7 @@ export function buildBulbDE(
   transforms: Transform[],
   finalTransform: Transform | null = null,
   symmetry: SymmetryParams = { order: 1, plane: "xz" },
+  twist: TwistAuthored | null = null,
 ): BulbDE {
   const analysis = analyzeBulbSystem(transforms, finalTransform, symmetry);
   if (analysis.status === "ineligible") {
@@ -412,20 +519,110 @@ export function buildBulbDE(
   const sigmas = transformSigmas(map);
   const escR = escapeRadius(sigmas.min);
   const tLen = Math.hypot(...affine.t);
+  // The chain twist: resolved, refused never clamped, and a trivially
+  // authored block collapses to absence (module doc). The `w` extension
+  // has no fourth axis to act on here — the bulb route is 3D-only — so a
+  // non-trivial one is refused exactly as the 3D chain refuses one.
+  let twistStepM: number[] | null = null;
+  let twistStepC: Vec3 | null = null;
+  if (twist !== null) {
+    const resolution = resolveTwist(twist);
+    if (!resolution.ok) {
+      throw new Error(
+        `system has a refused bulb twist: ${resolution.reasons.join("; ")}`,
+      );
+    }
+    const construction: TwistConstruction = resolution.construction;
+    if (twistWIsNonTrivial(twist)) {
+      throw new Error(
+        "system has a 4D bulb twist on the 3D Mandelbulb estimator",
+      );
+    }
+    if (!twistIsTrivial(construction)) {
+      // The composed step affine (module doc): m' = M·R and
+      // c0 = M·twistB + t, where twistB = R·off is twistMatrices3's
+      // pre-composed offset — the vocabulary's own wire, one composition
+      // per build instead of one per consumer.
+      const { m: rRows, b: twistB } = twistMatrices3(construction);
+      const m = affine.m;
+      const mr = [
+        m[0] * rRows[0] + m[1] * rRows[3] + m[2] * rRows[6],
+        m[0] * rRows[1] + m[1] * rRows[4] + m[2] * rRows[7],
+        m[0] * rRows[2] + m[1] * rRows[5] + m[2] * rRows[8],
+        m[3] * rRows[0] + m[4] * rRows[3] + m[5] * rRows[6],
+        m[3] * rRows[1] + m[4] * rRows[4] + m[5] * rRows[7],
+        m[3] * rRows[2] + m[4] * rRows[5] + m[5] * rRows[8],
+        m[6] * rRows[0] + m[7] * rRows[3] + m[8] * rRows[6],
+        m[6] * rRows[1] + m[7] * rRows[4] + m[8] * rRows[7],
+        m[6] * rRows[2] + m[7] * rRows[5] + m[8] * rRows[8],
+      ];
+      const c0: Vec3 = [
+        m[0] * twistB[0] + m[1] * twistB[1] + m[2] * twistB[2] + affine.t[0],
+        m[3] * twistB[0] + m[4] * twistB[1] + m[5] * twistB[2] + affine.t[1],
+        m[6] * twistB[0] + m[7] * twistB[1] + m[8] * twistB[2] + affine.t[2],
+      ];
+      twistStepM = mr;
+      twistStepC = c0;
+    }
+  }
+  // The marching ball: the shipped derivation for absence (module doc);
+  // the derived one for presence — the untwisted identity that the
+  // per-step offset is the seed breaks under a twist, and step 1's
+  // boundedness closes the bound instead.
+  const bailout = Math.max(BULB_BAILOUT_FLOOR, escR);
+  const boundingRadius =
+    twistStepM === null || twistStepC === null
+      ? (escR + tLen) / sigmas.min
+      : twistedBoundingRadius(
+          sigmas.max,
+          sigmas.min,
+          affine.t,
+          twistStepC,
+          bailout,
+        );
   const de: BulbCalibrationDE = {
     m: affine.m,
     t: affine.t,
     sigmaMax: sigmas.max,
-    bailout: Math.max(BULB_BAILOUT_FLOOR, escR),
+    bailout,
     // Query space: `y_0 = M p + t` must stay inside the ESCAPE radius (not
     // the bailout — a bailout raised for the estimate's sake would inflate
     // the marching ball for nothing), so `sigma_min·|p| - |t| <= escR`.
-    boundingRadius: (escR + tLen) / sigmas.min,
+    boundingRadius,
+    twistStepM,
+    twistStepC,
   };
   return {
     ...de,
     patternCalibration: calibrateBulbPattern(de),
   };
+}
+
+/**
+ * The twisted marching ball (module doc's MARCHING BALL paragraph):
+ * `max((1 + |t|)/sigma_min, (((k + D)/sigma_min)^(1/7) + |t|)/sigma_min)`
+ * with `k = sigma_max/sigma_min` and
+ * `D = k|t| + |c0| + bailout`, derived from step 1's
+ * boundedness (`sigma_min·|y_0|^8 <= |m'·p + c0| + bailout`). Always
+ * looser than the shipped untwisted ball (`D >= bailout >= 4` makes the
+ * 1/7 root exceed `escR`), which is why absence keeps the shipped
+ * formula.
+ */
+function twistedBoundingRadius(
+  sigmaMax: number,
+  sigmaMin: number,
+  t: Vec3,
+  twistStepC: Vec3,
+  bailout: number,
+): number {
+  // The bound reads the DE's own composed constant — |c0| is the
+  // derivation's term exactly, no separate |twistB| to recover.
+  const twistCLen = Math.hypot(twistStepC[0], twistStepC[1], twistStepC[2]);
+  const tLen = Math.hypot(t[0], t[1], t[2]);
+  const k = sigmaMax / sigmaMin;
+  const d = k * tLen + twistCLen + bailout;
+  const pCap = Math.pow((k + d) / sigmaMin, 1 / 7);
+  return Math.max((1 + tLen) / sigmaMin, (pCap + tLen) / sigmaMin);
 }
 
 /**
@@ -483,10 +680,32 @@ function runBulbOrbit(
   }
   const m = de.m;
   // y_0 = M p + t — the point the power is applied to, and (module doc) the
-  // Mandelbrot form's per-iteration offset in y space.
+  // Mandelbrot form's per-iteration offset in y space. Under a twist this
+  // line stays the SEED (the orbit starts at the query through the
+  // untwisted affine); the per-STEP offset is the twist's own constant
+  // pair below.
   const cx = m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + de.t[0];
   const cy = m[3] * p[0] + m[4] * p[1] + m[5] * p[2] + de.t[1];
   const cz = m[6] * p[0] + m[7] * p[1] + m[8] * p[2] + de.t[2];
+  // The per-step affine: (M, y_0) untwisted — the seed IS the offset, the
+  // shipped identity — and (m' = M·R, m'·p + c0) twisted (module doc's
+  // CHAIN TWIST paragraph; `dr`'s recurrence is unchanged because
+  // sigma_max(M·R) = sigma_max(M)). Absence runs these values verbatim.
+  const tsm = de.twistStepM;
+  const tsc = de.twistStepC;
+  const stepM = tsm !== null && tsc !== null ? tsm : m;
+  const stepCx =
+    tsm !== null && tsc !== null
+      ? tsm[0] * p[0] + tsm[1] * p[1] + tsm[2] * p[2] + tsc[0]
+      : cx;
+  const stepCy =
+    tsm !== null && tsc !== null
+      ? tsm[3] * p[0] + tsm[4] * p[1] + tsm[5] * p[2] + tsc[1]
+      : cy;
+  const stepCz =
+    tsm !== null && tsc !== null
+      ? tsm[6] * p[0] + tsm[7] * p[1] + tsm[8] * p[2] + tsc[2]
+      : cz;
   let yx = cx;
   let yy = cy;
   let yz = cz;
@@ -529,9 +748,9 @@ function runBulbOrbit(
     const v8 = 2 * u4 * v4;
     const vx = rho * s * u8;
     const vy = rho * s * v8;
-    yx = m[0] * vx + m[1] * vy + m[2] * vz + cx;
-    yy = m[3] * vx + m[4] * vy + m[5] * vz + cy;
-    yz = m[6] * vx + m[7] * vy + m[8] * vz + cz;
+    yx = stepM[0] * vx + stepM[1] * vy + stepM[2] * vz + stepCx;
+    yy = stepM[3] * vx + stepM[4] * vy + stepM[5] * vz + stepCy;
+    yz = stepM[6] * vx + stepM[7] * vy + stepM[8] * vz + stepCz;
     r2 = yx * yx + yy * yy + yz * yz;
     r = Math.sqrt(r2);
     // The shape trap's two accumulators, at exactly this post-step `y`.
@@ -580,6 +799,23 @@ function bulbPatternCarrierSample(
   const cx = m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + de.t[0];
   const cy = m[3] * p[0] + m[4] * p[1] + m[5] * p[2] + de.t[1];
   const cz = m[6] * p[0] + m[7] * p[1] + m[8] * p[2] + de.t[2];
+  // The per-step affine, runBulbOrbit's twist branch verbatim — the
+  // carrier sample mirrors what the shader's hit-info orbit reads.
+  const tsm = de.twistStepM;
+  const tsc = de.twistStepC;
+  const stepM = tsm !== null && tsc !== null ? tsm : m;
+  const stepCx =
+    tsm !== null && tsc !== null
+      ? tsm[0] * p[0] + tsm[1] * p[1] + tsm[2] * p[2] + tsc[0]
+      : cx;
+  const stepCy =
+    tsm !== null && tsc !== null
+      ? tsm[3] * p[0] + tsm[4] * p[1] + tsm[5] * p[2] + tsc[1]
+      : cy;
+  const stepCz =
+    tsm !== null && tsc !== null
+      ? tsm[6] * p[0] + tsm[7] * p[1] + tsm[8] * p[2] + tsc[2]
+      : cz;
   let yx = cx;
   let yy = cy;
   let yz = cz;
@@ -614,9 +850,9 @@ function bulbPatternCarrierSample(
     const v8 = 2 * u4 * v4;
     const vx = rho * s * u8;
     const vy = rho * s * v8;
-    yx = m[0] * vx + m[1] * vy + m[2] * vz + cx;
-    yy = m[3] * vx + m[4] * vy + m[5] * vz + cy;
-    yz = m[6] * vx + m[7] * vy + m[8] * vz + cz;
+    yx = stepM[0] * vx + stepM[1] * vy + stepM[2] * vz + stepCx;
+    yy = stepM[3] * vx + stepM[4] * vy + stepM[5] * vz + stepCy;
+    yz = stepM[6] * vx + stepM[7] * vy + stepM[8] * vz + stepCz;
     r2 = yx * yx + yy * yy + yz * yz;
     r = Math.sqrt(r2);
     rings = Math.min(rings, r / de.bailout);
