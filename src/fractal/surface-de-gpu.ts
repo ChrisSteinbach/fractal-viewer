@@ -332,8 +332,34 @@ import type { Vec3 } from "./types";
  *   planes — the one place this core reads a `symPlane` the 3D one
  *   cannot. `width`/`sharedFrontier`/`bnbStage2`/`shadeDeWidth` are
  *   inert, `lens` and `balloon` throw, and `groundPlane` composes.
+ * - `core: "menger"` / `core: "menger4"` are the twisted mod-Menger
+ *   CARVE cores — `menger-de.ts`/`menger-de-4d.ts`'s single-chain carve
+ *   estimator, for the sessions the `mengerTwist` block routes (the
+ *   block REPLACES the transform system as the subject). Neither a
+ *   descent nor a forward orbit: the carve chain is bounded work by
+ *   construction (`maxDepth` LEVELS of sawtooth + carve, each an
+ *   isometry away from exactness — the module doc of the oracles carries
+ *   the lower-bound argument and the measured step scale 1.0), so there
+ *   is no frontier, no orbit bailout, and no chaotic-orbit classifier on
+ *   the bench legs. Bindingless like "bulb"; the whole construction
+ *   rides the params VARIANT block — 3D: the twist's rows in the escape
+ *   head-link interleave (208..255) + the (levels, twistFlag, 0, 0) word
+ *   at 256; 4D: the lens4 region (the construction word at 464, the
+ *   SO(4) rows + offset at 480..559). The twist flag reads 0 exactly
+ *   when the resolved twist is trivial (the classic sponge) — the
+ *   flag-lane lesson's own rule — and the body's skip branch is
+ *   value-exact against the oracle's unconditional application (the
+ *   identity mat-vec is exact). The 4D core sits behind the shared view
+ *   lift (`liftMenger4`), packs `sliceHalfW` 0 with a nonzero THROW (the
+ *   carve has no segment cover), and `menger` 3D composes the ground
+ *   plane; `lens`, `balloon`, tiling, a shape trap and the
+ *   transform-system features THROW, each with its reason. The hit-info
+ *   trap is the WINNING level's fraction, normalized by the FULL level
+ *   count in the variant word — the preview-clamped `maxDepth` is the
+ *   loop budget, a different number under the preview tier, which is why
+ *   that word exists.
  *
- * All seven bodies share the public signature — `surfaceDE(pIn, cutoff,
+ * All bodies share the public signature — `surfaceDE(pIn, cutoff,
  * li)` — so the mode entry points below are textually identical
  * whichever core is picked. The two 3D DESCENT cores additionally share the
  * descent PROLOGUE text (lens, sphere bound, bail threshold, the
@@ -695,6 +721,37 @@ import type { Vec3 } from "./types";
  *                  `BULB_POWER` doc).
  *              272 vec4f padF — the escape core's pad again; the bulb has
  *                  no fold at all.
+ *          · `core: "menger"` — the carve construction's variant block,
+ *              the escape head-link lanes' own interleave:
+ *              208 vec3f menM row0    220 f32 menT.x (twistB.x)
+ *              224 vec3f menM row1    236 f32 menT.y
+ *              240 vec3f menM row2    252 f32 menT.z
+ *              256 vec4f menParams — (levels as f32, twistFlag, 0, 0).
+ *                  The rows ALWAYS pack (they are the construction, and
+ *                  the family's default twist is never the identity); the
+ *                  flag reads 0 exactly when the resolved twist is
+ *                  trivial (the classic sponge), the flag-lane lesson's
+ *                  own rule. `levels` is the FULL carve depth the
+ *                  hit-info's trap normalizes the winning level by —
+ *                  the preview-clamped `maxDepth` in the frozen block is
+ *                  the LOOP budget, a different number under the preview
+ *                  tier.
+ *              272 vec4f padF — the escape core's pad again; the carve
+ *                  has no fold and no lens.
+ *          · `core: "menger4"` — the SAME 464..575 region, the
+ *              4D VARIANT block's other occupant beside escape4, exactly
+ *              {@link SURFACE_GPU_PARAMS4_ESCAPE_BYTES} = 576 bytes:
+ *              464 vec4f men4Params — (levels as f32, twistFlag, 0, 0),
+ *                  the 3D word one dimension up.
+ *              480 vec4f men4TwistR0..R3 (..543) — the SO(4) rows,
+ *                  ROW-MAJOR bytes of the matrix the body applies
+ *                  (`q <- R q + b` per level).
+ *              544 vec4f men4TwistB (..559) — the offset in `q <- R q + b`
+ *                  form (b = R·off, the DE's own pre-composition).
+ *              560..575 pad — so the shared plane block lands at 576 for
+ *                  every 4D core. `lens` and `balloon` throw, and
+ *                  `sliceHalfW` packs 0 with a nonzero THROW at pack (the
+ *                  carve estimator has no segment cover).
  *          · `balloon: true` — the 3D block GROWS: {@link
  *              SURFACE_GPU_PARAMS_BALLOON_BYTES} = 320 bytes total. The
  *              struct declares the lens variant block UNCONDITIONALLY

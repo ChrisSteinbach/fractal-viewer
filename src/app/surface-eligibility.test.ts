@@ -2486,3 +2486,165 @@ describe("the chain twist's routing", () => {
     expect(result.note).toContain("shape trap");
   });
 });
+
+describe("the Menger carve's routing", () => {
+  /** The flat placeholder transform system the carve blocks ride (the
+   * sphere-inversion presets' own: the transforms render nothing under the
+   * block, so their shape is irrelevant to every routing answer here). */
+  const placeholder: Transform[] = [
+    {
+      id: 0,
+      position: [0.5, 0.5, 0.5],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+      variations: [],
+    },
+    {
+      id: 1,
+      position: [-0.5, -0.5, 0.5],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+      variations: [],
+    },
+  ];
+
+  function derive(
+    mengerTwist: unknown,
+    opts: {
+      computeAvailable?: boolean;
+      tiling?: TilingSpec | null;
+      chainTwist?: unknown;
+      symmetry?: SymmetryParams;
+      finalTransform?: Transform | null;
+    } = {},
+  ): ReturnType<typeof deriveSurfaceEligibility> {
+    return deriveSurfaceEligibility(
+      placeholder,
+      opts.finalTransform ?? null,
+      opts.symmetry ?? NO_SYMMETRY,
+      { computeAvailable: opts.computeAvailable ?? true },
+      null,
+      null,
+      opts.tiling ?? null,
+      undefined,
+      null,
+      null,
+      opts.chainTwist ?? null,
+      mengerTwist as never,
+    );
+  }
+
+  it("routes the reference construction to the 3D carve, naming the different object", () => {
+    const result = derive({
+      levels: 4,
+      rotation: [0, -0.9272952180016122, 0],
+    });
+    expect(result.kind).toBe("menger");
+    expect(result.status).toBe("degraded");
+    expect(result.note).toContain("Menger carve render");
+    expect(result.note).toContain("rather than an IFS attractor");
+  });
+
+  it("routes a w-bearing block to the 4D hyper-Menger and refuses without compute", () => {
+    const result = derive({
+      levels: 4,
+      rotation: [0, -0.9272952180016122, 0],
+      w: { rotation: { xw: 0.3 } },
+    });
+    expect(result.kind).toBe("menger4");
+    expect(result.note).toContain("4D hyper-Menger");
+    const withoutCompute = derive(
+      { levels: 4, w: { offset: 0.2 } },
+      { computeAvailable: false },
+    );
+    expect(withoutCompute.status).toBe("ineligible");
+    expect(withoutCompute.note).toContain("compute");
+  });
+
+  it("refuses tiling and a shape trap; composes the ground plane (no refusal)", () => {
+    const tiled = derive(
+      { rotation: [0.3, 0, 0] },
+      { tiling: { group: "a3" } },
+    );
+    expect(tiled.status).toBe("ineligible");
+    expect(tiled.note).toContain("Space tiling");
+    const trapped = deriveSurfaceEligibility(
+      placeholder,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      { shape: PEACE_SIGN_SHAPE },
+      null,
+      undefined,
+      null,
+      null,
+      null,
+      { rotation: [0.3, 0, 0] } as never,
+    );
+    expect(trapped.status).toBe("ineligible");
+    expect(trapped.note).toContain("shape trap");
+  });
+
+  it("discloses the dormant transform system: kaleidoscope, final lens, finishes", () => {
+    const symmetry = { order: 5, plane: "xz" as const, twist: 0 };
+    const withSym = derive({ rotation: [0.3, 0, 0] }, { symmetry });
+    expect(withSym.note).toContain("kaleidoscope is not read");
+    const final = {
+      id: 9,
+      position: [0, 0, 0] as [number, number, number],
+      rotation: [0, 0, 0] as [number, number, number],
+      scale: [1, 1, 1] as [number, number, number],
+      variations: [],
+    };
+    const withLens = derive(
+      { rotation: [0.3, 0, 0] },
+      { finalTransform: final },
+    );
+    expect(withLens.note).toContain("final transform lens is not read");
+  });
+
+  it("discloses a co-present live chain twist as dormant (the carve applies its own)", () => {
+    const result = derive(
+      { rotation: [0.3, 0, 0] },
+      {
+        chainTwist: { rotation: [0.5, 0, 0] },
+      },
+    );
+    expect(result.kind).toBe("menger");
+    expect(result.note).toContain("chain twist");
+    expect(result.note).toContain("its own twist");
+  });
+
+  it("surfaces the resolver's refusal verbatim, the block being the subject", () => {
+    const result = derive({ levels: 99 });
+    expect(result.status).toBe("ineligible");
+    expect(result.note).toContain("Menger carve refused");
+    const garbage = derive({ rotation: [Number.NaN, 0, 0] });
+    expect(garbage.status).toBe("ineligible");
+    expect(garbage.note).toContain("finite");
+  });
+
+  it("defers to the sphere-inversion block and discloses the co-present carve block dormant", () => {
+    const result = deriveSurfaceEligibility(
+      placeholder,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      null,
+      null,
+      undefined,
+      {
+        arrangement: "oct6",
+        radiusFraction: 0.9,
+        seed: { kind: "ball", size: 0.3 },
+      },
+      null,
+      null,
+      { rotation: [0.3, 0, 0] } as never,
+    );
+    expect(result.kind).toBe("sphereInversion");
+    expect(result.note).toContain("Menger-carve block is dormant");
+  });
+});
