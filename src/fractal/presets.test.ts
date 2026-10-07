@@ -96,7 +96,9 @@ import {
   twentyFourCellFlake,
   twentyFourCellWireframe,
   twistedSponge4Lens,
+  twistedSponge4Maps,
   twistedSpongeLens,
+  twistedSpongeMaps,
   woodGrain,
 } from "./presets";
 import { mulberry32 } from "./rng";
@@ -807,18 +809,34 @@ describe("PRESET_FINALS", () => {
 });
 
 describe("Twisted sponge showcases", () => {
-  // The twisted sponge is the plain Menger plus a plot-time sphere-fold
-  // lens — the shipped approximation of the "bent, swollen sponge ball"
-  // whose exact construction (a fixed rotation between carve levels) is
-  // not an IFS, so the maps stay UNROTATED (rotating them scrambles the
-  // sponge; see twistedSpongeLens's doc). The lens is the whole difference
-  // from the menger preset, which therefore stays lens- and hint-less.
-  it("twistedSponge is the plain Menger plus a sphere-fold lens, opened in Surface", () => {
-    expect(presetTransforms("twistedSponge")).toEqual(mengerSponge());
+  // The twisted sponge is the shared-twist Menger plus a plot-time
+  // sphere-fold lens — the shipped approximation of the "bent, swollen
+  // sponge ball" whose exact construction (a fixed rotation between carve
+  // levels) is not an IFS. The tuned composition carries BOTH halves the
+  // reference image needs (each measured alone against it, and short):
+  // every map sharing the reference construction's own 53.13° Y twist —
+  // the columnar twist, cells legible, chains bent, outline still a box —
+  // and the lens that bends that outline into the round crusty ball, its
+  // fold radii raised off the classic pair to keep the level-1 lobes at
+  // brick scale (twistedSpongeLens's doc carries the figures). The lens is
+  // still the only difference from the menger preset's subject family,
+  // which therefore stays lens- and hint-less.
+  it("twistedSponge is the shared-twist Menger plus a sphere-fold lens, opened in Surface", () => {
+    expect(presetTransforms("twistedSponge")).toEqual(twistedSpongeMaps());
+    // The twist is SHARED — one rotation, the reference's own `ma` angle,
+    // on every map of the plain sponge.
+    expect(twistedSpongeMaps()).toEqual(
+      mengerSponge().map((t) => ({
+        ...t,
+        rotation: [0, Math.atan2(0.8, 0.6), 0] as [number, number, number],
+      })),
+    );
     expect(PRESET_RENDER_HINTS.twistedSponge).toBe("surface");
     const final = PRESET_FINALS.twistedSponge!();
     expect(final).toEqual(twistedSpongeLens());
-    expect(final.variations).toEqual([{ type: "spherefold", weight: 1 }]);
+    expect(final.variations).toEqual([
+      { type: "spherefold", weight: 1, minRadius: 0.8, fixedRadius: 0.9 },
+    ]);
     const analysis = analyzeSurfaceSystem(
       presetTransforms("twistedSponge"),
       final,
@@ -840,14 +858,20 @@ describe("Twisted sponge showcases", () => {
   // own map count; here the explorer's plot-time path is exercised for
   // real: the lifted system plus the lifted lens converges to a bounded
   // cloud with extent on all four axes.
-  it("twistedSponge4 is the hyper-Menger through the same lens with an xw tilt, authored for the explorer", () => {
-    expect(presetTransforms("twistedSponge4")).toEqual(
-      hyperMengerSpongeTransforms(),
+  it("twistedSponge4 is the shared-twist hyper-Menger through the same lens with an xw tilt, authored for the explorer", () => {
+    expect(presetTransforms("twistedSponge4")).toEqual(twistedSponge4Maps());
+    expect(twistedSponge4Maps()).toEqual(
+      hyperMengerSpongeTransforms().map((t) => ({
+        ...t,
+        rotation: [0, Math.atan2(0.8, 0.6), 0] as [number, number, number],
+      })),
     );
     expect(PRESET_RENDER_HINTS.twistedSponge4).toBeUndefined();
     const final = PRESET_FINALS.twistedSponge4!();
     expect(final).toEqual(twistedSponge4Lens());
-    expect(final.variations).toEqual([{ type: "spherefold", weight: 1 }]);
+    expect(final.variations).toEqual([
+      { type: "spherefold", weight: 1, minRadius: 0.8, fixedRadius: 0.9 },
+    ]);
     expect(final.w).toEqual({ rotation: { xw: 0.45 } });
     const result = runChaosGame4(
       presetTransforms("twistedSponge4").map(toTransform4),

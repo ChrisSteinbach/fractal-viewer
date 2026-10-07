@@ -991,30 +991,60 @@ export function juliaSnowflakeLens(): Transform {
 }
 
 /**
- * The twisted-sponge lens: the Menger sponge seen through a strong,
- * off-axis `spherefold` FINAL. This is the shipped approximation of the
- * "bent, swollen sponge ball" — a Menger sponge whose outline curls while
- * its cells stay legible, the look of KentaYoshii/Raymarcher's twisted
- * Menger render (a fixed rotation applied to the SDF's query point
- * between carve levels). That construction is NOT an IFS — the twist sits
- * between levels at full scale, so no per-map composition closes — which
- * is why the look ships as a plot-time lens over the plain 20-map sponge
- * rather than as rotated maps: rotating the maps themselves scrambles the
- * sponge (measured: per-map Euler k ≥ 0.25 destroys the cells, k ≤ 0.08
- * barely bends). Parameters picked off a same-renderer comparison sheet
- * against the reference image (weight 1.0, the lens off the sponge's
- * centre so the fold's involution lands on the silhouette).
+ * The twisted-sponge maps: the plain Menger's 20 maps each carrying ONE
+ * shared twist — the reference construction's own `ma` rotation (53.13°
+ * about Y, `atan2(0.8, 0.6)` off KentaYoshii/Raymarcher's matrix). The
+ * shared rotation is the columnar twist the family record measured: cells
+ * stay legible and the brick chains bend, but the outline cannot — the
+ * hull is still the sponge's. The outline is {@link twistedSpongeLens}'s
+ * job: the lens wraps the twisted sponge into the round crusty ball.
+ */
+export function twistedSpongeMaps(): Transform[] {
+  const twist: Vec3 = [0, Math.atan2(0.8, 0.6), 0];
+  return mengerSponge().map((t) => ({ ...t, rotation: twist }));
+}
+
+/** {@link twistedSpongeMaps} one dimension up, over the hyper-Menger. */
+export function twistedSponge4Maps(): Transform[] {
+  const twist: Vec3 = [0, Math.atan2(0.8, 0.6), 0];
+  return hyperMengerSpongeTransforms().map((t) => ({ ...t, rotation: twist }));
+}
+
+/**
+ * The twisted-sponge lens: the (twisted — {@link twistedSpongeMaps}) Menger
+ * sponge through a strong, off-axis `spherefold` FINAL. This is the shipped
+ * approximation of the "bent, swollen sponge ball" — the look of
+ * KentaYoshii/Raymarcher's twisted Menger render (a fixed rotation applied
+ * to the SDF's query point between carve levels). That construction is NOT
+ * an IFS — the twist sits between levels at full scale, so no per-map
+ * composition closes — and the lens alone cannot reach its shape either
+ * (measured, same-renderer A/B against the reference image, 2026-10-08:
+ * lens-only crust reads shallow, fine-edge fraction 0.29 against the
+ * reference's 0.45; the shared per-map twist alone keeps cells but a box
+ * outline — so the SHIPPED TUNED COMPOSITION is both: the columnar twist
+ * in the maps plus a lens that bends the outline, fine-edge fraction 0.45).
+ * The lens's tuned values: fold radii mR 0.8/fR 0.9 — against the classic
+ * 0.5/1.0 this cuts the fold's worst magnification fR²/mR² from 4 to 1.27,
+ * which is what stops the sponge's level-1 lobes reading as giant smooth
+ * plates — and a strong off-axis rotation (0.35, 0.9273, 0.55) that lands
+ * the fold's involution obliquely on the sponge's faces, breaking the
+ * face-on views the reference does not show. Position, scale and weight
+ * stay the shipped ones (the off-centre fold is load-bearing: recentring
+ * it rounds the silhouette but calms the crust — 0.41 — and weight < 1
+ * reads identical at this range).
  *
  * The 4D twin ({@link twistedSponge4Lens}) carries the same lens one
- * dimension up with an xw tilt, over the hyper-Menger.
+ * dimension up with an xw tilt, over the twisted hyper-Menger.
  */
 export function twistedSpongeLens(): Transform {
   return {
     ...defaultFinalTransform(),
     position: [0.1, 0.05, -0.1],
-    rotation: [0.3, 0.2, 0.15],
+    rotation: [0.35, 0.9273, 0.55],
     scale: [0.85, 0.85, 0.85],
-    variations: [{ type: "spherefold", weight: 1 }],
+    variations: [
+      { type: "spherefold", weight: 1, minRadius: 0.8, fixedRadius: 0.9 },
+    ],
   };
 }
 
@@ -2807,18 +2837,21 @@ const PRESETS = {
   // The Surface swirl pair uses the original affine attractors unchanged;
   // their bounded plot-time deformation lives in PRESET_FINALS.
   swirlTetrahedron: sierpinskiTetrahedron,
-  // The twisted-sponge pair: the plain Menger (3D) and hyper-Menger (4D)
-  // through a strong sphere-fold FINAL lens (PRESET_FINALS) — the shipped
-  // approximation of the "bent, swollen sponge ball" look whose exact
-  // construction (a fixed rotation applied to the SDF's query point
-  // between carve levels) no finite IFS can express; see
-  // twistedSpongeLens for why the maps stay unrotated. The 4D half is
-  // authored for the explorer/Flame/Solid renders and carries NO surface
-  // hint: the hyper-Menger's 48 maps exceed the 4D surface tracer's
-  // 24-map cap (SURFACE4_MAX_MAPS), so a hinted load would switch into a
-  // mode that refuses the document.
-  twistedSponge: mengerSponge,
-  twistedSponge4: hyperMengerSpongeTransforms,
+  // The twisted-sponge pair: the SHARED-TWIST Menger (3D) and hyper-Menger
+  // (4D) — every map carrying the reference construction's own 53.13° Y
+  // rotation (twistedSpongeMaps) — through a strong sphere-fold FINAL lens
+  // (PRESET_FINALS): the shipped approximation of the "bent, swollen sponge
+  // ball" look whose exact construction (a fixed rotation applied to the
+  // SDF's query point between carve levels) no finite IFS can express. The
+  // tuned composition measured against the reference image: the twist alone
+  // keeps cells but a box outline; the lens alone reads shallow; both give
+  // the round crusty ball with curved brick chains (twistedSpongeLens's doc
+  // carries the figures). The 4D half is authored for the explorer/Flame/
+  // Solid renders and carries NO surface hint: the hyper-Menger's 48 maps
+  // exceed the 4D surface tracer's 24-map cap (SURFACE4_MAX_MAPS), so a
+  // hinted load would switch into a mode that refuses the document.
+  twistedSponge: twistedSpongeMaps,
+  twistedSponge4: twistedSponge4Maps,
   // The escape-time set's own presets: the mode had none, so the
   // only route in was authoring a lone fold map by hand.
   mandelboxClassic,
