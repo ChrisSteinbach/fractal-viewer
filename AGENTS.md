@@ -141,7 +141,7 @@ npm run build         # Production build → dist/app/
 npm run smoke         # Headless WebGL smoke test (SwiftShader) — boots the app, asserts it renders
 npm run verify        # Warm gate runner (docs/gate-velocity.md): one build+preview+browser per gate batch
 npm run bench:gpu     # Headless WebGPU flame agreement/bench (real Chrome) — pins the WGSL kernels to their CPU oracles; run after touching flame-gpu*.ts kernels (CI runs it on SwiftShader)
-npm run bench:surface # WebGPU fold-DE kernel agreement/timing — pins surface-de-gpu.ts (all seven cores) to its CPU oracles; add --display=:0 for real-driver timing. Run it QUIET (below), never beside the test suite: a contended software device corrupts mid-run readbacks; the canary reports verdict=device-unreliable (exit 2, rerun). JUDGE THE ESCAPE ROWS ON --display=:0 — escChainKaleido's known SwiftShader-only false failure is the realization-coin-flip class the escape/escape4 legs' boundary rings now exclude pre-hoc (adapter-independent, adapter-sized budgets; the flip cap stays untouched), measured on Iris Xe AND AMD RDNA-3. Fixtures, caps and measured rows: docs/gpu-bench-surface.md
+npm run bench:surface # WebGPU fold-DE kernel agreement/timing — pins surface-de-gpu.ts (all seven cores) to its CPU oracles; add --display=:0 for real-driver timing. Run it QUIET (below), never beside the test suite: a contended software device corrupts mid-run readbacks; the canary reports verdict=device-unreliable (exit 2, rerun). JUDGE THE ESCAPE ROWS ON --display=:0 — escChainKaleido's known SwiftShader-only false failure is the realization-coin-flip class the forward legs' boundary rings now exclude pre-hoc; the flip cap stays untouched. Fixtures, caps and measured rows: docs/gpu-bench-surface.md
 npm run gpu:scratch   # Seconds-scale kernel-edit loop (docs/gate-velocity.md): one scene, one production frame + eval probe; never a gate
 npm run bench:mesh-sdf # 64³ trefoil cold-bake vs its 2s budget, BVH-vs-exact agreement
 npm run verify:pattern-release # Owner gate: drives the built app -> blinded owner deck; verify:pattern-release-review scores it, only "approve" passes
@@ -1097,12 +1097,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     free per orbit step, and `SymmetryParams.blend` is deliberately
     unread exactly as in `surface-de.ts`.
     THE CHAIN TWIST (`twist.ts`, one block the twisted Menger also reads)
-    is an ORBIT operation at every link: `v <- R(f(v) + q + off)`, the
-    offset joining the per-link add and the rotation wrapping it. The
-    isometry is free in derivative terms (dr recurrence unchanged) and the
-    marching ball grows by `|twistB|` while the bailout stays 4; live
+    is an ORBIT operation at every link: `v <- R(f(v) + q + off)` — an
+    isometry, free in derivative terms (dr unchanged, bailout 4); live
     twists disclose and refuse tiling/traps; a `w` extension lifts a flat
-    chain to escape4. Certified by frozen references toBe, both dimensions.
+    chain to escape4. Certified frozen, both dimensions. Full record: the
+    family doc.
     EACH LINK CARRIES its resolved fold lengths and optional
     `postM`/`postT`. The forward post runs after the weighted fold/power and
     before `+ p`; `derivGrowth` multiplies base/post sigma-max bounds around
@@ -1161,16 +1160,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     Oracle for `surface-de-gpu.ts`'s `core: "escape4"`; NO fragment
     mirror, so an escape-shaped 4D session is compute-only exactly as the
     4D fold-branch port made fold-shaped ones. THREE PRESETS reach it,
-    from the 4D menu group rather than the Escape-time one:
-    `mandelboxBrick` and `mandelboxColumn` are the same map
-    (`mandelboxCube`'s) turned in `xw` and in `yw` — a PAIR whose subject
-    is that the rotation plane picks the long axis — the one place the
-    rotor slider reads as geometry rather than as a tumble — and
-    `hybridChainShells` is
-    `hybridChainQuaternion` with the rotation on its POWER link, the link
-    position that costs the least.
-    Full record — the per-axis extent figures and the rotation-cost
-    comparison across link positions — in `docs/escape-time-family.md`.
+    from the 4D menu group: `mandelboxBrick`/`mandelboxColumn` (one map
+    turned in `xw`/`yw` — the rotation plane picks the long axis) and
+    `hybridChainShells` (the rotation on its POWER link, the cheapest
+    position). Figures: `docs/escape-time-family.md`.
   - `qjulia-de.ts` — the quaternion Julia set's CPU oracle. Its module doc
     carries every settled verdict: the conjugacy, the CERTIFIED estimate,
     the smooth-alone renderer refusal (CLOSED won't-do, measured), the
@@ -1179,19 +1172,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     settled verdict: the Mandelbrot form and `y`-space orbit, the Böttcher
     estimate with the `dr` floor, measured step scale 1.0, the
     lone-bulb/escape-chain split, the post refusal, the mirrors' warning.
-    THE CHAIN TWIST rides it as the chain's placement one factoring over:
-    the y-space orbit's step constants become `m' = M·R` and `c0 =
-M·twistB + t` (composed ONCE at build onto the DE), leaving the `dr`
-    recurrence, the seed, the bailout, the escape radius and the estimate
-    form untouched — `sigma_max(M·R) = sigma_max(M)`. The marching ball's
-    re-derived form grows as the offset's 1/7 root (the `|y|^8` crushes
-    it); absence keeps the shipped formula. The z-axis twist IS the
-    commuting control (the power conjugates `R` to `R^8`, so the twisted
-    orbit is the untwisted one rotating — estimates match to rounding);
-    off-axis twists deform. The WGSL bulb core's wire rides the frozen
-    final-transform ballast (dead — the gate refuses a final transform)
-    with the flag on `bulbParams.z`; the bulb route DISCLOSES a live twist
-    and still refuses a `w`-bearing one (3D-only).
+    THE CHAIN TWIST rides it as the chain's placement one factoring over
+    (the y-space step constants composed onto the DE; the recurrence,
+    bailout and estimate form untouched; the z-axis twist IS the commuting
+    control; a `w`-bearing twist refused, 3D-only). Full record:
+    bulb-de.ts's module doc.
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
     `FOUR_D_COLOR_MODES`/`SYMMETRY_PLANES` const arrays (single source of
