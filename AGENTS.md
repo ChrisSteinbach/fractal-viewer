@@ -1098,10 +1098,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     unread exactly as in `surface-de.ts`.
     THE CHAIN TWIST (`twist.ts`, one block the twisted Menger also reads)
     is an ORBIT operation at every link: `v <- R(f(v) + q + off)` — an
-    isometry, free in derivative terms (dr unchanged, bailout 4); live
-    twists disclose and refuse tiling/traps; a `w` extension lifts a flat
-    chain to escape4. Certified frozen, both dimensions. Full record: the
-    family doc.
+    isometry (dr unchanged, bailout 4); live twists disclose and refuse
+    tiling/traps; a `w` extension lifts a flat chain to escape4. Certified
+    frozen, both dimensions. Full record: the family doc.
     EACH LINK CARRIES its resolved fold lengths and optional
     `postM`/`postT`. The forward post runs after the weighted fold/power and
     before `+ p`; `derivGrowth` multiplies base/post sigma-max bounds around
@@ -1173,10 +1172,9 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     estimate with the `dr` floor, measured step scale 1.0, the
     lone-bulb/escape-chain split, the post refusal, the mirrors' warning.
     THE CHAIN TWIST rides it as the chain's placement one factoring over
-    (the y-space step constants composed onto the DE; the recurrence,
-    bailout and estimate form untouched; the z-axis twist IS the commuting
-    control; a `w`-bearing twist refused, 3D-only). Full record:
-    bulb-de.ts's module doc.
+    (the y-space step constants composed onto the DE; recurrence, bailout
+    and estimate form untouched; the z-axis twist IS the commuting
+    control; `w` refused, 3D-only). Full record: bulb-de.ts's module doc.
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
     `FOUR_D_COLOR_MODES`/`SYMMETRY_PLANES` const arrays (single source of
