@@ -141,7 +141,7 @@ npm run build         # Production build → dist/app/
 npm run smoke         # Headless WebGL smoke test (SwiftShader) — boots the app, asserts it renders
 npm run verify        # Warm gate runner (docs/gate-velocity.md): one build+preview+browser per gate batch
 npm run bench:gpu     # Headless WebGPU flame agreement/bench (real Chrome) — pins the WGSL kernels to their CPU oracles; run after touching flame-gpu*.ts kernels (CI runs it on SwiftShader)
-npm run bench:surface # WebGPU fold-DE kernel agreement/timing — pins surface-de-gpu.ts (all seven cores) to its CPU oracles; add --display=:0 for real-driver timing. Run it QUIET (below), never beside the test suite: a contended software device corrupts mid-run readbacks; the canary reports verdict=device-unreliable (exit 2, rerun). JUDGE THE ESCAPE ROWS ON --display=:0 — escChainKaleido's known SwiftShader-only false failure is the realization-coin-flip class the forward legs' boundary rings now exclude pre-hoc; the flip cap stays untouched. Fixtures, caps and measured rows: docs/gpu-bench-surface.md
+npm run bench:surface # WebGPU fold-DE kernel agreement/timing — pins surface-de-gpu.ts (all seven cores) to its CPU oracles; add --display=:0 for real-driver timing. Run it QUIET (below), never beside the test suite: a contended software device corrupts mid-run readbacks; the canary reports verdict=device-unreliable (exit 2, rerun). JUDGE THE ESCAPE ROWS ON --display=:0 — escChainKaleido's known SwiftShader-only false failure is the realization-coin-flip class the forward legs' boundary rings exclude pre-hoc; the flip cap stays untouched. Fixtures, caps, rows: docs/gpu-bench-surface.md
 npm run gpu:scratch   # Seconds-scale kernel-edit loop (docs/gate-velocity.md): one scene, one production frame + eval probe; never a gate
 npm run bench:mesh-sdf # 64³ trefoil cold-bake vs its 2s budget, BVH-vs-exact agreement
 npm run verify:pattern-release # Owner gate: drives the built app -> blinded owner deck; verify:pattern-release-review scores it, only "approve" passes
@@ -1096,11 +1096,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     fold is discontinuous and would certify empty balls across the seam),
     free per orbit step, and `SymmetryParams.blend` is deliberately
     unread exactly as in `surface-de.ts`.
-    THE CHAIN TWIST (`twist.ts`, one block the twisted Menger also reads)
-    is an ORBIT operation at every link: `v <- R(f(v) + q + off)` — an
+    THE CHAIN TWIST (`twist.ts`, the twisted Menger's block)
+    is an orbit operation at every link: `v <- R(f(v) + q + off)` — an
     isometry (dr unchanged, bailout 4); live twists disclose and refuse
     tiling/traps; a `w` extension lifts a flat chain to escape4. Certified
-    frozen, both dimensions. Full record: the family doc.
+    frozen, both dimensions. Record: the family doc.
     EACH LINK CARRIES its resolved fold lengths and optional
     `postM`/`postT`. The forward post runs after the weighted fold/power and
     before `+ p`; `derivGrowth` multiplies base/post sigma-max bounds around
@@ -1173,8 +1173,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     lone-bulb/escape-chain split, the post refusal, the mirrors' warning.
     THE CHAIN TWIST rides it as the chain's placement one factoring over
     (the y-space step constants composed onto the DE; recurrence, bailout
-    and estimate form untouched; the z-axis twist IS the commuting
-    control; `w` refused, 3D-only). Full record: bulb-de.ts's module doc.
+    and estimate untouched; the z-axis twist IS the commuting control;
+    `w` refused, 3D-only). Record: bulb-de.ts's module doc.
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
     `FOUR_D_COLOR_MODES`/`SYMMETRY_PLANES` const arrays (single source of
