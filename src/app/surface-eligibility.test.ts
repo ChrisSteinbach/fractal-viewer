@@ -375,6 +375,20 @@ describe("deriveSurfaceEligibility over the shipped presets", () => {
     expect(twin.note).toContain("at most 24");
   });
 
+  // The burst sibling shares the map lists, so its halves inherit the same
+  // routing: the 3D pair is eligible in Surface, the 4D pair refuses at the
+  // same cap with the same disclosure.
+  it("admits the burst sibling and refuses its 48-map 4D twin at the same cap", () => {
+    const burst = derivePreset("twistedSpongeBurst");
+    expect(burst.status).toBe("eligible");
+    expect(burst.kind).toBe("ifs");
+    const twin = derivePreset("twistedSponge4Burst");
+    expect(twin.status).toBe("ineligible");
+    expect(twin.kind).toBe(null);
+    expect(twin.note).toContain("48 maps");
+    expect(twin.note).toContain("at most 24");
+  });
+
   it("routes the 4D escape presets to the escape4 kind", () => {
     for (const preset of [
       "mandelboxBrick",

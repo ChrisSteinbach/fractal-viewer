@@ -1061,6 +1061,56 @@ export function twistedSponge4Lens(): Transform {
 }
 
 /**
+ * The burst lens: the {@link twistedSpongeMaps} sponge through a WIDE-BAND,
+ * ORIGIN-CENTRED sphere-fold final — the opposite regime from
+ * {@link twistedSpongeLens}'s tuned pair. There the fold radii (0.8/0.9)
+ * sit INSIDE the sponge so most of it stays outside the inversion band and
+ * keeps its straight plates; here `fixedRadius` 1.3 is WIDER than the
+ * sponge's whole hull (boundingRadius ~1.32) with `minRadius` 0.25 deep
+ * inside the central void, so nearly the entire sponge sits in the band and
+ * the inversion curls every brick chain into an arc around the origin — a
+ * wild crusty burst with no flat faces anywhere. The magnification the
+ * core magnifies with (fR²/mR² = 27) lands on the central void, which is
+ * empty at every recursion level, so the blowup hits nothing; the crust
+ * reads dense and scrambled because the band compresses the sponge's outer
+ * structure inward while magnifying its inner structure outward.
+ *
+ * The look is a deliberate sibling, not a tune of the reference-image lens:
+ * where {@link twistedSpongeLens} approximates KentaYoshii/Raymarcher's
+ * README render (round crusty ball, curved chains, plates still visible),
+ * this one abandons the plates entirely. Provenance: measured ablation
+ * frames from the lens sweep (2026-10-08, `scripts/tune-doc.ts`'s
+ * `twist+lens` mode with `--mR=0.25 --fR=1.3 --scale=1 --pos=0,0,0`), whose
+ * scratch render this preset reproduces bit-for-bit (same hit fraction at
+ * the same 1024px raster on the real driver).
+ *
+ * AUTHORING FROM SCRATCH (the panel path, no preset needed): load
+ * "Menger Sponge", turn every transform's Y rotation to ~0.93 rad (or load
+ * "Twisted Sponge", which already carries the shared twist), then add a
+ * final transform with one `spherefold` at weight 1, min radius 0.25,
+ * fixed radius 1.3, position origin, scale 1 — the values ride the same
+ * sliders this preset ships.
+ */
+export function twistedSpongeBurstLens(): Transform {
+  return {
+    ...defaultFinalTransform(),
+    rotation: [0.35, 0.9273, 0.55],
+    variations: [
+      { type: "spherefold", weight: 1, minRadius: 0.25, fixedRadius: 1.3 },
+    ],
+  };
+}
+
+/** {@link twistedSpongeBurstLens} one dimension up, xw tilt per the
+ * {@link twistedSponge4Lens} rule. */
+export function twistedSponge4BurstLens(): Transform {
+  return {
+    ...twistedSpongeBurstLens(),
+    w: { rotation: { xw: 0.45 } },
+  };
+}
+
+/**
  * "Julia Pinwheel" — the counter-rotating `swirl` PAIR (the
  * same two arm maps {@link dyedSpiral} braids, without its authored color
  * slots) flattened to the plane, seen through a final `julia` lens turned
@@ -2852,6 +2902,14 @@ const PRESETS = {
   // hinted load would switch into a mode that refuses the document.
   twistedSponge: twistedSpongeMaps,
   twistedSponge4: twistedSponge4Maps,
+  // The burst sibling: the SAME shared-twist sponge maps through the
+  // OPPOSITE lens regime — a wide-band origin-centred fold that inverts
+  // nearly the whole sponge, curling every brick chain into an arc (the
+  // tuned lens keeps most of the sponge outside its narrow band, which is
+  // where its remaining straight plates live). twistedSpongeBurstLens's doc
+  // carries the regime argument and the from-scratch recipe.
+  twistedSpongeBurst: twistedSpongeMaps,
+  twistedSponge4Burst: twistedSponge4Maps,
   // The escape-time set's own presets: the mode had none, so the
   // only route in was authoring a lone fold map by hand.
   mandelboxClassic,
@@ -3083,6 +3141,7 @@ export const PRESET_RENDER_HINTS: Partial<
   // hinted load would switch into a mode that refuses the document — the
   // 4D half is authored for the explorer cloud (and Flame/Solid) instead.
   twistedSponge: "surface",
+  twistedSpongeBurst: "surface",
   swirlPentatope: "surface",
   tiledOctahedron: "surface",
   tiledPentatope: "surface",
@@ -3193,6 +3252,8 @@ export const PRESET_FINALS: Partial<Record<Preset, () => Transform>> = {
   pentatopePinwheel: pentatopePinwheelLens,
   twistedSponge: twistedSpongeLens,
   twistedSponge4: twistedSponge4Lens,
+  twistedSpongeBurst: twistedSpongeBurstLens,
+  twistedSponge4Burst: twistedSponge4BurstLens,
 };
 
 /**
