@@ -1701,10 +1701,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `surface-de.ts`'s `estimateDistanceRefined` line for line, the same
     oracle discipline as `flame-gpu.ts`; BASE maps packed into fixed-size
     (24-slot) uniform arrays, with kaleidoscope sectors swept from three
-    scalar uniforms rather than expanded into slots, so symmetry
+    scalar uniforms, so symmetry
     order no longer counts against the cap. Callers gate eligibility on the
     bare active-map count first, so an over-cap count throws here rather
-    than degrading silently.
+    than degrading silently — and since the 24/48 split a 25..48-record 3D
+    system is compute-only, so only ≤24 records ever reach this arm.
     Live map/escape/lens posts share compile-gated 1600-B `SurfacePosts3`
     (inverse for descent/lens, forward for escape); absence stays byte-exact.
     Browser gate: `scripts/surface-post.verify.mjs --display=:0`.
@@ -1815,9 +1816,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     rotated-w, and `scene.ts`'s `setSurface4View` converts it to the
     tracer's world `uW0` through `wSupport`, so one slider
     position is one hyperplane across every mode; 24-map cap matching 3D's —
-    since the 24/48 lift the FALLBACK's cap alone, the compute route
-    carrying `SURFACE4_COMPUTE_MAX_MAPS` 48 (past 24, compute-only), the
-    per-map arrays riding a std140 uniform BLOCK, and the
+    since the 24/48 lift the FALLBACK's cap alone (compute carries 48),
+    the per-map arrays riding a std140 uniform BLOCK, and the
     kaleidoscope SWEEPING like 3D's (order costs no slots). Since the 4D cut
     this tracer is the fallback arm for EVERY 4D system (see
     `surface-compute.ts`'s bullet) — only `?surfacegl`, a missing adapter

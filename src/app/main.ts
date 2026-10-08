@@ -141,9 +141,11 @@ import {
   sphereInversionComputeOnlySubject,
   sphereInversionRenderModeRefusal,
   sphereInversionSessionRefusal,
+  surfaceDescentRecordCount,
   surfaceEligibilityHasRoute,
   type SurfaceEligibilityResult,
 } from "./surface-eligibility";
+import { SURFACE_MAX_MAPS } from "./surface-material";
 import { resolveMengerTwist } from "../fractal/menger-twist";
 import { buildMengerDE } from "../fractal/menger-de";
 import { buildMengerDE4 } from "../fractal/menger-de-4d";
@@ -5153,14 +5155,24 @@ async function main(): Promise<void> {
   // routing admits on condensation sessions is a compute capability, so an
   // optics-authored plain-affine session prefers compute exactly like a
   // lit one (the GLSL fallback keeps the lane for a hardware rasterizer,
-  // the software strip still strips it).
+  // the software strip still strips it). One more clause is CAPACITY, not
+  // shape: a system past the WebGL tracer's fixed uniform arrays (the
+  // eligibility gate's own records formula — the 24/48 split one dimension
+  // down) has NO WebGL arm to fall back to, so it is compute-only past 24
+  // exactly as the 4D sessions are compute-only past theirs, and refused at
+  // the gate when compute is unavailable.
   function surfaceComputeEligible(de: SurfaceDE): boolean {
     return (
       surfaceComputeAvailable() &&
       (deHasFolds(de) ||
         de.foldFinal !== null ||
         surfaceComputeForced ||
-        state.surface.lighting !== undefined)
+        state.surface.lighting !== undefined ||
+        surfaceDescentRecordCount(
+          state.transforms,
+          state.symmetry,
+          state.schedule ?? null,
+        ) > SURFACE_MAX_MAPS)
     );
   }
 

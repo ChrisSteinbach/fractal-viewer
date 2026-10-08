@@ -46,7 +46,7 @@ import {
 import type { SurfaceEligibilityDocument } from "./surface-eligibility";
 import { SURFACE_MAX_MAPS } from "./surface-material";
 import { SURFACE4_MAX_MAPS } from "./surface-material-4d";
-import { SURFACE4_COMPUTE_MAX_MAPS } from "../fractal/surface-de-gpu";
+import { SURFACE_COMPUTE_MAX_MAPS } from "../fractal/surface-de-gpu";
 
 const NO_SYMMETRY: SymmetryParams = { order: 1, plane: "xy" };
 
@@ -153,10 +153,12 @@ describe("emitter-only Surface routing", () => {
         schedule,
       );
       expect(atCap.status, atCap.note ?? "").toBe("eligible");
-      // The cap split by engine: the 3D tracer's 24 records refuse order 12
-      // outright, while the 4D compute route admits its 26 and refuses only
-      // past the compute cap (order 24 → 2 + 2·24 = 50 records).
-      const overOrder = dimension === 4 ? 24 : 12;
+      // The cap split by engine, BOTH dimensions now (the 24/48 lift): 26
+      // records ride the compute route with compute, and the over-cap crowd
+      // is the compute cap's +1 (order 24 → 2 + 2·24 = 50 records), refused
+      // outright with the compute tracer named. Without compute the 26 fall
+      // to the compute-only refusal naming the WebGL count.
+      const overOrder = 24;
       const overCount = 2 + 2 * overOrder;
       const overCap = deriveSurfaceEligibility(
         transforms,
@@ -168,20 +170,27 @@ describe("emitter-only Surface routing", () => {
       expect(overCap.status).toBe("ineligible");
       expect(overCap.note).toMatch(
         new RegExp(
-          `${overCount} map\\/emitter\\/schedule records \\(the ${dimension === 4 ? "4D compute " : "surface "}tracer carries at most ${dimension === 4 ? SURFACE4_COMPUTE_MAX_MAPS : SURFACE_MAX_MAPS}\\)`,
+          `${overCount} map\\/emitter\\/schedule records \\(the ${dimension === 4 ? "4D compute " : "compute "}tracer carries at most ${SURFACE_COMPUTE_MAX_MAPS}\\)`,
         ),
       );
-      if (dimension === 4) {
-        expect(
-          deriveSurfaceEligibility(
-            transforms,
-            null,
-            { order: 12, plane: "xy" },
-            { computeAvailable: true },
-            schedule,
-          ).status,
-        ).toBe("eligible");
-      }
+      expect(
+        deriveSurfaceEligibility(
+          transforms,
+          null,
+          { order: 12, plane: "xy" },
+          { computeAvailable: true },
+          schedule,
+        ).status,
+      ).toBe("eligible");
+      const overNoCompute = deriveSurfaceEligibility(
+        transforms,
+        null,
+        { order: 12, plane: "xy" },
+        { computeAvailable: false },
+        schedule,
+      );
+      expect(overNoCompute.status).toBe("ineligible");
+      expect(overNoCompute.note).toMatch(/render on WebGPU compute only/);
     });
 
     it(`does not mistake a ${dimension}D B schedule for recursive geometry in an empty band`, () => {
@@ -382,7 +391,7 @@ describe("deriveSurfaceEligibility over the shipped presets", () => {
 
   // The twisted sponge's 4D twin hints Surface like its 3D sibling since
   // the 24/48 cap lift: the compute tracer's record cap
-  // (SURFACE4_COMPUTE_MAX_MAPS) carries the hyper-Menger's 48 maps, while
+  // (SURFACE_COMPUTE_MAX_MAPS) carries the hyper-Menger's 48 maps, while
   // the WebGL fallback's 24-slot block does not — so the twin's route is
   // compute-only, the same disclosure class every fold-shaped 4D system
   // rides (its spherefold lens makes it fold-shaped). The no-compute
@@ -586,28 +595,32 @@ describe("capability-neutral Surface document eligibility", () => {
       kind: null,
     });
 
+    // The 3D cap is split by engine exactly like the 4D one (the 24/48
+    // lift, the user's scheduled-Menger document the demand): the GLSL
+    // tracer's 24 slots refuse only WITHOUT compute — with it the compute
+    // route carries up to SURFACE_COMPUTE_MAX_MAPS records — so the parity
+    // derivation's over-cap crowd is the compute cap's +1 in both
+    // dimensions. The 25..48 split's own leaves are pinned in the cap-split
+    // test below.
     const base3 = sierpinskiTetrahedron();
     const overCap3: SurfaceEligibilityDocument = {
-      transforms: Array.from({ length: SURFACE_MAX_MAPS + 1 }, (_, index) => ({
-        ...base3[index % base3.length],
-        id: index,
-      })),
+      transforms: Array.from(
+        { length: SURFACE_COMPUTE_MAX_MAPS + 1 },
+        (_, index) => ({
+          ...base3[index % base3.length],
+          id: index,
+        }),
+      ),
       symmetry: NO_SYMMETRY,
     };
     expect(expectNeutralParity(overCap3)).toMatchObject({
       status: "ineligible",
       kind: null,
     });
-
-    // The 4D cap is split by engine (the 24/48 lift): the GLSL fallback's
-    // 24 slots refuse only WITHOUT compute — with it the compute route
-    // carries up to SURFACE4_COMPUTE_MAX_MAPS records — so the parity
-    // derivation's over-cap crowd is the compute cap's +1. The 25..48
-    // split's own leaves are pinned in the cap-split test below.
     const base4 = presetTransforms("pentatope");
     const overCap4: SurfaceEligibilityDocument = {
       transforms: Array.from(
-        { length: SURFACE4_COMPUTE_MAX_MAPS + 1 },
+        { length: SURFACE_COMPUTE_MAX_MAPS + 1 },
         (_, index) => ({
           ...base4[index % base4.length],
           id: index,
@@ -688,35 +701,105 @@ describe("capability-neutral Surface document eligibility", () => {
 });
 
 describe("deriveSurfaceEligibility caps and refusal notes", () => {
-  it("refuses past the tracer's map cap, counting only active maps", () => {
+  // The 3D cap is split by engine (the 3D half of the 24/48 lift): the
+  // WebGL tracer's fixed uniform arrays carry SURFACE_MAX_MAPS records and
+  // the compute route carries SURFACE_COMPUTE_MAX_MAPS, so 25..48 records
+  // are the compute-only class — admitted with compute (the routing seam
+  // sends them there; plain affine 3D otherwise prefers the WebGL arm),
+  // refused without it with the note naming the boundary — and past 48
+  // nothing renders. Zero-weight maps still do not count, and exactly at
+  // 24 the WebGL fallback exists so a compute-less machine keeps the route.
+  it("splits the 3D record cap by engine, with the compute-only boundary disclosed", () => {
     const base = sierpinskiTetrahedron();
-    const crowd: Transform[] = [];
-    for (let i = 0; i < SURFACE_MAX_MAPS + 1; i++) {
-      crowd.push({ ...base[i % base.length], id: i + 1 });
-    }
+    const crowd = (n: number): Transform[] =>
+      Array.from({ length: n }, (_, i) => ({
+        ...base[i % base.length],
+        id: i + 1,
+      }));
     // One extra ZERO-weight map must not count against the cap...
     const overCap = deriveSurfaceEligibility(
-      [...crowd, { ...base[0], id: 99, weight: 0 }],
+      [...crowd(SURFACE_COMPUTE_MAX_MAPS), { ...base[0], id: 99, weight: 0 }],
       null,
       NO_SYMMETRY,
       { computeAvailable: true },
     );
-    expect(overCap.status).toBe("ineligible");
-    expect(overCap.kind).toBe(null);
-    expect(overCap.note).toBe(
-      `${SURFACE_MAX_MAPS + 1} maps (the surface tracer carries at most ${SURFACE_MAX_MAPS})`,
+    expect(overCap.status).toBe("eligible");
+    // ...and 49 ACTIVE maps refuse outright, naming the compute cap.
+    const overCompute = deriveSurfaceEligibility(
+      crowd(SURFACE_COMPUTE_MAX_MAPS + 1),
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
     );
-    // ...and exactly at the cap the gate admits.
+    expect(overCompute.status).toBe("ineligible");
+    expect(overCompute.kind).toBe(null);
+    expect(overCompute.note).toBe(
+      `${SURFACE_COMPUTE_MAX_MAPS + 1} maps (the compute tracer carries at most ${SURFACE_COMPUTE_MAX_MAPS})`,
+    );
+    // 25 maps, compute available: the compute route admits.
     expect(
-      deriveSurfaceEligibility(
-        crowd.slice(0, SURFACE_MAX_MAPS),
-        null,
-        NO_SYMMETRY,
-        {
-          computeAvailable: true,
-        },
-      ).status,
-    ).toBe("eligible");
+      deriveSurfaceEligibility(crowd(SURFACE_MAX_MAPS + 1), null, NO_SYMMETRY, {
+        computeAvailable: true,
+      }),
+    ).toMatchObject({ status: "eligible", kind: "ifs" });
+    // 25 maps, no compute: refused, naming the boundary.
+    const withoutCompute = deriveSurfaceEligibility(
+      crowd(SURFACE_MAX_MAPS + 1),
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: false },
+    );
+    expect(withoutCompute.status).toBe("ineligible");
+    expect(withoutCompute.kind).toBe(null);
+    expect(withoutCompute.note).toBe(
+      `${SURFACE_MAX_MAPS + 1} maps render on WebGPU compute only (the WebGL tracer carries at most ${SURFACE_MAX_MAPS}), which is unavailable here`,
+    );
+    // Exactly at the WebGL tracer's cap the fragment arm exists, so a
+    // compute-less machine keeps the route.
+    expect(
+      deriveSurfaceEligibility(crowd(SURFACE_MAX_MAPS), null, NO_SYMMETRY, {
+        computeAvailable: false,
+      }),
+    ).toMatchObject({ status: "eligible", kind: "ifs" });
+    // The 3D escape-links gate prices the same split: the WebGL escape
+    // arm carries 24 uEscM slots per link and the compute arm's storage
+    // list carries 48 — so a chain past 24 is compute-only (admitted with
+    // compute, refused without it), past 48 refused outright.
+    const chainLink = presetTransforms("mandelboxClassic")[0];
+    const chain = (n: number): Transform[] =>
+      Array.from({ length: n }, (_, i) => ({ ...chainLink, id: i + 1 }));
+    expect(
+      deriveSurfaceEligibility(chain(SURFACE_MAX_MAPS + 1), null, NO_SYMMETRY, {
+        computeAvailable: true,
+      }),
+    ).toMatchObject({ status: "degraded", kind: "escape" });
+    const chainNoCompute = deriveSurfaceEligibility(
+      chain(SURFACE_MAX_MAPS + 1),
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: false },
+    );
+    expect(chainNoCompute.status).toBe("ineligible");
+    expect(chainNoCompute.note).toBe(
+      `${SURFACE_MAX_MAPS + 1} chain links render on WebGPU compute only (the WebGL tracer carries at most ${SURFACE_MAX_MAPS}), which is unavailable here`,
+    );
+    const chainOverCompute = deriveSurfaceEligibility(
+      chain(SURFACE_COMPUTE_MAX_MAPS + 1),
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+    );
+    expect(chainOverCompute.status).toBe("ineligible");
+    expect(chainOverCompute.note).toBe(
+      `${SURFACE_COMPUTE_MAX_MAPS + 1} chain links (the escape-time compute tracer carries at most ${SURFACE_COMPUTE_MAX_MAPS})`,
+    );
+    // At 24 links the WebGL fallback exists, so compute-less keeps the
+    // route.
+    expect(
+      deriveSurfaceEligibility(chain(SURFACE_MAX_MAPS), null, NO_SYMMETRY, {
+        computeAvailable: false,
+      }),
+    ).toMatchObject({ status: "degraded", kind: "escape" });
   });
 
   // The 4D cap is split by engine: the GLSL fallback tracer's 24-slot
@@ -764,14 +847,14 @@ describe("deriveSurfaceEligibility caps and refusal notes", () => {
     ).toMatchObject({ status: "eligible", kind: "ifs4" });
     // Past the compute cap nothing carries the system, compute or not.
     const overCompute = deriveSurfaceEligibility(
-      crowd(SURFACE4_COMPUTE_MAX_MAPS + 1),
+      crowd(SURFACE_COMPUTE_MAX_MAPS + 1),
       null,
       NO_SYMMETRY,
       { computeAvailable: true },
     );
     expect(overCompute.status).toBe("ineligible");
     expect(overCompute.note).toBe(
-      `${SURFACE4_COMPUTE_MAX_MAPS + 1} maps (the 4D compute tracer carries at most ${SURFACE4_COMPUTE_MAX_MAPS})`,
+      `${SURFACE_COMPUTE_MAX_MAPS + 1} maps (the 4D compute tracer carries at most ${SURFACE_COMPUTE_MAX_MAPS})`,
     );
     // The escape4 link gate prices the same compute cap — and without
     // compute the route refuses as the forward-orbit class always has.
@@ -779,14 +862,14 @@ describe("deriveSurfaceEligibility caps and refusal notes", () => {
     const chain = (n: number): Transform[] =>
       Array.from({ length: n }, (_, i) => ({ ...chainLink, id: i + 1 }));
     const escapeGate = deriveSurfaceEligibility(
-      chain(SURFACE4_COMPUTE_MAX_MAPS + 1),
+      chain(SURFACE_COMPUTE_MAX_MAPS + 1),
       null,
       NO_SYMMETRY,
       { computeAvailable: true },
     );
     expect(escapeGate.status).toBe("ineligible");
     expect(escapeGate.note).toBe(
-      `${SURFACE4_COMPUTE_MAX_MAPS + 1} chain links (the 4D escape-time compute tracer carries at most ${SURFACE4_COMPUTE_MAX_MAPS})`,
+      `${SURFACE_COMPUTE_MAX_MAPS + 1} chain links (the 4D escape-time compute tracer carries at most ${SURFACE_COMPUTE_MAX_MAPS})`,
     );
   });
 
@@ -1110,12 +1193,14 @@ describe("deriveSurfaceEligibility and the scheduled-hybrid block", () => {
     expect(result.note).not.toContain("Escape-time render");
   });
 
-  it("prices B records in the shared 24-record cap", () => {
+  it("prices B records in the shared record cap", () => {
     const base = sierpinskiTetrahedron();
-    const scheduleTransforms = Array.from({ length: 21 }, (_, id) => ({
+    const scheduleTransforms = Array.from({ length: 45 }, (_, id) => ({
       ...pairB[id % pairB.length],
       id,
     }));
+    // 4 A maps + 45 B records = 49: past the compute cap, refused — B's
+    // records price against the same cap the A maps do.
     const over = deriveSurfaceEligibility(
       base,
       null,
@@ -1124,26 +1209,51 @@ describe("deriveSurfaceEligibility and the scheduled-hybrid block", () => {
       { transforms: scheduleTransforms, depth: 1 },
     );
     expect(over.status).toBe("ineligible");
-    expect(over.note).toContain("25 map/schedule records");
+    expect(over.note).toContain("49 map/schedule records");
 
+    // Exactly at the compute cap (4 + 44 = 48) the gate admits.
     const atCap = deriveSurfaceEligibility(
       base,
       null,
       NO_SYMMETRY,
       { computeAvailable: true },
-      { transforms: scheduleTransforms.slice(0, 20), depth: 1 },
+      { transforms: scheduleTransforms.slice(0, 44), depth: 1 },
     );
     expect(atCap.status).toBe("eligible");
     expect(atCap.kind).toBe("ifs");
+
+    // 25 records (4 + 21) are the compute-only class: admitted with
+    // compute, refused without it, the note naming the boundary.
+    const mid = deriveSurfaceEligibility(
+      base,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      { transforms: scheduleTransforms.slice(0, 21), depth: 1 },
+    );
+    expect(mid.status).toBe("eligible");
+    const midNoCompute = deriveSurfaceEligibility(
+      base,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: false },
+      { transforms: scheduleTransforms.slice(0, 21), depth: 1 },
+    );
+    expect(midNoCompute.status).toBe("ineligible");
+    expect(midNoCompute.note).toContain(
+      "25 map/schedule records render on WebGPU compute only",
+    );
   });
 
   it("matches B's weighted support and all-zero uniform fallback when counting records", () => {
     const base = sierpinskiTetrahedron();
-    const many = Array.from({ length: 21 }, (_, id): Transform => ({
+    const many = Array.from({ length: 45 }, (_, id): Transform => ({
       ...pairB[id % pairB.length],
       id,
       weight: 0,
     }));
+    // Every weight zero: the table falls back to uniform support, so ALL
+    // 45 B records count — 49 total, past the compute cap.
     const allZero = deriveSurfaceEligibility(
       base,
       null,
@@ -1152,7 +1262,7 @@ describe("deriveSurfaceEligibility and the scheduled-hybrid block", () => {
       { transforms: many, depth: 1 },
     );
     expect(allZero.status).toBe("ineligible");
-    expect(allZero.note).toContain("25 map/schedule records");
+    expect(allZero.note).toContain("49 map/schedule records");
 
     const weighted = many.map((transform, index) => ({
       ...transform,
@@ -1425,29 +1535,51 @@ describe("deriveSurfaceEligibility shape emitters", () => {
   });
 
   it("prices symmetry-expanded emitter records against the common cap", () => {
-    const transforms: Transform[] = Array.from({ length: 25 }, (_, id) => ({
-      id,
-      position: [id * 0.01, 0, 0],
-      rotation: [0, 0, 0],
-      scale: [0.25, 0.25, 0.25],
-      ...(id === 0
-        ? {}
-        : {
-            emitter: {
-              parts: [
-                {
-                  primitive: { kind: "sphere" as const, radius: 0.5 },
-                  combine: "union" as const,
-                },
-              ],
-            },
-          }),
-    }));
+    const transforms: Transform[] = Array.from(
+      { length: SURFACE_COMPUTE_MAX_MAPS + 1 },
+      (_, id) => ({
+        id,
+        position: [id * 0.01, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.25, 0.25, 0.25],
+        ...(id === 0
+          ? {}
+          : {
+              emitter: {
+                parts: [
+                  {
+                    primitive: { kind: "sphere" as const, radius: 0.5 },
+                    combine: "union" as const,
+                  },
+                ],
+              },
+            }),
+      }),
+    );
     const result = deriveSurfaceEligibility(transforms, null, NO_SYMMETRY, {
       computeAvailable: true,
     });
     expect(result.status).toBe("ineligible");
-    expect(result.note).toContain("25 map/emitter records");
+    expect(result.note).toContain("49 map/emitter records");
+    // The compute-only class one engine down: 25 map/emitter records ride
+    // the compute route with compute, refuse without it.
+    const mid = deriveSurfaceEligibility(
+      transforms.slice(0, 25),
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+    );
+    expect(mid.status).toBe("eligible");
+    const midNoCompute = deriveSurfaceEligibility(
+      transforms.slice(0, 25),
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: false },
+    );
+    expect(midNoCompute.status).toBe("ineligible");
+    expect(midNoCompute.note).toContain(
+      "25 map/emitter records render on WebGPU compute only",
+    );
   });
 });
 

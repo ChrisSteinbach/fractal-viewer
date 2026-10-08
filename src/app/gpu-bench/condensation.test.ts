@@ -9,8 +9,7 @@ import {
   surfaceDeKernelWgsl,
   SURFACE_GPU_MAP_VEC4,
   SURFACE_GPU_MAP4_VEC4,
-  SURFACE_GPU_UNIFORM_MAP_SLOTS,
-  SURFACE4_COMPUTE_MAX_MAPS,
+  SURFACE_COMPUTE_MAX_MAPS,
 } from "../../fractal/surface-de-gpu";
 import { surfaceCondensationKernelSpec } from "./condensation";
 import { surfaceEmitterOnlyFixtures } from "./condensation-emitter-only";
@@ -140,16 +139,14 @@ describe("emitter-only surface agreement fixtures", () => {
     }
   });
 
-  it("counts every emitter and scheduled record against the engine's record cap with zero A maps", () => {
+  it("counts every emitter and scheduled record against the compute record cap with zero A maps", () => {
     for (const row of fixtures().filter((fixture) =>
       fixture.name.endsWith("schedule"),
     )) {
-      // The cap split by engine (the 4D 24/48 lift): the 3D packers and the
-      // 3D codegen keep the fixed 24, the 4D production wire carries the
-      // compute route's 48.
-      const cap = row.view4
-        ? SURFACE4_COMPUTE_MAX_MAPS
-        : SURFACE_GPU_UNIFORM_MAP_SLOTS;
+      // The production storage packers carry the compute cap in BOTH
+      // dimensions (the 24/48 lift): 48 records pack, 49 refuse, whichever
+      // stride the row packs.
+      const cap = SURFACE_COMPUTE_MAX_MAPS;
       const count = cap - row.de.schedule!.maps.length;
       if (row.view4) {
         const condensation = row.de.condensation!;

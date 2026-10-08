@@ -160,24 +160,24 @@ followed `twistedSponge4`'s shipping decision at the time (48 maps, no
 surface hint), verified in the explorer's Solid render; both 4D presets hint
 Surface since the cap lift below.
 
-## The 4D map cap lift — Surface reaches the 48-map hyper-Menger (2026-10-08)
+## The map cap lift — the record cap splits by engine (2026-10-08)
 
-The 4D surface tracer's per-map cap was split by engine, and the two 48-map
-hyper-Menger presets (`twistedSponge4`, `twistedSponge4Burst`) now hint
+The surface tracers' per-map caps split by engine in BOTH dimensions, and the
+48-map hyper-Menger presets (`twistedSponge4`, `twistedSponge4Burst`) now hint
 Surface:
 
-- The GLSL fallback tracer keeps `SURFACE4_MAX_MAPS = 24` — its per-map
-  arrays ride the std140 uniform block, and that budget is untouched.
+- The GLSL tracers keep their fixed 24-slot uniform arrays (`SURFACE_MAX_MAPS`
+  3D, `SURFACE4_MAX_MAPS` 4D, both `surface-material*.ts`) — those budgets are
+  untouched.
 - The compute route's maps wire is a runtime-sized STORAGE buffer, so its
-  capacity is a choice: `SURFACE4_COMPUTE_MAX_MAPS = 48`
-  (`surface-de-gpu.ts`), exactly the hyper-Menger's 48 records. The
-  eligibility gate's 4D records/links gates price it — a 25..48-record 4D
-  system is COMPUTE-ONLY (the same disclosure class fold-shaped 4D systems
-  ride, which these presets are through their spherefold lens: admitted with
-  compute, refused without it, the note naming "compute-only past 24"),
-  past 48 nothing renders it. The escape4 link gate prices the same compute
-  cap — escape4 has no fragment arm at all, so its old 24 bound was the
-  GLSL tracer's number borrowed where no fragment tracer exists.
+  capacity is a choice: `SURFACE_COMPUTE_MAX_MAPS = 48` (`surface-de-gpu.ts`,
+  one dimension-free constant), exactly the hyper-Menger's 48 records. The
+  eligibility gates' records/links gates price it in both dimensions — a
+  25..48-record system is COMPUTE-ONLY (admitted with compute, refused without
+  it, the note naming "compute-only past 24"), past 48 nothing renders it. The
+  escape link gates price the same compute cap — the 4D chain has no fragment
+  arm at all, and the 3D chain's old 24 bound was the GLSL arm's number named
+  as the MODE's cap while the compute arm's storage list has none.
 - The maps-uniform probe keeps its fixed 24 (`SURFACE_GPU_UNIFORM_MAP_SLOTS`):
   its kernel declares `array<GpuMap4, 24>` and cannot address more, so its
   record validations refuse above 24 instead of silently truncating.
@@ -186,30 +186,42 @@ Surface:
   render-gate constant, never document state). Kaleidoscope sectors sweep
   from uniforms, so slots stay transforms 1:1 at any order; schedules,
   emitters and chaos states thread the same compute cap.
+- The 3D half's DEMAND is the user's own document (2026-10-08): 20 flat Menger
+  A maps plus a depth-1 hybrid schedule whose B word is the same 20 maps — 40
+  physical records, IFS-eligible, refused only by the old 3D record gate. A
+  scheduled document is exactly the shape that can exceed 24 records with no
+  shipped preset doing so, which is what overturned the original out-of-scope
+  rationale. Plain affine 3D otherwise PREFERS the WebGL arm, so the routing
+  seam (main.ts's `surfaceComputeEligible`) sends the over-cap systems to
+  compute explicitly — one clause past the shape tests, reading the
+  eligibility gate's own record formula (`surfaceDescentRecordCount`).
 
 Measured cost (AMD RX 7900 XTX, `--display=:0`, `npm run gpu:scratch`,
 512x512 raster, quiet machine, production kernels, one settle frame each):
 
-| Scene                 | Core           | Maps | wall ms | gpu ms | march ms | shade ms | hit frac |
-| --------------------- | -------------- | ---- | ------- | ------ | -------- | -------- | -------- |
-| `twistedSponge` (3D)  | affine + lens  | 20   | 971     | 872    | 100      | 772      | 0.281    |
-| `twistedSponge4`      | affine4 + lens | 48   | 2246    | 2149   | 213      | 1936     | 0.176    |
-| `twistedSponge4Burst` | affine4 + lens | 48   | 6073    | 5907   | 600      | 5307     | 0.827    |
+| Scene                            | Core           | Records | wall ms | gpu ms | march ms | shade ms | hit frac |
+| -------------------------------- | -------------- | ------- | ------- | ------ | -------- | -------- | -------- |
+| `menger` (3D, 20 maps)           | affine         | 20      | 377     | 303    | 57       | 245      | 0.283    |
+| the user's scheduled Menger (3D) | affine + B20   | 40      | 657     | 549    | 80       | 469      | 0.285    |
+| `twistedSponge` (3D)             | affine + lens  | 20      | 971     | 872    | 100      | 772      | 0.281    |
+| `twistedSponge4`                 | affine4 + lens | 48      | 2246    | 2149   | 213      | 1936     | 0.176    |
+| `twistedSponge4Burst`            | affine4 + lens | 48      | 6073    | 5907   | 600      | 5307     | 0.827    |
 
-The verdict is SHIP THE HINTS. The narrow-band 4D twin settles at 2.3x the
-3D 20-map sibling's wall time at the same raster — the honest price of 48
+The verdict is SHIP THE HINTS (4D) and the route ADMITS the scheduled
+document (3D). The 40-record scheduled document settles at 1.74x the plain
+20-map Menger's wall time at the same raster — 2x the records plus the
+schedule's per-level bookkeeping, at a near-identical hit fraction (same
+object family, so the delta is honest per-ray descent cost). The narrow-band
+4D twin settles at 2.3x its 3D 20-map sibling — the honest price of 48
 records of 4x4+post-tail descent work per candidate per level plus the 4D
 math itself, well inside the preview tier's territory (previews trace at a
 reduced scale/depth rung). The burst reads 6.2x, but that number is
 hit-fraction dominated, not map-count dominated: 0.827 of its rays hit (the
 wide-band lens inverts nearly the whole sponge), so nearly every ray pays
 the full descent and a shade batch, where the narrow band's 0.176 leaves
-most rays cheap misses. Both frames are the presets' authored objects (the
-round crusty ball / the curled-arc burst) — the routing renders what the
-explorer renders. The 3D cap (`SURFACE_MAX_MAPS`,
-`surface-material.ts`) is deliberately NOT lifted: no shipped 3D preset
-exceeds 20 maps, and the 3D GLSL arm is a live preferred tracer for fold
-shapes, so its budget tradeoffs differ.
+most rays cheap misses. The frames are the authored objects (the level-2
+sponge the schedule composes / the round crusty ball / the curled-arc
+burst) — the routing renders what the explorer renders.
 
 **The reference thread's last lead was a mis-attribution.** The committed
 shader at `b341928` (2023-12-12) does carry the twist live, but the

@@ -1354,25 +1354,28 @@ export const SURFACE_GPU_SHADE_BYTES = 224;
  * zero-fills fresh buffers, so a short `packSurfaceGpuMaps4` write into a
  * full-size buffer is complete). The array is the PROBE's own limit, not a
  * wire-wide one: the production storage maps binding is runtime-sized and
- * carries {@link SURFACE4_COMPUTE_MAX_MAPS} records, so a mapsUniform
+ * carries {@link SURFACE_COMPUTE_MAX_MAPS} records, so a mapsUniform
  * pipeline must pack against 24 whatever the compute route admits — the
  * record validations below take the probe's cap whenever `mapsUniform` is
  * set, so a >24 pack into it refuses instead of silently truncating. */
 export const SURFACE_GPU_UNIFORM_MAP_SLOTS = 24;
 /**
- * The compute route's 4D record cap: the production STORAGE maps wire is
- * runtime-sized (`array<GpuMap4>`, one 224-byte stride per record, sized by
- * {@link packSurfaceGpuMaps4} from the DE's own record count), so its
- * capacity is a CHOICE — 48, exactly the 48-map hyper-Menger the 24-slot
- * GLSL fallback tracer refuses (`SURFACE4_MAX_MAPS`, surface-material-4d.ts).
- * surface-eligibility's 4D records/links gates admit 25..48-record 4D
- * systems on the compute route and refuse them without compute ("compute-only
- * past 24"); past this count no tracer carries the system and the gate
- * refuses outright. The maps-uniform probe above keeps its fixed 24: its
- * kernel declares `array<GpuMap4, 24>` and cannot address more, so a
- * mapsUniform pipeline packs against {@link SURFACE_GPU_UNIFORM_MAP_SLOTS}
- * whatever this constant says. */
-export const SURFACE4_COMPUTE_MAX_MAPS = 48;
+ * The compute route's record cap, BOTH dimensions: the production STORAGE
+ * maps wire is runtime-sized (`array<GpuMap>` / `array<GpuMap4>`, one
+ * 160-byte 3D / 224-byte 4D stride per record, sized by
+ * {@link packSurfaceGpuMaps} / {@link packSurfaceGpuMaps4} from the DE's own
+ * record count), so its capacity is a CHOICE — 48, exactly the 48-record
+ * constructions the fixed uniform-block tracers refuse (the 4D hyper-Menger
+ * presets' `SURFACE4_MAX_MAPS = 24` and the 3D GLSL tracer's
+ * `SURFACE_MAX_MAPS = 24`, both surface-material*.ts). surface-eligibility's
+ * records/links gates admit 25..48-record systems on the compute route and
+ * refuse them without compute ("compute-only past 24"); past this count no
+ * tracer carries the system and the gate refuses outright. The
+ * maps-uniform probe keeps its fixed 24: its kernel declares
+ * `array<GpuMap4, 24>` and cannot address more, so a mapsUniform pipeline
+ * packs against {@link SURFACE_GPU_UNIFORM_MAP_SLOTS} whatever this constant
+ * says. */
+export const SURFACE_COMPUTE_MAX_MAPS = 48;
 
 interface CondensationWireEmitter {
   shadeIndex: number;
@@ -1521,11 +1524,12 @@ function validateSurfacePhysicalMapCount(
     condensation?: { emitters: readonly unknown[] };
   },
   emitterCount = 0,
-  /** The record cap the caller's wire carries: the fixed-24 uniform probe
-   * (SURFACE_GPU_UNIFORM_MAP_SLOTS) for the 3D packers and the mapsUniform
-   * pipelines, {@link SURFACE4_COMPUTE_MAX_MAPS} for the 4D production
-   * storage packers (the capacity surface-eligibility's 4D gates admit). */
-  cap: number = SURFACE_GPU_UNIFORM_MAP_SLOTS,
+  /** The record cap the caller's wire carries: {@link
+   * SURFACE_COMPUTE_MAX_MAPS} for the production storage packers (both
+   * dimensions — the capacity surface-eligibility's records/links gates
+   * admit), the fixed-24 uniform probe (SURFACE_GPU_UNIFORM_MAP_SLOTS)
+   * only for a mapsUniform pipeline's pack. */
+  cap: number = SURFACE_COMPUTE_MAX_MAPS,
 ): void {
   const scheduleCount = surfaceScheduleWireInfo(de)?.mapCount ?? 0;
   const recordCount = de.maps.length + scheduleCount + emitterCount;
@@ -2649,11 +2653,15 @@ export function packSurfaceGpuParams(
   tiling: ResolvedTiling | null = null,
 ): ArrayBuffer {
   const schedule = surfaceScheduleWireInfo(de);
-  const condensation = condensationWireInfo(de);
-  const chaos = surfaceChaosWireInfo(de);
+  const condensation = condensationWireInfo(de, SURFACE_COMPUTE_MAX_MAPS);
+  const chaos = surfaceChaosWireInfo(de, SURFACE_COMPUTE_MAX_MAPS);
   const tilingInfo = surfaceTilingWireInfo(tiling, 3);
   validateSurfaceLatticeRadius(tilingInfo, de.visibleBoundingRadius);
-  validateSurfacePhysicalMapCount(de, condensation?.emitterCount ?? 0);
+  validateSurfacePhysicalMapCount(
+    de,
+    condensation?.emitterCount ?? 0,
+    SURFACE_COMPUTE_MAX_MAPS,
+  );
   if (balloon && groundPlane) {
     throw new Error(
       "surface-de-gpu: groundPlane+balloon: excluded — the two " +
@@ -3652,14 +3660,14 @@ export function packSurface4GpuParams(
   tiling: ResolvedTiling | null = null,
 ): ArrayBuffer {
   const schedule = surfaceScheduleWireInfo(de);
-  const condensation = condensationWireInfo(de, SURFACE4_COMPUTE_MAX_MAPS);
-  const chaos = surfaceChaosWireInfo(de, SURFACE4_COMPUTE_MAX_MAPS);
+  const condensation = condensationWireInfo(de, SURFACE_COMPUTE_MAX_MAPS);
+  const chaos = surfaceChaosWireInfo(de, SURFACE_COMPUTE_MAX_MAPS);
   const tilingInfo = surfaceTilingWireInfo(tiling, 4);
   validateSurfaceLatticeRadius(tilingInfo, de.visibleBoundingRadius);
   validateSurfacePhysicalMapCount(
     de,
     condensation?.emitterCount ?? 0,
-    SURFACE4_COMPUTE_MAX_MAPS,
+    SURFACE_COMPUTE_MAX_MAPS,
   );
   if (balloon && groundPlane) {
     throw new Error(
@@ -4560,9 +4568,9 @@ export function packSurfaceGpuMaps(
   options: SurfaceGpuMapPackOptions = {},
 ): Float32Array {
   const schedule = surfaceScheduleWireInfo(de);
-  const condensation = condensationWireInfo(de);
+  const condensation = condensationWireInfo(de, SURFACE_COMPUTE_MAX_MAPS);
   const emitterCount = condensation?.emitterCount ?? 0;
-  validateSurfacePhysicalMapCount(de, emitterCount);
+  validateSurfacePhysicalMapCount(de, emitterCount, SURFACE_COMPUTE_MAX_MAPS);
   const scheduleMapCount = schedule?.mapCount ?? 0;
   const stride = options.stateBounds
     ? SURFACE_GPU_MAP_STATE_STRIDE_VEC4
@@ -4697,9 +4705,9 @@ export function packSurfaceGpuMaps4(
   options: SurfaceGpuMapPackOptions = {},
 ): Float32Array {
   const schedule = surfaceScheduleWireInfo(de);
-  const condensation = condensationWireInfo(de, SURFACE4_COMPUTE_MAX_MAPS);
+  const condensation = condensationWireInfo(de, SURFACE_COMPUTE_MAX_MAPS);
   const emitterCount = condensation?.emitterCount ?? 0;
-  validateSurfacePhysicalMapCount(de, emitterCount, SURFACE4_COMPUTE_MAX_MAPS);
+  validateSurfacePhysicalMapCount(de, emitterCount, SURFACE_COMPUTE_MAX_MAPS);
   const scheduleMapCount = schedule?.mapCount ?? 0;
   const stride = options.stateBounds
     ? SURFACE_GPU_MAP4_STATE_STRIDE_VEC4
@@ -5816,22 +5824,18 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   const tiling = tilingInfo?.tiling ?? null;
   const latticeTiling = tilingInfo?.kind === "lattice";
   // The record cap the generated kernel's wire carries (see
-  // {@link validateSurfacePhysicalMapCount}'s cap parameter): the 4D descent
-  // pair packs the runtime-sized storage maps wire, so it carries
-  // SURFACE4_COMPUTE_MAX_MAPS records — unless this IS the maps-uniform
-  // probe, whose fixed `array<GpuMap4, 24>` cannot address more, so its
-  // pack refuses above SURFACE_GPU_UNIFORM_MAP_SLOTS instead of silently
-  // truncating. Every non-4D core keeps the probe's 24 (the 3D record cap
-  // is the GLSL fragment tracer's, out of the 4D lift's scope). `mapsUniform`
-  // is structurally inert off the 4D descent cores (its option doc), so the
-  // raw option read here agrees with the codegen's own mapsUniform flag
-  // wherever either matters.
+  // {@link validateSurfacePhysicalMapCount}'s cap parameter): every descent
+  // core packs the runtime-sized storage maps wire, so it carries
+  // SURFACE_COMPUTE_MAX_MAPS records in both dimensions — unless this IS
+  // the maps-uniform probe, whose fixed `array<GpuMap4, 24>` cannot address
+  // more, so its pack refuses above SURFACE_GPU_UNIFORM_MAP_SLOTS instead
+  // of silently truncating. `mapsUniform` is structurally inert off the 4D
+  // descent cores (its option doc), so the raw option read here agrees with
+  // the codegen's own mapsUniform flag wherever either matters.
   const recordCap =
     core4 && (opts.mapsUniform ?? false)
       ? SURFACE_GPU_UNIFORM_MAP_SLOTS
-      : core4
-        ? SURFACE4_COMPUTE_MAX_MAPS
-        : SURFACE_GPU_UNIFORM_MAP_SLOTS;
+      : SURFACE_COMPUTE_MAX_MAPS;
   let schedule: NonNullable<SurfaceGpuKernelOptions["schedule"]> | null = null;
   if (opts.schedule && opts.schedule.scheduleMapCount !== 0) {
     if (

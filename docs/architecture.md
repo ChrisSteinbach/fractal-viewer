@@ -1405,10 +1405,11 @@ BLOCK — 2688 bytes of a guaranteed 16KB, budgeted separately from the default
 block — put the 24-map **24-cell** presets in reach and left the cap a
 question of per-ray descent cost rather than uniform space. That cap is now
 the GLSL FALLBACK's alone: the compute route's maps wire is a runtime-sized
-storage buffer, so the 4D record limit split by engine —
-`SURFACE4_COMPUTE_MAX_MAPS = 48` (`surface-de-gpu.ts`) on the compute route
-(the 48-map hyper-Menger presets surface there, compute-only past 24),
-`SURFACE4_MAX_MAPS = 24` unchanged for the fallback arm, and the
+storage buffer, so the record limit splits by engine in BOTH dimensions —
+`SURFACE_COMPUTE_MAX_MAPS = 48` (`surface-de-gpu.ts`, one dimension-free
+constant) on the compute route (the 48-map hyper-Menger presets and a
+40-record scheduled Menger document surface there, compute-only past 24),
+the GLSL tracers' 24 unchanged for their fallback arms, and the
 maps-uniform probe keeps its fixed 24. What the app
 marches is never the full 4D attractor but its
 `w = sliceCenter` SLICE. A certified 4D DE lower-bounds slice distance for
