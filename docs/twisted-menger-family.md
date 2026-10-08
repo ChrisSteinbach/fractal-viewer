@@ -136,6 +136,63 @@ brick chains, deep multi-scale crust, fine-edge fraction matched
 (0.448 vs 0.448). Regenerate the side-by-side with `scripts/make-sheet.mjs`
 (frames under `scripts/out/`, gitignored).
 
+## The burst sibling and the reference thread, closed (2026-10-08 takeover)
+
+The "try again" pass after the tune landed two things: a shipped sibling in
+the OPPOSITE lens regime, and the closure of the README-image thread.
+
+**The burst sibling** (`twistedSpongeBurst`/`twistedSponge4Burst`) keeps the
+shared-twist maps and swaps the lens regime: `fixedRadius` 1.3 is wider than
+the sponge's whole hull (boundingRadius ~1.32) with `minRadius` 0.25 deep
+inside the central void, so nearly the whole sponge sits in the inversion
+band and every brick chain curls into an arc — no straight plates anywhere.
+The core magnification `fR²/mR² = 27` lands on the central void, empty at
+every recursion level, so the blowup hits nothing. Where the tuned lens
+approximates the reference (plates still visible), the burst abandons them
+deliberately — the user picked it from the sweep frames as a look in its own
+right. The preset's doc comment carries the from-scratch recipe (plain
+Menger or the twisted maps, then one final `spherefold` at 0.25/1.3, origin,
+scale 1); the scratch render of the shipped preset matches its provenance
+frame at the same raster (hit fraction 0.1855 vs 0.1854 — the delta is the
+preset route's auto-framing; the same-doc re-run is bit-exact). The 4D twin
+follows `twistedSponge4`'s shipping decision (48 maps, no surface hint),
+verified in the explorer's Solid render.
+
+**The reference thread's last lead was a mis-attribution.** The committed
+shader at `b341928` (2023-12-12) does carry the twist live, but the
+`Scale = 1.85 / p = p*Scale - Offset*(Scale-1.0)` structure beside it belongs
+to `sdSierpinski`, not the sponge — its `sdMengerSponge` is the SAME carve
+construction (twist animated by `ani`, enclosing box unrotated). So the repo
+cannot produce the README image at any commit: the caption-vs-commit
+mismatch means the image came from an uncommitted local build, and the
+carve route stays closed. The silhouette re-measurement confirms it: bright
+row spans 449/588/773/683/421 px at 10/25/50/75/90% of the object's own
+height — a circle profile (0.58/0.76/1.0/0.88/0.54 normalized vs the
+circle's 0.60/0.87/1.0/0.87/0.60), with slightly tight upper shoulders; no
+box orientation produces it at their camera.
+
+**The tuned lens's "largest plates remain bigger" limit is structural, not
+a tuning failure.** Under one sphere-fold, the ball's outer crust is always
+the image of the material NEAREST the fold centre (inversion is inside-out:
+far maps near, near maps far), and the nearest material to any void or
+exterior centre is the sponge's level-1 brickwork — coarse, magnified
+`fR²/r²` to the outer edge. A fold centre on the attractor itself gives
+self-similar fine material, but its image bricks scale with the distance
+from the centre (size ≈ 0.67·ρ), which is the same coarse-at-the-edge
+signature, unbounded as the centre approaches set points. The reference's
+uniform small bricks at every radius therefore cannot come from one
+inversion of a self-similar sponge — its generator must apply structure at
+every level the way the carve does. Measured ablations through the existing
+vocabulary agree: per-map folds (a bend at every descent level —
+`tune-doc`'s `perfold` mode) plus the tuned lens reach the reference's crust
+DENSITY (fine-edge 0.470/0.476 vs the reference's 0.4475 at the same 1024px
+raster) but keep the plate hierarchy; per-map boxfolds tear the system into
+disconnected pieces at walls that cross a map's image, and keep the box
+lattice at walls that don't. The one other shipped family with the right
+cell character is the escape-time Mandelbox (`mandelboxClassic` — boxy
+window cells on a crusty ball), which is Surface-only and a different
+construction.
+
 ## Soundness and exactness
 
 The twist `q ← R(q + b)` is an isometry, so each level's carve term is the
@@ -197,7 +254,9 @@ Landed: the vocabulary and resolver, both CPU estimators, their tests, the
 sheet, and the `twistedSponge`/`twistedSponge4` presets (the lens-based
 approximation, which is a plot-time composition over ordinary IFS
 machinery — `PRESET_FINALS` — tuned to the reference image per the section
-above: the shared map twist plus the bent lens). Also landed, as the carve family's own
+above: the shared map twist plus the bent lens) and their burst siblings
+(`twistedSpongeBurst`/`twistedSponge4Burst`, the opposite lens regime —
+the section above). Also landed, as the carve family's own
 routing stage: the `mengerTwist` block's AppState field, verbatim
 persistence and scene-dimension wiring (the block REPLACES the transform
 system as the subject, the `sphereInversion` precedent, checked after it);
