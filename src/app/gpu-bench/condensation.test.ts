@@ -9,6 +9,8 @@ import {
   surfaceDeKernelWgsl,
   SURFACE_GPU_MAP_VEC4,
   SURFACE_GPU_MAP4_VEC4,
+  SURFACE_GPU_UNIFORM_MAP_SLOTS,
+  SURFACE4_COMPUTE_MAX_MAPS,
 } from "../../fractal/surface-de-gpu";
 import { surfaceCondensationKernelSpec } from "./condensation";
 import { surfaceEmitterOnlyFixtures } from "./condensation-emitter-only";
@@ -138,11 +140,17 @@ describe("emitter-only surface agreement fixtures", () => {
     }
   });
 
-  it("counts every emitter and scheduled record against the 24-record cap with zero A maps", () => {
+  it("counts every emitter and scheduled record against the engine's record cap with zero A maps", () => {
     for (const row of fixtures().filter((fixture) =>
       fixture.name.endsWith("schedule"),
     )) {
-      const count = 24 - row.de.schedule!.maps.length;
+      // The cap split by engine (the 4D 24/48 lift): the 3D packers and the
+      // 3D codegen keep the fixed 24, the 4D production wire carries the
+      // compute route's 48.
+      const cap = row.view4
+        ? SURFACE4_COMPUTE_MAX_MAPS
+        : SURFACE_GPU_UNIFORM_MAP_SLOTS;
+      const count = cap - row.de.schedule!.maps.length;
       if (row.view4) {
         const condensation = row.de.condensation!;
         const capped = {
@@ -156,16 +164,18 @@ describe("emitter-only surface agreement fixtures", () => {
           },
         };
         expect(packSurfaceGpuMaps4(capped)).toHaveLength(
-          24 * SURFACE_GPU_MAP4_VEC4 * 4,
+          cap * SURFACE_GPU_MAP4_VEC4 * 4,
         );
         expect(() =>
           packSurface4GpuParams(capped, row.view4, { itemCount: 1 }),
         ).not.toThrow();
         capped.condensation.emitters.push(condensation.emitters[0]);
-        expect(() => packSurfaceGpuMaps4(capped)).toThrow(/25.*cap is 24/);
+        expect(() => packSurfaceGpuMaps4(capped)).toThrow(
+          new RegExp(`${cap + 1}.*cap is ${cap}`),
+        );
         expect(() =>
           packSurface4GpuParams(capped, row.view4, { itemCount: 1 }),
-        ).toThrow(/25.*cap is 24/);
+        ).toThrow(new RegExp(`${cap + 1}.*cap is ${cap}`));
       } else {
         const condensation = row.de.condensation!;
         const capped = {
@@ -179,15 +189,17 @@ describe("emitter-only surface agreement fixtures", () => {
           },
         };
         expect(packSurfaceGpuMaps(capped)).toHaveLength(
-          24 * SURFACE_GPU_MAP_VEC4 * 4,
+          cap * SURFACE_GPU_MAP_VEC4 * 4,
         );
         expect(() =>
           packSurfaceGpuParams(capped, { itemCount: 1 }),
         ).not.toThrow();
         capped.condensation.emitters.push(condensation.emitters[0]);
-        expect(() => packSurfaceGpuMaps(capped)).toThrow(/25.*cap is 24/);
+        expect(() => packSurfaceGpuMaps(capped)).toThrow(
+          new RegExp(`${cap + 1}.*cap is ${cap}`),
+        );
         expect(() => packSurfaceGpuParams(capped, { itemCount: 1 })).toThrow(
-          /25.*cap is 24/,
+          new RegExp(`${cap + 1}.*cap is ${cap}`),
         );
       }
       expect(() =>
@@ -207,7 +219,7 @@ describe("emitter-only surface agreement fixtures", () => {
             ),
           },
         }),
-      ).toThrow(/25.*cap is 24/);
+      ).toThrow(new RegExp(`${cap + 1}.*cap is ${cap}`));
     }
   });
 });

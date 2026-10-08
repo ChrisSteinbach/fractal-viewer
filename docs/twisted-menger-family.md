@@ -122,9 +122,10 @@ the off-centre fold is load-bearing), and weight 0.85 reads identical to
 weight 1 (0.449), so the weight stays 1. The 4D twin inherits every tuned
 value through `twistedSponge4Lens`'s spread and carries the same map twist
 over the 48-map hyper-Menger (`twistedSponge4Maps`); verified in the real
-app's Solid render (the hyper-Menger exceeds the 4D surface tracer's cap,
-so the explorer renders are the 4D evidence): the shipped preset's crumpled
-box-blob becomes a round ball with curved brick-arc bands.
+app's Solid render before the 4D tracer's map cap was lifted past the
+hyper-Menger's 48 (see the section below), when the explorer renders were
+the 4D evidence: the shipped preset's crumpled box-blob becomes a round
+ball with curved brick-arc bands.
 
 Honest limits: the exact band layout and brick-size mix differ from the
 reference's (its own camera is unknown, and its construction — a query-point
@@ -155,8 +156,60 @@ Menger or the twisted maps, then one final `spherefold` at 0.25/1.3, origin,
 scale 1); the scratch render of the shipped preset matches its provenance
 frame at the same raster (hit fraction 0.1855 vs 0.1854 — the delta is the
 preset route's auto-framing; the same-doc re-run is bit-exact). The 4D twin
-follows `twistedSponge4`'s shipping decision (48 maps, no surface hint),
-verified in the explorer's Solid render.
+followed `twistedSponge4`'s shipping decision at the time (48 maps, no
+surface hint), verified in the explorer's Solid render; both 4D presets hint
+Surface since the cap lift below.
+
+## The 4D map cap lift — Surface reaches the 48-map hyper-Menger (2026-10-08)
+
+The 4D surface tracer's per-map cap was split by engine, and the two 48-map
+hyper-Menger presets (`twistedSponge4`, `twistedSponge4Burst`) now hint
+Surface:
+
+- The GLSL fallback tracer keeps `SURFACE4_MAX_MAPS = 24` — its per-map
+  arrays ride the std140 uniform block, and that budget is untouched.
+- The compute route's maps wire is a runtime-sized STORAGE buffer, so its
+  capacity is a choice: `SURFACE4_COMPUTE_MAX_MAPS = 48`
+  (`surface-de-gpu.ts`), exactly the hyper-Menger's 48 records. The
+  eligibility gate's 4D records/links gates price it — a 25..48-record 4D
+  system is COMPUTE-ONLY (the same disclosure class fold-shaped 4D systems
+  ride, which these presets are through their spherefold lens: admitted with
+  compute, refused without it, the note naming "compute-only past 24"),
+  past 48 nothing renders it. The escape4 link gate prices the same compute
+  cap — escape4 has no fragment arm at all, so its old 24 bound was the
+  GLSL tracer's number borrowed where no fragment tracer exists.
+- The maps-uniform probe keeps its fixed 24 (`SURFACE_GPU_UNIFORM_MAP_SLOTS`):
+  its kernel declares `array<GpuMap4, 24>` and cannot address more, so its
+  record validations refuse above 24 instead of silently truncating.
+- No estimator algebra changed — this is a capacity, routing and disclosure
+  change; morphs, mutations and persistence are untouched (the cap is a
+  render-gate constant, never document state). Kaleidoscope sectors sweep
+  from uniforms, so slots stay transforms 1:1 at any order; schedules,
+  emitters and chaos states thread the same compute cap.
+
+Measured cost (AMD RX 7900 XTX, `--display=:0`, `npm run gpu:scratch`,
+512x512 raster, quiet machine, production kernels, one settle frame each):
+
+| Scene                 | Core           | Maps | wall ms | gpu ms | march ms | shade ms | hit frac |
+| --------------------- | -------------- | ---- | ------- | ------ | -------- | -------- | -------- |
+| `twistedSponge` (3D)  | affine + lens  | 20   | 971     | 872    | 100      | 772      | 0.281    |
+| `twistedSponge4`      | affine4 + lens | 48   | 2246    | 2149   | 213      | 1936     | 0.176    |
+| `twistedSponge4Burst` | affine4 + lens | 48   | 6073    | 5907   | 600      | 5307     | 0.827    |
+
+The verdict is SHIP THE HINTS. The narrow-band 4D twin settles at 2.3x the
+3D 20-map sibling's wall time at the same raster — the honest price of 48
+records of 4x4+post-tail descent work per candidate per level plus the 4D
+math itself, well inside the preview tier's territory (previews trace at a
+reduced scale/depth rung). The burst reads 6.2x, but that number is
+hit-fraction dominated, not map-count dominated: 0.827 of its rays hit (the
+wide-band lens inverts nearly the whole sponge), so nearly every ray pays
+the full descent and a shade batch, where the narrow band's 0.176 leaves
+most rays cheap misses. Both frames are the presets' authored objects (the
+round crusty ball / the curled-arc burst) — the routing renders what the
+explorer renders. The 3D cap (`SURFACE_MAX_MAPS`,
+`surface-material.ts`) is deliberately NOT lifted: no shipped 3D preset
+exceeds 20 maps, and the 3D GLSL arm is a live preferred tracer for fold
+shapes, so its budget tradeoffs differ.
 
 **The reference thread's last lead was a mis-attribution.** The committed
 shader at `b341928` (2023-12-12) does carry the twist live, but the
