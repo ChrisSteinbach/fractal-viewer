@@ -756,7 +756,7 @@ export const GATE_MAP: GateMapEntry[] = [
     cost: "lifecycle",
     modules: ["src/app/surface-compute.ts"],
   },
-  // ---- Harness sheets (75) ---------------------------------------------------------
+  // ---- Harness sheets (76) ---------------------------------------------------------
   // The sheets' exercised modules ride their OWN import closures (every sheet
   // imports the shared de-preview/set-extent machinery, which imports
   // src/fractal/*), so their entries carry only app-side extras — and the
@@ -786,6 +786,7 @@ export const GATE_MAP: GateMapEntry[] = [
       "finish-transmission",
       "finite-solid",
       "finite-transport-f5-replay",
+      "sphairahedron",
       "flame-balloon",
       "flame-density-estimate",
       "flame-differential",
