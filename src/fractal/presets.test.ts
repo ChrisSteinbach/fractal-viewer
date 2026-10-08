@@ -855,15 +855,17 @@ describe("Twisted sponge showcases", () => {
     expect(PRESET_RENDER_HINTS.menger).toBeUndefined();
   });
 
-  // The 4D twin's home renderers are the explorer cloud, Flame and Solid:
-  // the hyper-Menger's 48 maps exceed the 4D surface tracer's 24-map cap,
-  // so the preset deliberately carries NO surface hint (a hinted load
-  // would switch into a mode that refuses the document). The cap refusal
-  // itself is pinned in surface-eligibility.test.ts over this preset's
-  // own map count; here the explorer's plot-time path is exercised for
-  // real: the lifted system plus the lifted lens converges to a bounded
-  // cloud with extent on all four axes.
-  it("twistedSponge4 is the shared-twist hyper-Menger through the same lens with an xw tilt, authored for the explorer", () => {
+  // The 4D twin hints Surface like its 3D sibling since the 24/48 cap
+  // lift: the compute tracer's record cap carries the hyper-Menger's 48
+  // maps past the WebGL fallback's 24-slot block, so the route is
+  // compute-only — the same disclosure class every fold-shaped 4D system
+  // rides (the spherefold lens makes it fold-shaped), and a machine
+  // without compute refuses the load with that reason. The eligibility
+  // split itself is pinned in surface-eligibility.test.ts; here the
+  // explorer's plot-time path is exercised for real: the lifted system
+  // plus the lifted lens converges to a bounded cloud with extent on all
+  // four axes.
+  it("twistedSponge4 is the shared-twist hyper-Menger through the same lens with an xw tilt, opened in Surface on compute", () => {
     expect(presetTransforms("twistedSponge4")).toEqual(twistedSponge4Maps());
     expect(twistedSponge4Maps()).toEqual(
       hyperMengerSpongeTransforms().map((t) => ({
@@ -871,7 +873,7 @@ describe("Twisted sponge showcases", () => {
         rotation: [0, Math.atan2(0.8, 0.6), 0] as [number, number, number],
       })),
     );
-    expect(PRESET_RENDER_HINTS.twistedSponge4).toBeUndefined();
+    expect(PRESET_RENDER_HINTS.twistedSponge4).toBe("surface");
     const final = PRESET_FINALS.twistedSponge4!();
     expect(final).toEqual(twistedSponge4Lens());
     expect(final.variations).toEqual([
@@ -949,13 +951,14 @@ describe("Twisted sponge showcases", () => {
   });
 
   // The burst's 4D twin follows twistedSponge4's shipping decision: the
-  // hyper-Menger's 48 maps exceed the 4D surface tracer's cap, so the twin
-  // is authored for the explorer/Flame/Solid renders and carries NO hint.
-  it("twistedSponge4Burst is the shared-twist hyper-Menger through the burst lens with an xw tilt, authored for the explorer", () => {
+  // hyper-Menger's 48 maps ride the compute tracer's record cap past the
+  // WebGL fallback's 24, so the twin hints Surface on the compute-only
+  // route.
+  it("twistedSponge4Burst is the shared-twist hyper-Menger through the burst lens with an xw tilt, opened in Surface on compute", () => {
     expect(presetTransforms("twistedSponge4Burst")).toEqual(
       twistedSponge4Maps(),
     );
-    expect(PRESET_RENDER_HINTS.twistedSponge4Burst).toBeUndefined();
+    expect(PRESET_RENDER_HINTS.twistedSponge4Burst).toBe("surface");
     const final = PRESET_FINALS.twistedSponge4Burst!();
     expect(final).toEqual(twistedSponge4BurstLens());
     expect(final.variations).toEqual([

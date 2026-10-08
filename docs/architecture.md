@@ -1403,7 +1403,13 @@ Those mat4-sized slots did start at 16, because in the DEFAULT uniform block
 merely guarantees; moving the per-map arrays into a std140 uniform
 BLOCK — 2688 bytes of a guaranteed 16KB, budgeted separately from the default
 block — put the 24-map **24-cell** presets in reach and left the cap a
-question of per-ray descent cost rather than uniform space. What the app
+question of per-ray descent cost rather than uniform space. That cap is now
+the GLSL FALLBACK's alone: the compute route's maps wire is a runtime-sized
+storage buffer, so the 4D record limit split by engine —
+`SURFACE4_COMPUTE_MAX_MAPS = 48` (`surface-de-gpu.ts`) on the compute route
+(the 48-map hyper-Menger presets surface there, compute-only past 24),
+`SURFACE4_MAX_MAPS = 24` unchanged for the fallback arm, and the
+maps-uniform probe keeps its fixed 24. What the app
 marches is never the full 4D attractor but its
 `w = sliceCenter` SLICE. A certified 4D DE lower-bounds slice distance for
 free — distance to a subset only grows — but the spike measured the plain

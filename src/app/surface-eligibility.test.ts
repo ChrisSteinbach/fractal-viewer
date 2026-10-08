@@ -46,6 +46,7 @@ import {
 import type { SurfaceEligibilityDocument } from "./surface-eligibility";
 import { SURFACE_MAX_MAPS } from "./surface-material";
 import { SURFACE4_MAX_MAPS } from "./surface-material-4d";
+import { SURFACE4_COMPUTE_MAX_MAPS } from "../fractal/surface-de-gpu";
 
 const NO_SYMMETRY: SymmetryParams = { order: 1, plane: "xy" };
 
@@ -152,15 +153,35 @@ describe("emitter-only Surface routing", () => {
         schedule,
       );
       expect(atCap.status, atCap.note ?? "").toBe("eligible");
+      // The cap split by engine: the 3D tracer's 24 records refuse order 12
+      // outright, while the 4D compute route admits its 26 and refuses only
+      // past the compute cap (order 24 → 2 + 2·24 = 50 records).
+      const overOrder = dimension === 4 ? 24 : 12;
+      const overCount = 2 + 2 * overOrder;
       const overCap = deriveSurfaceEligibility(
         transforms,
         null,
-        { order: 12, plane: "xy" },
+        { order: overOrder, plane: "xy" },
         { computeAvailable: true },
         schedule,
       );
       expect(overCap.status).toBe("ineligible");
-      expect(overCap.note).toMatch(/26 map\/emitter\/schedule records/);
+      expect(overCap.note).toMatch(
+        new RegExp(
+          `${overCount} map\\/emitter\\/schedule records \\(the ${dimension === 4 ? "4D compute " : "surface "}tracer carries at most ${dimension === 4 ? SURFACE4_COMPUTE_MAX_MAPS : SURFACE_MAX_MAPS}\\)`,
+        ),
+      );
+      if (dimension === 4) {
+        expect(
+          deriveSurfaceEligibility(
+            transforms,
+            null,
+            { order: 12, plane: "xy" },
+            { computeAvailable: true },
+            schedule,
+          ).status,
+        ).toBe("eligible");
+      }
     });
 
     it(`does not mistake a ${dimension}D B schedule for recursive geometry in an empty band`, () => {
@@ -359,34 +380,32 @@ describe("deriveSurfaceEligibility over the shipped presets", () => {
     expect(derivePreset("pentatope").kind).toBe("ifs4");
   });
 
-  // The twisted sponge's 4D twin is authored for the explorer/Flame/Solid
-  // renders and deliberately carries NO surface hint, because the
-  // hyper-Menger's 48 maps exceed the 4D tracer's uniform cap — the
-  // refusal is the preset's own disclosure, pinned here so a cap lift
-  // flips this test deliberately (and the preset can then take the hint).
-  it("admits the twisted sponge's lens and refuses its 48-map 4D twin at the 4D tracer's cap", () => {
+  // The twisted sponge's 4D twin hints Surface like its 3D sibling since
+  // the 24/48 cap lift: the compute tracer's record cap
+  // (SURFACE4_COMPUTE_MAX_MAPS) carries the hyper-Menger's 48 maps, while
+  // the WebGL fallback's 24-slot block does not — so the twin's route is
+  // compute-only, the same disclosure class every fold-shaped 4D system
+  // rides (its spherefold lens makes it fold-shaped). The no-compute
+  // refusal is pinned in the cap-split test below.
+  it("admits the twisted sponge's lens and its 48-map 4D twin on the compute route", () => {
     const sponge = derivePreset("twistedSponge");
     expect(sponge.status).toBe("eligible");
     expect(sponge.kind).toBe("ifs");
     const twin = derivePreset("twistedSponge4");
-    expect(twin.status).toBe("ineligible");
-    expect(twin.kind).toBe(null);
-    expect(twin.note).toContain("48 maps");
-    expect(twin.note).toContain("at most 24");
+    expect(twin.status).toBe("eligible");
+    expect(twin.kind).toBe("ifs4");
   });
 
   // The burst sibling shares the map lists, so its halves inherit the same
-  // routing: the 3D pair is eligible in Surface, the 4D pair refuses at the
-  // same cap with the same disclosure.
-  it("admits the burst sibling and refuses its 48-map 4D twin at the same cap", () => {
+  // routing: the 3D pair is eligible in Surface, the 4D pair rides the
+  // compute route at the same 48-record cap.
+  it("admits the burst sibling and its 48-map 4D twin on the same compute route", () => {
     const burst = derivePreset("twistedSpongeBurst");
     expect(burst.status).toBe("eligible");
     expect(burst.kind).toBe("ifs");
     const twin = derivePreset("twistedSponge4Burst");
-    expect(twin.status).toBe("ineligible");
-    expect(twin.kind).toBe(null);
-    expect(twin.note).toContain("48 maps");
-    expect(twin.note).toContain("at most 24");
+    expect(twin.status).toBe("eligible");
+    expect(twin.kind).toBe("ifs4");
   });
 
   it("routes the 4D escape presets to the escape4 kind", () => {
@@ -580,12 +599,20 @@ describe("capability-neutral Surface document eligibility", () => {
       kind: null,
     });
 
+    // The 4D cap is split by engine (the 24/48 lift): the GLSL fallback's
+    // 24 slots refuse only WITHOUT compute — with it the compute route
+    // carries up to SURFACE4_COMPUTE_MAX_MAPS records — so the parity
+    // derivation's over-cap crowd is the compute cap's +1. The 25..48
+    // split's own leaves are pinned in the cap-split test below.
     const base4 = presetTransforms("pentatope");
     const overCap4: SurfaceEligibilityDocument = {
-      transforms: Array.from({ length: SURFACE4_MAX_MAPS + 1 }, (_, index) => ({
-        ...base4[index % base4.length],
-        id: index,
-      })),
+      transforms: Array.from(
+        { length: SURFACE4_COMPUTE_MAX_MAPS + 1 },
+        (_, index) => ({
+          ...base4[index % base4.length],
+          id: index,
+        }),
+      ),
       symmetry: NO_SYMMETRY,
     };
     expect(expectNeutralParity(overCap4)).toMatchObject({
@@ -690,6 +717,77 @@ describe("deriveSurfaceEligibility caps and refusal notes", () => {
         },
       ).status,
     ).toBe("eligible");
+  });
+
+  // The 4D cap is split by engine: the GLSL fallback tracer's 24-slot
+  // std140 block is the boundary below which the fragment arm exists at
+  // all, and the compute route's runtime-sized storage wire carries the
+  // 48-map hyper-Menger — so 25..48 records are the compute-only class
+  // (admitted with compute, refused without it, the note naming the
+  // boundary), past 48 nothing renders, and the escape4 link gate prices
+  // the same compute cap (escape4 has no fragment arm to cap at all).
+  it("splits the 4D record cap by engine, with the compute-only boundary disclosed", () => {
+    const base4 = presetTransforms("pentatope");
+    const crowd = (n: number): Transform[] =>
+      Array.from({ length: n }, (_, i) => ({
+        ...base4[i % base4.length],
+        id: i + 1,
+      }));
+    // 25 maps, compute available: the compute route admits.
+    expect(
+      deriveSurfaceEligibility(
+        crowd(SURFACE4_MAX_MAPS + 1),
+        null,
+        NO_SYMMETRY,
+        { computeAvailable: true },
+      ),
+    ).toMatchObject({ status: "eligible", kind: "ifs4" });
+    // 25 maps, no compute: refused, naming the boundary.
+    const withoutCompute = deriveSurfaceEligibility(
+      crowd(SURFACE4_MAX_MAPS + 1),
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: false },
+    );
+    expect(withoutCompute.status).toBe("ineligible");
+    expect(withoutCompute.kind).toBe(null);
+    expect(withoutCompute.note).toBe(
+      `${SURFACE4_MAX_MAPS + 1} maps render on WebGPU compute only (the WebGL tracer carries at most ${SURFACE4_MAX_MAPS}), which is unavailable here`,
+    );
+    // Exactly at the GLSL tracer's cap the fragment fallback exists, so a
+    // compute-less machine keeps the route (the shipped 24-map preset's
+    // own case).
+    expect(
+      deriveSurfaceEligibility(crowd(SURFACE4_MAX_MAPS), null, NO_SYMMETRY, {
+        computeAvailable: false,
+      }),
+    ).toMatchObject({ status: "eligible", kind: "ifs4" });
+    // Past the compute cap nothing carries the system, compute or not.
+    const overCompute = deriveSurfaceEligibility(
+      crowd(SURFACE4_COMPUTE_MAX_MAPS + 1),
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+    );
+    expect(overCompute.status).toBe("ineligible");
+    expect(overCompute.note).toBe(
+      `${SURFACE4_COMPUTE_MAX_MAPS + 1} maps (the 4D compute tracer carries at most ${SURFACE4_COMPUTE_MAX_MAPS})`,
+    );
+    // The escape4 link gate prices the same compute cap — and without
+    // compute the route refuses as the forward-orbit class always has.
+    const chainLink = presetTransforms("mandelboxBrick")[0];
+    const chain = (n: number): Transform[] =>
+      Array.from({ length: n }, (_, i) => ({ ...chainLink, id: i + 1 }));
+    const escapeGate = deriveSurfaceEligibility(
+      chain(SURFACE4_COMPUTE_MAX_MAPS + 1),
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+    );
+    expect(escapeGate.status).toBe("ineligible");
+    expect(escapeGate.note).toBe(
+      `${SURFACE4_COMPUTE_MAX_MAPS + 1} chain links (the 4D escape-time compute tracer carries at most ${SURFACE4_COMPUTE_MAX_MAPS})`,
+    );
   });
 
   it("appends the ONE qsquare hint in both the 3D and 4D refusal arms", () => {

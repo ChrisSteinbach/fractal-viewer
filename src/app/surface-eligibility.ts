@@ -78,6 +78,7 @@ import { sphereInversionGlassAdmission } from "./surface-optics-backend";
 import type { RenderMode } from "./state";
 import { SURFACE_MAX_MAPS, SURFACE_MAX_RECORDS } from "./surface-material";
 import { SURFACE4_MAX_MAPS } from "./surface-material-4d";
+import { SURFACE4_COMPUTE_MAX_MAPS } from "../fractal/surface-de-gpu";
 
 /**
  * The renderer family the document routes to if Surface is entered — the
@@ -1227,15 +1228,18 @@ export function deriveSurfaceEligibility(
         symmetry,
       );
       if (escape4.status === "eligible") {
-        // The chain's own cap is the 4D tracer's map cap — one `GpuMap4`
-        // per LINK on the maps binding, and eligibility is one answer
-        // whatever engine runs it (the 3D arm's reasoning, where the cap
-        // comes from the fragment fallback's uniform array instead).
+        // The chain's cap is the COMPUTE side's record cap — escape4 has no
+        // fragment mirror at all (the reason this route refuses without
+        // compute one gate below), so the GLSL fallback's uniform-block
+        // bound does not apply here; the compute tracer carries
+        // SURFACE4_COMPUTE_MAX_MAPS `GpuMap4` records on its runtime-sized
+        // maps binding, and eligibility is one answer whatever engine runs
+        // it.
         const links = activeMapCount(transforms);
-        if (links > SURFACE4_MAX_MAPS) {
+        if (links > SURFACE4_COMPUTE_MAX_MAPS) {
           return {
             status: "ineligible",
-            note: `${links} chain links (the escape-time tracer carries at most ${SURFACE4_MAX_MAPS})`,
+            note: `${links} chain links (the 4D escape-time compute tracer carries at most ${SURFACE4_COMPUTE_MAX_MAPS})`,
             kind: null,
           };
         }
@@ -1342,9 +1346,16 @@ export function deriveSurfaceEligibility(
         recovery: "disableShapeTrapGeometry",
       };
     }
-    // The 4D tracer's uniform cap. No symmetry multiplier — the 4D descent
-    // sweeps kaleidoscope sectors around the base maps, so slots are active
-    // maps 1:1 at any order.
+    // The 4D tracers' slot caps, SPLIT BY ENGINE (the 4D half of the
+    // 24/48 lift): the GLSL fallback tracer's std140 block carries
+    // SURFACE4_MAX_MAPS slots, while the compute route's runtime-sized
+    // storage maps wire carries SURFACE4_COMPUTE_MAX_MAPS — so a system
+    // past the fallback's count is COMPUTE-ONLY (the same disclosure class
+    // fold-shaped 4D systems are: admitted here with compute, refused
+    // without it, with the note naming the boundary), and past the compute
+    // count no tracer carries the system at all. No symmetry multiplier —
+    // the 4D descent sweeps kaleidoscope sectors around the base maps, so
+    // slots are active maps 1:1 at any order.
     const records4 =
       condensationRecordCount(transforms, symmetry) + scheduleRecords;
     if (records4 > SURFACE4_MAX_MAPS) {
@@ -1355,11 +1366,23 @@ export function deriveSurfaceEligibility(
         : hasActiveEmitter(transforms)
           ? "map/emitter records"
           : "maps";
-      return {
-        status: "ineligible",
-        note: `${records4} ${countLabel} (the 4D surface tracer carries at most ${SURFACE4_MAX_MAPS})`,
-        kind: null,
-      };
+      if (records4 > SURFACE4_COMPUTE_MAX_MAPS) {
+        return {
+          status: "ineligible",
+          note: `${records4} ${countLabel} (the 4D compute tracer carries at most ${SURFACE4_COMPUTE_MAX_MAPS})`,
+          kind: null,
+        };
+      }
+      if (!opts.computeAvailable) {
+        return {
+          status: "ineligible",
+          note: `${records4} ${countLabel} render on WebGPU compute only (the WebGL tracer carries at most ${SURFACE4_MAX_MAPS}), which is unavailable here`,
+          kind: null,
+        };
+      }
+      // 25..48 records with compute available: admitted below, the compute
+      // route's own capacity — no note, exactly as fold-shaped 4D systems
+      // disclose nothing on a compute-capable machine.
     }
     if (analysis.status === "degraded") {
       return withSurfaceShapeSourceBudget(

@@ -432,11 +432,15 @@ morphs into place instead of snapping (see **Presets** below).
   carried on the disabled Surface button's own tooltip for keyboard and
   assistive technology, with the touch toast as a supplement. An ordinary document
   counts its bare active maps; a **Hybrid schedule** counts the physical
-  `A | B | emitter` records together against the same 24-slot limit, for
-  flat and 4D systems alike (the 4D
-  limit was raised from 16 by moving that tracer's per-map arrays into a
+  `A | B | emitter` records together against the same limit, for flat and
+  4D systems alike — 24 slots on the WebGL tracers (the 4D limit was raised
+  from 16 by moving that tracer's per-map arrays into a
   std140 uniform block — the 24-map **24-cell** presets
-  surface now). **Symmetry** no longer counts against that budget: the flat
+  surface now), and 48 on the 4D compute route, which is therefore
+  **compute-only** past the WebGL tracer's 24: a 25..48-map 4D system
+  renders on WebGPU compute and refuses without it with that reason, the
+  same disclosure every fold-shaped 4D system rides. **Symmetry** no
+  longer counts against that budget: the flat
   tracer used to expand each kaleidoscope copy into a map slot of its own,
   so a 4-map system was capped at 6-fold and higher orders disabled the
   button, but the distance estimator now sweeps the symmetry
@@ -453,7 +457,7 @@ morphs into place instead of snapping (see **Presets** below).
   limit attractor the unbounded default accumulates onto is not part of it
   (fold maps still draw it; that port is owed).
   Emitters do not recurse and their variations are skipped; ordinary maps
-  remain the recursive alphabet. In a schedule-free document the 24-slot
+  remain the recursive alphabet. In a schedule-free document the record
   gate therefore counts ordinary maps plus symmetry-expanded emitter
   records; with a schedule, B's supported affine maps sit between those two
   groups. Symmetry copies share the emitter's one color/material slot.
@@ -564,7 +568,9 @@ morphs into place instead of snapping (see **Presets** below).
   Surface marches the w-slice of the escape-time set of the chain they form
   — one link per orbit step — rather than an IFS attractor"). Everything
   above holds one dimension up: same cycling, same per-link offset and
-  bailout, same weights and fold lengths, same 24-link budget — and the
+  bailout, same weights and fold lengths. The link budget is the 4D
+  compute tracer's 48 — the WebGL 4D tracer carries no forward-orbit path
+  at all, so the 3D tracer's 24 never bounds a 4D chain. The
   **Quaternion square** becomes the whole quaternion square it is named
   after rather than the 3D restriction of one, four coordinates being its
   home dimension. The differences are three refusals and one

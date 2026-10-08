@@ -1352,11 +1352,27 @@ export const SURFACE_GPU_SHADE_BYTES = 224;
  * = 3456 bytes (WebGPU validates the full type size at bind-group
  * creation; slots past `params.mapCount` are never read, and WebGPU
  * zero-fills fresh buffers, so a short `packSurfaceGpuMaps4` write into a
- * full-size buffer is complete). 24 matches the app's 4D eligibility cap
- * (`SURFACE4_MAX_MAPS`, surface-material-4d.ts — enforced for every 4D
- * surface entry in main.ts, compute-only fold shapes included), so no
- * eligible system can overflow the fixed array. */
+ * full-size buffer is complete). The array is the PROBE's own limit, not a
+ * wire-wide one: the production storage maps binding is runtime-sized and
+ * carries {@link SURFACE4_COMPUTE_MAX_MAPS} records, so a mapsUniform
+ * pipeline must pack against 24 whatever the compute route admits — the
+ * record validations below take the probe's cap whenever `mapsUniform` is
+ * set, so a >24 pack into it refuses instead of silently truncating. */
 export const SURFACE_GPU_UNIFORM_MAP_SLOTS = 24;
+/**
+ * The compute route's 4D record cap: the production STORAGE maps wire is
+ * runtime-sized (`array<GpuMap4>`, one 224-byte stride per record, sized by
+ * {@link packSurfaceGpuMaps4} from the DE's own record count), so its
+ * capacity is a CHOICE — 48, exactly the 48-map hyper-Menger the 24-slot
+ * GLSL fallback tracer refuses (`SURFACE4_MAX_MAPS`, surface-material-4d.ts).
+ * surface-eligibility's 4D records/links gates admit 25..48-record 4D
+ * systems on the compute route and refuse them without compute ("compute-only
+ * past 24"); past this count no tracer carries the system and the gate
+ * refuses outright. The maps-uniform probe above keeps its fixed 24: its
+ * kernel declares `array<GpuMap4, 24>` and cannot address more, so a
+ * mapsUniform pipeline packs against {@link SURFACE_GPU_UNIFORM_MAP_SLOTS}
+ * whatever this constant says. */
+export const SURFACE4_COMPUTE_MAX_MAPS = 48;
 
 interface CondensationWireEmitter {
   shadeIndex: number;
@@ -1382,18 +1398,23 @@ interface SurfaceChaosWireInfo {
   activeStateCount: number;
 }
 
-function surfaceChaosWireInfo(de: {
-  chaos?: SurfaceChaosWire | null;
-}): SurfaceChaosWireInfo | null {
+function surfaceChaosWireInfo(
+  de: {
+    chaos?: SurfaceChaosWire | null;
+  },
+  /** The state-record cap the caller's wire carries — see
+   * {@link validateSurfacePhysicalMapCount}'s own parameter for the split. */
+  cap: number = SURFACE_GPU_UNIFORM_MAP_SLOTS,
+): SurfaceChaosWireInfo | null {
   const chaos = de.chaos;
   if (!chaos || chaos.activeStateCount === 0) return null;
   if (
     !Number.isInteger(chaos.activeStateCount) ||
     chaos.activeStateCount < 1 ||
-    chaos.activeStateCount > SURFACE_GPU_UNIFORM_MAP_SLOTS
+    chaos.activeStateCount > cap
   ) {
     throw new RangeError(
-      `surface-de-gpu: chaos activeStateCount ${chaos.activeStateCount} is outside 1..${SURFACE_GPU_UNIFORM_MAP_SLOTS}`,
+      `surface-de-gpu: chaos activeStateCount ${chaos.activeStateCount} is outside 1..${cap}`,
     );
   }
   if (chaos.predecessorMasks.length !== chaos.activeStateCount) {
@@ -1500,13 +1521,18 @@ function validateSurfacePhysicalMapCount(
     condensation?: { emitters: readonly unknown[] };
   },
   emitterCount = 0,
+  /** The record cap the caller's wire carries: the fixed-24 uniform probe
+   * (SURFACE_GPU_UNIFORM_MAP_SLOTS) for the 3D packers and the mapsUniform
+   * pipelines, {@link SURFACE4_COMPUTE_MAX_MAPS} for the 4D production
+   * storage packers (the capacity surface-eligibility's 4D gates admit). */
+  cap: number = SURFACE_GPU_UNIFORM_MAP_SLOTS,
 ): void {
   const scheduleCount = surfaceScheduleWireInfo(de)?.mapCount ?? 0;
   const recordCount = de.maps.length + scheduleCount + emitterCount;
-  if (recordCount > SURFACE_GPU_UNIFORM_MAP_SLOTS) {
+  if (recordCount > cap) {
     throw new RangeError(
       `surface-de-gpu: surface needs ${recordCount} physical map/emitter records; ` +
-        `the low-level cap is ${SURFACE_GPU_UNIFORM_MAP_SLOTS}`,
+        `the low-level cap is ${cap}`,
     );
   }
 }
@@ -1523,10 +1549,11 @@ interface CondensationWireInfo {
  * unique by base emitter and must be the contiguous suffix after maps. */
 function condensationWireInfo(
   de: CondensationWireDE,
+  cap: number = SURFACE_GPU_UNIFORM_MAP_SLOTS,
 ): CondensationWireInfo | null {
   const condensation = de.condensation;
   if (!condensation || condensation.emitters.length === 0) return null;
-  validateSurfacePhysicalMapCount(de, condensation.emitters.length);
+  validateSurfacePhysicalMapCount(de, condensation.emitters.length, cap);
   const shadeIndices = new Set<number>();
   for (const emitter of condensation.emitters) {
     if (!Number.isInteger(emitter.shadeIndex)) {
@@ -1548,10 +1575,10 @@ function condensationWireInfo(
     }
   }
   const shadeCount = de.maps.length + sortedShades.length;
-  if (shadeCount > SURFACE_GPU_UNIFORM_MAP_SLOTS) {
+  if (shadeCount > cap) {
     throw new RangeError(
       `surface-de-gpu: condensation needs ${shadeCount} unique shade slots; ` +
-        `the low-level cap is ${SURFACE_GPU_UNIFORM_MAP_SLOTS}`,
+        `the low-level cap is ${cap}`,
     );
   }
   return {
@@ -3625,11 +3652,15 @@ export function packSurface4GpuParams(
   tiling: ResolvedTiling | null = null,
 ): ArrayBuffer {
   const schedule = surfaceScheduleWireInfo(de);
-  const condensation = condensationWireInfo(de);
-  const chaos = surfaceChaosWireInfo(de);
+  const condensation = condensationWireInfo(de, SURFACE4_COMPUTE_MAX_MAPS);
+  const chaos = surfaceChaosWireInfo(de, SURFACE4_COMPUTE_MAX_MAPS);
   const tilingInfo = surfaceTilingWireInfo(tiling, 4);
   validateSurfaceLatticeRadius(tilingInfo, de.visibleBoundingRadius);
-  validateSurfacePhysicalMapCount(de, condensation?.emitterCount ?? 0);
+  validateSurfacePhysicalMapCount(
+    de,
+    condensation?.emitterCount ?? 0,
+    SURFACE4_COMPUTE_MAX_MAPS,
+  );
   if (balloon && groundPlane) {
     throw new Error(
       "surface-de-gpu: groundPlane+balloon: excluded — the two " +
@@ -4666,9 +4697,9 @@ export function packSurfaceGpuMaps4(
   options: SurfaceGpuMapPackOptions = {},
 ): Float32Array {
   const schedule = surfaceScheduleWireInfo(de);
-  const condensation = condensationWireInfo(de);
+  const condensation = condensationWireInfo(de, SURFACE4_COMPUTE_MAX_MAPS);
   const emitterCount = condensation?.emitterCount ?? 0;
-  validateSurfacePhysicalMapCount(de, emitterCount);
+  validateSurfacePhysicalMapCount(de, emitterCount, SURFACE4_COMPUTE_MAX_MAPS);
   const scheduleMapCount = schedule?.mapCount ?? 0;
   const stride = options.stateBounds
     ? SURFACE_GPU_MAP4_STATE_STRIDE_VEC4
@@ -5784,6 +5815,23 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   const tilingInfo = surfaceTilingWireInfo(opts.tiling, core4 ? 4 : 3);
   const tiling = tilingInfo?.tiling ?? null;
   const latticeTiling = tilingInfo?.kind === "lattice";
+  // The record cap the generated kernel's wire carries (see
+  // {@link validateSurfacePhysicalMapCount}'s cap parameter): the 4D descent
+  // pair packs the runtime-sized storage maps wire, so it carries
+  // SURFACE4_COMPUTE_MAX_MAPS records — unless this IS the maps-uniform
+  // probe, whose fixed `array<GpuMap4, 24>` cannot address more, so its
+  // pack refuses above SURFACE_GPU_UNIFORM_MAP_SLOTS instead of silently
+  // truncating. Every non-4D core keeps the probe's 24 (the 3D record cap
+  // is the GLSL fragment tracer's, out of the 4D lift's scope). `mapsUniform`
+  // is structurally inert off the 4D descent cores (its option doc), so the
+  // raw option read here agrees with the codegen's own mapsUniform flag
+  // wherever either matters.
+  const recordCap =
+    core4 && (opts.mapsUniform ?? false)
+      ? SURFACE_GPU_UNIFORM_MAP_SLOTS
+      : core4
+        ? SURFACE4_COMPUTE_MAX_MAPS
+        : SURFACE_GPU_UNIFORM_MAP_SLOTS;
   let schedule: NonNullable<SurfaceGpuKernelOptions["schedule"]> | null = null;
   if (opts.schedule && opts.schedule.scheduleMapCount !== 0) {
     if (
@@ -5798,14 +5846,11 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
           `B=${opts.schedule.scheduleMapCount}`,
       );
     }
-    if (
-      opts.schedule.mapCount + opts.schedule.scheduleMapCount >
-      SURFACE_GPU_UNIFORM_MAP_SLOTS
-    ) {
+    if (opts.schedule.mapCount + opts.schedule.scheduleMapCount > recordCap) {
       throw new RangeError(
         `surface-de-gpu: hybrid schedule needs ${
           opts.schedule.mapCount + opts.schedule.scheduleMapCount
-        } physical map records; the low-level cap is ${SURFACE_GPU_UNIFORM_MAP_SLOTS}`,
+        } physical map records; the low-level cap is ${recordCap}`,
       );
     }
     schedule = opts.schedule;
@@ -5820,12 +5865,15 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   if (opts.chaos && opts.chaos.activeStateCount !== 0) {
     // Reuse the packer's one validation rule so codegen and the wire cannot
     // disagree about mask length, u32 range, or live-state bits.
-    const info = surfaceChaosWireInfo({
-      chaos: {
-        activeStateCount: opts.chaos.activeStateCount,
-        predecessorMasks: opts.chaos.predecessorMasks,
+    const info = surfaceChaosWireInfo(
+      {
+        chaos: {
+          activeStateCount: opts.chaos.activeStateCount,
+          predecessorMasks: opts.chaos.predecessorMasks,
+        },
       },
-    });
+      recordCap,
+    );
     chaos = info
       ? {
           activeStateCount: info.activeStateCount,
@@ -5887,19 +5935,22 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
       codegenCondensation.mapCount +
       (schedule?.scheduleMapCount ?? 0) +
       codegenCondensation.emitters.length;
-    if (physicalCount > SURFACE_GPU_UNIFORM_MAP_SLOTS) {
+    if (physicalCount > recordCap) {
       throw new RangeError(
         `surface-de-gpu: schedule+condensation needs ${physicalCount} physical ` +
-          `map/emitter records; the low-level cap is ${SURFACE_GPU_UNIFORM_MAP_SLOTS}`,
+          `map/emitter records; the low-level cap is ${recordCap}`,
       );
     }
-    const info = condensationWireInfo({
-      maps: new Array(codegenCondensation.mapCount),
-      condensation: {
-        emitters: codegenCondensation.emitters,
-        depthBand: { minDepth: 0, maxDepth: 0 },
+    const info = condensationWireInfo(
+      {
+        maps: new Array(codegenCondensation.mapCount),
+        condensation: {
+          emitters: codegenCondensation.emitters,
+          depthBand: { minDepth: 0, maxDepth: 0 },
+        },
       },
-    })!;
+      recordCap,
+    )!;
     // Size by the validated shade suffix, not the symmetry-expanded record
     // count, then make every copy agree on its base shape.
     const shapes = new Array<ShapeSpec>(

@@ -824,7 +824,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     maps (`deHasFolds4`) marched as the same width-configurable frontier
     as 3D "fold", slab(`ext`)-aware, sharing `GpuMap4` and the affine4
     tail; no stage-2 B&B emission by the 3D verdict. A `mapsUniform`
-    codegen option (a 4D kernel-cost probe) moves the 4D cores' maps
+    codegen option moves the 4D cores' maps
     binding to a fixed 24-slot uniform array — REFUTED for production,
     kept as the refutation's executable record behind the opt-in
     `--surface-aff4-sweep` leg.
@@ -1814,12 +1814,12 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     unlike Flame/Solid's settled-restart worker contract — the slider is normalized
     rotated-w, and `scene.ts`'s `setSurface4View` converts it to the
     tracer's world `uW0` through `wSupport`, so one slider
-    position is one hyperplane across every mode; 24-map cap matching 3D's,
-    the per-map arrays riding a std140 uniform BLOCK, and the
-    kaleidoscope SWEEPS like 3D's, so 24 slots means 24
-    transforms at any order. Since the 4D cut this tracer is the PLAIN-4D
-    fallback arm, and since the shade-sizer width fix the fallback for EVERY 4D
-    system, nothing routes here by preference any more (see
+    position is one hyperplane across every mode; 24-map cap matching 3D's —
+    since the 24/48 lift the FALLBACK's cap alone, the compute route
+    carrying `SURFACE4_COMPUTE_MAX_MAPS` 48 (past 24, compute-only), the
+    per-map arrays riding a std140 uniform BLOCK, and the
+    kaleidoscope SWEEPING like 3D's (order costs no slots). Since the 4D cut
+    this tracer is the fallback arm for EVERY 4D system (see
     `surface-compute.ts`'s bullet) — only `?surfacegl`, a missing adapter
     or a device loss.
     TWO VARIANT ARMS — the balloon inverted-union and

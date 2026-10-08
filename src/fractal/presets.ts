@@ -2896,10 +2896,13 @@ const PRESETS = {
   // tuned composition measured against the reference image: the twist alone
   // keeps cells but a box outline; the lens alone reads shallow; both give
   // the round crusty ball with curved brick chains (twistedSpongeLens's doc
-  // carries the figures). The 4D half is authored for the explorer/Flame/
-  // Solid renders and carries NO surface hint: the hyper-Menger's 48 maps
-  // exceed the 4D surface tracer's 24-map cap (SURFACE4_MAX_MAPS), so a
-  // hinted load would switch into a mode that refuses the document.
+  // carries the figures). The 4D half is Surface-hinted like its 3D
+  // sibling: the compute tracer's 4D record cap (SURFACE4_COMPUTE_MAX_MAPS)
+  // carries the hyper-Menger's 48 maps, while the WebGL fallback's 24-map
+  // block (SURFACE4_MAX_MAPS) does not — so the routes past 24 maps are
+  // compute-only, the same disclosure class every fold-shaped 4D system
+  // rides (the fold-final lens makes these fold-shaped), and a machine
+  // without compute refuses the load with that reason.
   twistedSponge: twistedSpongeMaps,
   twistedSponge4: twistedSponge4Maps,
   // The burst sibling: the SAME shared-twist sponge maps through the
@@ -3136,12 +3139,17 @@ export const PRESET_RENDER_HINTS: Partial<
   metalStudio: "surface",
   swirlTetrahedron: "surface",
   // The twisted sponge's payoff is the folded surface (as a cloud it reads
-  // as a bent dust ball). Its 4D twin deliberately has NO entry: the
-  // hyper-Menger's 48 maps exceed the 4D surface tracer's 24-map cap, so a
-  // hinted load would switch into a mode that refuses the document — the
-  // 4D half is authored for the explorer cloud (and Flame/Solid) instead.
+  // as a bent dust ball). All four of the family's presets hint it now: the
+  // 4D twins' 48 maps ride the compute tracer's record cap
+  // (SURFACE4_COMPUTE_MAX_MAPS) past the WebGL fallback's 24 — compute-only
+  // routes, the same disclosure class every fold-shaped 4D system rides
+  // (their spherefold lens is the fold), so a machine without compute
+  // refuses the load with that reason rather than drawing a different
+  // object.
   twistedSponge: "surface",
   twistedSpongeBurst: "surface",
+  twistedSponge4: "surface",
+  twistedSponge4Burst: "surface",
   swirlPentatope: "surface",
   tiledOctahedron: "surface",
   tiledPentatope: "surface",

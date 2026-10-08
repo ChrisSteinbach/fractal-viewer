@@ -9192,21 +9192,55 @@ describe("hybrid schedule GPU ABI", () => {
     expect(() => packSurfaceGpuMaps(withSchedule3(base3, 24))).toThrow(
       /25.*cap is 24/,
     );
+    // The 4D production storage wire carries the compute cap
+    // (SURFACE4_COMPUTE_MAX_MAPS): 48 records pack, 49 refuse — the
+    // hyper-Menger's 48 maps are the point of the lift.
     const base4 = buildSurfaceDE4([condensationTransforms()[0]]);
     expect(packSurfaceGpuMaps4(withSchedule4(base4, 23))).toHaveLength(
       24 * SURFACE_GPU_MAP4_VEC4 * 4,
     );
-    expect(() => packSurfaceGpuMaps4(withSchedule4(base4, 24))).toThrow(
-      /25.*cap is 24/,
+    expect(packSurfaceGpuMaps4(withSchedule4(base4, 47))).toHaveLength(
+      48 * SURFACE_GPU_MAP4_VEC4 * 4,
     );
+    expect(() => packSurfaceGpuMaps4(withSchedule4(base4, 48))).toThrow(
+      /49.*cap is 48/,
+    );
+    // The 4D descent codegen prices the same compute cap...
     expect(() =>
       surfaceDeKernelWgsl(
-        kernelOpts({ schedule: { mapCount: 1, scheduleMapCount: 23 } }),
+        kernelOpts({
+          core: "affine4",
+          schedule: { mapCount: 1, scheduleMapCount: 47 },
+        }),
       ),
     ).not.toThrow();
     expect(() =>
       surfaceDeKernelWgsl(
-        kernelOpts({ schedule: { mapCount: 1, scheduleMapCount: 24 } }),
+        kernelOpts({
+          core: "affine4",
+          schedule: { mapCount: 1, scheduleMapCount: 48 },
+        }),
+      ),
+    ).toThrow(/49.*cap is 48/);
+    // ...while the maps-uniform probe keeps its fixed 24: the same
+    // 25-record wire the production affine4 packs refuses on the probe
+    // (its `array<GpuMap4, 24>` cannot address more), refusing instead of
+    // silently truncating.
+    expect(() =>
+      surfaceDeKernelWgsl(
+        kernelOpts({
+          core: "affine4",
+          schedule: { mapCount: 1, scheduleMapCount: 24 },
+        }),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      surfaceDeKernelWgsl(
+        kernelOpts({
+          core: "affine4",
+          mapsUniform: true,
+          schedule: { mapCount: 1, scheduleMapCount: 24 },
+        }),
       ),
     ).toThrow(/25.*cap is 24/);
   });
