@@ -1,5 +1,6 @@
 import { composeAffine } from "./affine";
 import { systemPartsAreNonFlat, toTransform4 } from "./affine4";
+import type { Bounds } from "./types";
 import {
   DEFAULT_COLOR_SPEED,
   derivedColorIndex,
@@ -95,8 +96,10 @@ import {
   tesseractWireframe,
   twentyFourCellFlake,
   twentyFourCellWireframe,
+  twistedSponge4BurstLens,
   twistedSponge4Lens,
   twistedSponge4Maps,
+  twistedSpongeBurstLens,
   twistedSpongeLens,
   twistedSpongeMaps,
   woodGrain,
@@ -804,6 +807,8 @@ describe("PRESET_FINALS", () => {
       "swirlTetrahedron",
       "twistedSponge",
       "twistedSponge4",
+      "twistedSponge4Burst",
+      "twistedSpongeBurst",
     ]);
   });
 });
@@ -890,6 +895,88 @@ describe("Twisted sponge showcases", () => {
     // plain hyper-Menger's, not from nothing.
     const plain = runChaosGame4(
       presetTransforms("twistedSponge4").map(toTransform4),
+      20000,
+      mulberry32(11),
+    );
+    expect(result.radius).not.toBeCloseTo(plain.radius, 3);
+  });
+
+  // The burst sibling keeps the tuned composition's maps (the shared twist
+  // IS the subject family) and swaps the lens regime: a wide-band,
+  // origin-centred fold that inverts nearly the whole sponge instead of a
+  // narrow off-centre shell. The pair is one radii table apart, so the test
+  // pins exactly that difference plus what the regime buys: no straight
+  // plates means the lensed cloud's extent is the fold's doing, and the
+  // eligible Surface route carries the hint like its sibling.
+  it("twistedSpongeBurst shares the twisted maps through the wide-band origin-centred lens, opened in Surface", () => {
+    expect(presetTransforms("twistedSpongeBurst")).toEqual(twistedSpongeMaps());
+    expect(presetTransforms("twistedSpongeBurst")).toEqual(
+      presetTransforms("twistedSponge"),
+    );
+    expect(PRESET_RENDER_HINTS.twistedSpongeBurst).toBe("surface");
+    const final = PRESET_FINALS.twistedSpongeBurst!();
+    expect(final).toEqual(twistedSpongeBurstLens());
+    expect(final.position).toEqual([0, 0, 0]);
+    expect(final.scale).toEqual([1, 1, 1]);
+    expect(final.variations).toEqual([
+      { type: "spherefold", weight: 1, minRadius: 0.25, fixedRadius: 1.3 },
+    ]);
+    const analysis = analyzeSurfaceSystem(
+      presetTransforms("twistedSpongeBurst"),
+      final,
+    );
+    expect(analysis.status, analysis.reasons.join("; ")).toBe("eligible");
+    const de = buildSurfaceDE(presetTransforms("twistedSpongeBurst"), final);
+    expect(de.foldFinal?.foldKind).toBe(SURFACE_FOLD_SPHEREFOLD);
+    expect(de.visibleBoundingRadius).toBeGreaterThan(1);
+    // The lens must actually fold: the burst cloud differs from the plain
+    // twisted sponge's, not from nothing.
+    const plain = runChaosGame(
+      presetTransforms("twistedSpongeBurst"),
+      20000,
+      mulberry32(11),
+    );
+    const burst = runChaosGame(
+      presetTransforms("twistedSpongeBurst"),
+      20000,
+      mulberry32(11),
+      final,
+    );
+    const extent = (b: Bounds): number =>
+      Math.max(b.maxX - b.minX, b.maxY - b.minY, b.maxZ - b.minZ);
+    expect(extent(burst.bounds)).not.toBeCloseTo(extent(plain.bounds), 3);
+    for (const p of burst.positions) expect(Number.isFinite(p)).toBe(true);
+  });
+
+  // The burst's 4D twin follows twistedSponge4's shipping decision: the
+  // hyper-Menger's 48 maps exceed the 4D surface tracer's cap, so the twin
+  // is authored for the explorer/Flame/Solid renders and carries NO hint.
+  it("twistedSponge4Burst is the shared-twist hyper-Menger through the burst lens with an xw tilt, authored for the explorer", () => {
+    expect(presetTransforms("twistedSponge4Burst")).toEqual(
+      twistedSponge4Maps(),
+    );
+    expect(PRESET_RENDER_HINTS.twistedSponge4Burst).toBeUndefined();
+    const final = PRESET_FINALS.twistedSponge4Burst!();
+    expect(final).toEqual(twistedSponge4BurstLens());
+    expect(final.variations).toEqual([
+      { type: "spherefold", weight: 1, minRadius: 0.25, fixedRadius: 1.3 },
+    ]);
+    expect(final.w).toEqual({ rotation: { xw: 0.45 } });
+    const result = runChaosGame4(
+      presetTransforms("twistedSponge4Burst").map(toTransform4),
+      20000,
+      mulberry32(11),
+      toTransform4(final),
+    );
+    expect(result.count).toBe(20000);
+    for (const w of result.w) expect(Number.isFinite(w)).toBe(true);
+    for (const p of result.positions) expect(Number.isFinite(p)).toBe(true);
+    const { minX, maxX, minY, maxY, minZ, maxZ, minW, maxW } = result.bounds;
+    for (const extent of [maxX - minX, maxY - minY, maxZ - minZ, maxW - minW]) {
+      expect(extent).toBeGreaterThan(0.2);
+    }
+    const plain = runChaosGame4(
+      presetTransforms("twistedSponge4Burst").map(toTransform4),
       20000,
       mulberry32(11),
     );
