@@ -2,7 +2,7 @@ import { sierpinskiTetrahedron } from "../fractal/presets";
 import { initialState } from "./state";
 import { toSnapshot, type SceneSnapshot } from "./persist";
 import { CROSSOVER_ALGORITHM_VERSION } from "./evolution-crossover";
-import { SURFACE_MAX_MAPS } from "./surface-material";
+import { SURFACE_COMPUTE_MAX_MAPS } from "../fractal/surface-de-gpu";
 import {
   CROSSOVER_V1_MAX_ATTEMPTS,
   createEvolutionCrossoverCandidate,
@@ -155,10 +155,13 @@ describe("crossover-v1 strict candidate gate", () => {
     const secondary = snapshot();
     for (const parent of [primary, secondary]) {
       // Repeating the healthy tetrahedron leaves its distribution intact but
-      // exceeds Surface's bounded map representation exactly.
+      // exceeds every Surface tracer's bounded map representation exactly —
+      // past the compute route's 48 there is no engine left, so the
+      // capability-neutral gate refuses (the 24/48 split's own boundary;
+      // 25..48 would be compute-only, still a document-level pass).
       const tetrahedron = sierpinskiTetrahedron();
       parent.transforms = Array.from(
-        { length: SURFACE_MAX_MAPS + 1 },
+        { length: SURFACE_COMPUTE_MAX_MAPS + 1 },
         (_, index) => ({
           ...structuredClone(tetrahedron[index % tetrahedron.length]),
           id: index,

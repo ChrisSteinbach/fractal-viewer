@@ -1446,9 +1446,10 @@ BLOCK (5,376 bytes with its current eight members, still within the guaranteed
 would exceed the guaranteed 224 default-block fragment vectors) — and the
 kaleidoscope SWEEPS like 3D's, so 24 slots means 24 transforms at any order.
 It is the FALLBACK's cap: the compute route's storage maps wire carries 48
-(`surface-de-gpu.ts`'s `SURFACE4_COMPUTE_MAX_MAPS`, the 24/48 lift — a
-25..48-record 4D system is compute-only, and the eligibility gate refuses
-this arm's count without compute).
+(`surface-de-gpu.ts`'s `SURFACE_COMPUTE_MAX_MAPS`, the 24/48 lift — a
+25..48-record system is compute-only, and the eligibility gate refuses
+this arm's count without compute; the 3D tracer's own
+`SURFACE_MAX_MAPS` prices the same split one dimension down).
 
 Since the 4D cut, this tracer is the PLAIN-4D fallback arm (`?surfacegl` /
 no adapter / device loss — compute is 1.7x faster there). Since the

@@ -8710,7 +8710,7 @@ describe("condensation GPU packing", () => {
     expect(packSurfaceGpuMaps4(empty4)).toEqual(packSurfaceGpuMaps4(plain4));
   });
 
-  it("enforces the 24-record cap and contiguous shade suffix", () => {
+  it("enforces the compute record cap and contiguous shade suffix", () => {
     const de = buildSurfaceDE(
       condensationTransforms(),
       null,
@@ -8718,16 +8718,18 @@ describe("condensation GPU packing", () => {
       depthOptions,
     );
     const first = de.condensation!.emitters[0];
+    // condensationTransforms() contributes 1 recursive map, so 48 emitters
+    // make 49 physical records — past SURFACE_COMPUTE_MAX_MAPS.
     const tooMany: SurfaceDE = {
       ...de,
       condensation: {
         ...de.condensation!,
-        emitters: Array.from({ length: 24 }, () => first),
+        emitters: Array.from({ length: 48 }, () => first),
       },
     };
-    expect(() => packSurfaceGpuMaps(tooMany)).toThrow(/25.*cap is 24/);
+    expect(() => packSurfaceGpuMaps(tooMany)).toThrow(/49.*cap is 48/);
     expect(() => packSurfaceGpuParams(tooMany, { itemCount: 1 })).toThrow(
-      /25.*cap is 24/,
+      /49.*cap is 48/,
     );
     const badShade: SurfaceDE = {
       ...de,
@@ -8960,14 +8962,14 @@ describe("surfaceDeKernelWgsl condensation", () => {
           core: "affine",
           condensation: {
             mapCount: 0,
-            emitters: Array.from({ length: 25 }, (_, shadeIndex) => ({
+            emitters: Array.from({ length: 49 }, (_, shadeIndex) => ({
               shape: GEAR_SHAPE,
               shadeIndex,
             })),
           },
         }),
       ),
-    ).toThrow(/25.*cap is 24/);
+    ).toThrow(/49.*cap is 48/);
   });
 });
 
@@ -9184,16 +9186,23 @@ describe("hybrid schedule GPU ABI", () => {
     ).toBe(SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_CONDENSATION_BYTES);
   });
 
-  it("accepts 24 physical records and rejects 25 in both dimensions and codegen", () => {
+  it("accepts 48 physical records and rejects 49 on the production wire, 24 on the maps-uniform probe", () => {
+    // The production storage packers carry the compute cap
+    // (SURFACE_COMPUTE_MAX_MAPS) in BOTH dimensions — 48 records pack, 49
+    // refuse — while the maps-uniform probe keeps its fixed 24 (its
+    // `array<GpuMap4, 24>` cannot address more, so a 25-record pack into it
+    // refuses instead of silently truncating).
     const base3 = buildSurfaceDE([condensationTransforms()[0]]);
     expect(packSurfaceGpuMaps(withSchedule3(base3, 23))).toHaveLength(
       24 * SURFACE_GPU_MAP_VEC4 * 4,
     );
-    expect(() => packSurfaceGpuMaps(withSchedule3(base3, 24))).toThrow(
-      /25.*cap is 24/,
+    expect(packSurfaceGpuMaps(withSchedule3(base3, 47))).toHaveLength(
+      48 * SURFACE_GPU_MAP_VEC4 * 4,
     );
-    // The 4D production storage wire carries the compute cap
-    // (SURFACE4_COMPUTE_MAX_MAPS): 48 records pack, 49 refuse — the
+    expect(() => packSurfaceGpuMaps(withSchedule3(base3, 48))).toThrow(
+      /49.*cap is 48/,
+    );
+    // The 4D production wire carries the same compute cap — the
     // hyper-Menger's 48 maps are the point of the lift.
     const base4 = buildSurfaceDE4([condensationTransforms()[0]]);
     expect(packSurfaceGpuMaps4(withSchedule4(base4, 23))).toHaveLength(
@@ -9205,7 +9214,18 @@ describe("hybrid schedule GPU ABI", () => {
     expect(() => packSurfaceGpuMaps4(withSchedule4(base4, 48))).toThrow(
       /49.*cap is 48/,
     );
-    // The 4D descent codegen prices the same compute cap...
+    // The descent codegen prices the same compute cap for the 3D core...
+    expect(() =>
+      surfaceDeKernelWgsl(
+        kernelOpts({ schedule: { mapCount: 1, scheduleMapCount: 47 } }),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      surfaceDeKernelWgsl(
+        kernelOpts({ schedule: { mapCount: 1, scheduleMapCount: 48 } }),
+      ),
+    ).toThrow(/49.*cap is 48/);
+    // ...and for the 4D descent pair.
     expect(() =>
       surfaceDeKernelWgsl(
         kernelOpts({
@@ -9222,9 +9242,9 @@ describe("hybrid schedule GPU ABI", () => {
         }),
       ),
     ).toThrow(/49.*cap is 48/);
-    // ...while the maps-uniform probe keeps its fixed 24: the same
-    // 25-record wire the production affine4 packs refuses on the probe
-    // (its `array<GpuMap4, 24>` cannot address more), refusing instead of
+    // The maps-uniform probe keeps its fixed 24: the same 25-record wire
+    // the production affine4 packs refuses on the probe (its
+    // `array<GpuMap4, 24>` cannot address more), refusing instead of
     // silently truncating.
     expect(() =>
       surfaceDeKernelWgsl(
@@ -9317,11 +9337,11 @@ describe("surfaceDeKernelWgsl hybrid schedule", () => {
     expect(() =>
       surfaceDeKernelWgsl(
         kernelOpts({
-          schedule: { mapCount: 2, scheduleMapCount: 21 },
+          schedule: { mapCount: 2, scheduleMapCount: 45 },
           condensation,
         }),
       ),
-    ).toThrow(/25 physical.*24/);
+    ).toThrow(/49 physical.*48/);
   });
 });
 

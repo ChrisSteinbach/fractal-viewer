@@ -78,7 +78,7 @@ import { sphereInversionGlassAdmission } from "./surface-optics-backend";
 import type { RenderMode } from "./state";
 import { SURFACE_MAX_MAPS, SURFACE_MAX_RECORDS } from "./surface-material";
 import { SURFACE4_MAX_MAPS } from "./surface-material-4d";
-import { SURFACE4_COMPUTE_MAX_MAPS } from "../fractal/surface-de-gpu";
+import { SURFACE_COMPUTE_MAX_MAPS } from "../fractal/surface-de-gpu";
 
 /**
  * The renderer family the document routes to if Surface is entered — the
@@ -942,6 +942,26 @@ function scheduleRecordCount(schedule: HybridSchedule | null): number {
   return count;
 }
 
+/**
+ * The descent record count the tracers' caps price, in both dimensions:
+ * active recursive maps plus symmetry-expanded emitter records plus the
+ * schedule's B-table records. This is the ONE definition — the records
+ * gates below price it, and main.ts's 3D compute-routing seam reads the
+ * same function, so the gate that admits a 25..48-record system and the
+ * routing that sends it to the only tracer that carries it can never
+ * disagree about the count.
+ */
+export function surfaceDescentRecordCount(
+  transforms: Transform[],
+  symmetry: SymmetryParams,
+  schedule: HybridSchedule | null,
+): number {
+  return (
+    condensationRecordCount(transforms, symmetry) +
+    scheduleRecordCount(schedule)
+  );
+}
+
 /** Trap geometry's deliberately narrower admission inside an otherwise
  * marchable escape-time route. Color trapping is defined for every forward
  * orbit, but pulling a shape SDF back into distance geometry relies on the
@@ -1232,14 +1252,14 @@ export function deriveSurfaceEligibility(
         // fragment mirror at all (the reason this route refuses without
         // compute one gate below), so the GLSL fallback's uniform-block
         // bound does not apply here; the compute tracer carries
-        // SURFACE4_COMPUTE_MAX_MAPS `GpuMap4` records on its runtime-sized
+        // SURFACE_COMPUTE_MAX_MAPS `GpuMap4` records on its runtime-sized
         // maps binding, and eligibility is one answer whatever engine runs
         // it.
         const links = activeMapCount(transforms);
-        if (links > SURFACE4_COMPUTE_MAX_MAPS) {
+        if (links > SURFACE_COMPUTE_MAX_MAPS) {
           return {
             status: "ineligible",
-            note: `${links} chain links (the 4D escape-time compute tracer carries at most ${SURFACE4_COMPUTE_MAX_MAPS})`,
+            note: `${links} chain links (the 4D escape-time compute tracer carries at most ${SURFACE_COMPUTE_MAX_MAPS})`,
             kind: null,
           };
         }
@@ -1346,18 +1366,17 @@ export function deriveSurfaceEligibility(
         recovery: "disableShapeTrapGeometry",
       };
     }
-    // The 4D tracers' slot caps, SPLIT BY ENGINE (the 4D half of the
-    // 24/48 lift): the GLSL fallback tracer's std140 block carries
-    // SURFACE4_MAX_MAPS slots, while the compute route's runtime-sized
-    // storage maps wire carries SURFACE4_COMPUTE_MAX_MAPS — so a system
-    // past the fallback's count is COMPUTE-ONLY (the same disclosure class
-    // fold-shaped 4D systems are: admitted here with compute, refused
-    // without it, with the note naming the boundary), and past the compute
-    // count no tracer carries the system at all. No symmetry multiplier —
-    // the 4D descent sweeps kaleidoscope sectors around the base maps, so
-    // slots are active maps 1:1 at any order.
-    const records4 =
-      condensationRecordCount(transforms, symmetry) + scheduleRecords;
+    // The 4D tracers' slot caps, SPLIT BY ENGINE (the 24/48 lift): the GLSL
+    // fallback tracer's std140 block carries SURFACE4_MAX_MAPS slots, while
+    // the compute route's runtime-sized storage maps wire carries
+    // SURFACE_COMPUTE_MAX_MAPS — so a system past the fallback's count is
+    // COMPUTE-ONLY (the same disclosure class fold-shaped 4D systems are:
+    // admitted here with compute, refused without it, with the note naming
+    // the boundary), and past the compute count no tracer carries the
+    // system at all. No symmetry multiplier — the 4D descent sweeps
+    // kaleidoscope sectors around the base maps, so slots are active maps
+    // 1:1 at any order.
+    const records4 = surfaceDescentRecordCount(transforms, symmetry, schedule);
     if (records4 > SURFACE4_MAX_MAPS) {
       const countLabel = hasSchedule
         ? hasActiveEmitter(transforms)
@@ -1366,10 +1385,10 @@ export function deriveSurfaceEligibility(
         : hasActiveEmitter(transforms)
           ? "map/emitter records"
           : "maps";
-      if (records4 > SURFACE4_COMPUTE_MAX_MAPS) {
+      if (records4 > SURFACE_COMPUTE_MAX_MAPS) {
         return {
           status: "ineligible",
-          note: `${records4} ${countLabel} (the 4D compute tracer carries at most ${SURFACE4_COMPUTE_MAX_MAPS})`,
+          note: `${records4} ${countLabel} (the 4D compute tracer carries at most ${SURFACE_COMPUTE_MAX_MAPS})`,
           kind: null,
         };
       }
@@ -1448,17 +1467,29 @@ export function deriveSurfaceEligibility(
     // rendered.
     const escape = analyzeEscapeSystem(transforms, finalTransform, symmetry);
     if (escape.status === "eligible") {
-      // The chain's own uniform cap: the WebGL fallback arm carries one
-      // uEscM/uEscT/uEscParams slot per LINK, and eligibility is one answer
-      // for both engines — so the fragment tracer's cap is the mode's cap
-      // even though the compute arm's storage list has none.
+      // The chain's link cap, SPLIT BY ENGINE — the escape4 gate's honesty
+      // one dimension down: the WebGL fallback arm carries one
+      // uEscM/uEscT/uEscParams slot per LINK (SURFACE_MAX_MAPS), while the
+      // compute arm's storage list carries SURFACE_COMPUTE_MAX_MAPS — so a
+      // chain past the WebGL count is COMPUTE-ONLY (admitted with compute,
+      // refused without it, the note naming the boundary), and past the
+      // compute count no tracer carries the chain at all.
       const links = activeMapCount(transforms);
       if (links > SURFACE_MAX_MAPS) {
-        return {
-          status: "ineligible",
-          note: `${links} chain links (the escape-time tracer carries at most ${SURFACE_MAX_MAPS})`,
-          kind: null,
-        };
+        if (links > SURFACE_COMPUTE_MAX_MAPS) {
+          return {
+            status: "ineligible",
+            note: `${links} chain links (the escape-time compute tracer carries at most ${SURFACE_COMPUTE_MAX_MAPS})`,
+            kind: null,
+          };
+        }
+        if (!opts.computeAvailable) {
+          return {
+            status: "ineligible",
+            note: `${links} chain links render on WebGPU compute only (the WebGL tracer carries at most ${SURFACE_MAX_MAPS}), which is unavailable here`,
+            kind: null,
+          };
+        }
       }
       const geometryRefusal = trapGeometryRefusal(transforms, shapeTrap, false);
       if (geometryRefusal) {
@@ -1642,11 +1673,18 @@ export function deriveSurfaceEligibility(
       recovery: "disableShapeTrapGeometry",
     };
   }
-  // The tracer's uniform cap, on the BARE active-map count: the descent
-  // sweeps kaleidoscope sectors around the base maps, so order costs no
-  // slots and every order is admissible.
-  const records =
-    condensationRecordCount(transforms, symmetry) + scheduleRecords;
+  // The tracers' slot caps, SPLIT BY ENGINE — the 3D half of the 24/48
+  // lift, the 4D arm's gate above verbatim: the WebGL tracer's fixed
+  // uniform arrays carry SURFACE_MAX_RECORDS records, while the compute
+  // route's runtime-sized storage maps wire carries
+  // SURFACE_COMPUTE_MAX_MAPS — so a system past the WebGL count is
+  // COMPUTE-ONLY (admitted here with compute — the routing seam sends it
+  // to the compute tracer, since plain affine 3D otherwise prefers the
+  // WebGL arm — and refused without it, the note naming the boundary), and
+  // past the compute count no tracer carries the system at all. On the
+  // BARE count: the descent sweeps kaleidoscope sectors around the base
+  // maps, so order costs no slots and every order is admissible.
+  const records = surfaceDescentRecordCount(transforms, symmetry, schedule);
   if (records > SURFACE_MAX_RECORDS) {
     const countLabel = hasSchedule
       ? hasActiveEmitter(transforms)
@@ -1655,11 +1693,22 @@ export function deriveSurfaceEligibility(
       : hasActiveEmitter(transforms)
         ? "map/emitter records"
         : "maps";
-    return {
-      status: "ineligible",
-      note: `${records} ${countLabel} (the surface tracer carries at most ${SURFACE_MAX_RECORDS})`,
-      kind: null,
-    };
+    if (records > SURFACE_COMPUTE_MAX_MAPS) {
+      return {
+        status: "ineligible",
+        note: `${records} ${countLabel} (the compute tracer carries at most ${SURFACE_COMPUTE_MAX_MAPS})`,
+        kind: null,
+      };
+    }
+    if (!opts.computeAvailable) {
+      return {
+        status: "ineligible",
+        note: `${records} ${countLabel} render on WebGPU compute only (the WebGL tracer carries at most ${SURFACE_MAX_RECORDS}), which is unavailable here`,
+        kind: null,
+      };
+    }
+    // 25..48 records with compute available: admitted below, the compute
+    // route's own capacity — the routing seam routes it there.
   }
   if (analysis.status === "degraded") {
     return withSurfaceShapeSourceBudget(

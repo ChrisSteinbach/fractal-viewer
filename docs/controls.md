@@ -436,10 +436,11 @@ morphs into place instead of snapping (see **Presets** below).
   4D systems alike — 24 slots on the WebGL tracers (the 4D limit was raised
   from 16 by moving that tracer's per-map arrays into a
   std140 uniform block — the 24-map **24-cell** presets
-  surface now), and 48 on the 4D compute route, which is therefore
-  **compute-only** past the WebGL tracer's 24: a 25..48-map 4D system
+  surface now), and 48 on the compute route, which is therefore
+  **compute-only** past the WebGL tracer's 24: a 25..48-record system
   renders on WebGPU compute and refuses without it with that reason, the
-  same disclosure every fold-shaped 4D system rides. **Symmetry** no
+  same disclosure every fold-shaped 4D system rides. A **chain** past 24
+  links prices the same split one gate over. **Symmetry** no
   longer counts against that budget: the flat
   tracer used to expand each kaleidoscope copy into a map slot of its own,
   so a 4-map system was capped at 6-fold and higher orders disabled the
