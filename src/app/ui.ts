@@ -5624,14 +5624,13 @@ export class Ui {
    * buttons with the reason on their tooltips and key the Balloon rows'
    * dormancy — the sphere-inversion setter's twin.
    */
-  setSphairahedronModeRefusal(note: string | null): void {
-    const { flame, solid } = this.modeButtons;
-    flame.disabled = note !== null;
-    solid.disabled = note !== null;
-    flame.title = note ?? "Fractal-flame exposure of the current view";
-    solid.title =
-      note ?? "Sampled voxel-density Solid; distinct from analytic Surface";
-    this.sphairahedronScene = note !== null;
+  /**
+   * Record a sphairahedron scene's PRESENCE (the balloon-echo dormancy
+   * note's input; the mode buttons' refusal state is the composite's —
+   * `setSubjectModeRefusal`, one writer for the shared buttons).
+   */
+  setSphairahedronScenePresent(present: boolean): void {
+    this.sphairahedronScene = present;
     this.syncBalloonRows();
   }
 
@@ -8663,22 +8662,33 @@ export class Ui {
   }
 
   /**
-   * Reflect a sphere-inversion block's Flame/Solid refusal (the family's
-   * per-mode verdict in `docs/sphere-inversion-family.md`): a non-null note
-   * disables both mode buttons and rides their `title` tooltips; `null`
-   * restores the default affordance. A block arriving under a live
-   * Flame/Solid session is main.ts's toast, not panel copy. The document
-   * keeps its render-mode-independent state either way.
+   * Record a sphere-inversion scene's PRESENCE (the balloon-echo dormancy
+   * note's input; the mode buttons' refusal state is the composite's —
+   * `setSubjectModeRefusal`, one writer for the shared buttons).
    */
-  setSphereInversionModeRefusal(note: string | null): void {
+  setSphereInversionScenePresent(present: boolean): void {
+    this.sphereInversionScene = present;
+    this.syncBalloonRows();
+  }
+
+  /**
+   * Reflect a subject families' composite Flame/Solid refusal —
+   * `surface-eligibility.ts`'s `subjectRenderModeRefusal`, the first
+   * subject family in the derivation's order that refuses the mode: a
+   * non-null note disables both mode buttons and rides their `title`
+   * tooltips; `null` restores the default affordance. ONE writer for the
+   * SHARED buttons: the per-family setters used to each write them, and
+   * the last writer's null note re-enabled what the first family's refusal
+   * had disabled (the si gate's toast phase caught it). A block arriving
+   * under a live Flame/Solid session is main.ts's toast, not panel copy.
+   */
+  setSubjectModeRefusal(note: string | null): void {
     const { flame, solid } = this.modeButtons;
     flame.disabled = note !== null;
     solid.disabled = note !== null;
     flame.title = note ?? "Fractal-flame exposure of the current view";
     solid.title =
       note ?? "Sampled voxel-density Solid; distinct from analytic Surface";
-    this.sphereInversionScene = note !== null;
-    this.syncBalloonRows();
   }
 
   /**

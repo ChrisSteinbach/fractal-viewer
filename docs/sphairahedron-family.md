@@ -503,6 +503,38 @@ captions; faces are not generations), hidden for a refused block, falling
 through when an earlier subject block is co-present, exactly the
 derivation's and the cloud dispatcher's own subject order.
 
+**The owner-feedback round's panel corrections** (2026-10-09, measured
+where noted). The empty-cloud disclosure is FAMILY-keyed AND
+sphere-absent, never the sphere alone: `SPHAIRAHEDRON_WALK_EMPTY_FAMILIES`
+(tetra333, tetra4, prism2) is pinned against the walk itself — each named
+family's sphere-less construction keeps 0 of 5000 asked (mulberry32(1)),
+each cube family keeps 5000/5000, so a sphere-less CUBE construction still
+draws and must not inherit the note. The J rows widen their slider span to
+reach an authored value past the fixed base (`widenSpanToAuthored`, the
+numeric companion never reads red for a value the document carries), the
+widening disclosed against `SPHAIRAHEDRON_INVERSION_BASE_RANGES`; the
+out-of-span note survives only as the defensive branch (a resolving block's
+moduli are inside their region-scoped spans by construction). A discrete
+subject edit (enable, family, finite stance) arms the landing camera fit
+through the regen coalescer — the preset-load rule one edit class over;
+slider ticks keep the plain form (the fit would fight the authoring hand)
+— and the fit refuses an empty cloud rather than parking on a degenerate
+zero box. The guides (and the box hit-test) hide under ANY subject block
+through one presence definition, refreshed by the panel pipeline when a
+discrete edit flips that presence — before this the panel path never
+called the guides' refresh, so the placeholder boxes stayed on screen
+framing nothing. The Choose-sphere button wears the house button classes
+plus a title naming the deterministic picker (its output only LOOKS like a
+lottery: the census's first accepted candidate moves with the moduli). And
+the Flame/Solid buttons' refusal state is the families' COMPOSITE —
+`subjectRenderModeRefusal`, the same chain the door reads, written by ONE
+setter per refresh — because the sphaira family's own refusal setter and
+the sphere-inversion one fought over the shared buttons (the later sync's
+null note re-enabled what the earlier refusal had disabled; the door held
+while the affordance lied, and the si gate's toast phase caught it a week
+later — the sphaira gate now runs the same phase, which is what was
+missing when the regression shipped).
+
 **Morph and mutation.** `lerpSphairahedron` (in `morph.ts`) lerps moduli
 and J within the same family and finiteness and pops the target's block
 otherwise; midpoints resolve through `buildSphairahedron` — the region is
