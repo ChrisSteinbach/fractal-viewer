@@ -196,10 +196,12 @@ import type { Vec3 } from "./types";
  * for term, and `src/app/gpu-bench/` pins it against that CPU oracle on
  * real query points before any timing is trusted.
  *
- * SEVEN KERNEL CORES (`core`; the fold-lens compute port added the
+ * SEVEN KERNEL CORES below (`core`; the fold-lens compute port added the
  * second, the escape port the third and — its 4D cut — the fourth, the
  * 4D fold-branch sweep the fifth, the bulb kernel the sixth, the 4D
- * escape lift the seventh).
+ * escape lift the seventh) — plus the sphereInv(4), finite(4), menger(4)
+ * and sphaira(4) pairs, each documented in its own section further down:
+ * FIFTEEN cores in all, so recount this module before asserting any total.
  * Which estimator a system is entitled to is decided exactly as on the
  * CPU — its BASE maps for the two 3D descents AND for the two 4D ones
  * (`deHasFolds` / `deHasFolds4`), the escape gate for the forward fold
