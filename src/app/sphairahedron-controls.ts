@@ -232,7 +232,8 @@ function conicInterval(
 }
 
 /** The valid region interval of `field` given the family's OTHER modulus —
- * `null` means no valid position exists at the fixed value. */
+ * `null` means no valid position exists at the fixed value (and a family
+ * that reads no moduli answers null outright — its spans never display). */
 function cubeModulusInterval(
   field: "za" | "zb",
   family: SphairahedronFamilyId,
@@ -247,9 +248,12 @@ function cubeModulusInterval(
         ? field === "za"
           ? cube4Za(fixed)
           : cube4Zb(fixed)
-        : field === "za"
-          ? cube9Za(fixed)
-          : cube9Zb(fixed);
+        : family === "cube9"
+          ? field === "za"
+            ? cube9Za(fixed)
+            : cube9Zb(fixed)
+          : null;
+  if (!conics) return null;
   let span: [number, number] = [0, Number.POSITIVE_INFINITY];
   for (const conic of conics) {
     const next = conicInterval(conic, span[0], span[1]);
@@ -552,8 +556,21 @@ export function sphairahedronControlNotes(
     "inversion.cw",
     "inversion.r",
   ];
+  const family = sphairahedronFamily(block);
+  const finite = sphairahedronIsFinite(block);
   for (const field of numericFields) {
     if (notes[field] !== "") continue;
+    // A field the family does not read (za/zb on the tetra/prism, z2 on
+    // the cubes) has no span and no row — its authored value is ignored,
+    // never "kept outside a range".
+    if (field === "za" || field === "zb") {
+      if (family === null || !CUBE_FAMILIES.includes(family)) continue;
+    } else if (field === "z2") {
+      if (family !== "prism2") continue;
+    } else if (!finite) {
+      // The sphere rows hide while the construction is infinite.
+      continue;
+    }
     const raw = sphairahedronFieldAuthored(block, field);
     if (typeof raw !== "number" || !Number.isFinite(raw)) continue;
     const range = sphairahedronFieldRange(block, field);
