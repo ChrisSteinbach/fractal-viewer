@@ -36,6 +36,8 @@ import type { Vec4 } from "./types";
  * `[c0..c3, r, solidInside]`, plane `[n0..n3, h, 0]`. Term stride 6:
  * sphere `[c0..c3, r, inside]`, plane `[n0..n3, h, above]`. */
 export interface SphairahedronDE4 {
+  readonly boundingRadius: number;
+  readonly visibleBoundingRadius: number;
   readonly foldCap: number;
   readonly faceCount: number;
   readonly faceKind: Int32Array;
@@ -104,6 +106,8 @@ function flatten4(construction: SphairahedronConstruction): SphairahedronDE4 {
     });
   });
   return {
+    boundingRadius: construction.bound.radius,
+    visibleBoundingRadius: construction.bound.radius,
     foldCap: construction.foldCap,
     faceCount,
     faceKind,
@@ -128,6 +132,9 @@ let foldReflections = 0;
 let foldPasses = 0;
 let foldCapped = false;
 let foldPole = false;
+/** The face index of the fold's last move — the 3D twin's per-face
+ * attribution one dimension up. −1 when the fold never moved. */
+let foldLastFace = -1;
 
 function fold4(de: SphairahedronDE4, p: Vec4): void {
   let x = p[0];
@@ -141,6 +148,7 @@ function fold4(de: SphairahedronDE4, p: Vec4): void {
   let passes = 0;
   let capped = false;
   let pole = false;
+  let lastFace = -1;
   const fk = de.faceKind;
   const fd = de.faceData;
   const poleFloor2 = SPHAIRAHEDRON_POLE_FLOOR * SPHAIRAHEDRON_POLE_FLOOR;
@@ -171,6 +179,7 @@ function fold4(de: SphairahedronDE4, p: Vec4): void {
           inversions++;
           moves++;
           moved = true;
+          lastFace = fi;
         }
       } else {
         const d =
@@ -183,6 +192,7 @@ function fold4(de: SphairahedronDE4, p: Vec4): void {
           reflections++;
           moves++;
           moved = true;
+          lastFace = fi;
         }
       }
     }
@@ -204,6 +214,7 @@ function fold4(de: SphairahedronDE4, p: Vec4): void {
   foldPasses = passes;
   foldCapped = capped;
   foldPole = pole;
+  foldLastFace = lastFace;
 }
 
 function pieceSDF4(
@@ -268,6 +279,7 @@ function evaluate4(
       hit.reflections = foldReflections;
       hit.passes = foldPasses;
       hit.capped = false;
+      hit.lastFace = foldLastFace;
     }
     return 0;
   }
@@ -284,6 +296,7 @@ function evaluate4(
     hit.reflections = foldReflections;
     hit.passes = foldPasses;
     hit.capped = foldCapped;
+    hit.lastFace = foldLastFace;
   }
   return v;
 }
@@ -307,6 +320,9 @@ export interface SphairahedronHit4 {
   reflections: number;
   passes: number;
   capped: boolean;
+  /** The face index of the fold's last move — the 3D twin's attribution
+   * one dimension up. −1 when the fold never moved. */
+  lastFace: number;
 }
 
 export function makeSphairahedronHit4(): SphairahedronHit4 {
@@ -318,6 +334,7 @@ export function makeSphairahedronHit4(): SphairahedronHit4 {
     reflections: 0,
     passes: 0,
     capped: false,
+    lastFace: -1,
   };
 }
 
