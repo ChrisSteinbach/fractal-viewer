@@ -42,6 +42,8 @@ import type { ShapeTrap, Transform, Vec3, Vec4 } from "../fractal/types";
 import type { SphereInversionTables } from "../fractal/sphere-inversion";
 import type { Mat4 } from "../fractal/flame";
 import { presentationFloorSpec } from "../fractal/presentation-floor";
+import type { SubjectGuideSpec } from "./subject-guides";
+
 import type { VoxelMaxHierarchy } from "../fractal/voxel-max-hierarchy";
 import {
   DEFAULT_CAMERA_FOV,
@@ -262,6 +264,11 @@ const REPLAY_CURSOR_SIZE = 0.14;
 // highlighted one reads clearly.
 const GUIDE_LINE_OPACITY = 0.9;
 const GUIDE_FACE_OPACITY = 0.15;
+// The subject families' own guides (subject-guides.ts's spec): quieter than
+// the boxes' 0.9 — the wireframe reads as annotation over the cloud, and
+// the sheets as surfaces, not as geometry to orbit into.
+const SUBJECT_GUIDE_LINE_OPACITY = 0.55;
+const SUBJECT_GUIDE_SHEET_OPACITY = 0.1;
 const GUIDE_HIGHLIGHT_LINE_OPACITY = 1.0;
 const GUIDE_HIGHLIGHT_FACE_OPACITY = 0.3;
 const GUIDE_DIMMED_LINE_OPACITY = 0.25;
@@ -1030,6 +1037,9 @@ export class FractalScene {
   private balloonTint: [number, number, number] = [0, 0, 0];
   private balloonTintStrength = 0;
   private guideCubes: THREE.Object3D[] = [];
+  // The subject block's own guides (updateSubjectGuides): the wireframe
+  // LineSegments plus the sheets' translucent mesh, rebuilt whole per push.
+  private subjectGuideObjects: THREE.Object3D[] = [];
   /** Displayed-world aids shared by flat and non-flat Points. Kept out of
    * the cloud scene so bloom, fog and EDL cannot obscure the rig labels. */
   private readonly surfaceLightGuideScene = new THREE.Scene();
@@ -2474,6 +2484,108 @@ export class FractalScene {
       cube.visible = showGuides;
     }
     if (this.fourDScaffold) this.fourDScaffold.visible = showGuides;
+    for (const object of this.subjectGuideObjects) {
+      object.visible = showGuides;
+    }
+  }
+
+  /**
+   * The subject block's OWN guides — `subject-guides.ts`'s spec drawn as
+   * one vertex-colored LineSegments (the fold faces' great-circle
+   * wireframes and the sheets' border loops) plus one translucent sheet
+   * mesh (the walls and the divide). The transform boxes' role one subject
+   * over: display-only (the boxes' drag/hit-test do not transfer to
+   * spheres, and the J sphere's numbers are the J rows' sliders'), rebuilt
+   * whole on every push like `updateGuides` rebuilds the boxes. `spec`
+   * null clears — no subject block, a refused block (its disclosure owns
+   * the why), or a view where the subject guides do not draw.
+   */
+  updateSubjectGuides(
+    spec: SubjectGuideSpec | null,
+    showGuides: boolean,
+  ): void {
+    this.renderNeeded = true;
+    for (const object of this.subjectGuideObjects) {
+      this.scene.remove(object);
+      disposeTree(object);
+    }
+    this.subjectGuideObjects = [];
+    if (!spec || spec.dim !== 3) return;
+    const lineGeometry = new THREE.BufferGeometry();
+    lineGeometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(spec.positions, 3),
+    );
+    lineGeometry.setAttribute(
+      "color",
+      new THREE.BufferAttribute(spec.colors, 3),
+    );
+    const lines = new THREE.LineSegments(
+      lineGeometry,
+      new THREE.LineBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: SUBJECT_GUIDE_LINE_OPACITY,
+        fog: false,
+      }),
+    );
+    lines.visible = showGuides;
+    lines.frustumCulled = false;
+    this.scene.add(lines);
+    this.subjectGuideObjects.push(lines);
+
+    if (spec.sheets.length > 0) {
+      // Each sheet is one quad drawn as two triangles (6 vertices, 3
+      // components each), all sheets merged into one vertex-colored draw.
+      const d = spec.dim;
+      const sheetPositions = new Float32Array(spec.sheets.length * 6 * 3);
+      const sheetColors = new Float32Array(spec.sheets.length * 6 * 3);
+      let o = 0;
+      for (const sheet of spec.sheets) {
+        const c = Array.from(sheet.corners);
+        const corner = (k: number): number[] => c.slice(k * d, k * d + d);
+        for (const v of [
+          corner(0),
+          corner(1),
+          corner(2),
+          corner(0),
+          corner(2),
+          corner(3),
+        ]) {
+          sheetPositions[o * 3] = v[0];
+          sheetPositions[o * 3 + 1] = v[1];
+          sheetPositions[o * 3 + 2] = v[2];
+          sheetColors[o * 3] = sheet.color[0];
+          sheetColors[o * 3 + 1] = sheet.color[1];
+          sheetColors[o * 3 + 2] = sheet.color[2];
+          o++;
+        }
+      }
+      const sheetGeometry = new THREE.BufferGeometry();
+      sheetGeometry.setAttribute(
+        "position",
+        new THREE.BufferAttribute(sheetPositions, 3),
+      );
+      sheetGeometry.setAttribute(
+        "color",
+        new THREE.BufferAttribute(sheetColors, 3),
+      );
+      const mesh = new THREE.Mesh(
+        sheetGeometry,
+        new THREE.MeshBasicMaterial({
+          vertexColors: true,
+          transparent: true,
+          opacity: SUBJECT_GUIDE_SHEET_OPACITY,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          fog: false,
+        }),
+      );
+      mesh.visible = showGuides;
+      mesh.frustumCulled = false;
+      this.scene.add(mesh);
+      this.subjectGuideObjects.push(mesh);
+    }
   }
 
   /** View / Device, this session: the open lighting editor in Points owns
@@ -3299,7 +3411,7 @@ export class FractalScene {
    * glance, the way a rotating tesseract's frame does. Pass `null` (or `[]`)
    * to remove it. Follows the Show-guides toggle like the grid and axes.
    */
-  setFourDScaffold(edges: [Vec4, Vec4][] | null): void {
+  setFourDScaffold(edges: [Vec4, Vec4][] | null, colors?: Float32Array): void {
     this.renderNeeded = true;
     if (this.fourDScaffold) {
       this.scene.remove(this.fourDScaffold);
@@ -3317,8 +3429,19 @@ export class FractalScene {
         3,
       ),
     );
+    // Per-endpoint colors when provided (the subject guides' face hues —
+    // updateFourDScaffoldPositions only re-poses positions, so the color
+    // attribute rides the same rebuild); the preset scaffolds keep their
+    // one neutral blue.
+    const colored =
+      colors !== undefined &&
+      colors.length === this.fourDScaffoldEdges.length * 6;
+    if (colored) {
+      geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    }
     const material = new THREE.LineBasicMaterial({
       color: 0x93a4c8,
+      vertexColors: colored,
       transparent: true,
       opacity: 0.3,
       depthWrite: false,

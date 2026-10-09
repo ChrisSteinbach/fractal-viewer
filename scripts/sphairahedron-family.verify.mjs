@@ -699,6 +699,155 @@ async function main() {
         await context.close();
       }
     }
+
+    // --- the subject GUIDES: the construction's own defining geometry
+    // (face balls, walls, divide, the authored J) drawn under the Points
+    // cloud when Show-guides is on — the transform boxes' role one subject
+    // over. Two legs, driven the way the owner drives them — the PANEL
+    // enable on the default system, not a preset load (the sphaira
+    // presets' render hint auto-enters Surface, and the Cloud section —
+    // whose Show-guides checkbox these legs toggle — is a Points-only
+    // section): (a) the finite construction's guides appear and hide with
+    // the checkbox; (b) the owner's exact scenario — the sphere-less
+    // infinite tetra, whose Points cloud is empty BY DESIGN (the walk
+    // keeps nothing) — must show the machinery instead of empty space,
+    // framed by the construction's own bound.
+    {
+      const frameSum = async (page) => {
+        return await page.evaluate(() => {
+          return new Promise((resolve) => {
+            window.dispatchEvent(new Event("resize"));
+            requestAnimationFrame(() => {
+              const canvas =
+                document.querySelector("#container canvas") ??
+                document.querySelector("canvas");
+              const w = canvas.width;
+              const h = canvas.height;
+              const ctx = document.createElement("canvas");
+              ctx.width = w;
+              ctx.height = h;
+              const c2 = ctx.getContext("2d");
+              c2.drawImage(canvas, 0, 0);
+              const d = c2.getImageData(0, 0, w, h).data;
+              let sum = 0;
+              for (let i = 0; i < d.length; i += 4) {
+                sum += d[i] + d[i + 1] + d[i + 2];
+              }
+              resolve(sum);
+            });
+          });
+        });
+      };
+      const openGuidesCheckbox = async (page) => {
+        await page.evaluate(() => {
+          const d = document.getElementById("showGuides")?.closest("details");
+          if (d && !d.open) d.open = true;
+        });
+      };
+      {
+        const { context, page } = await openApp(browser, args);
+        try {
+          await page.evaluate(() => {
+            document.getElementById("sphairahedronSection").open = true;
+          });
+          await page.check("#sphairahedronEnabledCheckbox");
+          await page.waitForFunction(
+            () =>
+              Number(
+                (
+                  document.getElementById("pointCount")?.textContent ?? ""
+                ).replace(/[^\d]/g, ""),
+              ) > 0,
+            undefined,
+            { timeout: 30_000 },
+          );
+          await page.waitForTimeout(2_000);
+          await openGuidesCheckbox(page);
+          const on = await frameSum(page);
+          await page.uncheck("#showGuides");
+          await page.waitForTimeout(1_000);
+          const off = await frameSum(page);
+          if (on === off) {
+            failures.push(
+              "the finite construction's subject guides did not hide with Show-guides — nothing is drawn, or the toggle is dead",
+            );
+          } else {
+            console.error(
+              "[sphaira-family] subject guides (finite): drawn and toggled",
+            );
+          }
+          await page.check("#showGuides");
+        } catch (error) {
+          failures.push(`subject guides: ${String(error).split("\n")[0]}`);
+        } finally {
+          await context.close().catch(() => {});
+        }
+      }
+      {
+        const { context, page } = await openApp(browser, args);
+        try {
+          await page.evaluate(() => {
+            document.getElementById("sphairahedronSection").open = true;
+          });
+          await page.check("#sphairahedronEnabledCheckbox");
+          await page.waitForFunction(
+            () =>
+              Number(
+                (
+                  document.getElementById("pointCount")?.textContent ?? ""
+                ).replace(/[^\d]/g, ""),
+              ) > 0,
+            undefined,
+            { timeout: 30_000 },
+          );
+          // The family select writes through the table pipeline on change.
+          await page.selectOption("#sphairahedronFamily", "tetra333");
+          await page.waitForTimeout(2_500);
+          await page.uncheck("#sphairahedronFiniteCheckbox");
+          // The empty walk's cloud: poll the count to zero.
+          await page.waitForFunction(
+            () =>
+              Number(
+                (
+                  document.getElementById("pointCount")?.textContent ?? ""
+                ).replace(/[^\d]/g, ""),
+              ) === 0,
+            undefined,
+            { timeout: 20_000 },
+          );
+          const note = await page.evaluate(
+            () =>
+              document.getElementById("sphairahedronFiniteNote")?.textContent ??
+              "",
+          );
+          if (!/walk keeps nothing/.test(note)) {
+            failures.push(
+              `the empty-cloud disclosure is missing beside the finite row (${JSON.stringify(note)})`,
+            );
+          }
+          await openGuidesCheckbox(page);
+          const on = await frameSum(page);
+          await page.uncheck("#showGuides");
+          await page.waitForTimeout(1_000);
+          const off = await frameSum(page);
+          if (on === off) {
+            failures.push(
+              "the sphere-less infinite tetra's guides did not hide with Show-guides — the empty viewport is not the guides' doing",
+            );
+          } else {
+            console.error(
+              "[sphaira-family] subject guides (infinite tetra, empty cloud): the machinery draws, toggles, and the disclosure names the check",
+            );
+          }
+        } catch (error) {
+          failures.push(
+            `subject guides (infinite): ${String(error).split("\n")[0]}`,
+          );
+        } finally {
+          await context.close().catch(() => {});
+        }
+      }
+    }
     // --- the Flame/Solid doors' refusal AFFORDANCE: the mode buttons are
     // SHARED across the subject families, and the composite refusal
     // (surface-eligibility.ts's subjectRenderModeRefusal — the same chain

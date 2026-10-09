@@ -535,6 +535,44 @@ while the affordance lied, and the si gate's toast phase caught it a week
 later — the sphaira gate now runs the same phase, which is what was
 missing when the regression shipped).
 
+**The subject guides.** With the placeholder boxes correctly hidden, the
+subject block's OWN construction draws in their place when Show-guides is
+on — the transform boxes' role one subject over, display-only (the boxes'
+drag/hit-test do not transfer to spheres, and the J sphere's numbers are
+the J rows' sliders'; a draggable ball guide would be a second editor of
+the same numbers). `subject-guides.ts` derives the spec purely from the
+resolved construction: one great-circle wireframe triple per fold-face
+ball (six in 4D — the w-carrying planes are what make a 4D ball read as
+4D), a translucent bounded sheet per wall plane and for the divide, sized
+by the construction's own framing ball; every face wears the hue the
+cloud and the By-Transform legend give that face
+(`transformColors(foldFaces.length)`, the walk's last-applied-face slot),
+the divide wears the 4D scaffold's neutral blue, the authored J wears
+white. FOR THE INFINITE FAMILIES THIS IS THE OBJECT ITSELF, not
+decoration: tetra333's limit set IS the plane y = 0 — its divide — so the
+drawn sheet is the limit set, exactly, where the point sampler keeps
+nothing; and an empty cloud's landing fit frames the construction's own
+bound (`fitCameraToGuideFrame`) instead of parking on the previous
+framing, so the sphere-less tetra opens onto its machinery rather than
+the interior of where the finite sphere used to be. The 4D arm rides the
+existing scaffold (`setFourDScaffold`, re-posed per rotor tick by the CPU
+twin of the cloud's own vertex transform): the subject's edges own the
+slot in the 4D Points view — a block replaces the transforms a preset's
+polytope wireframe illustrated — and the preset's wireframe shows again
+when the block leaves; the slot's content guard keeps the per-arrival
+refresh from rebuilding unchanged geometry. THE VISIBILITY REPAIR the
+feature forced: `setGuidesVisible` had been folded into the transform
+BOXES' flat-Points gate, which silently hid the tumbling scaffold — and
+the grid and axes — in the very 4D view the scaffold was built for (the
+original 4D mode followed the checkbox directly; measured on the
+pentatope: nothing drawn with Show-guides checked). The grid, axes,
+scaffold and subject guides now follow the user's Show-guides control in
+the POINTS view, both projections; the boxes keep their own flat-Points
+gate, and the other render modes keep everything off. The family gate
+gained two legs: the finite construction's guides toggle with the
+checkbox, and the sphere-less infinite tetra's empty cloud shows the
+machinery with the disclosure beside the finite row.
+
 **Morph and mutation.** `lerpSphairahedron` (in `morph.ts`) lerps moduli
 and J within the same family and finiteness and pops the target's block
 otherwise; midpoints resolve through `buildSphairahedron` — the region is
