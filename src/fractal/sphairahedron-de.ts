@@ -80,6 +80,9 @@ export interface SphairahedronDE {
   readonly pieceCount: number;
   readonly pieceStart: Int32Array;
   readonly pieceLength: Int32Array;
+  /** The flattened term count — the GPU/GLSL table wire's second count
+   * (the terms ride termData at the file's term stride). */
+  readonly termCount: number;
   readonly termKind: Int32Array;
   readonly termData: Float64Array;
 }
@@ -152,6 +155,7 @@ function flatten(construction: SphairahedronConstruction): SphairahedronDE {
     pieceCount,
     pieceStart,
     pieceLength,
+    termCount: termTotal,
     termKind,
     termData,
   };

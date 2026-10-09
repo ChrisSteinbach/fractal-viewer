@@ -21,6 +21,10 @@ import {
   SURFACE_SPHERE_INVERSION_COLOR_SLOTS,
   SURFACE_SPHERE_INVERSION_TABLE_ENTRIES,
   setEscapeSystem,
+  setSphairahedronSystem,
+  sphairahedronFragmentArmLimit,
+  SURFACE_SPHAIRA_MAX_PIECES,
+  SURFACE_SPHAIRA_MAX_TERMS,
   setSurfaceBalloon,
   setSurfaceGrid,
   setSurfaceGridEnabled,
@@ -59,6 +63,8 @@ import {
   BULB_STEP_SCALE,
 } from "../fractal/bulb-de";
 import { buildEscapeDE, ESCAPE_TIME_RADIUS } from "../fractal/escape-de";
+import { resolveSphairahedron } from "../fractal/sphairahedron";
+import { buildSphairahedronDE } from "../fractal/sphairahedron-de";
 import { shapeTrapInvNorm } from "../fractal/shape-trap";
 import { activeMeshSdfAtlas } from "../fractal/mesh-sdf-atlas-cache";
 import {
@@ -136,19 +142,19 @@ const BALLOON_PALETTE_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "3D balloon finish0": {
-    resolved: "b3d7c243da2fb089",
+    resolved: "9e0bb35ffd947d21",
     emitted: "8a3ca649ed45d7c2",
   },
   "3D balloon finish1": {
-    resolved: "9d59d6f3e149f3fe",
+    resolved: "648c411b18d4067f",
     emitted: "9fe2b3cadb57aa32",
   },
   "3D lens+balloon finish0": {
-    resolved: "16daa7f3813870ae",
+    resolved: "55641a810d77d4cb",
     emitted: "e6302065ea497beb",
   },
   "3D lens+balloon finish1": {
-    resolved: "2dc188fcec04d2b0",
+    resolved: "fe0a25add8190f88",
     emitted: "fd44f5a17c42aeb3",
   },
   "3D escape+balloon finish0": {
@@ -177,27 +183,27 @@ const SWIRL_LENS_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "3D lens finish0": {
-    resolved: "31bd45fe2ab1b0e2",
+    resolved: "9d831d4770d4ba2c",
     emitted: "b8b80b22b2b010aa",
   },
   "3D lens+balloon finish0": {
-    resolved: "16daa7f3813870ae",
+    resolved: "55641a810d77d4cb",
     emitted: "e6302065ea497beb",
   },
   "3D lens+plane finish0": {
-    resolved: "8a7086106d042de8",
+    resolved: "209a99c7df543dec",
     emitted: "1c65d10713495ab7",
   },
   "3D lens finish1": {
-    resolved: "c4e59eb6dd09c86e",
+    resolved: "aef25bc005bfa492",
     emitted: "d754e88870d23a6f",
   },
   "3D lens+balloon finish1": {
-    resolved: "2dc188fcec04d2b0",
+    resolved: "fe0a25add8190f88",
     emitted: "fd44f5a17c42aeb3",
   },
   "3D lens+plane finish1": {
-    resolved: "2c860f71626793f2",
+    resolved: "2f19b020bb063824",
     emitted: "9dfff5fed89b0f1d",
   },
 };
@@ -207,28 +213,31 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
   string,
   { resolved: string; emitted: string }
 > = {
+  // resolved re-recorded for the alternatives chain's closing comment
+  // naming the sphairahedron fold (the PRE_PATTERN copy carries the same
+  // note) — one comment paragraph, no code motion.
   "3D affine finish0": {
-    resolved: "f2bbdcc679b87d93",
+    resolved: "1f98436899cf5d88",
     emitted: "91d566a8234dee47",
   },
   "3D lens finish0": {
-    resolved: "31bd45fe2ab1b0e2",
+    resolved: "9d831d4770d4ba2c",
     emitted: "b8b80b22b2b010aa",
   },
   "3D balloon finish0": {
-    resolved: "b3d7c243da2fb089",
+    resolved: "9e0bb35ffd947d21",
     emitted: "8a3ca649ed45d7c2",
   },
   "3D plane finish0": {
-    resolved: "049c163ec1f6039f",
+    resolved: "0d606850ba40cb84",
     emitted: "4ede30dc81198664",
   },
   "3D lens+balloon finish0": {
-    resolved: "16daa7f3813870ae",
+    resolved: "55641a810d77d4cb",
     emitted: "e6302065ea497beb",
   },
   "3D lens+plane finish0": {
-    resolved: "8a7086106d042de8",
+    resolved: "209a99c7df543dec",
     emitted: "1c65d10713495ab7",
   },
   "3D escape finish0": {
@@ -256,27 +265,27 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
     emitted: "c66d896d94e7df3c",
   },
   "3D affine finish1": {
-    resolved: "cc132629850c9c6b",
+    resolved: "d96be25b54bf2d98",
     emitted: "0678ded3a8ff419b",
   },
   "3D lens finish1": {
-    resolved: "c4e59eb6dd09c86e",
+    resolved: "aef25bc005bfa492",
     emitted: "d754e88870d23a6f",
   },
   "3D balloon finish1": {
-    resolved: "9d59d6f3e149f3fe",
+    resolved: "648c411b18d4067f",
     emitted: "9fe2b3cadb57aa32",
   },
   "3D plane finish1": {
-    resolved: "7cd47ab406b02572",
+    resolved: "f4278ce2a0d55b3a",
     emitted: "71aa043bc0cf3f17",
   },
   "3D lens+balloon finish1": {
-    resolved: "2dc188fcec04d2b0",
+    resolved: "fe0a25add8190f88",
     emitted: "fd44f5a17c42aeb3",
   },
   "3D lens+plane finish1": {
-    resolved: "2c860f71626793f2",
+    resolved: "2f19b020bb063824",
     emitted: "9dfff5fed89b0f1d",
   },
   "3D escape finish1": {
@@ -1596,6 +1605,232 @@ describe("the fold's authored lengths in the GLSL tracer", () => {
         1,
       ).length,
     ).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+    // The sphaira arm resolves to ~41 KB — a face scan (no maps arrays,
+    // no orbit, no estimator branches, the carve arm's shape one family
+    // over) — with ~24 KB of headroom. Pinned beside the others because
+    // it is the same property (commentary survives into a driver log).
+    expect(
+      surfaceFragmentResolvedFor(
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        null,
+        false,
+        0,
+        0,
+        0,
+        null,
+        0,
+        0,
+        0,
+        0,
+        0,
+        false,
+        0,
+        1,
+      ).length,
+    ).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+  });
+});
+
+describe("SURFACE_SPHAIRA GLSL arm", () => {
+  const resolved = surfaceFragmentResolvedFor(
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    undefined,
+    null,
+    null,
+    false,
+    0,
+    0,
+    0,
+    null,
+    0,
+    0,
+    0,
+    0,
+    0,
+    false,
+    0,
+    1,
+  );
+
+  it("replaces the descent bodies wholesale with the scan fold's own three surfaceDE overloads", () => {
+    expect(resolved).toContain("uniform vec4 uSphFaces[6];");
+    expect(resolved).toContain("uniform vec4 uSphTerms[8];");
+    expect(resolved).toContain("uniform vec4 uSphPieces[2];");
+    expect(resolved).toContain("uniform vec4 uSphParams;");
+    expect(resolved).toContain("void sphairaFold(");
+    expect(resolved).toContain("float sphairaTileSDF(");
+    // Exactly the arm's three overloads, and none of the descent
+    // machinery.
+    expect((resolved.match(/float surfaceDE\(/g) ?? []).length).toBe(3);
+    expect(resolved).not.toContain("fcQ[FOLD_W]");
+    expect(resolved).not.toContain("uEscM");
+    // The estimate's damping is the arm's own constant, and the pass cap
+    // is baked — no uMaxDepth read in the fold.
+    expect(resolved).toContain("SPHAIRA_FUDGE = 0.2");
+    expect(resolved).toContain("SPHAIRA_CAP = 50");
+    // The hit overload's attribution: last-move face + move count trap.
+    expect(resolved).toContain("firstChoice = max(lastFace, 0)");
+    expect(resolved).toContain("clamp(float(moves) / 16.0, 0.0, 1.0)");
+  });
+
+  it("refuses every alternative-arm and transform-system clash, naming the define", () => {
+    // Every clash call carries the sphaira flag itself — the arm's own
+    // refusal, not a plain variant's. Full positional lists, the
+    // resolver's own signature shape.
+    const withSphaira = (
+      escape: number,
+      lens = 0,
+      balloon = 0,
+      plane = 0,
+      bulb = 0,
+      menger = 0,
+    ): Parameters<typeof surfaceFragmentResolvedFor> => [
+      escape,
+      lens,
+      balloon,
+      plane,
+      bulb,
+      0,
+      0,
+      undefined,
+      null,
+      null,
+      false,
+      0,
+      0,
+      0,
+      null,
+      0,
+      0,
+      0,
+      0,
+      0,
+      false,
+      menger,
+      1,
+    ];
+    expect(() => surfaceFragmentResolvedFor(...withSphaira(1))).toThrow(
+      /SURFACE_ESCAPE/,
+    );
+    expect(() =>
+      surfaceFragmentResolvedFor(...withSphaira(0, 0, 0, 0, 1)),
+    ).toThrow(/SURFACE_BULB/);
+    expect(() =>
+      surfaceFragmentResolvedFor(...withSphaira(0, 0, 0, 0, 0, 1)),
+    ).toThrow(/SURFACE_MENGER/);
+    expect(() => surfaceFragmentResolvedFor(...withSphaira(0, 1))).toThrow(
+      /SURFACE_FOLD_LENS/,
+    );
+    expect(() => surfaceFragmentResolvedFor(...withSphaira(0, 0, 1))).toThrow(
+      /SURFACE_BALLOON/,
+    );
+  });
+
+  it("setSphairahedronSystem packs the kernel's table wire and flips the material onto the arm", () => {
+    const material = createSurfaceMaterial();
+    const r = resolveSphairahedron({ family: "tetra333" });
+    if (!r.ok) throw new Error(r.reasons.join("; "));
+    const de = buildSphairahedronDE(r.construction);
+    setSphairahedronSystem(material, de, [
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+      [1, 1, 0],
+    ]);
+    const u = material.uniforms;
+    expect((u.uSphParams.value as { x: number; y: number; z: number }).x).toBe(
+      de.faceCount,
+    );
+    expect((u.uSphParams.value as { y: number; z: number }).y).toBe(
+      de.termCount,
+    );
+    expect(u.uMapCount.value).toBe(de.faceCount);
+    // Face 0's A/B lanes carry the DE's own table values (the kernel's
+    // binding-1 wire, read through the same packer).
+    const face0 = (u.uSphFaces.value as { toArray: () => number[] }[])[0];
+    expect(face0.toArray()[0]).toBeCloseTo(de.faceData[0], 12);
+    expect(face0.toArray()[1]).toBeCloseTo(de.faceData[1], 12);
+    expect(face0.toArray()[2]).toBeCloseTo(de.faceData[2], 12);
+    expect(face0.toArray()[3]).toBe(0);
+    const face1 = (u.uSphFaces.value as { toArray: () => number[] }[])[1];
+    expect(face1.toArray()[0]).toBe(de.faceData[3]);
+    expect(face1.toArray()[1]).toBe(0);
+    expect(face1.toArray()[2]).toBe(0);
+    // The slot wire: one colour per face, the trap coordinate its face
+    // index over faceCount − 1.
+    expect(
+      (u.uMapColor.value as { toArray: () => number[] }[])[0].toArray(),
+    ).toEqual([1, 0, 0]);
+    expect((u.uTrapIndex.value as number[])[3]).toBe(1);
+    // The march sphere: the construction's framing ball, step scale 1.
+    expect(u.uBoundingRadius.value).toBe(de.boundingRadius);
+    expect(u.uStepScale.value).toBe(1);
+    expect(material.defines.SURFACE_SPHAIRA).toBe(1);
+    expect(material.defines.SURFACE_FOLDS).toBe(0);
+    expect(material.fragmentShader).toContain("void sphairaFold(");
+    // The colour-count contract refuses a mismatched wire.
+    expect(() => setSphairahedronSystem(material, de, [[1, 0, 0]])).toThrow(
+      /4 face colours/,
+    );
+    material.dispose();
+  });
+
+  it("fits every shipped construction inside the per-table caps", () => {
+    const families: Array<
+      [Parameters<typeof resolveSphairahedron>[0], number]
+    > = [
+      [{ family: "tetra333" }, 4],
+      [{ family: "prism2", z2: 2 }, 5],
+      [{ family: "cube1", za: 0.5, zb: 1.0 }, 6],
+      [{ family: "cube4", za: 0.4, zb: 0.3 }, 6],
+      [{ family: "cube9", za: 0.3, zb: 0.2 }, 6],
+      [
+        {
+          family: "tetra333",
+          inversion: { cx: 0.5, cy: 3, cz: 0, r: 1.3 },
+        },
+        4,
+      ],
+    ];
+    for (const [block, faces] of families) {
+      const r = resolveSphairahedron(block);
+      if (!r.ok) throw new Error(r.reasons.join("; "));
+      const de = buildSphairahedronDE(r.construction);
+      expect(de.faceCount).toBe(faces);
+      expect(sphairahedronFragmentArmLimit(de)).toBeNull();
+      // The setter's own contract: the counts ride the wire it packs.
+      expect(de.termCount).toBeLessThanOrEqual(SURFACE_SPHAIRA_MAX_TERMS);
+      expect(de.pieceCount).toBeLessThanOrEqual(SURFACE_SPHAIRA_MAX_PIECES);
+    }
+    // A hypothetical over-cap construction refuses with the cap named.
+    expect(
+      sphairahedronFragmentArmLimit({
+        faceCount: 7,
+        termCount: 5,
+        pieceCount: 1,
+      }),
+    ).toBe("faces");
+    expect(
+      sphairahedronFragmentArmLimit({
+        faceCount: 6,
+        termCount: 9,
+        pieceCount: 1,
+      }),
+    ).toBe("terms");
   });
 });
 
@@ -1700,7 +1935,11 @@ describe("compile-gated finite tiling in the 3D GLSL tracer", () => {
 
   it("keeps the pre-lattice finite source bytes frozen", () => {
     expect(sha256(sourceFor(a3))).toBe(
-      "3bc6c1873aa4e665985df2b1ddad52629b6d7bd2a6fb633f4198722fa96f2cd5",
+      // Re-recorded for the alternatives chain's closing comment naming
+      // the sphairahedron fold — one comment paragraph, no code motion
+      // (the resolver's byte-identity discipline: the sha pins the
+      // emitted GLSL, and the comment rides it).
+      "b02accd0cb82985586d5bf72400a722acff8636e7bc118d1efc80e28bbc2d7d3",
     );
     expect(
       sha256(
