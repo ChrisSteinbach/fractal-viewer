@@ -173,11 +173,37 @@ import {
 import {
   MENGER_SLAB_REFUSAL,
   SPHERE_INVERSION_SLAB_REFUSAL,
+  SPHAIRAHEDRON_SLAB_REFUSAL,
   surfaceTrapGeometryRestriction,
   type SurfaceEligibilityRecovery,
   type SurfaceEligibilityResult,
   type SurfaceRouteKind,
 } from "./surface-eligibility";
+import {
+  sphairahedronControlNotes,
+  sphairahedronIsFinite,
+  sphairahedronVisibleRows,
+  SPHAIRAHEDRON_AUTHORED_OPTION,
+  SPHAIRAHEDRON_CONTROLS_MODE_REASON,
+  SPHAIRAHEDRON_DORMANT_REASON,
+  type SphairahedronNoteRow,
+} from "./sphairahedron-controls";
+
+/** The Sphairahedron section's slider ids (the menger list's shape; the
+ * enable checkbox is driven by its spec, the Pick button by its handler). */
+const SPHAIRAHEDRON_ROW_CONTROL_IDS: readonly string[] = [
+  "sphairahedronFamily",
+  "sphairahedronZaSlider",
+  "sphairahedronZbSlider",
+  "sphairahedronZ2Slider",
+  "sphairahedronFiniteCheckbox",
+  "sphairahedronCxSlider",
+  "sphairahedronCySlider",
+  "sphairahedronCzSlider",
+  "sphairahedronCwSlider",
+  "sphairahedronRSlider",
+  "sphairahedronPickButton",
+];
 
 /** The Menger-carve section's shared wordings — the Flame/Solid mode
  * refusal and the dormancy pass's canonical reason (the sphere-inversion
@@ -328,6 +354,13 @@ export interface UiHandlers {
   /** Step the scene document forward one edit burst. */
   onRedo: () => void;
   onPreset: (preset: Preset) => void;
+  /**
+   * The Sphairahedron section's "Choose sphere" button was clicked: run the
+   * deterministic J picker (`sphairahedron-authoring.ts`) and author its
+   * first accepted sphere as the block's inversion sphere — an ordinary
+   * undoable document edit. main.ts reports a picker refusal as a toast.
+   */
+  onSphairahedronPick?: () => void;
   /** Complete authored rig edit; absence restores the legacy light path.
    * Input is live; commit closes the undo burst and restarts convergence. */
   onSurfaceLighting?: (
@@ -2988,6 +3021,31 @@ export class Ui {
   /** Whether {@link applySphereInversionDormancy} has disabled anything the
    * release pass must restore. */
   private sphereInversionDormancyApplied = false;
+  // The Sphairahedron section (sphairahedron-controls.ts's record): the
+  // third subject block, the sphere-inversion section's shape one family
+  // over — the row containers its family shows or hides, and one
+  // disclosure per row.
+  private readonly sphairahedronSection: HTMLDetailsElement;
+  private readonly sphairahedronControls: HTMLElement;
+  private readonly sphairahedronNote: HTMLElement;
+  private readonly sphairahedronRows: Record<
+    "za" | "zb" | "z2" | "inversion" | "cw",
+    HTMLElement
+  >;
+  private readonly sphairahedronNotes: Record<
+    Exclude<SphairahedronNoteRow, "block">,
+    HTMLElement
+  >;
+  private readonly sphairahedronPickButton: HTMLButtonElement;
+  /** Whether the DOCUMENT carries a sphairahedron block — keys the
+   * transform sections' dormancy (the sphereInversionPresent twin). */
+  private sphairahedronPresent = false;
+  /** Whether the document carries a sphairahedron block (set with the
+   * Flame/Solid refusal): the Balloon echo stays dormant over the family. */
+  private sphairahedronScene = false;
+  /** Whether {@link applySphairahedronDormancy} has disabled anything the
+   * release pass must restore. */
+  private sphairahedronDormancyApplied = false;
 
   // The surface render's mode-gated status block contains its trace progress
   // (see setSurfaceProgress). The document-derived eligibility verdict rides
@@ -3128,6 +3186,7 @@ export class Ui {
     | "sphereInversion"
     | "finiteSolid"
     | "menger"
+    | "sphairahedron"
     | null = null;
   /**
    * The ACTIVE surface session's shape: `"escape"` for the escape-time fold
@@ -3761,6 +3820,34 @@ export class Ui {
       section: this.byId(section),
       note: this.byId(note),
     }));
+    this.sphairahedronSection = this.byId<HTMLDetailsElement>(
+      "sphairahedronSection",
+    );
+    this.sphairahedronControls = this.byId("sphairahedronControls");
+    this.sphairahedronNote = this.byId("sphairahedronNote");
+    this.sphairahedronPickButton = this.byId<HTMLButtonElement>(
+      "sphairahedronPickButton",
+    );
+    this.sphairahedronRows = {
+      za: this.byId("sphairahedronZaRow"),
+      zb: this.byId("sphairahedronZbRow"),
+      z2: this.byId("sphairahedronZ2Row"),
+      inversion: this.byId("sphairahedronInversionRows"),
+      cw: this.byId("sphairahedronCwRow"),
+    };
+    this.sphairahedronNotes = {
+      family: this.byId("sphairahedronFamilyNote"),
+      za: this.byId("sphairahedronZaNote"),
+      zb: this.byId("sphairahedronZbNote"),
+      z2: this.byId("sphairahedronZ2Note"),
+      finite: this.byId("sphairahedronFiniteNote"),
+      pick: this.byId("sphairahedronPickNote"),
+      "inversion.cx": this.byId("sphairahedronCxNote"),
+      "inversion.cy": this.byId("sphairahedronCyNote"),
+      "inversion.cz": this.byId("sphairahedronCzNote"),
+      "inversion.cw": this.byId("sphairahedronCwNote"),
+      "inversion.r": this.byId("sphairahedronRNote"),
+    };
     this.surfaceEligibilityRecoveryBtn = this.byId(
       "surfaceEligibilityRecoveryBtn",
     );
@@ -4616,6 +4703,9 @@ export class Ui {
     this.finalTransformToggle.addEventListener("change", () =>
       handlers.onToggleFinalTransform(this.finalTransformToggle.checked),
     );
+    this.sphairahedronPickButton.addEventListener("click", () =>
+      handlers.onSphairahedronPick?.(),
+    );
     for (const mode of RENDER_MODES) {
       this.modeButtons[mode].addEventListener("click", () =>
         handlers.onRenderMode(mode),
@@ -4910,24 +5000,26 @@ export class Ui {
           ? `Slab thickness is unavailable in a sphere-inversion scene: ${SPHERE_INVERSION_SLAB_REFUSAL}. A zero-thickness slice remains available.`
           : this.fourDSlabRefusal === "menger"
             ? `Slab thickness is unavailable in a Menger-carve scene: ${MENGER_SLAB_REFUSAL}. A zero-thickness slice remains available.`
-            : this.fourDSlabRefusal === "finiteSolid"
-              ? "Slab thickness is unavailable in a finite-solid scene: the " +
-                "exact cell walk threads one w-plane, and a segment has no " +
-                "cell walk. A zero-thickness slice remains available."
-              : this.fourDSlabRefusal === "condensation"
-                ? "Slab thickness is unavailable with a condensation shape: its " +
-                  "carried solid needs its own set-distance evaluator for a " +
-                  "segment. A zero-thickness slice remains available."
-                : this.fourDSlabRefusal === "tiling"
-                  ? "Slab thickness is unavailable with lattice Space tiling: its " +
-                    "mirror walls need their own segment enumeration. A " +
-                    "zero-thickness slice remains available."
-                  : this.surfaceSessionKind === "escape"
-                    ? "Slab thickness is unavailable in the escape-time render: its " +
-                      "orbit runs the maps FORWARD, with no branches to thread a " +
-                      "segment through, so a slab has no certificate at any fold " +
-                      "family. The IFS surface render keeps it."
-                    : "";
+            : this.fourDSlabRefusal === "sphairahedron"
+              ? `Slab thickness is unavailable in a sphairahedron scene: ${SPHAIRAHEDRON_SLAB_REFUSAL}. A zero-thickness slice remains available.`
+              : this.fourDSlabRefusal === "finiteSolid"
+                ? "Slab thickness is unavailable in a finite-solid scene: the " +
+                  "exact cell walk threads one w-plane, and a segment has no " +
+                  "cell walk. A zero-thickness slice remains available."
+                : this.fourDSlabRefusal === "condensation"
+                  ? "Slab thickness is unavailable with a condensation shape: its " +
+                    "carried solid needs its own set-distance evaluator for a " +
+                    "segment. A zero-thickness slice remains available."
+                  : this.fourDSlabRefusal === "tiling"
+                    ? "Slab thickness is unavailable with lattice Space tiling: its " +
+                      "mirror walls need their own segment enumeration. A " +
+                      "zero-thickness slice remains available."
+                    : this.surfaceSessionKind === "escape"
+                      ? "Slab thickness is unavailable in the escape-time render: its " +
+                        "orbit runs the maps FORWARD, with no branches to thread a " +
+                        "segment through, so a slab has no certificate at any fold " +
+                        "family. The IFS surface render keeps it."
+                      : "";
     this.fourDSliceThicknessUnavailableNote.textContent =
       this.fourDSliceThicknessRow.title;
     this.fourDSliceThicknessUnavailableNote.classList.toggle(
@@ -4984,6 +5076,7 @@ export class Ui {
       | "sphereInversion"
       | "finiteSolid"
       | "menger"
+      | "sphairahedron"
       | null = null,
   ): void {
     if (
@@ -5079,9 +5172,11 @@ export class Ui {
       ? BALLOON_CENTRE_REFUSAL_REASON
       : context.surfaceKind === "sphereInversion"
         ? SPHERE_INVERSION_DORMANT_REASON
-        : applicability.kind === "disabled"
-          ? applicability.reason
-          : "";
+        : context.surfaceKind === "sphairahedron"
+          ? SPHAIRAHEDRON_DORMANT_REASON
+          : applicability.kind === "disabled"
+            ? applicability.reason
+            : "";
     const showDependent = !refused && this.balloonEchoCheckbox.checked;
     const heldLattice =
       context.renderMode === "points" &&
@@ -5092,11 +5187,11 @@ export class Ui {
     const heldSphereInversion =
       context.renderMode === "points" &&
       this.balloonEchoCheckbox.checked &&
-      this.sphereInversionScene;
+      (this.sphereInversionScene || this.sphairahedronScene);
     const pendingReason = heldLattice
       ? "Balloon stays dormant over the earlier lattice cloud until regeneration installs finite or ordinary Points. Use Regenerate if Auto-update is off."
       : heldSphereInversion
-        ? "Balloon stays dormant over a sphere-inversion scene: the family has no echo. The setting is kept for other scenes."
+        ? "Balloon stays dormant over this subject block's scene: the family has no echo. The setting is kept for other scenes."
         : "";
 
     this.balloonEchoCheckbox.disabled = refused;
@@ -5393,6 +5488,151 @@ export class Ui {
       }
     }
     this.mengerDormancyApplied = false;
+  }
+
+  /**
+   * Paint the Sphairahedron section from the document
+   * (sphairahedron-controls.ts decides; this only writes the DOM) — the
+   * sphere-inversion sync's shape one subject over: the Flame/Solid
+   * refusal, the controls' visibility behind the checkbox, the family's
+   * own modulus rows, the finite rows' visibility, and the per-row
+   * disclosures.
+   */
+  private syncSphairahedronSection(state: AppState): void {
+    const block = state.sphairahedron;
+    const refusedMode =
+      state.renderMode === "flame" || state.renderMode === "solid";
+    this.setScalarDisabled("sphairahedronEnabledCheckbox", refusedMode);
+    this.sphairahedronControls.classList.toggle("hidden", !block);
+    const notes = block ? sphairahedronControlNotes(block) : null;
+    const sectionNote = refusedMode
+      ? SPHAIRAHEDRON_CONTROLS_MODE_REASON
+      : (notes?.block ?? "");
+    this.setReasonNote(this.sphairahedronNote, sectionNote);
+    if (!block || !notes) {
+      for (const id of SPHAIRAHEDRON_ROW_CONTROL_IDS) {
+        if (id === "sphairahedronPickButton") continue;
+        this.setScalarDisabled(id, true);
+      }
+      this.sphairahedronPickButton.disabled = true;
+      for (const note of Object.values(this.sphairahedronNotes)) {
+        this.setReasonNote(note, "");
+      }
+      this.sphairahedronPresent = false;
+      this.applySphairahedronDormancy();
+      return;
+    }
+    const visible = sphairahedronVisibleRows(block);
+    this.sphairahedronRows.za.classList.toggle("hidden", !visible.za);
+    this.sphairahedronRows.zb.classList.toggle("hidden", !visible.zb);
+    this.sphairahedronRows.z2.classList.toggle("hidden", !visible.z2);
+    this.sphairahedronRows.cw.classList.toggle("hidden", !visible.cw);
+    const finite = sphairahedronIsFinite(block);
+    this.sphairahedronRows.inversion.classList.toggle("hidden", !finite);
+    for (const id of SPHAIRAHEDRON_ROW_CONTROL_IDS) {
+      // The Pick button is a handler-driven button, not a scalar control —
+      // its availability is set directly.
+      if (id === "sphairahedronPickButton") continue;
+      this.setScalarDisabled(id, refusedMode);
+    }
+    this.sphairahedronPickButton.disabled = refusedMode || !finite;
+    // The family select's authored-value option names the raw block (the
+    // sphere-inversion select's discipline).
+    const familyOption = Array.from(
+      this.scalarSelect("sphairahedronFamily").options,
+    ).find((o) => o.value === SPHAIRAHEDRON_AUTHORED_OPTION);
+    if (familyOption) {
+      familyOption.textContent = `Authored: ${JSON.stringify(
+        (block as Record<string, unknown>).family ?? null,
+      )}`;
+    }
+    for (const [row, note] of Object.entries(this.sphairahedronNotes) as [
+      Exclude<SphairahedronNoteRow, "block">,
+      HTMLElement,
+    ][]) {
+      this.setReasonNote(note, notes[row]);
+      note.classList.toggle("hidden", notes[row] === "");
+    }
+    this.sphairahedronPresent = true;
+    this.applySphairahedronDormancy();
+    if (!refusedMode) return;
+    // In Flame/Solid the whole section is inert beside its reason — the
+    // panel-ia disable-with-adjacent-reason contract.
+    for (const id of SPHAIRAHEDRON_ROW_CONTROL_IDS) {
+      if (id === "sphairahedronPickButton") continue;
+      this.setScalarDisabled(id, true);
+    }
+    this.sphairahedronPickButton.disabled = true;
+  }
+
+  /**
+   * Disable the replaced transform system's sections while a
+   * sphairahedron block is the subject (refused blocks included) —
+   * {@link applyMengerDormancy}'s pass, one subject over.
+   */
+  private applySphairahedronDormancy(): void {
+    if (!this.sphairahedronPresent) {
+      this.releaseSphairahedronDormancy();
+      return;
+    }
+    for (const { section, note } of this.sphereInversionDormantSections) {
+      this.setReasonNote(note, SPHAIRAHEDRON_DORMANT_REASON);
+      note.classList.remove("hidden");
+      for (const control of this.dormantSectionControls(section)) {
+        if (!control.disabled) {
+          control.disabled = true;
+          control.dataset.sphairahedronDormant = "true";
+        }
+        const ids = (control.getAttribute("aria-describedby") ?? "")
+          .split(/\s+/)
+          .filter(Boolean);
+        if (!ids.includes(note.id)) {
+          control.setAttribute("aria-describedby", [...ids, note.id].join(" "));
+        }
+      }
+    }
+    this.sphairahedronDormancyApplied = true;
+  }
+
+  /** Undo {@link applySphairahedronDormancy}: re-enable what it marked and
+   * drop its reason from every description. */
+  private releaseSphairahedronDormancy(): void {
+    if (!this.sphairahedronDormancyApplied) return;
+    for (const { section, note } of this.sphereInversionDormantSections) {
+      this.setReasonNote(note, "");
+      note.classList.add("hidden");
+      for (const control of this.dormantSectionControls(section)) {
+        if (control.dataset.sphairahedronDormant !== undefined) {
+          control.disabled = false;
+          delete control.dataset.sphairahedronDormant;
+        }
+        const ids = (control.getAttribute("aria-describedby") ?? "")
+          .split(/\s+/)
+          .filter((id) => id && id !== note.id);
+        if (ids.length > 0) {
+          control.setAttribute("aria-describedby", ids.join(" "));
+        } else {
+          control.removeAttribute("aria-describedby");
+        }
+      }
+    }
+    this.sphairahedronDormancyApplied = false;
+  }
+
+  /**
+   * Reflect the sphairahedron family's mode refusal: disable both mode
+   * buttons with the reason on their tooltips and key the Balloon rows'
+   * dormancy — the sphere-inversion setter's twin.
+   */
+  setSphairahedronModeRefusal(note: string | null): void {
+    const { flame, solid } = this.modeButtons;
+    flame.disabled = note !== null;
+    solid.disabled = note !== null;
+    flame.title = note ?? "Fractal-flame exposure of the current view";
+    solid.title =
+      note ?? "Sampled voxel-density Solid; distinct from analytic Surface";
+    this.sphairahedronScene = note !== null;
+    this.syncBalloonRows();
   }
 
   /**
@@ -6124,6 +6364,11 @@ export class Ui {
       "hidden",
       !nonFlat && !twistWIsNonTrivial(state.mengerTwist ?? {}),
     );
+    // The Sphairahedron section — always reachable (it AUTHORS the third
+    // subject block), its controls disabled beside the mode reason in
+    // Flame/Solid, whose renders refuse the family. Its moduli rows show
+    // what the block's family reads; the sphere-inversion sync's shape.
+    this.syncSphairahedronSection(state);
     this.syncAuthoredShapeEditor(
       this.surfaceTrapPrimitiveEditor,
       state.shapeTrap?.shape,
@@ -10660,14 +10905,25 @@ export class Ui {
       editor.geometry.weight <= 0;
     // A sphere-inversion block replaces the transform system as the
     // subject: every transform's material is kept but not read (the
-    // ownership split, surface-eligibility.ts).
+    // ownership split, surface-eligibility.ts). The sphairahedron block is
+    // the third subject — same ownership split, its own reason wording.
     const dormantUnderBlock =
       this.sphereInversionPresent ||
+      this.sphairahedronPresent ||
       eligibility.kind === "sphereInversion" ||
-      eligibility.kind === "sphereInversion4";
+      eligibility.kind === "sphereInversion4" ||
+      eligibility.kind === "sphairahedron" ||
+      eligibility.kind === "sphairahedron4";
     const refused =
       fullyIneligible || headOnly || inactiveIfs || dormantUnderBlock;
     const reason = (feature: "finish" | "pattern"): string => {
+      if (
+        this.sphairahedronPresent ||
+        eligibility.kind === "sphairahedron" ||
+        eligibility.kind === "sphairahedron4"
+      ) {
+        return `Sphairahedron replaces the transforms; this ${feature} stays authored, unread. Turn it off to edit.`;
+      }
       if (dormantUnderBlock) {
         return `Sphere inversion replaces the transforms; this ${feature} stays authored, unread. Turn it off to edit.`;
       }

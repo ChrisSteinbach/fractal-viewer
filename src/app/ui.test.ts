@@ -1373,9 +1373,11 @@ describe("Ui table-driven exact numeric controls", () => {
     // 47 plus the six sphere-inversion sliders (radius, seed size,
     // half-thickness, cut radius, cut offset, depth), the ten chain-twist
     // sliders (rotation XYZ, offset XYZ, the three w-plane turns, the w
-    // offset), and the eleven Menger-carve sliders (levels, rotation XYZ,
-    // offset XYZ, the three w-plane turns, the w offset).
-    expect(ranges).toHaveLength(74);
+    // offset), the eleven Menger-carve sliders (levels, rotation XYZ,
+    // offset XYZ, the three w-plane turns, the w offset), and the eight
+    // sphairahedron sliders (za, zb, z2, the inversion sphere's cx/cy/cz/
+    // cw/r).
+    expect(ranges).toHaveLength(82);
     for (const spec of ranges) {
       const slider = document.getElementById(spec.id);
       const number = exactInput(spec.id);

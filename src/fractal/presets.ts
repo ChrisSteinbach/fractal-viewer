@@ -3,6 +3,7 @@ import type { FlamePaletteId, PaletteSelection } from "./palette";
 import type { Rng } from "./rng";
 import type { FiniteSolidAuthored } from "./finite-solid";
 import type { MengerTwistAuthored } from "./menger-twist";
+import type { SphairahedronAuthored } from "./sphairahedron";
 import { GEAR_SHAPE, PEACE_SIGN_SHAPE, STAR_PRISM_SHAPE } from "./shapes";
 import type { SphereInversionAuthored } from "./sphere-inversion";
 import type { TilingSpec } from "./tiling";
@@ -3752,6 +3753,24 @@ export const PRESET_MENGER_TWISTS: Partial<
     w: { rotation: { xw: 0.3 }, offset: 0 },
   }),
 };
+
+/**
+ * The sphairahedron family's preset blocks — {@link PRESET_MENGER_TWISTS}'s
+ * absent-means-clear rule: the block is installed by its own preset and
+ * CLEARED on every other preset load, because every other preset names a
+ * transform-system subject a leftover block would replace. Factories, so
+ * the document never aliases the table.
+ *
+ * DELIBERATELY EMPTY in this child: the presets are the NEXT child's work
+ * (each preset's explicit J is pinned to the approved sheets — the
+ * picker's J, NOT the bare reflected reference, which collapses type 9's
+ * image construction). The table exists NOW so the preset handler's
+ * absent-means-clear line can run: a sphairahedron scene must not survive
+ * an unrelated preset load carrying its block into the arriving system.
+ */
+export const PRESET_SPHAIRAHEDRONS: Partial<
+  Record<Preset, () => SphairahedronAuthored>
+> = {};
 
 /** A preset's authored camera: where the eye is, what it looks at, and the
  * vertical field of view in degrees (`orbit.ts`'s `CameraPose.fov`). */

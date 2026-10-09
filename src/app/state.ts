@@ -2502,9 +2502,14 @@ export function setSphairahedronField(
     return state;
   }
   if (head === "inversion" && SPHAIRAHEDRON_INVERSION_FIELDS.includes(leaf)) {
+    // Copy the sphere object: the reducer contract is immutability, and the
+    // block is stored AS AUTHORED — mutating the previous state's inversion
+    // in place would corrupt an undo checkpoint's document.
     const raw: unknown = base.inversion;
     const inv: Record<string, unknown> =
-      typeof raw === "object" && raw !== null ? raw : {};
+      typeof raw === "object" && raw !== null && !Array.isArray(raw)
+        ? { ...(raw as Record<string, unknown>) }
+        : {};
     inv[leaf] = value;
     return { ...state, sphairahedron: { ...base, inversion: inv } };
   }
@@ -3397,6 +3402,7 @@ export function sceneIsNonFlat(state: AppState): boolean {
     state.symmetry,
     state.sphereInversion,
     state.mengerTwist,
+    state.sphairahedron,
   );
 }
 

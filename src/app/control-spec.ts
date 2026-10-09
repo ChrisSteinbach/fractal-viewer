@@ -46,6 +46,18 @@ import {
 } from "../fractal/menger-twist";
 import { SPHERE_INVERSION_SEED_KINDS } from "../fractal/sphere-inversion";
 import {
+  defaultSphairahedronBlock,
+  sphairahedronFamilyValue,
+  sphairahedronFieldRange,
+  sphairahedronFieldValue,
+  sphairahedronIsFinite,
+  withSphairahedronFamily,
+  withSphairahedronField,
+  withSphairahedronFinite,
+  type SphairahedronNumericField,
+} from "./sphairahedron-controls";
+import type { SphairahedronAuthored } from "../fractal/sphairahedron";
+import {
   defaultSphereInversionBlock,
   sphereInversionArrangementValue,
   sphereInversionFieldRange,
@@ -130,6 +142,7 @@ import {
   setSurfacePaletteId,
   setFiniteSolid,
   setSphereInversion,
+  setSphairahedron,
   setMengerTwist,
   setMengerTwistField,
   setTiling,
@@ -432,6 +445,15 @@ export interface ControlEffects {
    * (which restarts — the block is fixed at session create).
    */
   syncMengerTwist(): void;
+  /**
+   * Settle a sphairahedron block edit everywhere the block reaches outside
+   * the panel: the Flame/Solid refusal on the mode buttons' tooltips, the
+   * transform sections' dormancy notes, and a live Surface session, which
+   * RESTARTS only when the block's authored JSON differs from the one it
+   * entered with (the sphere-inversion restart's comparison; the
+   * construction is fixed at create).
+   */
+  syncSphairahedron(): void;
 }
 
 /**
@@ -1137,6 +1159,81 @@ function mengerTwistEffect(_s: AppState, fx: ControlEffects): void {
   fx.refreshSurfaceEligibility();
   fx.restartSurfaceRender();
   fx.syncMengerTwist();
+}
+
+/**
+ * A discrete sphairahedron edit (the enable gesture, the family, the
+ * finite stance, the Pick action): Points follows Auto-update (the block
+ * replaces the cloud's subject and decides the scene's dimension); the
+ * Surface gate re-derives; a live Surface session restarts on the slider's
+ * RELEASE — the construction is fixed at create (the kernel tables pack
+ * from it once), the sphere-inversion timing; syncSphairahedron settles
+ * the mode refusals and the dormancy pass.
+ */
+const sphairahedronEffect: ControlEffect = (_s, fx) => {
+  fx.regenerateIfAutoUpdate();
+  fx.refreshSurfaceEligibility();
+  fx.syncSphairahedron();
+};
+
+/** A sphairahedron slider tick: Points follows Auto-update and the gate
+ * re-derives, but Surface waits for the release — a session restart per
+ * tick would rebuild the construction's tables dozens of times a drag. */
+const sphairahedronLiveEffect: ControlEffect = (_s, fx) => {
+  fx.regenerateIfAutoUpdate();
+  fx.refreshSurfaceEligibility();
+};
+
+const sphairahedronCommit: ControlEffect = (_s, fx) => {
+  fx.syncSphairahedron();
+};
+
+/** One table-driven sphairahedron slider — `sphereInversionRange`'s shape,
+ * with the region-scoped DYNAMIC span (bounds re-read per state, so a
+ * drag of one modulus re-scopes the other's). */
+function sphairahedronRange(
+  id: string,
+  labelId: string,
+  accessibleLabel: string,
+  field: SphairahedronNumericField,
+): RangeControlSpec {
+  const probe: SphairahedronAuthored = { family: "cube1", za: 0.5, zb: 1.0 };
+  const blockOf = (s: AppState): SphairahedronAuthored =>
+    s.sphairahedron ?? probe;
+  const value = (s: AppState): number =>
+    sphairahedronFieldValue(blockOf(s), field);
+  const write = (s: AppState, next: number): AppState =>
+    s.sphairahedron && Number.isFinite(next)
+      ? setSphairahedron(
+          s,
+          withSphairahedronField(s.sphairahedron, field, next),
+        )
+      : s;
+  return {
+    kind: "range",
+    id,
+    label: { id: labelId, text: (s) => sphereInversionReadout(value(s)) },
+    numeric: numericControl(
+      accessibleLabel,
+      // The STATIC span is the probe's own range (the
+      // sphereInversionRange discipline): it must admit the DOM
+      // attributes' initial value at construction time; the DYNAMIC
+      // region-scoped span rides `bounds` and takes over at every sync.
+      sphairahedronFieldRange(probe, field).min,
+      sphairahedronFieldRange(probe, field).max,
+      0.005,
+      value,
+      write,
+      {
+        precision: 3,
+        bounds: (s) => sphairahedronFieldRange(blockOf(s), field),
+      },
+    ),
+    read: (s) => String(value(s)),
+    apply: (s, raw) => write(s, Number(raw)),
+    effect: sphairahedronLiveEffect,
+    commit: sphairahedronCommit,
+  };
 }
 
 /** The twist readout: radians to two decimals (the numeric companion
@@ -3518,6 +3615,99 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     apply: (s, raw) => setMengerTwistField(s, "w.offset", Number(raw)),
     effect: mengerTwistEffect,
   },
+  // ——— Sphairahedron: the third subject block — the sphereInversion
+  // checkbox's shape (the enable gesture authors the canonical cube made
+  // finite by the J picker; presence/absence is the checkbox's alone).
+  // The selects and sliders write one field each through the pure controls
+  // module, whose moduli spans are the family's valid region scoped
+  // dynamically to the other modulus (sphairahedron-controls.ts carries
+  // the panel-IA record and the region math). ———
+  {
+    kind: "checkbox",
+    id: "sphairahedronEnabledCheckbox",
+    read: (s) => s.sphairahedron !== undefined,
+    apply: (s, checked) =>
+      checked
+        ? s.sphairahedron
+          ? s
+          : setSphairahedron(s, defaultSphairahedronBlock())
+        : s.sphairahedron
+          ? setSphairahedron(s, null)
+          : s,
+    effect: sphairahedronEffect,
+  },
+  {
+    kind: "select",
+    id: "sphairahedronFamily",
+    read: (s) =>
+      s.sphairahedron ? sphairahedronFamilyValue(s.sphairahedron) : "cube1",
+    apply: (s, raw) => {
+      if (!s.sphairahedron) return s;
+      const next = withSphairahedronFamily(s.sphairahedron, raw);
+      return next === s.sphairahedron ? s : setSphairahedron(s, next);
+    },
+    effect: sphairahedronEffect,
+  },
+  sphairahedronRange(
+    "sphairahedronZaSlider",
+    "sphairahedronZaLabel",
+    "Sphairahedron height zA",
+    "za",
+  ),
+  sphairahedronRange(
+    "sphairahedronZbSlider",
+    "sphairahedronZbLabel",
+    "Sphairahedron height zB",
+    "zb",
+  ),
+  sphairahedronRange(
+    "sphairahedronZ2Slider",
+    "sphairahedronZ2Label",
+    "Sphairahedron prism ball height",
+    "z2",
+  ),
+  {
+    kind: "checkbox",
+    id: "sphairahedronFiniteCheckbox",
+    read: (s) =>
+      s.sphairahedron ? sphairahedronIsFinite(s.sphairahedron) : true,
+    apply: (s, checked) => {
+      if (!s.sphairahedron) return s;
+      const next = withSphairahedronFinite(s.sphairahedron, checked);
+      return next === s.sphairahedron ? s : setSphairahedron(s, next);
+    },
+    effect: sphairahedronEffect,
+  },
+  sphairahedronRange(
+    "sphairahedronCxSlider",
+    "sphairahedronCxLabel",
+    "Inversion sphere centre x",
+    "inversion.cx",
+  ),
+  sphairahedronRange(
+    "sphairahedronCySlider",
+    "sphairahedronCyLabel",
+    "Inversion sphere centre y",
+    "inversion.cy",
+  ),
+  sphairahedronRange(
+    "sphairahedronCzSlider",
+    "sphairahedronCzLabel",
+    "Inversion sphere centre z",
+    "inversion.cz",
+  ),
+  sphairahedronRange(
+    "sphairahedronCwSlider",
+    "sphairahedronCwLabel",
+    "Inversion sphere centre w",
+    "inversion.cw",
+  ),
+  sphairahedronRange(
+    "sphairahedronRSlider",
+    "sphairahedronRLabel",
+    "Inversion sphere radius",
+    "inversion.r",
+  ),
 ];
 
 /**
