@@ -48,6 +48,17 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
 import { contendedReason, quietBaseline } from "./lib/machine-quiet.mjs";
+// The toast recorder and its anti-vacuity check are the si gate lib's
+// generic instruments (an init script recording every toast the page shows
+// into `window.__toasts`) — imported, not copied, so the two family gates
+// cannot drift apart on what "the user was told" means. READ_DOCUMENT is
+// the one hash decoder.
+import {
+  READ_DOCUMENT,
+  TOAST_RECORDER,
+  recorderSeesCopyToast,
+  waitDocument,
+} from "./lib/sphere-inversion-gate.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUT_DIR = path.join(HERE, "out", "sphairahedron-family");
@@ -107,6 +118,11 @@ function launchOptions(mode) {
         "--enable-unsafe-webgpu",
         "--enable-features=Vulkan",
         "--ignore-gpu-blocklist",
+        // A service worker's own script fetch ignores a context's
+        // ignoreHTTPSErrors in Chromium — the si launcher's addition — so
+        // the toast phase's error asserts (and the isolation dance) need
+        // the browser-level flag when serving over the self-signed cert.
+        "--ignore-certificate-errors",
         "--no-sandbox",
       ],
       headless: false,
@@ -121,6 +137,7 @@ function launchOptions(mode) {
         "--enable-unsafe-swiftshader",
         "--use-gl=angle",
         "--use-angle=swiftshader",
+        "--ignore-certificate-errors",
         "--no-sandbox",
       ],
       headless: true,
@@ -136,11 +153,20 @@ async function openApp(browser, args) {
     viewport: { width: 1024, height: 640 },
     reducedMotion: "reduce",
   });
+  for (const [fn, arg] of args.initScripts ?? []) {
+    await context.addInitScript(fn, arg);
+  }
   const page = await context.newPage();
   const consoleLines = [];
-  page.on("console", (m) => consoleLines.push(m.text()));
+  const errors = [];
+  page.on("console", (m) => {
+    consoleLines.push(m.text());
+    if (m.type() === "error" || /device lost|validation error/i.test(m.text()))
+      errors.push(m.text().slice(0, 200));
+  });
+  page.on("pageerror", (e) => errors.push(`pageerror ${String(e)}`));
   const q = args.query ? `?surfacestate&${args.query}` : "?surfacestate";
-  await page.goto(`${args.url}/${q}`, { waitUntil: "load" });
+  await page.goto(`${args.url}/${q}${args.hash ?? ""}`, { waitUntil: "load" });
   await settled(page, () =>
     page.waitForFunction(() => typeof window.__surfaceState === "function"),
   );
@@ -152,7 +178,7 @@ async function openApp(browser, args) {
   await settled(page, () =>
     page.waitForFunction(() => typeof window.__surfaceState === "function"),
   );
-  return { context, page, consoleLines };
+  return { context, page, consoleLines, errors };
 }
 
 async function settled(page, fn) {
@@ -671,6 +697,200 @@ async function main() {
         }
       } finally {
         await context.close();
+      }
+    }
+    // --- the Flame/Solid doors' refusal AFFORDANCE: the mode buttons are
+    // SHARED across the subject families, and the composite refusal
+    // (surface-eligibility.ts's subjectRenderModeRefusal — the same chain
+    // switchRenderMode's door reads) is what disables them, written by ONE
+    // setter per refresh. This phase is what was MISSING when the sphaira
+    // family's own refusal setter fought the sphere-inversion one over the
+    // shared buttons: the later sync's null note re-enabled what the earlier
+    // refusal had disabled, the door held while the affordance lied, and the
+    // rot sat for a week because only the si gate ran these legs. Two real
+    // doors: the isolation handoff restoring a mode onto a block document
+    // (the boot refuses, says why, stays in Points), and the history door
+    // (undo restores the block under a live session — applyDecodedSnapshot
+    // leaves for Points BEFORE the restored document refreshes the panel, so
+    // the toast there is recorded, not required).
+    const SPHAIRA_REFUSAL_TOAST =
+      /Flame and Solid are unavailable for a sphairahedron scene/;
+    if (wanted.some((p) => p.key === "sphairaQuasisphere")) {
+      // Mint the block document: the quasisphere preset's own hash.
+      let blockHash = null;
+      {
+        const { context, page } = await openApp(browser, args);
+        try {
+          await loadPreset(page, "sphairaQuasisphere");
+          await waitDocument(page, (d) => !!d.sphairahedron);
+          blockHash = await page.evaluate(() => location.hash);
+        } finally {
+          await context.close().catch(() => {});
+        }
+      }
+      if (!blockHash) {
+        failures.push("toast: could not mint a block document");
+      }
+      for (const mode of blockHash ? ["flame", "solid"] : []) {
+        const button = mode === "flame" ? "#modeFlameBtn" : "#modeSolidBtn";
+        // (a) THE HANDOFF DOOR: the isolation reload restores the mode
+        // (isolation-handoff.ts) onto a document that carries a block.
+        {
+          const app = await openApp(browser, {
+            url: args.url,
+            hash: blockHash,
+            initScripts: [
+              [TOAST_RECORDER],
+              [
+                (m) =>
+                  sessionStorage.setItem(
+                    "fractal-viewer:isolation-handoff",
+                    JSON.stringify({ renderMode: m }),
+                  ),
+                mode,
+              ],
+            ],
+          });
+          try {
+            await app.page.waitForFunction(
+              () =>
+                Number(
+                  (
+                    document.getElementById("pointCount")?.textContent ?? ""
+                  ).replace(/[^\d]/g, ""),
+                ) > 0,
+              undefined,
+              { timeout: 60_000, polling: 200 },
+            );
+            await app.page.waitForTimeout(2_500);
+            const seen = await app.page.evaluate(
+              (sel) => ({
+                mode: window.__surfaceState().mode,
+                toasts: window.__toasts ?? [],
+                disabled: document.querySelector(sel)?.disabled ?? null,
+                handoffLeft: sessionStorage.getItem(
+                  "fractal-viewer:isolation-handoff",
+                ),
+              }),
+              button,
+            );
+            const recorderLive = await recorderSeesCopyToast(app.page);
+            console.error(
+              `[sphaira-family] toast ${mode} handoff: mode=${seen.mode}` +
+                ` toast=${seen.toasts.some((t) => SPHAIRA_REFUSAL_TOAST.test(t)) ? "yes" : "NO"}` +
+                ` ${mode} button disabled=${seen.disabled} handoff consumed=${seen.handoffLeft === null}`,
+            );
+            if (!recorderLive)
+              failures.push(
+                `toast ${mode} handoff: the toast recorder is not recording`,
+              );
+            if (seen.handoffLeft !== null)
+              failures.push(
+                `toast ${mode} handoff: the app never consumed the handoff`,
+              );
+            if (seen.mode !== "points")
+              failures.push(
+                `toast ${mode} handoff: booted into ${seen.mode}, expected points`,
+              );
+            if (!seen.toasts.some((t) => SPHAIRA_REFUSAL_TOAST.test(t)))
+              failures.push(
+                `toast ${mode} handoff: no refusal toast (toasts shown: ${JSON.stringify(seen.toasts)})`,
+              );
+            if (seen.disabled !== true)
+              failures.push(
+                `toast ${mode} handoff: the ${mode} button stayed enabled`,
+              );
+            if (app.errors.length)
+              failures.push(
+                `toast ${mode} handoff: console errors: ${app.errors
+                  .slice(0, 3)
+                  .join(" | ")}`,
+              );
+          } catch (error) {
+            failures.push(
+              `toast ${mode} handoff: ${String(error).split("\n")[0]}`,
+            );
+          } finally {
+            await app.context.close().catch(() => {});
+          }
+        }
+        // (b) THE HISTORY DOOR: with the session live on an ordinary scene,
+        // Undo brings the block back. The exit is gated in
+        // applyDecodedSnapshot (every undo/redo/import leg), so by the time
+        // the family's refusal runs there is no session to refuse — the
+        // refusal toast is NOT required here, only the affordance: the
+        // recomputed composite still sees the block and the button stays
+        // dark. (The si gate's undo leg lost its recorder init script to an
+        // editing accident in the tier=fast commit and could never pass its
+        // own recorder check — this port carries the recorder from birth.)
+        {
+          const app = await openApp(browser, {
+            url: args.url,
+            initScripts: [[TOAST_RECORDER]],
+          });
+          const { page } = app;
+          try {
+            await loadPreset(page, "sphairaQuasisphere");
+            await waitDocument(page, (d) => !!d.sphairahedron);
+            await loadPreset(page, "sierpinski");
+            const cleared = await waitDocument(page, (d) => !d.sphairahedron);
+            if (cleared?.sphairahedron) {
+              failures.push(
+                "toast undo: loading sierpinski left the block in place",
+              );
+              continue;
+            }
+            await page.click(button);
+            await page.waitForFunction(
+              (m) => window.__surfaceState?.()?.mode === m,
+              mode,
+              { timeout: 15_000 },
+            );
+            let restored = false;
+            for (let i = 0; i < 6 && !restored; i++) {
+              await page.click("#undoBtn");
+              await page.waitForTimeout(700);
+              const doc = await page.evaluate(READ_DOCUMENT);
+              if (doc?.sphairahedron) restored = true;
+            }
+            if (!restored) {
+              failures.push("toast undo: undo never brought the block back");
+              continue;
+            }
+            const landed = await page
+              .waitForFunction(
+                () => window.__surfaceState?.()?.mode === "points",
+                undefined,
+                { timeout: 10_000 },
+              )
+              .then(() => true)
+              .catch(() => false);
+            await page.waitForTimeout(2_500);
+            const disabled = await page.evaluate(
+              (sel) => document.querySelector(sel)?.disabled ?? null,
+              button,
+            );
+            const recorderLive = await recorderSeesCopyToast(page);
+            console.error(
+              `[sphaira-family] toast ${mode} undo: points=${landed}` +
+                ` ${mode} button disabled=${disabled}`,
+            );
+            if (!recorderLive)
+              failures.push(
+                `toast ${mode} undo: the toast recorder is not recording`,
+              );
+            if (!landed)
+              failures.push("toast undo: the app did not exit to Points");
+            if (disabled !== true)
+              failures.push(`toast undo: the ${mode} button stayed enabled`);
+          } catch (error) {
+            failures.push(
+              `toast ${mode} undo: ${String(error).split("\n")[0]}`,
+            );
+          } finally {
+            await app.context.close().catch(() => {});
+          }
+        }
       }
     }
   } finally {

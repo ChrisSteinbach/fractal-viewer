@@ -182,6 +182,7 @@ import {
   loadPreset,
   openApp,
   openPanelSection,
+  recorderSeesCopyToast,
   sameJson,
   savePng,
   settleFromLink,
@@ -316,20 +317,6 @@ async function settleLinkHop(browser, args, link, preset, hop, query = "") {
 let failHook = (line) => {
   throw new Error(line);
 };
-
-/** The recorder's anti-vacuity: Copy link always flashes a toast, so a
- * history that misses it proves nothing about a missing refusal. */
-async function recorderSeesCopyToast(page) {
-  await page.evaluate(() => {
-    const el = document.getElementById("shareSection");
-    if (el && !el.open) el.open = true;
-  });
-  const before = await page.evaluate(() => (window.__toasts ?? []).length);
-  await page.click("#copyLinkBtn");
-  await page.waitForTimeout(600);
-  const after = await page.evaluate(() => window.__toasts ?? []);
-  return after.slice(before).some((t) => /link/i.test(t));
-}
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -1454,6 +1441,13 @@ async function main() {
           const app = await openApp(browser, {
             url: args.url,
             query: "surfacegl",
+            // The tier=fast commit swapped this leg's recorder init script
+            // FOR the surfacegl query instead of adding the query beside it
+            // — the recorder was never installed here after that, so this
+            // leg's own recorder check could never pass and the whole toast
+            // phase went unexercised (it is not part of either tier's
+            // measured phase list, so the rot was silent for a week).
+            initScripts: [[TOAST_RECORDER]],
           });
           const { page } = app;
           try {

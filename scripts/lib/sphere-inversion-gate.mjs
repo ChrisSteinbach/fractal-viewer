@@ -638,3 +638,18 @@ export async function copyLink(page) {
     .then((h) => h.jsonValue())
     .catch(() => null);
 }
+
+/** The toast recorder's anti-vacuity: Copy link always flashes a toast, so
+ * a history that misses it proves nothing about a missing refusal. Lives
+ * here beside TOAST_RECORDER so both family gates run the same check. */
+export async function recorderSeesCopyToast(page) {
+  await page.evaluate(() => {
+    const el = document.getElementById("shareSection");
+    if (el && !el.open) el.open = true;
+  });
+  const before = await page.evaluate(() => (window.__toasts ?? []).length);
+  await page.click("#copyLinkBtn");
+  await page.waitForTimeout(600);
+  const after = await page.evaluate(() => window.__toasts ?? []);
+  return after.slice(before).some((t) => /link/i.test(t));
+}
