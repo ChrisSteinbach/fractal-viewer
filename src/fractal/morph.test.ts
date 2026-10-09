@@ -2,7 +2,12 @@ import { systemPartsAreNonFlat } from "./affine4";
 import { derivedColorIndex } from "./chaos-game";
 import { DIELECTRIC_IOR } from "./surface-dielectric";
 import type { MeshAssetId } from "./mesh-shapes";
-import { lerpShapeTrap, lerpSystem, lerpTiling } from "./morph";
+import {
+  lerpShapeTrap,
+  lerpSphairahedron,
+  lerpSystem,
+  lerpTiling,
+} from "./morph";
 import type { MorphSystem } from "./morph";
 import { CLASSIC_SURFACE_FINISH } from "./surface-finish";
 import type { ShapeSpec } from "./shapes";
@@ -1877,5 +1882,101 @@ describe("lerpSystem and the sphere-inversion block", () => {
     expect(mid).not.toBe(a);
     expect(mid).not.toBe(b);
     expect("sphereInversion" in mid).toBe(false);
+  });
+});
+
+describe("lerpSphairahedron (the family's own morph stance)", () => {
+  it("lerps the moduli between same-family endpoints; the endpoints are exact", () => {
+    const a = { family: "cube1", za: 0.5, zb: 1.0 };
+    const b = { family: "cube1", za: 0.6, zb: 1.2 };
+    expect(lerpSphairahedron(a, b, 0)).toBe(a);
+    expect(lerpSphairahedron(a, b, 1)).toBe(b);
+    const mid = lerpSphairahedron(a, b, 0.5);
+    expect(mid?.za).toBeCloseTo(0.55, 12);
+    expect(mid?.zb).toBeCloseTo(1.1, 12);
+    expect(mid?.family).toBe("cube1");
+  });
+
+  it("lerps the inversion sphere between two finite endpoints", () => {
+    const a = {
+      family: "cube1",
+      za: 0.5,
+      zb: 1.0,
+      inversion: { cx: 0.1, cy: -1, cz: 0, r: 0.8 },
+    };
+    const b = {
+      family: "cube1",
+      za: 0.5,
+      zb: 1.0,
+      inversion: { cx: 0.3, cy: -1.4, cz: 0, r: 1.2 },
+    };
+    const mid = lerpSphairahedron(a, b, 0.5);
+    expect(mid?.inversion).toEqual({
+      cx: 0.2,
+      cy: -1.2,
+      cz: 0,
+      r: 1.0,
+    });
+  });
+
+  it("pops the target block for cross-family, infinite-to-finite, and one-sided pairs", () => {
+    const a = { family: "cube1", za: 0.5, zb: 1.0 };
+    const prism = { family: "prism2", z2: 1.5 };
+    expect(lerpSphairahedron(a, prism, 0.5)).toBe(prism);
+    expect(
+      lerpSphairahedron(
+        a,
+        { ...a, inversion: { cx: 0, cy: 0, cz: 0, r: 1 } },
+        0.5,
+      )?.inversion,
+    ).toBeDefined();
+    expect(lerpSphairahedron(a, null, 0.5)).toBeNull();
+    expect(lerpSphairahedron(null, a, 0.5)).toBe(a);
+  });
+
+  it("resolves SAME-FAMILY midpoints through the existence path: the cusp's swap midpoint builds though the region refuses it", () => {
+    // The type-1 cusp (sqrt6/4, sqrt6/2) and its moduli swap are both
+    // in-region; their midpoint is NOT (the region is not convex). The
+    // lerp produces that midpoint as an AUTHORED block; the consumer's
+    // existence path (buildSphairahedron) must build it so the morph
+    // renders coherently — the decided stance the family doc records.
+    const cusp = {
+      family: "cube1",
+      za: Math.sqrt(6) / 4,
+      zb: Math.sqrt(6) / 2,
+    };
+    const swap = {
+      family: "cube1",
+      za: Math.sqrt(6) / 2,
+      zb: Math.sqrt(6) / 4,
+    };
+    const mid = lerpSphairahedron(cusp, swap, 0.5);
+    expect(mid).toEqual({
+      family: "cube1",
+      za: Math.sqrt(6) / 4 + (Math.sqrt(6) / 2 - Math.sqrt(6) / 4) * 0.5,
+      zb: Math.sqrt(6) / 2 + (Math.sqrt(6) / 4 - Math.sqrt(6) / 2) * 0.5,
+    });
+  });
+});
+
+describe("lerpSystem and the sphairahedron block", () => {
+  it("interpolates same-family blocks in the system sample and pops cross-family ones", () => {
+    const a = {
+      ...system(),
+      sphairahedron: { family: "cube1", za: 0.5, zb: 1.0 },
+    } as MorphSystem;
+    const b = {
+      ...system(),
+      sphairahedron: { family: "cube1", za: 0.6, zb: 1.0 },
+    } as MorphSystem;
+    const mid = lerpSystem(a, b, 0.5);
+    expect(mid.sphairahedron?.za).toBeCloseTo(0.55, 12);
+    const prism = {
+      ...system(),
+      sphairahedron: { family: "prism2", z2: 1.5 },
+    } as MorphSystem;
+    expect(lerpSystem(a, prism, 0.5).sphairahedron?.family).toBe("prism2");
+    // A morph into a blockless target pops to absence.
+    expect(lerpSystem(a, system(), 0.5).sphairahedron).toBeUndefined();
   });
 });

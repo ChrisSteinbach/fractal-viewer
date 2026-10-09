@@ -110,6 +110,7 @@ import { DEFAULT_SHAPE_TRAP_THRESHOLD } from "./shape-trap";
 import type { ShapePart, ShapePose, ShapeSpec } from "./shapes";
 import { isLatticeTilingSpec } from "./tiling";
 import type { TilingSpec } from "./tiling";
+import type { SphairahedronAuthored } from "./sphairahedron";
 import { CLASSIC_SURFACE_FINISH } from "./surface-finish";
 import { DIELECTRIC_IOR } from "./surface-dielectric";
 import {
@@ -190,6 +191,28 @@ export interface MorphSystem {
    * every existing caller's plain object stays valid.
    */
   tiling?: TilingSpec | null;
+  /**
+   * The scene's optional sphairahedron block (`fractal/sphairahedron.ts`'s
+   * {@link SphairahedronAuthored}) — carried so the block's placement in a
+   * morph is ONE rule ({@link lerpSphairahedron}), and it is the FIRST
+   * subject block that INTERPOLATES: two same-family endpoints with the
+   * same finiteness lerp their moduli (and, between two finite
+   * constructions, the inversion sphere's centre and radius — the
+   * quasi-sphere deforms continuously with J, measured in the study), and
+   * the intermediates resolve through `buildSphairahedron`, the
+   * construction-existence path, NOT the document resolver — the region is
+   * NOT convex (the type-1 cusp and its moduli swap are both in-region;
+   * their midpoint is not), so a region gate on midpoints would break a
+   * legal morph mid-glide, and out-of-region intermediates render
+   * coherently (measured). Every other pair — cross-family,
+   * infinite↔finite, one-sided — pops the target's whole block (the
+   * scheduled-hybrid placement), disclosed by the morph driver. Absent on
+   * both sides stays absent, and the endpoints are exact by
+   * {@link lerpSystem}'s by-reference returns. Optional (`undefined` and
+   * `null` both mean "no block") so every existing caller's plain object
+   * stays valid.
+   */
+  sphairahedron?: SphairahedronAuthored | null;
 }
 
 /** The three w-mixing planes shared by {@link WExtension}'s `rotation` and
@@ -1133,7 +1156,69 @@ export function lerpSystem(
   }
   const tiling = lerpTiling(a.tiling ?? null, b.tiling ?? null, t);
   if (tiling) system.tiling = tiling;
+  const sphairahedron = lerpSphairahedron(
+    a.sphairahedron ?? null,
+    b.sphairahedron ?? null,
+    t,
+  );
+  if (sphairahedron) system.sphairahedron = sphairahedron;
   return system;
+}
+
+/**
+ * The sphairahedron block's interpolation ({@link MorphSystem.sphairahedron}'s
+ * rule, the family doc's decided stance): two same-family endpoints with
+ * the SAME finiteness lerp the moduli the family reads (za/zb for the
+ * cubes, z2 for the prism) — and, between two finite constructions, the
+ * inversion sphere's centre components and radius; every other pair
+ * (cross-family, infinite↔finite, one-sided) pops the TARGET's whole
+ * block, the scheduled-hybrid placement. Intermediates resolve through
+ * `buildSphairahedron` (the construction-existence path) at the consumer —
+ * the region is not convex, so a region gate on midpoints would break a
+ * legal morph (module doc). The endpoints are exact by {@link
+ * lerpSystem}'s by-reference returns. Exported for the pinning tests; app
+ * callers go through {@link lerpSystem}.
+ */
+export function lerpSphairahedron(
+  a: SphairahedronAuthored | null,
+  b: SphairahedronAuthored | null,
+  t: number,
+): SphairahedronAuthored | null {
+  if (t <= 0) return a;
+  if (t >= 1) return b;
+  if (!a || !b) return b;
+  if (a.family !== b.family) return b;
+  const aFinite = a.inversion !== undefined;
+  const bFinite = b.inversion !== undefined;
+  if (aFinite !== bFinite) return b;
+  const out: SphairahedronAuthored = { ...b, family: b.family };
+  // The moduli: lerp every field either side authors (an absent field on
+  // one side reads that side's own value as the constant it renders —
+  // the absent-means-default rule evaluated at the endpoint).
+  for (const key of ["za", "zb", "z2"] as const) {
+    const av = a[key];
+    const bv = b[key];
+    if (av === undefined && bv === undefined) continue;
+    const l = lerp(av ?? bv ?? 0, bv ?? av ?? 0, t);
+    out[key] = l;
+  }
+  if (aFinite && bFinite) {
+    const ai = a.inversion as Record<string, unknown>;
+    const bi = b.inversion as Record<string, unknown>;
+    const inv: Record<string, number> = {};
+    for (const key of ["cx", "cy", "cz", "cw", "r"] as const) {
+      const av = ai[key];
+      const bv = bi[key];
+      if (av === undefined && bv === undefined) continue;
+      inv[key] = lerp(
+        typeof av === "number" ? av : (bv as number),
+        typeof bv === "number" ? bv : (av as number),
+        t,
+      );
+    }
+    out.inversion = inv;
+  }
+  return out;
 }
 
 /**
