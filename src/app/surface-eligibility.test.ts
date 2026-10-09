@@ -38,6 +38,7 @@ import {
   deriveSurfaceDocumentEligibility,
   deriveSurfaceEligibility,
   sphairahedronSessionRefusal,
+  sphairahedronRenderModeRefusal,
   sphereInversionDormantDisclosures,
   sphereInversionComputeOnlySubject,
   sphereInversionRenderModeRefusal,
@@ -2174,6 +2175,45 @@ describe("the sphere-inversion route", () => {
     for (const mode of ["points", "flame", "solid", "surface"] as const) {
       expect(sphereInversionRenderModeRefusal(undefined, mode)).toBeNull();
     }
+  });
+});
+
+describe("the sphairahedron route's render-mode refusals", () => {
+  it("refuses Flame and Solid for a document carrying a block, in 3D and 4D", () => {
+    for (const family of ["cube1", "tetra4"]) {
+      for (const mode of ["flame", "solid"] as const) {
+        expect(sphairahedronRenderModeRefusal({ family }, mode)).toMatch(
+          /Flame and Solid are unavailable/,
+        );
+      }
+    }
+  });
+
+  it("refuses Flame and Solid even when the block itself is refused", () => {
+    expect(
+      sphairahedronRenderModeRefusal({ family: "nope" }, "solid"),
+    ).not.toBeNull();
+  });
+
+  it("admits Points and Surface for a document carrying a block", () => {
+    for (const mode of ["points", "surface"] as const) {
+      expect(
+        sphairahedronRenderModeRefusal({ family: "tetra333" }, mode),
+      ).toBeNull();
+    }
+  });
+
+  it("admits every render mode without a block", () => {
+    for (const mode of ["points", "flame", "solid", "surface"] as const) {
+      expect(sphairahedronRenderModeRefusal(undefined, mode)).toBeNull();
+    }
+  });
+
+  it("refuses Balloon at the session and admits a session without it", () => {
+    expect(sphairahedronSessionRefusal({ balloonEcho: true })).toMatch(
+      /Balloon is not available/,
+    );
+    expect(sphairahedronSessionRefusal({ balloonEcho: false })).toBeNull();
   });
 });
 
