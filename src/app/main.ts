@@ -78,6 +78,7 @@ import {
   isSphereInversionTarget,
   isFiniteSolidTarget,
   isMengerTarget,
+  isSphairahedronTarget,
   setSurfaceComputeSchedulePins,
   setSurfaceComputeTrace,
   SurfaceComputeRenderer,
@@ -5399,6 +5400,18 @@ async function main(): Promise<void> {
       // fraction does.
       slotColors = [escapeSlotColor()];
       slotTraps = [0];
+    } else if (isSphairahedronTarget(target)) {
+      // The sphairahedron fold: one slot per FACE — the hit-info's
+      // firstChoice is the fold's last-move face, so "By Transform" wears
+      // one hue per face exactly as the sphere-inversion route wears one
+      // per generation (the same transformColors spread, no authored
+      // colorIndex to honour — the block has no transforms). Each slot's
+      // trap coordinate is its face index over faceCount − 1, the kernel
+      // trap ramp's own normalization shape.
+      const faceCount = target.de.faceCount;
+      slotColors = transformColors(faceCount);
+      const denom = Math.max(1, faceCount - 1);
+      slotTraps = Array.from({ length: faceCount }, (_, i) => i / denom);
     } else {
       slotColors = surfaceSlotColors(
         state.transforms,

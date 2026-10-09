@@ -36,6 +36,8 @@ const CORES = [
   "escape4",
   "menger",
   "menger4",
+  "sphaira",
+  "sphaira4",
 ] as const;
 const MODES = ["eval", "march", "shade"] as const;
 

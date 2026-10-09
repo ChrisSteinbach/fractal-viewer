@@ -115,6 +115,10 @@ import type { Transform } from "../fractal/types";
 import { resolveSphereInversion } from "../fractal/sphere-inversion";
 import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
 import { buildSphereInversionDE } from "../fractal/sphere-inversion-de";
+import { resolveSphairahedron } from "../fractal/sphairahedron";
+import { buildSphairahedronDE } from "../fractal/sphairahedron-de";
+import { buildSphairahedronDE4 } from "../fractal/sphairahedron-de-4d";
+import { packSphairaGpuTables } from "../fractal/surface-de-gpu";
 import { buildSphereInversionDE4 } from "../fractal/sphere-inversion-de-4d";
 import { packSphereInversionGpuTables } from "../fractal/surface-sphere-inversion-gpu";
 import {
@@ -2504,6 +2508,18 @@ describe("SurfaceComputeRenderer sphere-inversion targets", () => {
     return r.construction;
   }
 
+  function construction3() {
+    const r = resolveSphairahedron({ family: "tetra333" });
+    if (!r.ok) throw new Error(r.reasons.join("; "));
+    return r.construction;
+  }
+
+  function construction4() {
+    const r = resolveSphairahedron({ family: "tetra4" });
+    if (!r.ok) throw new Error(r.reasons.join("; "));
+    return r.construction;
+  }
+
   it("builds a 3D session on the sphereInv kernel pair with the table wire at binding 1 and a 288 B params buffer (336 B with a floor)", async () => {
     const de = buildSphereInversionDE(
       construction({
@@ -2561,6 +2577,54 @@ describe("SurfaceComputeRenderer sphere-inversion targets", () => {
     plain.renderer.destroy();
     const floor = await createPaletteResourceHarness(false, {
       kind: "sphereInversion4",
+      de,
+      groundPlane: true,
+    });
+    expect(floor.bufferDescriptors[0].size).toBe(624);
+    floor.renderer.destroy();
+  });
+
+  it("builds a 3D sphairahedron session on the sphaira kernel pair with the face/term/piece table at binding 1 and a 288 B params buffer (336 B with a floor)", async () => {
+    const de = buildSphairahedronDE(construction3());
+    const tableBytes = packSphairaGpuTables(de).byteLength;
+    const plain = await createPaletteResourceHarness(false, {
+      kind: "sphairahedron",
+      de,
+    });
+    expect(plain.bufferDescriptors[0].size).toBe(288);
+    expect(plain.bufferDescriptors.some((d) => d.size === tableBytes)).toBe(
+      true,
+    );
+    expect(plain.shaderSources).toHaveLength(2);
+    for (const source of plain.shaderSources) {
+      expect(source).toContain("var<storage, read> sphTable: array<vec4f>;");
+      expect(source).toContain("fn sphairaFold3(");
+    }
+    plain.renderer.destroy();
+    const floor = await createPaletteResourceHarness(false, {
+      kind: "sphairahedron",
+      de,
+      groundPlane: true,
+    });
+    expect(floor.bufferDescriptors[0].size).toBe(336);
+    floor.renderer.destroy();
+  });
+
+  it("builds a native 4D sphairahedron session on the sphaira4 pair: 576 B params (624 B with a floor), the lifted fold, one kernel pair with no slab twin", async () => {
+    const de = buildSphairahedronDE4(construction4());
+    const plain = await createPaletteResourceHarness(false, {
+      kind: "sphairahedron4",
+      de,
+    });
+    expect(plain.bufferDescriptors[0].size).toBe(576);
+    expect(plain.shaderSources).toHaveLength(2);
+    for (const source of plain.shaderSources) {
+      expect(source).toContain("fn sphairaFold4(");
+      expect(source).toContain("liftSphaira4(");
+    }
+    plain.renderer.destroy();
+    const floor = await createPaletteResourceHarness(false, {
+      kind: "sphairahedron4",
       de,
       groundPlane: true,
     });

@@ -38,6 +38,9 @@ import type { Vec4 } from "./types";
 export interface SphairahedronDE4 {
   readonly boundingRadius: number;
   readonly visibleBoundingRadius: number;
+  /** The framing ball's centre — the march sphere's anchor (the
+   * construction's own `bound`; the 3D cores take its xyz). */
+  readonly boundCenter: readonly number[];
   readonly foldCap: number;
   readonly faceCount: number;
   readonly faceKind: Int32Array;
@@ -108,6 +111,7 @@ function flatten4(construction: SphairahedronConstruction): SphairahedronDE4 {
   return {
     boundingRadius: construction.bound.radius,
     visibleBoundingRadius: construction.bound.radius,
+    boundCenter: construction.bound.center,
     foldCap: construction.foldCap,
     faceCount,
     faceKind,

@@ -30,6 +30,15 @@ import { SYM_PLANE_CODE4, type EscapeDE4 } from "./escape-de-4d";
 import { MENGER_STEP_SCALE, type MengerDE } from "./menger-de";
 import type { MengerDE4 } from "./menger-de-4d";
 import {
+  SPHAIRAHEDRON_FOLD_CAP,
+  SPHAIRAHEDRON_FUDGE,
+  SPHAIRAHEDRON_POLE_FLOOR,
+  SPHAIRAHEDRON_STEP_SCALE,
+  SPHAIRAHEDRON_TRAP_NORM,
+} from "./sphairahedron";
+import type { SphairahedronDE } from "./sphairahedron-de";
+import type { SphairahedronDE4 } from "./sphairahedron-de-4d";
+import {
   SHAPE_MARCH_SAFETY,
   shapeMeshIds,
   shapeSdfSource,
@@ -358,6 +367,45 @@ import type { Vec3 } from "./types";
  *   count in the variant word — the preview-clamped `maxDepth` is the
  *   loop budget, a different number under the preview tier, which is why
  *   that word exists.
+ * - `core: "sphaira"` / `core: "sphaira4"` are the SPHAIRAHEDRON cores —
+ *   `sphairahedron-de.ts`/`-4d.ts`'s IIS fold + accumulated-Jacobian
+ *   estimate, for the sessions the `sphairahedron` block routes (the
+ *   third subject-replacing block, after the sphere inversion and the
+ *   Menger carve). The fold is a PASS-RESTART face scan — per pass, scan
+ *   the faces in the construction's order (scan order is PART of the
+ *   algorithm once faces intersect); a face sphere holding the point on
+ *   its removed side inverts it (λ ×= R²/|p−c|²), a violated wall
+ *   reflects it; passes repeat until a clean one or the cap
+ *   ({@link SPHAIRAHEDRON_FOLD_CAP}, baked — a numerical guard, never an
+ *   object parameter, so it is NOT preview-clamped: clamping passes
+ *   would make far queries decision-unreliable). Bounded work by the
+ *   cap, so there is no frontier, no orbit bailout and no chaotic-orbit
+ *   classifier — the legs gate fail=0 like the carve's. NOT bindingless:
+ *   the face system is a VARIABLE construction (≤ 6 faces, ≤ 8 tile
+ *   terms), so it rides binding 1 re-typed `sphTable: array<vec4f>` —
+ *   one vec4 pair per face/term (coords in A, `[r_or_h, kind, sense]` in
+ *   B; dim-generic, 3D zero-pads the coordinate's w), the tile pieces as
+ *   `[start, length, 0, 0]` vec4s at the tail — while the params VARIANT
+ *   block carries only the counts vec4u (208 in 3D / 464 in 4D, padded
+ *   under the shared plane/balloon block's frozen offset, the
+ *   sphereInv/escape4 shape). `maxDepth` is inert (packed, never read —
+ *   the loop budget is the baked cap), `footprint` throws (bounded
+ *   work), the transform-system features, tiling, a shape trap and the
+ *   balloon THROW (the union bound composes a heuristic — the forward
+ *   families' reason), `groundPlane` composes, and `sliceHalfW` packs 0
+ *   with a nonzero THROW at pack (a segment through an inversion bends —
+ *   no certificate, the escape4/menger4 reason). The estimate applies
+ *   the fudge itself ({@link SPHAIRAHEDRON_FUDGE}, measured — the march
+ *   step scale packs 1, the fudge IS the damping) and takes NO cutoff:
+ *   λ is not monotone, so there is no transportable running minimum —
+ *   cutoff is accepted for signature parity and ignored, every return
+ *   the cutoff-0 result. The hit-info's `firstChoice` is the fold's
+ *   LAST-MOVE FACE (the per-face color source; one shade slot per face,
+ *   clamped to slot 0 when the fold never moved) and `trap` the move
+ *   count over {@link SPHAIRAHEDRON_TRAP_NORM} — the study's depth-color
+ *   arm on the app ramp. The 4D core sits behind the shared view lift
+ *   (`liftSphaira4`); no fragment mirror exists for it (the escape4
+ *   verdict, three families running).
  *
  * All bodies share the public signature — `surfaceDE(pIn, cutoff,
  * li)` — so the mode entry points below are textually identical
@@ -1214,6 +1262,17 @@ export const SURFACE_GPU_PARAMS_SPHERE_INV_BYTES = 288;
  * lens4 block's region, padded to 576 so the plane block keeps its frozen 576
  * ({@link SURFACE_GPU_PARAMS4_PLANE_BYTES} with a floor). */
 export const SURFACE_GPU_PARAMS4_SPHERE_INV_BYTES = 576;
+/** The params uniform for `core: "sphaira"` without a ground plane: the
+ * 208..223 counts vec4 (faceCount, termCount, pieceCount, 0), then the
+ * variant region's remaining 224..271 pad and the escape/bulb 272..287 pad
+ * declared as one fixed array, so the shared plane/balloon block keeps its
+ * frozen 288. The face/term/piece tables ride binding 1, never here. */
+export const SURFACE_GPU_PARAMS_SPHAIRA_BYTES = 288;
+/** The params uniform for `core: "sphaira4"` without a ground plane: the
+ * counts vec4 at 464..479 inside the lens4 block's region, padded to 576
+ * so the plane block keeps its frozen 576 — the sphereInv4 shape one core
+ * over. */
+export const SURFACE_GPU_PARAMS4_SPHAIRA_BYTES = 576;
 /** Params size for a 4D core under `balloon: true`: the 576-byte
  * 4D block — variant members declared unconditionally, zero-filled by the
  * packer when there is no lens — plus the appended balloon block at the
@@ -1972,7 +2031,9 @@ export interface SurfaceGpuKernelOptions {
     | "finite"
     | "finite4"
     | "menger"
-    | "menger4";
+    | "menger4"
+    | "sphaira"
+    | "sphaira4";
   /** Emit the FOLD FINAL-transform lens wrapper (`descendLens`, the
    * pure-fold final lens's vocabulary; the 4D arm lifts it to the 4D
    * cores as `descendLens4`): the descent body (any core but
@@ -3572,6 +3633,277 @@ export function packMenger4GpuParams(
     writeGroundPlane4(view, groundPlane);
   }
   return buf;
+}
+
+/**
+ * Pack the params uniform for the SPHAIRA core — the sphairahedron fold's
+ * own kernel, structurally the menger packer's sibling with the counts
+ * word in place of the twist: the face/term/piece tables ride binding 1
+ * ({@link packSphairaGpuTables}), so the 208..223 VARIANT slot is a single
+ * counts vec4u and 224..287 stays pad, keeping the shared plane/balloon
+ * block at its frozen 288. `boundingRadius`/`visibleRadius` are the
+ * construction's own framing ball (both), `boundCenter` its centre — the
+ * march sphere the caller frames on, unlike the carve's origin anchor.
+ * `stepScale` packs {@link SPHAIRAHEDRON_STEP_SCALE} (1 — the fudge IS the
+ * damping), `mapCount` the FACE count (the shared shade entry's slot clamp
+ * — the hit-info's firstChoice is the fold's last-move face), and
+ * `maxDepth` packs the full pass cap with the body never reading it (the
+ * loop budget is the BAKED cap — clamping passes would make far queries
+ * decision-unreliable, so the preview tier's knob is inert here, exactly
+ * the carve's preview-clamped `maxDepth` inverted: there the clamp is
+ * honest because fewer levels IS a coarser object; here fewer passes is a
+ * wrong one). `escapeRadius` packs the dead `2R` (the wire never carries
+ * an uninitialized word). `footprint` packs 0 and a nonzero one THROWS
+ * (the scan is bounded work by the cap); tiling and a shape trap THROW
+ * (the eligibility refuses both); the ground plane appends at the frozen
+ * 288 exactly as every 3D core's does.
+ */
+export function packSphairaGpuParams(
+  de: SphairahedronDE,
+  run: SurfaceGpuRunParams,
+  groundPlane: SurfaceGpuGroundPlane | null = null,
+  shapeTrap: ResolvedShapeTrap | null = null,
+  tiling: ResolvedTiling | null = null,
+): ArrayBuffer {
+  if (shapeTrap) {
+    throw new Error(
+      "surface-de-gpu: a shape trap is excluded from the sphaira core (no trap accumulator covers the fold scan)",
+    );
+  }
+  if (tiling) {
+    throw new Error(
+      "surface-de-gpu: space tiling is excluded from the sphaira core (no tiling wrapper certifies a fold estimator yet)",
+    );
+  }
+  if ((run.footprint ?? 0) !== 0) {
+    throw new Error(
+      "surface-de-gpu: the sphaira core takes no footprint cap (the face scan is bounded work)",
+    );
+  }
+  const baseBytes = groundPlane
+    ? SURFACE_GPU_PARAMS_PLANE_BYTES
+    : SURFACE_GPU_PARAMS_SPHAIRA_BYTES;
+  const buf = new ArrayBuffer(baseBytes);
+  const view = new DataView(buf);
+  const center3: Vec3 = [
+    de.boundCenter[0],
+    de.boundCenter[1],
+    de.boundCenter[2],
+  ];
+  writeVec3(view, 0, center3);
+  const R = de.boundingRadius;
+  view.setFloat32(12, R, true);
+  view.setFloat32(16, R * 2, true);
+  view.setFloat32(20, SPHAIRAHEDRON_STEP_SCALE, true);
+  view.setFloat32(24, de.visibleBoundingRadius, true);
+  view.setFloat32(28, 1, true);
+  view.setFloat32(32, 1, true);
+  view.setUint32(40, 1, true);
+  view.setUint32(44, 0, true);
+  view.setUint32(48, de.faceCount, true);
+  view.setUint32(52, SPHAIRAHEDRON_FOLD_CAP, true);
+  view.setUint32(56, run.itemCount, true);
+  view.setUint32(60, run.stepsThisPass ?? 0, true);
+  view.setFloat32(64, run.cutoff ?? 0, true);
+  view.setUint32(72, run.marchSteps ?? 0, true);
+  const pose = run.pose;
+  view.setFloat32(76, pose?.pixelEps ?? 0, true);
+  view.setFloat32(80, R * (run.hitFloor ?? SURFACE_GPU_HIT_FLOOR), true);
+  view.setUint32(84, pose?.rasterWidth ?? 0, true);
+  view.setUint32(88, pose?.rasterHeight ?? 0, true);
+  view.setFloat32(92, run.focusDepth ?? 0, true);
+  writeVec3(view, 96, [1, 0, 0]);
+  writeVec3(view, 112, [0, 1, 0]);
+  writeVec3(view, 128, [0, 0, 1]);
+  writeVec3(view, 144, pose?.ro ?? [0, 0, 0]);
+  view.setFloat32(156, 1, true);
+  writeVec3(view, 160, pose?.right ?? [1, 0, 0]);
+  view.setFloat32(172, pose?.tanHalf ?? 0, true);
+  writeVec3(view, 176, pose?.up ?? [0, 1, 0]);
+  view.setFloat32(188, pose?.aspect ?? 1, true);
+  writeVec3(view, 192, pose?.fwd ?? [0, 0, 1]);
+  view.setFloat32(204, run.fogDensity ?? 1, true);
+  // The VARIANT block: the counts vec4u at 208 — (faceCount, termCount,
+  // pieceCount, 0); 224..287 stays pad (zero), which is the whole
+  // construction wire in the params. The tables ride binding 1.
+  view.setUint32(208, de.faceCount, true);
+  view.setUint32(212, de.termData.length / 5, true);
+  view.setUint32(216, de.pieceCount, true);
+  view.setUint32(220, 0, true);
+  if (groundPlane) {
+    writeGroundPlane(view, groundPlane);
+  }
+  return buf;
+}
+
+/**
+ * Pack the params uniform for the SPHAIRA4 core — the 3D sphaira packer
+ * and the 4D one crossed, which is what this core is. From the 4D packer:
+ * the rotor rows (the packer performs the one real transpose — pose rotor
+ * → world-to-attractor — exactly {@link packMenger4GpuParams}'s dance),
+ * `w0`, the slice-ADJUSTED `visibleRadius` so the shared march entry's
+ * sphere gate is textually unchanged, and `sliceHalfW` packing 0 with a
+ * nonzero one THROWS — a segment through an inversion bends, so a slab
+ * session is refused rather than bounded badly. `boundCenter` packs the
+ * construction's framing centre's xyz (the march ball's anchor; the
+ * marching happens in the 3D query space). `stepBack4` and
+ * `final4M`/`final4T` pack IDENTITY (no sector sweep, no lens), and the
+ * radius band packs `(0, 0, 1/visRadius4)` over the framing ball — the
+ * fold has no probe-fit band, exactly the carve's shape.
+ *
+ * The 464..575 VARIANT block holds ONLY the counts vec4u
+ * (faceCount/termCount/pieceCount — the tables ride binding 1), padded to
+ * the lens4 block's size ({@link SURFACE_GPU_PARAMS4_SPHAIRA_BYTES}) so the
+ * shared plane block below lands at 576 for every 4D core.
+ */
+export function packSphaira4GpuParams(
+  de: SphairahedronDE4,
+  view4: SurfaceGpu4View,
+  run: SurfaceGpuRunParams,
+  groundPlane: SurfaceGpuGroundPlane | null = null,
+): ArrayBuffer {
+  if (view4.sliceHalfW !== 0) {
+    throw new Error(
+      "surface-de-gpu: the sphaira4 core takes no slab — a segment through an inversion bends, so " +
+        "the scan fold has no segment certificate; clamp sliceHalfW to 0 for this session",
+    );
+  }
+  if ((run.footprint ?? 0) !== 0) {
+    throw new Error(
+      "surface-de-gpu: the sphaira4 core takes no footprint cap (the face scan is bounded work)",
+    );
+  }
+  const baseBytes = groundPlane
+    ? SURFACE_GPU_PARAMS4_PLANE_BYTES
+    : SURFACE_GPU_PARAMS4_SPHAIRA_BYTES;
+  const buf = new ArrayBuffer(baseBytes);
+  const view = new DataView(buf);
+  const center3: Vec3 = [
+    de.boundCenter[0],
+    de.boundCenter[1],
+    de.boundCenter[2],
+  ];
+  writeVec3(view, 0, center3);
+  const R = de.boundingRadius;
+  view.setFloat32(12, R, true);
+  view.setFloat32(16, R * 2, true);
+  view.setFloat32(20, SPHAIRAHEDRON_STEP_SCALE, true);
+  // The slice-adjusted marching ball: |(p, w0)| <= R implies |p| <= this,
+  // the affine4 packer's own line at sliceHalfW 0.
+  const minW = Math.abs(view4.w0);
+  const sliceR = Math.sqrt(Math.max(R * R - minW * minW, 0));
+  view.setFloat32(24, sliceR, true);
+  view.setFloat32(28, 1, true);
+  view.setFloat32(32, 1, true);
+  view.setUint32(40, 1, true);
+  view.setUint32(44, 0, true);
+  view.setUint32(48, de.faceCount, true);
+  view.setUint32(52, SPHAIRAHEDRON_FOLD_CAP, true);
+  view.setUint32(56, run.itemCount, true);
+  view.setUint32(60, run.stepsThisPass ?? 0, true);
+  view.setFloat32(64, run.cutoff ?? 0, true);
+  view.setUint32(72, run.marchSteps ?? 0, true);
+  const pose = run.pose;
+  view.setFloat32(76, pose?.pixelEps ?? 0, true);
+  view.setFloat32(80, R * (run.hitFloor ?? SURFACE_GPU_HIT_FLOOR), true);
+  view.setUint32(84, pose?.rasterWidth ?? 0, true);
+  view.setUint32(88, pose?.rasterHeight ?? 0, true);
+  view.setFloat32(92, run.focusDepth ?? 0, true);
+  writeVec3(view, 96, [1, 0, 0]);
+  writeVec3(view, 112, [0, 1, 0]);
+  writeVec3(view, 128, [0, 0, 1]);
+  writeVec3(view, 144, pose?.ro ?? [0, 0, 0]);
+  view.setFloat32(156, 1, true);
+  writeVec3(view, 160, pose?.right ?? [1, 0, 0]);
+  view.setFloat32(172, pose?.tanHalf ?? 0, true);
+  writeVec3(view, 176, pose?.up ?? [0, 1, 0]);
+  view.setFloat32(188, pose?.aspect ?? 1, true);
+  writeVec3(view, 192, pose?.fwd ?? [0, 0, 1]);
+  view.setFloat32(204, run.fogDensity ?? 1, true);
+  const rot = view4.rotor;
+  for (let i = 0; i < 4; i++) {
+    const at = 208 + i * 16;
+    view.setFloat32(at, rot[i], true);
+    view.setFloat32(at + 4, rot[4 + i], true);
+    view.setFloat32(at + 8, rot[8 + i], true);
+    view.setFloat32(at + 12, rot[12 + i], true);
+  }
+  // stepBack4 and final4M pack IDENTITY: this core sweeps no sectors and
+  // carries no lens, and the packers' never-uninitialized convention says
+  // a slot the body might read holds the value that makes it a no-op.
+  for (let i = 0; i < 4; i++) {
+    view.setFloat32(272 + i * 20, 1, true);
+    view.setFloat32(336 + i * 20, 1, true);
+  }
+  view.setFloat32(416, view4.w0, true);
+  view.setFloat32(424, 1, true);
+  view.setFloat32(428, R, true);
+  view.setFloat32(452, 1 / R, true);
+  // The VARIANT block: the counts vec4u at 464; 480..575 stays pad.
+  view.setUint32(464, de.faceCount, true);
+  view.setUint32(468, de.termData.length / 6, true);
+  view.setUint32(472, de.pieceCount, true);
+  view.setUint32(476, 0, true);
+  if (groundPlane) {
+    writeGroundPlane4(view, groundPlane);
+  }
+  return buf;
+}
+
+/**
+ * Pack the SPHAIRA table wire — binding 1, `sphTable: array<vec4f>`, the
+ * face/term/piece tables in one flat array. Per face (dim-generic lanes):
+ * A = the face's coordinate vector (3D zero-pads the w; the walls lift
+ * with n = (a0, 0, a1, 0), which is exactly the CPU twin's wall lift), B =
+ * `[r_or_h, kind, sense, 0]` — kind 0.0 sphere / 1.0 plane, sense the
+ * sphere's `solidInside` (planes carry 0; the CPU normalizes them so the
+ * solid side is n·p < h). Per term: the same A/B shapes with sense the
+ * sphere's `inside` / the plane's `above` (the negation flags the CPU's
+ * pieceSDF branches on). Per piece: one `[start, length, 0, 0]` vec4.
+ * The kernel's loops index face i at vec4 2i/2i+1, term t at
+ * `termBase + 2t/2t+1` (termBase = 2·faceCount), piece pi at
+ * `pieceBase + pi` (pieceBase = termBase + 2·termCount) — the packer and
+ * the bodies agree by one layout contract, pinned by the bench legs'
+ * value agreement and the unit packer tests.
+ */
+export function packSphairaGpuTables(
+  de: SphairahedronDE | SphairahedronDE4,
+): Float32Array {
+  const dim = de.faceData.length === de.faceCount * 5 ? 3 : 4;
+  const coords = dim === 3 ? 3 : 4;
+  const stride = dim === 3 ? 5 : 6;
+  const vec4s =
+    de.faceCount * 2 + (de.termData.length / stride) * 2 + de.pieceCount;
+  const out = new Float32Array(vec4s * 4);
+  let o = 0;
+  for (let fi = 0; fi < de.faceCount; fi++) {
+    for (let k = 0; k < coords; k++) out[o + k] = de.faceData[fi * stride + k];
+    if (coords === 3) out[o + 3] = 0;
+    const kind = de.faceKind[fi];
+    const sense = kind === 0 ? de.faceData[fi * stride + 4] : 0;
+    out[o + 4] = de.faceData[fi * stride + 3];
+    out[o + 5] = kind;
+    out[o + 6] = sense;
+    out[o + 7] = 0;
+    o += 8;
+  }
+  const termCount = de.termData.length / stride;
+  for (let t = 0; t < termCount; t++) {
+    for (let k = 0; k < coords; k++) out[o + k] = de.termData[t * stride + k];
+    if (coords === 3) out[o + 3] = 0;
+    const kind = de.termKind[t];
+    out[o + 4] = de.termData[t * stride + 3];
+    out[o + 5] = kind;
+    out[o + 6] = de.termData[t * stride + 4];
+    out[o + 7] = 0;
+    o += 8;
+  }
+  for (let pi = 0; pi < de.pieceCount; pi++) {
+    out[o] = de.pieceStart[pi];
+    out[o + 1] = de.pieceLength[pi];
+    o += 4;
+  }
+  return out;
 }
 
 /** Per-frame 4D view for `core: "affine4"` — the same (rotor, w0,
@@ -5581,7 +5913,8 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
     core === "escape4" ||
     core === "sphereInv4" ||
     core === "finite4" ||
-    core === "menger4";
+    core === "menger4" ||
+    core === "sphaira4";
   // The FORWARD cores (escape, bulb and escape4): a forward orbit
   // rather than a descent, so none of the
   // descent helpers and no frontier. The shared header/entry
@@ -5680,6 +6013,47 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
       [
         !!opts.slabCover,
         "a slab cover (the carve estimator has no segment cover)",
+      ],
+    ];
+    for (const [refused, what] of refusals) {
+      if (refused) {
+        throw new Error(`surface-de-gpu: the ${core} core refuses ${what}`);
+      }
+    }
+  }
+  // The SPHAIRAHEDRON cores: neither a descent (no inverse maps, no
+  // frontier) nor a forward orbit (no `+ p`, no bailout) — the face scan
+  // is bounded work by the baked pass cap. The face/term/piece tables
+  // ride binding 1 sphTable, the counts the params variant block.
+  const sphairaCore = core === "sphaira" || core === "sphaira4";
+  if (sphairaCore) {
+    const refusals: [boolean, string][] = [
+      [
+        !!opts.lens,
+        "a fold-final lens (the construction has no final transform — SphairahedronDE carries none)",
+      ],
+      [
+        !!opts.balloon,
+        "balloon (the union bound composes a heuristic, not a certified bound — the forward families' reason)",
+      ],
+      [
+        (opts.tiling ?? null) !== null,
+        "space tiling (no tiling wrapper certifies a fold estimator yet)",
+      ],
+      [
+        (opts.shapeTrap ?? null) !== null ||
+          opts.shapeTrapGeometry?.geometry === true,
+        "a shape trap (the fold scan has no trap accumulator)",
+      ],
+      [
+        (opts.condensation?.emitters.length ?? 0) > 0 ||
+          (opts.schedule?.scheduleMapCount ?? 0) > 0 ||
+          (opts.chaos?.activeStateCount ?? 0) > 0,
+        "condensation, a hybrid schedule or xaos (transform-system features)",
+      ],
+      [
+        !!opts.slabCover,
+        "a slab cover (the scan fold has no segment certificate)",
       ],
     ];
     for (const [refused, what] of refusals) {
@@ -6722,7 +7096,7 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
   // escape4 core is 4D and takes no slab at all (a forward orbit cannot
   // thread a segment), so it sits with the 3D cores here.
   const slabExt =
-    core4 && !forward && !siCore && !finiteCore && !mengerCore
+    core4 && !forward && !siCore && !finiteCore && !mengerCore && !sphairaCore
       ? (opts.slabExt ?? true)
       : true;
   // The nonlinear slab cover (option doc). Structurally inert outside the
@@ -6733,7 +7107,7 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
   // own crossing enumeration and bounded work, which no finite-root
   // table supplies.
   const slabCover =
-    core4 && !forward && !siCore && !finiteCore && !mengerCore
+    core4 && !forward && !siCore && !finiteCore && !mengerCore && !sphairaCore
       ? (opts.slabCover ?? false)
       : false;
   if (slabCover && !slabExt) {
@@ -6819,7 +7193,7 @@ ${condensationHitFold(q, scale, depth, best, state)}    }
   // The maps-load probe (option doc). Same structural inertness
   // as slabExt — only the 4D descent cores ever consult it.
   const mapsUniform =
-    core4 && !forward && !siCore && !finiteCore && !mengerCore
+    core4 && !forward && !siCore && !finiteCore && !mengerCore && !sphairaCore
       ? (opts.mapsUniform ?? false)
       : false;
   if (!Number.isInteger(width) || width < 1) {
@@ -9122,6 +9496,41 @@ ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
   return info;
 }`;
 
+  // The sphaira hit-info: the scan fold's colors-only twin — firstChoice
+  // is the fold's LAST-MOVE FACE (the per-face color source; the
+  // kernel-side clamp puts a never-moved fold in slot 0, a measure-zero
+  // attribution — the CPU hit carries −1), trap the move count over
+  // SPHAIRAHEDRON_TRAP_NORM (the study's depth-color arm on the app
+  // ramp), rings/sheets the fold's closest radial / y-plane approaches
+  // over the pass ends, normalized by the bounding radius (the menger
+  // vocabulary on the scan). The fold helper is SHARED with the value
+  // body, so the attribution cannot drift between the two callers.
+  const sphairaHitInfoText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg});
+  let f = sphairaFold3(p);
+  info.firstChoice = max(f.lastFace, 0);
+  info.trap = clamp(f32(f.moves) / ${SPHAIRAHEDRON_TRAP_NORM}.0, 0.0, 1.0);
+  info.rings = clamp(f.minR / params.boundingRadius, 0.0, 1.0);
+  info.sheets = clamp(f.minY / params.boundingRadius, 0.0, 1.0);
+${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
+  return info;
+}`;
+
+  // The sphaira4 hit-info: the 3D one behind the view lift — the same
+  // attribution, trap and closest-approach sources off the 4D fold
+  // (which runs in the ATTRACTOR frame, exactly as the 4D carve's own
+  // does).
+  const sphaira4HitInfoText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg});
+  let f = sphairaFold4(liftSphaira4(p));
+  info.firstChoice = max(f.lastFace, 0);
+  info.trap = clamp(f32(f.moves) / ${SPHAIRAHEDRON_TRAP_NORM}.0, 0.0, 1.0);
+  info.rings = clamp(f.minR / params.boundingRadius, 0.0, 1.0);
+  info.sheets = clamp(f.minY / params.boundingRadius, 0.0, 1.0);
+${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
+  return info;
+}`;
+
   // Lens hit-info wrapper (the GLSL lens hit overload
   // term for term): re-run the branch sweep with FULL-width zero-cutoff
   // core calls, tracking the ARGMIN branch's core query (identity-branch
@@ -10067,11 +10476,15 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
                 ? mengerHitInfoText
                 : core === "menger4"
                   ? menger4HitInfoText
-                  : core === "affine4"
-                    ? affine4HitInfoText(bodySlabExt, core4ExternalLift)
-                    : core === "fold4"
-                      ? fold4HitInfoText(bodySlabExt, core4ExternalLift)
-                      : foldHitInfoText;
+                  : core === "sphaira"
+                    ? sphairaHitInfoText
+                    : core === "sphaira4"
+                      ? sphaira4HitInfoText
+                      : core === "affine4"
+                        ? affine4HitInfoText(bodySlabExt, core4ExternalLift)
+                        : core === "fold4"
+                          ? fold4HitInfoText(bodySlabExt, core4ExternalLift)
+                          : foldHitInfoText;
   const coreHitInfoText = scheduleCoreSource(rawCoreHitInfoText, true);
   const lensedHitInfoText = lens
     ? `${coreHitInfoText.replace(
@@ -10354,7 +10767,10 @@ ${tilingSlabCoverHitInfoWrapText}`
         ? `u = clamp(hi.colorPos.y / visR * 0.5 + 0.5, 0.0, 1.0);`
         : `u = clamp(pos.y / visR * 0.5 + 0.5, 0.0, 1.0);`;
   const shadeRadiusU =
-    core === "escape4" || core === "sphereInv4" || core === "menger4"
+    core === "escape4" ||
+    core === "sphereInv4" ||
+    core === "menger4" ||
+    core === "sphaira4"
       ? // The same attractor-frame radius ramp, through this
         // core's own lift (it emits none of the descents' 4D helpers, and
         // its slab is pinned to 0 so there is no sStar term to add). The
@@ -10372,7 +10788,9 @@ ${tilingSlabCoverHitInfoWrapText}`
               ? "liftSphereInv4"
               : core === "menger4"
                 ? "liftMenger4"
-                : "liftEscape4"
+                : core === "sphaira4"
+                  ? "liftSphaira4"
+                  : "liftEscape4"
           }(pos);
       u = clamp(
         (length(q4c - params.radiusCenter4) - params.radiusMinD) *
@@ -14025,8 +14443,19 @@ struct Params {
   padMen4: array<vec4f, 1>,`
       : ""
   }`
-          : core === "finite4"
+          : core === "sphaira4"
             ? /* wgsl */ `
+  // (faceCount, termCount, pieceCount, 0) — the TABLE COUNTS: the
+  // face/term/piece tables ride binding 1 sphTable, and these three
+  // words bound the kernel's scan loops. Everything else this block's
+  // region carries is PAD — the counts are the whole construction wire
+  // in the params — so the shared plane block lands at 576 for every
+  // 4D core (the sphereInv4/escape4/menger4 shape).
+  sph4Counts: vec4u,
+  // 480..575, PAD.
+  sph4Pad: array<vec4f, 6>,`
+            : core === "finite4"
+              ? /* wgsl */ `
   // 464..479, the FINITE-SOLID block (surface-finite-solid-gpu.ts): the
   // authored construction — the half extent, the level 0..2 and the grid
   // size 3^level the integer arithmetic reads. The 4D pose rides the
@@ -14035,15 +14464,15 @@ struct Params {
   finiteLevel: u32,
   finiteGrid: u32,
   finitePad: f32,${groundPlane ? padFin4Fields : ""}`
-            : // The lens4 block, APPENDED past the 4D tail
-              // (464..575). Declared under the lens, and under anything
-              // appended past it, so the shared
-              // block keeps one offset. A smaller struct reading a larger
-              // buffer is valid WebGPU, so keeping it struct-conditional
-              // otherwise is what keeps every plain 4D kernel's text
-              // byte-identical.
-              lens || tail4Block
-              ? /* wgsl */ `
+              : // The lens4 block, APPENDED past the 4D tail
+                // (464..575). Declared under the lens, and under anything
+                // appended past it, so the shared
+                // block keeps one offset. A smaller struct reading a larger
+                // buffer is valid WebGPU, so keeping it struct-conditional
+                // otherwise is what keeps every plain 4D kernel's text
+                // byte-identical.
+                lens || tail4Block
+                ? /* wgsl */ `
   lens4MR0: vec4f,
   lens4MR1: vec4f,
   lens4MR2: vec4f,
@@ -14054,7 +14483,7 @@ struct Params {
   // radii are dimension-free (SurfaceFoldRadii is SHARED by the two
   // oracles), so this is the same quartet at the 4D block's own offset.
   lens4Fold: vec4f,`
-              : ""
+                : ""
   }${balloon ? balloonStructFields : ""}${
     groundPlane || shapeTrap ? planeStructFields : ""
   }${shapeTrap ? trapStructFields : ""}${
@@ -14131,8 +14560,19 @@ struct Params {
   // the shared plane/balloon block lands at ONE offset (288) across
   // every 3D core.
   padF: vec4f,${groundPlane ? planeStructFields : ""}`
-              : core === "finite"
+              : core === "sphaira"
                 ? /* wgsl */ `
+  // (faceCount, termCount, pieceCount, 0) — the TABLE COUNTS: the
+  // face/term/piece tables ride binding 1 sphTable, and these three
+  // words bound the kernel's scan loops. Everything else the variant
+  // region carries is PAD — the counts are the whole construction wire
+  // in the params — so the shared plane/balloon block lands at ONE
+  // offset (288) across every 3D core.
+  sphCounts: vec4u,
+  // 224..287, PAD.
+  sphPad: array<vec4f, 4>,${groundPlane ? planeStructFields : ""}`
+                : core === "finite"
+                  ? /* wgsl */ `
   // 208..223, the FINITE-SOLID block (surface-finite-solid-gpu.ts): the
   // authored construction — the half extent, the level 0..2 and the grid
   // size 3^level the integer arithmetic reads. The 3D pose is the
@@ -14141,14 +14581,14 @@ struct Params {
   finiteLevel: u32,
   finiteGrid: u32,
   finitePad: f32,${groundPlane ? `${padFin3Fields}${planeStructFields}` : ""}`
-                : lens ||
-                    balloon ||
-                    groundPlane ||
-                    condensationShapes ||
-                    schedule ||
-                    chaos ||
-                    tiling
-                  ? /* wgsl */ `
+                  : lens ||
+                      balloon ||
+                      groundPlane ||
+                      condensationShapes ||
+                      schedule ||
+                      chaos ||
+                      tiling
+                    ? /* wgsl */ `
   lensM0: vec3f,
   lensT0: f32,
   lensM1: vec3f,
@@ -14166,7 +14606,7 @@ struct Params {
   }${condensationShapes ? condensationStructFields : ""}${
     schedule ? scheduleStructFields : ""
   }${chaos ? chaosStructFields : ""}`
-                  : ""
+                    : ""
   }
 ${
   tiling
@@ -14203,7 +14643,7 @@ ${
       : ""
   }
 }${
-    !mapsBinding || siCore
+    !mapsBinding || siCore || sphairaCore
       ? ""
       : core4
         ? /* wgsl */ `
@@ -14276,18 +14716,24 @@ struct GpuMap {
       : siCore
         ? `
 @group(0) @binding(1) var<storage, read> siTable: array<vec4f>;`
-        : core4
-          ? mapsUniform
-            ? `
+        : sphairaCore
+          ? `
+// The face/term/piece tables — one vec4 pair per face and per term
+// (coords in A; [r_or_h, kind, sense] in B), then one [start, length]
+// vec4 per tile piece. Layout contract in the sphaira packer's doc.
+@group(0) @binding(1) var<storage, read> sphTable: array<vec4f>;`
+          : core4
+            ? mapsUniform
+              ? `
 @group(0) @binding(1) var<uniform> maps: array<GpuMap4, ${SURFACE_GPU_UNIFORM_MAP_SLOTS}>;`
-            : `
+              : `
 @group(0) @binding(1) var<storage, read> maps: array<GpuMap4>;`
-          : `
+            : `
 @group(0) @binding(1) var<storage, read> maps: array<GpuMap>;`
   }
 ${io}
 ${frontierBlock}${
-    forward || siCore || finiteCore || mengerCore
+    forward || siCore || finiteCore || mengerCore || sphairaCore
       ? ""
       : core4
         ? /* wgsl */ `
@@ -17640,6 +18086,350 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   return d;
 }`;
 
+  // The SPHAIRA cores: sphairahedron-de.ts / -4d.ts's IIS fold +
+  // accumulated-Jacobian estimate — the pass-restart face scan over the
+  // construction's tables (binding 1, `sphTable`), the SURFACE_SPHAIRA
+  // GLSL arm's f32 formulation (surface-material.ts, the fallback this
+  // core replaces on the compute route). Structurally the menger core:
+  // no descent, no frontier, no orbit — cutoff is accepted for signature
+  // parity and ignored (every return IS the cutoff-0 result, trivially
+  // the cutoff contract; the CPU states NO cutoff deliberately — λ is
+  // not monotone — and the mirrors honor that), and `li` never indexes
+  // anything. The pass cap and the fudge are MODULE CONSTANTS, baked —
+  // the cap is a numerical guard never an object parameter (clamping
+  // passes would make far queries decision-unreliable), the fudge the
+  // measured damping (the step scale packs 1; the fudge IS the
+  // damping). NOT a chaotic orbit and bounded work by the cap: no
+  // ensemble/ring/flip classifier runs on the legs — they gate fail=0
+  // like the carve's, per the bench's S-legs.
+  const sphairaDescentText = /* wgsl */ `
+// The fold result: the folded point, the accumulated conformal Jacobian,
+// the move counters, the two outcome flags, the last-move face
+// attribution and the per-pass closest-approach pair the hit-info reads
+// (the rings/sheets sources). The CPU oracle's module-scope fold
+// results, made a value — the hit-info re-folds with the SAME helper,
+// so the attribution cannot drift between the two callers.
+struct SphairaFold {
+  x: vec3f,
+  lambda: f32,
+  moves: u32,
+  inversions: u32,
+  reflections: u32,
+  passes: u32,
+  capped: bool,
+  pole: bool,
+  lastFace: i32,
+  minR: f32,
+  minY: f32,
+}
+
+// sphairahedron-de.ts's fold3, statement for statement: per pass, scan
+// the faces in the construction's order (scan order is PART of the
+// algorithm once faces intersect); a face sphere holding the point on
+// its REMOVED side inverts it (λ ×= R²/|p−c|²), a violated wall
+// reflects it (λ unchanged); the scan CONTINUES within the pass and
+// passes repeat until a clean one or the cap. A query AT a face
+// sphere's centre (within the baked relative pole floor) skips the
+// inversion but keeps scanning — the pole contract: the estimator
+// returns 0, not a member. minR/minY track the closest radial and
+// y-plane approaches over the pass ends (the hit-info's rings/sheets,
+// measured from the initial point on).
+fn sphairaFold3(p: vec3f) -> SphairaFold {
+  var x = p;
+  var lambda = 1.0;
+  var moves = 0u;
+  var inversions = 0u;
+  var reflections = 0u;
+  var passes = 0u;
+  var capped = false;
+  var pole = false;
+  var lastFace = -1;
+  var minR = length(p);
+  var minY = abs(p.y);
+  let fc = params.sphCounts.x;
+  let poleFloor2 = ${SPHAIRAHEDRON_POLE_FLOOR * SPHAIRAHEDRON_POLE_FLOOR};
+  loop {
+    var moved = false;
+    for (var fi = 0u; fi < fc; fi++) {
+      let a = sphTable[fi * 2u];
+      let b = sphTable[fi * 2u + 1u];
+      if (b.y < 0.5) {
+        // A sphere face: sense 1 = the solid is the INTERIOR, so the
+        // removed side is OUTSIDE (d² > r²); sense 0 the other way
+        // round — the CPU's onRemovedSide ternary.
+        let d = x - a.xyz;
+        let d2 = dot(d, d);
+        let r = b.x;
+        let r2 = r * r;
+        let removed = select(d2 < r2, d2 > r2, b.z > 0.5);
+        if (removed) {
+          if (d2 < poleFloor2 * r2) {
+            pole = true;
+          } else {
+            let k = r2 / d2;
+            x = a.xyz + k * d;
+            lambda = lambda * k;
+            inversions = inversions + 1u;
+            moves = moves + 1u;
+            moved = true;
+            lastFace = i32(fi);
+          }
+        }
+      } else {
+        // A wall: reflect when violated (solid side n·p < h, so the
+        // removed side is d > 0); λ unchanged.
+        let dd = dot(a.xyz, x) - b.x;
+        if (dd > 0.0) {
+          x = x - 2.0 * dd * a.xyz;
+          reflections = reflections + 1u;
+          moves = moves + 1u;
+          moved = true;
+          lastFace = i32(fi);
+        }
+      }
+    }
+    passes = passes + 1u;
+    minR = min(minR, length(x));
+    minY = min(minY, abs(x.y));
+    if (!moved) {
+      break;
+    }
+    if (passes >= ${SPHAIRAHEDRON_FOLD_CAP}u) {
+      capped = true;
+      break;
+    }
+  }
+  return SphairaFold(
+    x,
+    lambda,
+    moves,
+    inversions,
+    reflections,
+    passes,
+    capped,
+    pole,
+    lastFace,
+    minR,
+    minY,
+  );
+}
+
+// sphairahedron-de.ts's tileSDF3: min over pieces of the max-form
+// intersections. Negative inside the union of tiles, positive outside —
+// the reference's exact convention.
+fn sphairaTileSDF3(x: vec3f) -> f32 {
+  let fc = params.sphCounts.x;
+  let tc = params.sphCounts.y;
+  let pc = params.sphCounts.z;
+  let termBase = fc * 2u;
+  let pieceBase = termBase + tc * 2u;
+  var best = 1e30;
+  for (var pi = 0u; pi < pc; pi++) {
+    let seg = sphTable[pieceBase + pi];
+    var piece = -1e30;
+    for (var t = u32(seg.x); t < u32(seg.x + seg.y); t++) {
+      let a = sphTable[termBase + t * 2u];
+      let b = sphTable[termBase + t * 2u + 1u];
+      var v: f32;
+      if (b.y < 0.5) {
+        v = length(x - a.xyz) - b.x;
+        if (b.z < 0.5) {
+          v = -v;
+        }
+      } else {
+        v = dot(a.xyz, x) - b.x;
+        if (b.z > 0.5) {
+          v = -v;
+        }
+      }
+      piece = max(piece, v);
+    }
+    best = min(best, piece);
+  }
+  return best;
+}
+
+// The author-form estimate: tileSDF(folded)/|λ| · fudge — positive
+// outside the union of tiles, negative inside, zero on the limit set.
+// The POLE case returns 0, not a member (the sphere-inversion family's
+// pole contract); a CAPPED fold's value is a decision-unreliable
+// reading the CPU returns anyway — the legs classify, never the
+// kernel.
+fn sphairaEstimate3(p: vec3f) -> f32 {
+  let f = sphairaFold3(p);
+  if (f.pole) {
+    return 0.0;
+  }
+  return sphairaTileSDF3(f.x) / abs(f.lambda) * ${SPHAIRAHEDRON_FUDGE};
+}
+
+fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+  return sphairaEstimate3(pIn);
+}`;
+
+  // The SPHAIRA4 core: the fold one dimension up
+  // (sphairahedron-de-4d.ts's fold4) behind the 4D cores' view lift —
+  // the estimator the (absent, by decision) 4D GLSL fallback would
+  // march. The walls leave w untouched and adding the zero w term is
+  // exact, which is what keeps the CPU w = 0 slice bit-identical; the
+  // kernel's vec4 arithmetic inherits that shape (the packer zero-pads
+  // the 3D families' w lanes).
+  const sphaira4DescentText = /* wgsl */ `
+// The view lift, INLINED rather than reaching for rotorInvApply4: that
+// helper is emitted for the 4D DESCENT cores only (liftMenger4's own
+// reasoning). No half-extent register — the packer pins sliceHalfW to 0
+// for this core (a segment through an inversion bends; no certificate).
+fn liftSphaira4(pIn: vec3f) -> vec4f {
+  let pv = vec4f(pIn, params.w0);
+  return vec4f(
+    dot(params.rotorInvR0, pv),
+    dot(params.rotorInvR1, pv),
+    dot(params.rotorInvR2, pv),
+    dot(params.rotorInvR3, pv),
+  );
+}
+
+// The fold result one dimension up — the 3D struct with the folded
+// point a vec4 (the counters and flags are dimension-free).
+struct SphairaFold4 {
+  x: vec4f,
+  lambda: f32,
+  moves: u32,
+  inversions: u32,
+  reflections: u32,
+  passes: u32,
+  capped: bool,
+  pole: bool,
+  lastFace: i32,
+  minR: f32,
+  minY: f32,
+}
+
+// sphairahedron-de-4d.ts's fold4, statement for statement — the 3D
+// body's scan with the fourth coordinate carried through the inversions
+// and the reflections (the walls' normals carry no w: the packer
+// zero-pads, and 0·w − h is the exact 3D wall value).
+fn sphairaFold4(p: vec4f) -> SphairaFold4 {
+  var x = p;
+  var lambda = 1.0;
+  var moves = 0u;
+  var inversions = 0u;
+  var reflections = 0u;
+  var passes = 0u;
+  var capped = false;
+  var pole = false;
+  var lastFace = -1;
+  var minR = length(p);
+  var minY = abs(p.y);
+  let fc = params.sph4Counts.x;
+  let poleFloor2 = ${SPHAIRAHEDRON_POLE_FLOOR * SPHAIRAHEDRON_POLE_FLOOR};
+  loop {
+    var moved = false;
+    for (var fi = 0u; fi < fc; fi++) {
+      let a = sphTable[fi * 2u];
+      let b = sphTable[fi * 2u + 1u];
+      if (b.y < 0.5) {
+        let d = x - a;
+        let d2 = dot(d, d);
+        let r = b.x;
+        let r2 = r * r;
+        let removed = select(d2 < r2, d2 > r2, b.z > 0.5);
+        if (removed) {
+          if (d2 < poleFloor2 * r2) {
+            pole = true;
+          } else {
+            let k = r2 / d2;
+            x = a + k * d;
+            lambda = lambda * k;
+            inversions = inversions + 1u;
+            moves = moves + 1u;
+            moved = true;
+            lastFace = i32(fi);
+          }
+        }
+      } else {
+        let dd = dot(a, x) - b.x;
+        if (dd > 0.0) {
+          x = x - 2.0 * dd * a;
+          reflections = reflections + 1u;
+          moves = moves + 1u;
+          moved = true;
+          lastFace = i32(fi);
+        }
+      }
+    }
+    passes = passes + 1u;
+    minR = min(minR, length(x));
+    minY = min(minY, abs(x.y));
+    if (!moved) {
+      break;
+    }
+    if (passes >= ${SPHAIRAHEDRON_FOLD_CAP}u) {
+      capped = true;
+      break;
+    }
+  }
+  return SphairaFold4(
+    x,
+    lambda,
+    moves,
+    inversions,
+    reflections,
+    passes,
+    capped,
+    pole,
+    lastFace,
+    minR,
+    minY,
+  );
+}
+
+// sphairahedron-de-4d.ts's tileSDF4 — the 3D tile walk one dimension up.
+fn sphairaTileSDF4(x: vec4f) -> f32 {
+  let fc = params.sph4Counts.x;
+  let tc = params.sph4Counts.y;
+  let pc = params.sph4Counts.z;
+  let termBase = fc * 2u;
+  let pieceBase = termBase + tc * 2u;
+  var best = 1e30;
+  for (var pi = 0u; pi < pc; pi++) {
+    let seg = sphTable[pieceBase + pi];
+    var piece = -1e30;
+    for (var t = u32(seg.x); t < u32(seg.x + seg.y); t++) {
+      let a = sphTable[termBase + t * 2u];
+      let b = sphTable[termBase + t * 2u + 1u];
+      var v: f32;
+      if (b.y < 0.5) {
+        v = length(x - a) - b.x;
+        if (b.z < 0.5) {
+          v = -v;
+        }
+      } else {
+        v = dot(a, x) - b.x;
+        if (b.z > 0.5) {
+          v = -v;
+        }
+      }
+      piece = max(piece, v);
+    }
+    best = min(best, piece);
+  }
+  return best;
+}
+
+// The author-form estimate one dimension up (the 3D twin's semantics).
+fn sphairaEstimate4(p: vec4f) -> f32 {
+  let f = sphairaFold4(p);
+  if (f.pole) {
+    return 0.0;
+  }
+  return sphairaTileSDF4(f.x) / abs(f.lambda) * ${SPHAIRAHEDRON_FUDGE};
+}
+
+fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+  return sphairaEstimate4(liftSphaira4(pIn));
+}`;
+
   const rawDescentBlock = siCore
     ? `// The sphere-inversion seed-orbit estimator (surface-sphere-inversion-gpu.ts),
 // ${core === "sphereInv4" ? "native 4D behind the view lift" : "3D"}.
@@ -17692,16 +18482,27 @@ ${mengerDescentText}`
 // view lift — the carve chain one dimension up. No fragment mirror:
 // the 4D carve is compute-only (the escape4 verdict).
 ${menger4DescentText}`
-                  : core === "affine4"
-                    ? `// estimateDistance4Refined (surface-de-4d.ts) behind the view lift —
+                  : core === "sphaira"
+                    ? `// estimateSphairahedronDistance (sphairahedron-de.ts) — the IIS
+// fold + accumulated-Jacobian estimate over the face/term tables on
+// binding 1, the SURFACE_SPHAIRA GLSL arm's twin.
+${sphairaDescentText}`
+                    : core === "sphaira4"
+                      ? `// estimateSphairahedronDistance4 (sphairahedron-de-4d.ts) behind
+// the 4D cores' view lift — the fold one dimension up. No fragment
+// mirror: the 4D sphairahedron is compute-only (the escape4 verdict,
+// three families running).
+${sphaira4DescentText}`
+                      : core === "affine4"
+                        ? `// estimateDistance4Refined (surface-de-4d.ts) behind the view lift —
 // the estimator the 4D GLSL tracer marches (surface-material-4d.ts), in
 // that mirror's f32 formulation. Fixed width 4.
 ${affine4DescentText(bodySlabExt, core4ExternalLift)}`
-                    : core === "fold4"
-                      ? `// descendFold4's refine=false path (surface-de-4d.ts) behind the same
+                        : core === "fold4"
+                          ? `// descendFold4's refine=false path (surface-de-4d.ts) behind the same
 // view lift — the 4D fold-branch frontier, f32.
 ${fold4DescentFnText(width, bodySlabExt, core4ExternalLift)}${probe4DeFns}`
-                      : `// descendFold's refine=false path (surface-de.ts), the estimator the
+                          : `// descendFold's refine=false path (surface-de.ts), the estimator the
 // fold GLSL marches, in that mirror's f32 formulation.
 ${descentFnText(W, privateDecls)}${probeDeFns}`;
   const descentBlock = scheduleCoreSource(rawDescentBlock, false);

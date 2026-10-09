@@ -41,6 +41,8 @@ import type { BulbDE } from "../../fractal/bulb-de";
 import type { SphereInversionDE } from "../../fractal/sphere-inversion";
 import type { MengerDE } from "../../fractal/menger-de";
 import type { MengerDE4 } from "../../fractal/menger-de-4d";
+import type { SphairahedronDE } from "../../fractal/sphairahedron-de";
+import type { SphairahedronDE4 } from "../../fractal/sphairahedron-de-4d";
 import { resolveMengerTwist } from "../../fractal/menger-twist";
 import {
   PRESET_FINALS,
@@ -65,6 +67,10 @@ import type { FiniteSolidAuthored } from "../../fractal/finite-solid";
 import type { MengerTwistAuthored } from "../../fractal/menger-twist";
 import { buildMengerDE } from "../../fractal/menger-de";
 import { buildMengerDE4 } from "../../fractal/menger-de-4d";
+import { resolveSphairahedron } from "../../fractal/sphairahedron";
+import type { SphairahedronAuthored } from "../../fractal/sphairahedron";
+import { buildSphairahedronDE } from "../../fractal/sphairahedron-de";
+import { buildSphairahedronDE4 } from "../../fractal/sphairahedron-de-4d";
 import type { CondensationDepthBand } from "../../fractal/condensation-de";
 import type {
   HybridSchedule,
@@ -104,7 +110,9 @@ export type ScratchCore =
   | "finite"
   | "finite4"
   | "menger"
-  | "menger4";
+  | "menger4"
+  | "sphaira"
+  | "sphaira4";
 
 export const SCRATCH_CORES: readonly ScratchCore[] = [
   "affine",
@@ -120,6 +128,8 @@ export const SCRATCH_CORES: readonly ScratchCore[] = [
   "finite4",
   "menger",
   "menger4",
+  "sphaira",
+  "sphaira4",
 ];
 
 /** The cores with an eval-probe leg. The two extra compute families have no
@@ -156,6 +166,10 @@ export interface ScratchScene {
   /** The Menger-carve block's authored form, as decoded — the route's
    * subject block when present. */
   mengerTwist: MengerTwistAuthored | null;
+  /** The sphairahedron block's authored form — the third subject block,
+   * programmatically authored (no preset or document decoder carries it
+   * yet). */
+  sphairahedron?: SphairahedronAuthored | null;
   /** The scene's own 4D view pose when it carries one — the preset's
    * authored rotor + world `w0`, or the decoded document's `FourDPose`
    * (world `sliceW` preferred, the persisted convention). Null → identity
@@ -292,6 +306,8 @@ export interface ScratchRoute {
     | SphereInversionDE
     | MengerDE
     | MengerDE4
+    | SphairahedronDE
+    | SphairahedronDE4
     | null;
   view4: SurfaceGpu4View;
   /** A shaped finite-solid block's construction + displayed level (the
@@ -321,6 +337,7 @@ export function deriveScratchRoute(scene: ScratchScene): ScratchRoute {
     scene.finiteSolid,
     scene.chainTwist,
     scene.mengerTwist,
+    scene.sphairahedron ?? null,
   );
   if (eligibility.status === "ineligible" || eligibility.kind === null) {
     throw new Error(
@@ -333,12 +350,26 @@ export function deriveScratchRoute(scene: ScratchScene): ScratchRoute {
     : IDENTITY_VIEW4;
   switch (kind) {
     case "sphairahedron":
-    case "sphairahedron4":
-      // The gate routes the block; the scratch scene's sphairahedron leg
-      // lands with the family's compute cores.
-      throw new Error(
-        "the sphairahedron route is not wired into the scratch scene yet",
-      );
+    case "sphairahedron4": {
+      const block = scene.sphairahedron;
+      if (!block) {
+        throw new Error("sphairahedron route without the block");
+      }
+      const resolution = resolveSphairahedron(block);
+      if (!resolution.ok) {
+        throw new Error(resolution.reasons.join("; "));
+      }
+      const construction = resolution.construction;
+      return {
+        kind,
+        core: construction.dim === 4 ? "sphaira4" : "sphaira",
+        de:
+          construction.dim === 4
+            ? buildSphairahedronDE4(construction)
+            : buildSphairahedronDE(construction),
+        view4,
+      };
+    }
     case "ifs":
     case "ifs4": {
       const fourD = systemPartsAreNonFlat(
