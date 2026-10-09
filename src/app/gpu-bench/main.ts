@@ -139,6 +139,23 @@ import {
   type MengerTwistAuthored,
 } from "../../fractal/menger-twist";
 import {
+  defaultSphairahedronInversion,
+  resolveSphairahedron,
+  SPHAIRAHEDRON_FUDGE,
+  SPHAIRAHEDRON_POLE_FLOOR,
+  type SphairahedronAuthored,
+} from "../../fractal/sphairahedron";
+import {
+  buildSphairahedronDE,
+  estimateSphairahedronDistance,
+  type SphairahedronDE,
+} from "../../fractal/sphairahedron-de";
+import {
+  buildSphairahedronDE4,
+  estimateSphairahedronDistance4,
+  type SphairahedronDE4,
+} from "../../fractal/sphairahedron-de-4d";
+import {
   analyzeEscapeSystem,
   buildEscapeDE,
   ESCAPE_LINK_SPHEREFOLD,
@@ -291,6 +308,9 @@ import {
   packBulbGpuParams,
   packMenger4GpuParams,
   packMengerGpuParams,
+  packSphaira4GpuParams,
+  packSphairaGpuParams,
+  packSphairaGpuTables,
   packEscape4GpuMaps,
   packEscape4GpuParams,
   packEscapeGpuMaps,
@@ -3904,7 +3924,9 @@ interface SurfaceKernelConfig {
     | "fold4"
     | "escape4"
     | "menger"
-    | "menger4";
+    | "menger4"
+    | "sphaira"
+    | "sphaira4";
   variant: SurfaceVariant;
   width: number;
   stage2: boolean;
@@ -3943,7 +3965,9 @@ interface SurfaceAgreementRow {
     | "fold4"
     | "escape4"
     | "menger"
-    | "menger4";
+    | "menger4"
+    | "sphaira"
+    | "sphaira4";
   variant: SurfaceVariant;
   width: number;
   stage2: boolean;
@@ -6398,6 +6422,148 @@ function menger4Queries(
   return out;
 }
 
+/**
+ * The sphaira eval leg's query mix — `mengerQueries`' recipe RE-BRACKETED
+ * against the sphaira DE (the framing ball replaces the carve's origin
+ * box): 400 uniform points in a 1.2 R cube about the framing centre, 200
+ * bisected onto the `DE < 0.005 R` near-boundary shell (the region a
+ * distance estimator most needs to be right in — for the fold the
+ * boundary is the limit set, whose analytic anchor pieces the CPU tests
+ * pin), and 100 clustered near the framing centre (the tile's own
+ * neighbourhood — the divide plane and the excavation ball both live
+ * there, the fold's pole and cap guards' population). 700 total, every
+ * component `Math.fround`ed — see `surfaceQueries`' doc for why. NOT a
+ * chaotic orbit: no ensemble/ring/flip classifier runs on these rows (the
+ * scan fold is deterministic and bounded work by the cap; the leg gates
+ * fail=0 like the carve's).
+ */
+function sphairaQueries(de: SphairahedronDE, seed: number): Vec3[] {
+  const R = de.boundingRadius;
+  const rng = mulberry32(seed);
+  const out: Vec3[] = [];
+  const half = 1.2 * R;
+  const c = de.boundCenter;
+  const uniformPoint = (): Vec3 => [
+    Math.fround(c[0] + (rng() - 0.5) * 2 * half),
+    Math.fround(c[1] + (rng() - 0.5) * 2 * half),
+    Math.fround(c[2] + (rng() - 0.5) * 2 * half),
+  ];
+  for (let i = 0; i < 400; i++) {
+    out.push(uniformPoint());
+  }
+  const nearBoundary = (p: Vec3): boolean =>
+    estimateSphairahedronDistance(de, p) < 0.005 * R;
+  for (let i = 0; i < 200; i++) {
+    let a: Vec3 = [
+      c[0] + (rng() - 0.5) * 1.2,
+      c[1] + (rng() - 0.5) * 1.2,
+      c[2] + (rng() - 0.5) * 1.2,
+    ];
+    let b = uniformPoint();
+    const pa = nearBoundary(a);
+    for (let step = 0; step < 24; step++) {
+      const mid: Vec3 = [
+        (a[0] + b[0]) / 2,
+        (a[1] + b[1]) / 2,
+        (a[2] + b[2]) / 2,
+      ];
+      if (nearBoundary(mid) === pa) {
+        a = mid;
+      } else {
+        b = mid;
+      }
+    }
+    // The final `a` — see `escapeQueries`' doc.
+    out.push([Math.fround(a[0]), Math.fround(a[1]), Math.fround(a[2])]);
+  }
+  for (let i = 0; i < 100; i++) {
+    const s = rng() * 0.5;
+    out.push([
+      Math.fround(c[0] + (rng() - 0.5) * s),
+      Math.fround(c[1] + (rng() - 0.5) * s),
+      Math.fround(c[2] + (rng() - 0.5) * s),
+    ]);
+  }
+  return out;
+}
+
+/**
+ * The sphaira4 leg's composed f64 oracle — `estimateMenger4Composed`'s
+ * exact shape (view lift + estimator) for the fold: the lift applies the
+ * pose rotor's TRANSPOSE (the same world→attractor matrix the kernel's
+ * stored rows apply), then `estimateSphairahedronDistance4`.
+ */
+function estimateSphaira4Composed(
+  de: SphairahedronDE4,
+  view4: SurfaceGpu4View,
+  p: Vec3,
+): number {
+  const rot = view4.rotor;
+  const lifted: Vec4 = [
+    rot[0] * p[0] + rot[4] * p[1] + rot[8] * p[2] + rot[12] * view4.w0,
+    rot[1] * p[0] + rot[5] * p[1] + rot[9] * p[2] + rot[13] * view4.w0,
+    rot[2] * p[0] + rot[6] * p[1] + rot[10] * p[2] + rot[14] * view4.w0,
+    rot[3] * p[0] + rot[7] * p[1] + rot[11] * p[2] + rot[15] * view4.w0,
+  ];
+  return estimateSphairahedronDistance4(de, lifted);
+}
+
+/** The sphaira4 leg's query mix — `sphairaQueries` one dimension up,
+ * bracketed against the COMPOSED oracle (the lift is an isometry, so the
+ * near-boundary shell is the same shell the kernel sees). */
+function sphaira4Queries(
+  de: SphairahedronDE4,
+  view4: SurfaceGpu4View,
+  seed: number,
+): Vec3[] {
+  const R = de.boundingRadius;
+  const rng = mulberry32(seed);
+  const out: Vec3[] = [];
+  const half = 1.2 * R;
+  const c = de.boundCenter;
+  const uniformPoint = (): Vec3 => [
+    Math.fround(c[0] + (rng() - 0.5) * 2 * half),
+    Math.fround(c[1] + (rng() - 0.5) * 2 * half),
+    Math.fround(c[2] + (rng() - 0.5) * 2 * half),
+  ];
+  for (let i = 0; i < 400; i++) {
+    out.push(uniformPoint());
+  }
+  const nearBoundary = (p: Vec3): boolean =>
+    estimateSphaira4Composed(de, view4, p) < 0.005 * R;
+  for (let i = 0; i < 200; i++) {
+    let a: Vec3 = [
+      c[0] + (rng() - 0.5) * 1.2,
+      c[1] + (rng() - 0.5) * 1.2,
+      c[2] + (rng() - 0.5) * 1.2,
+    ];
+    let b = uniformPoint();
+    const pa = nearBoundary(a);
+    for (let step = 0; step < 24; step++) {
+      const mid: Vec3 = [
+        (a[0] + b[0]) / 2,
+        (a[1] + b[1]) / 2,
+        (a[2] + b[2]) / 2,
+      ];
+      if (nearBoundary(mid) === pa) {
+        a = mid;
+      } else {
+        b = mid;
+      }
+    }
+    out.push([Math.fround(a[0]), Math.fround(a[1]), Math.fround(a[2])]);
+  }
+  for (let i = 0; i < 100; i++) {
+    const s = rng() * 0.5;
+    out.push([
+      Math.fround(c[0] + (rng() - 0.5) * s),
+      Math.fround(c[1] + (rng() - 0.5) * s),
+      Math.fround(c[2] + (rng() - 0.5) * s),
+    ]);
+  }
+  return out;
+}
+
 /** The affine4 leg's tolerance/query radius rule: the lens GROWS or shrinks
  * the visible set, so error scales from the set the DE actually describes —
  * M0's `foldFinal ? visibleBoundingRadius : boundingRadius` analog one
@@ -7628,6 +7794,247 @@ function estimateMengerDistance4F32(
     }
   }
   return d;
+}
+
+/**
+ * The bench's f32 twin of `estimateSphairahedronDistance` — the scan
+ * fold's realization-noise instrument, exactly the menger twin's job.
+ * Every op frounds (the kernel is f32; the CPU oracle f64), so any gap
+ * against the f64 oracle at the same points isolates f32 rounding from
+ * kernel arithmetic. The fold is deterministic (a face scan, not an
+ * orbit), so a twin row over tolerance is a discontinuity-sized
+ * rounding event, not noise — the twin gate uses `surfaceEvalTol` like
+ * the carve's, and the pole floor rides frounded relative squares.
+ */
+function estimateSphairahedronDistanceF32(
+  de: SphairahedronDE,
+  p: Vec3,
+): number {
+  const f = Math.fround;
+  const fd = de.faceData;
+  const fk = de.faceKind;
+  let x = f(p[0]);
+  let y = f(p[1]);
+  let z = f(p[2]);
+  let lambda = 1;
+  let passes = 0;
+  let capped = false;
+  let pole = false;
+  const poleFloor2 = f(
+    f(SPHAIRAHEDRON_POLE_FLOOR) * f(SPHAIRAHEDRON_POLE_FLOOR),
+  );
+  for (;;) {
+    let moved = false;
+    for (let fi = 0; fi < de.faceCount; fi++) {
+      const o = fi * 5;
+      if (fk[fi] === 0) {
+        const dx = f(x - f(fd[o]));
+        const dy = f(y - f(fd[o + 1]));
+        const dz = f(z - f(fd[o + 2]));
+        const d2 = f(f(f(dx * dx) + f(dy * dy)) + f(dz * dz));
+        const r = f(fd[o + 3]);
+        const r2 = f(r * r);
+        const removed = fd[o + 4] === 1 ? d2 > r2 : d2 < r2;
+        if (removed) {
+          if (d2 < f(poleFloor2 * r2)) {
+            pole = true;
+            continue;
+          }
+          const k = f(r2 / d2);
+          x = f(f(fd[o]) + f(k * dx));
+          y = f(f(fd[o + 1]) + f(k * dy));
+          z = f(f(fd[o + 2]) + f(k * dz));
+          lambda = f(lambda * k);
+          moved = true;
+        }
+      } else {
+        const dd = f(
+          f(f(f(f(fd[o]) * x) + f(f(fd[o + 1]) * y)) + f(f(fd[o + 2]) * z)) -
+            f(fd[o + 3]),
+        );
+        if (dd > 0) {
+          const twoD = f(2 * dd);
+          x = f(x - f(twoD * f(fd[o])));
+          y = f(y - f(twoD * f(fd[o + 1])));
+          z = f(z - f(twoD * f(fd[o + 2])));
+          moved = true;
+        }
+      }
+    }
+    passes++;
+    if (!moved) break;
+    if (passes >= de.foldCap) {
+      capped = true;
+      break;
+    }
+  }
+  if (pole) return 0;
+  void capped;
+  // The tile SDF, frounded.
+  let best = Infinity;
+  for (let piece = 0; piece < de.pieceCount; piece++) {
+    const start = de.pieceStart[piece];
+    const end = start + de.pieceLength[piece];
+    let d = -Infinity;
+    for (let t = start; t < end; t++) {
+      const o = t * 5;
+      let v: number;
+      if (de.termKind[t] === 0) {
+        const dx = f(x - f(de.termData[o]));
+        const dy = f(y - f(de.termData[o + 1]));
+        const dz = f(z - f(de.termData[o + 2]));
+        v = f(
+          Math.sqrt(f(f(f(dx * dx) + f(dy * dy)) + f(dz * dz))) -
+            f(de.termData[o + 3]),
+        );
+        if (de.termData[o + 4] === 0) v = -v;
+      } else {
+        v = f(
+          f(
+            f(f(f(de.termData[o]) * x) + f(f(de.termData[o + 1]) * y)) +
+              f(f(de.termData[o + 2]) * z),
+          ) - f(de.termData[o + 3]),
+        );
+        if (de.termData[o + 4] === 1) v = -v;
+      }
+      if (v > d) d = v;
+    }
+    if (d < best) best = d;
+  }
+  return f(f(best / Math.abs(lambda)) * f(SPHAIRAHEDRON_FUDGE));
+}
+
+/**
+ * The bench's f32 twin of `estimateSphaira4Composed` — the 4D fold's
+ * realization-noise instrument, the 3D twin behind the same lift the
+ * kernel applies (the menger4 twin's discipline).
+ */
+function estimateSphaira4ComposedF32(
+  de: SphairahedronDE4,
+  p: Vec3,
+  view4: SurfaceGpu4View,
+): number {
+  const f = Math.fround;
+  const rot = view4.rotor;
+  const w0 = f(view4.w0);
+  const px = f(p[0]);
+  const py = f(p[1]);
+  const pz = f(p[2]);
+  const lifted: Vec4 = [
+    f(f(f(f(rot[0] * px) + f(rot[4] * py)) + f(rot[8] * pz)) + f(rot[12] * w0)),
+    f(f(f(f(rot[1] * px) + f(rot[5] * py)) + f(rot[9] * pz)) + f(rot[13] * w0)),
+    f(
+      f(f(f(rot[2] * px) + f(rot[6] * py)) + f(rot[10] * pz)) + f(rot[14] * w0),
+    ),
+    f(
+      f(f(f(rot[3] * px) + f(rot[7] * py)) + f(rot[11] * pz)) + f(rot[15] * w0),
+    ),
+  ];
+  const fd = de.faceData;
+  const fk = de.faceKind;
+  let x = lifted[0];
+  let y = lifted[1];
+  let z = lifted[2];
+  let w = lifted[3];
+  let lambda = 1;
+  let passes = 0;
+  let capped = false;
+  let pole = false;
+  const poleFloor2 = f(
+    f(SPHAIRAHEDRON_POLE_FLOOR) * f(SPHAIRAHEDRON_POLE_FLOOR),
+  );
+  for (;;) {
+    let moved = false;
+    for (let fi = 0; fi < de.faceCount; fi++) {
+      const o = fi * 6;
+      if (fk[fi] === 0) {
+        const dx = f(x - f(fd[o]));
+        const dy = f(y - f(fd[o + 1]));
+        const dz = f(z - f(fd[o + 2]));
+        const dw = f(w - f(fd[o + 3]));
+        const d2 = f(
+          f(f(f(dx * dx) + f(dy * dy)) + f(f(dz * dz) + f(dw * dw))),
+        );
+        const r = f(fd[o + 4]);
+        const r2 = f(r * r);
+        const removed = fd[o + 5] === 1 ? d2 > r2 : d2 < r2;
+        if (removed) {
+          if (d2 < f(poleFloor2 * r2)) {
+            pole = true;
+            continue;
+          }
+          const k = f(r2 / d2);
+          x = f(f(fd[o]) + f(k * dx));
+          y = f(f(fd[o + 1]) + f(k * dy));
+          z = f(f(fd[o + 2]) + f(k * dz));
+          w = f(f(fd[o + 3]) + f(k * dw));
+          lambda = f(lambda * k);
+          moved = true;
+        }
+      } else {
+        const dd = f(
+          f(
+            f(f(f(fd[o]) * x) + f(f(fd[o + 1]) * y) + f(f(fd[o + 2]) * z)) +
+              f(f(fd[o + 3]) * w),
+          ) - f(fd[o + 4]),
+        );
+        if (dd > 0) {
+          const twoD = f(2 * dd);
+          x = f(x - f(twoD * f(fd[o])));
+          y = f(y - f(twoD * f(fd[o + 1])));
+          z = f(z - f(twoD * f(fd[o + 2])));
+          w = f(w - f(twoD * f(fd[o + 3])));
+          moved = true;
+        }
+      }
+    }
+    passes++;
+    if (!moved) break;
+    if (passes >= de.foldCap) {
+      capped = true;
+      break;
+    }
+  }
+  if (pole) return 0;
+  void capped;
+  let best = Infinity;
+  for (let piece = 0; piece < de.pieceCount; piece++) {
+    const start = de.pieceStart[piece];
+    const end = start + de.pieceLength[piece];
+    let d = -Infinity;
+    for (let t = start; t < end; t++) {
+      const o = t * 6;
+      let v: number;
+      if (de.termKind[t] === 0) {
+        const dx = f(x - f(de.termData[o]));
+        const dy = f(y - f(de.termData[o + 1]));
+        const dz = f(z - f(de.termData[o + 2]));
+        const dw = f(w - f(de.termData[o + 3]));
+        v = f(
+          Math.sqrt(
+            f(f(f(dx * dx) + f(dy * dy)) + f(f(dz * dz) + f(dw * dw))),
+          ) - f(de.termData[o + 4]),
+        );
+        if (de.termData[o + 5] === 0) v = -v;
+      } else {
+        v = f(
+          f(
+            f(
+              f(
+                f(f(de.termData[o]) * x) +
+                  f(f(de.termData[o + 1]) * y) +
+                  f(f(de.termData[o + 2]) * z),
+              ) + f(f(de.termData[o + 3]) * w),
+            ) - f(de.termData[o + 4]),
+          ),
+        );
+        if (de.termData[o + 5] === 1) v = -v;
+      }
+      if (v > d) d = v;
+    }
+    if (d < best) best = d;
+  }
+  return f(f(best / Math.abs(lambda)) * f(SPHAIRAHEDRON_FUDGE));
 }
 
 /**
@@ -21876,6 +22283,227 @@ async function runSurfaceDeSection(
     render();
   }
 
+  // ----- Sphaira systems (S1/S2): the sphairahedron family's own gate -----
+  // The IIS fold's construction — NOT an IFS, NOT a forward orbit, and not
+  // a carve: a pass-restart face scan bounded by the baked cap, so neither
+  // the descent defs (no attractor) nor the forward machinery (no orbit,
+  // no ensemble/ring/flip classifier) applies. One def list per dimension,
+  // the resolver-gated build, `sphairaQueries`' re-bracketed mix, and the
+  // plain comparator. The finite fixtures carry EXPLICIT inversion spheres
+  // (the family's authored wire — the resolver refuses a finite request
+  // without one), the tetra's from the CPU tests' own pinned J and the
+  // cube's the reflected-reference first candidate.
+  const sphairaSystemDefs: {
+    name: string;
+    seed: number;
+    block: () => SphairahedronAuthored;
+  }[] = [
+    {
+      // The infinite tetra: the analytic plane anchor's own family, one
+      // ball + three walls, the scan's shortest face list.
+      name: "sphairaTetraReference",
+      seed: 801,
+      block: () => ({ family: "tetra333" }),
+    },
+    {
+      // The finite tetra: every face maps to a sphere or a plane, and the
+      // J.c neighborhood's measured softness (~3e-3 within 0.03 of the
+      // centre) is IN the mix — the query generator brackets against the
+      // oracle, so the shell lands wherever the set is.
+      name: "sphairaTetraFinite",
+      seed: 802,
+      block: () => ({
+        family: "tetra333",
+        inversion: { cx: 0.5, cy: 3, cz: 0, r: 1.3 },
+      }),
+    },
+    {
+      // The finite cube: three balls + three walls in the reference's
+      // interleaved scan order, the reflected-reference J (the picker's
+      // documented FIRST CANDIDATE — the presets child pins the picker's
+      // own J's; the leg exercises the wire, not the presentation).
+      name: "sphairaCubeFinite",
+      seed: 803,
+      block: () => {
+        const infinite = resolveSphairahedron({
+          family: "cube1",
+          za: 0.5,
+          zb: 1.0,
+        });
+        if (!infinite.ok) {
+          throw new Error(infinite.reasons.join("; "));
+        }
+        const j = defaultSphairahedronInversion(infinite.construction);
+        if (!j) {
+          throw new Error("the reflected-reference rule needs three balls");
+        }
+        return {
+          family: "cube1",
+          za: 0.5,
+          zb: 1.0,
+          inversion: { cx: j.c[0], cy: j.c[1], cz: j.c[2], r: j.r },
+        };
+      },
+    },
+  ];
+  const sphairaSystems: {
+    name: string;
+    de: SphairahedronDE;
+    queries: Vec3[];
+    cpu: number[];
+  }[] = [];
+  let sphairaGateFail = false;
+  for (const def of sphairaSystemDefs) {
+    status(`cpu oracle: ${def.name}…`);
+    activity.setState("cpu", `Surface sphaira CPU oracle — ${def.name}`);
+    await new Promise<void>((resolve) => setTimeout(resolve));
+    try {
+      const resolution = resolveSphairahedron(def.block());
+      if (!resolution.ok) {
+        results.notes.push(
+          `${def.name}: skipped — ${resolution.reasons.join("; ")}`,
+        );
+      } else {
+        const de = buildSphairahedronDE(resolution.construction);
+        const queries = sphairaQueries(de, def.seed);
+        const cpu = queries.map((q) => estimateSphairahedronDistance(de, q));
+        // The f32 twin's own agreement with the f64 oracle — the
+        // realization-noise figure the leg's tolerance must dominate. The
+        // scan fold is deterministic, so a twin row over tolerance is a
+        // discontinuity-sized rounding event, not noise.
+        const R = de.boundingRadius;
+        let twinMaxAbsErr = 0;
+        for (let i = 0; i < cpu.length; i++) {
+          const err = Math.abs(
+            estimateSphairahedronDistanceF32(de, queries[i]) - cpu[i],
+          );
+          if (err > twinMaxAbsErr) twinMaxAbsErr = err;
+          if (err > surfaceEvalTol(cpu[i], R)) {
+            sphairaGateFail = true;
+            results.notes.push(
+              `${def.name}: the f32 twin disagrees with the f64 oracle at ` +
+                `query ${String(i)} (maxAbs ${err.toExponential(2)}, tol ` +
+                `${surfaceEvalTol(cpu[i], R).toExponential(2)})`,
+            );
+            break;
+          }
+        }
+        results.notes.push(
+          `${def.name}: f32 twin realization noise maxAbs ${twinMaxAbsErr.toExponential(2)}`,
+        );
+        sphairaSystems.push({
+          name: def.name,
+          de,
+          queries,
+          cpu,
+        });
+      }
+    } catch (e) {
+      results.notes.push(`${def.name}: skipped — ${describeError(e)}`);
+    }
+    render();
+  }
+
+  const sphaira4SystemDefs: {
+    name: string;
+    seed: number;
+    block: SphairahedronAuthored;
+    view4: () => SurfaceGpu4View;
+  }[] = [
+    {
+      // The tetra lift at the identity view: the walls leave w untouched,
+      // so the slice gate reads w0 = 0 and the fold is the 3D one's
+      // vec4 realization.
+      name: "sphaira4TetraReference",
+      seed: 811,
+      block: { family: "tetra4" },
+      view4: () => ({
+        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        w0: 0,
+        sliceHalfW: 0,
+      }),
+    },
+    {
+      // The pose rotor turned, the slice plane off-centre: the lift AND
+      // the 4D ball's fourth-axis degrees of freedom both in play, and the
+      // slice gate reading a nonzero |w0| (the slice-adjusted march ball).
+      name: "sphaira4TetraTilted",
+      seed: 812,
+      block: {
+        family: "tetra4",
+        inversion: { cx: 0.5, cy: 3, cz: 0, cw: 0, r: 1.3 },
+      },
+      view4: () => {
+        const m = symmetryRotation4("xw", 0.55);
+        return {
+          rotor: m,
+          w0: 0.3,
+          sliceHalfW: 0,
+        };
+      },
+    },
+  ];
+  const sphaira4Systems: {
+    name: string;
+    de: SphairahedronDE4;
+    view4: SurfaceGpu4View;
+    queries: Vec3[];
+    cpu: number[];
+  }[] = [];
+  let sphaira4GateFail = false;
+  for (const def of sphaira4SystemDefs) {
+    status(`cpu oracle: ${def.name}…`);
+    activity.setState("cpu", `Surface sphaira4 CPU oracle — ${def.name}`);
+    await new Promise<void>((resolve) => setTimeout(resolve));
+    try {
+      const resolution = resolveSphairahedron(def.block);
+      if (!resolution.ok) {
+        results.notes.push(
+          `${def.name}: skipped — ${resolution.reasons.join("; ")}`,
+        );
+      } else {
+        const de = buildSphairahedronDE4(resolution.construction);
+        const view4 = def.view4();
+        const queries = sphaira4Queries(de, view4, def.seed);
+        // The COMPOSED oracle: the f64 lift, then the estimator — the
+        // exact function the kernel computes (the M3/M7 discipline) — and
+        // the f32 twin's own agreement gate, the 3D loop's rule one
+        // dimension up.
+        const cpu = queries.map((q) => estimateSphaira4Composed(de, view4, q));
+        const R = de.boundingRadius;
+        let twinMaxAbsErr = 0;
+        for (let i = 0; i < cpu.length; i++) {
+          const err = Math.abs(
+            estimateSphaira4ComposedF32(de, queries[i], view4) - cpu[i],
+          );
+          if (err > twinMaxAbsErr) twinMaxAbsErr = err;
+          if (err > surfaceEvalTol(cpu[i], R)) {
+            sphaira4GateFail = true;
+            results.notes.push(
+              `${def.name}: the f32 twin disagrees with the f64 oracle at ` +
+                `query ${String(i)} (maxAbs ${err.toExponential(2)}, tol ` +
+                `${surfaceEvalTol(cpu[i], R).toExponential(2)})`,
+            );
+            break;
+          }
+        }
+        results.notes.push(
+          `${def.name}: f32 twin realization noise maxAbs ${twinMaxAbsErr.toExponential(2)}`,
+        );
+        sphaira4Systems.push({
+          name: def.name,
+          de,
+          view4,
+          queries,
+          cpu,
+        });
+      }
+    } catch (e) {
+      results.notes.push(`${def.name}: skipped — ${describeError(e)}`);
+    }
+    render();
+  }
+
   // ----- Affine4 (4D) systems (M3): a THIRD separate gate -----
   // `buildSurfaceDE` has no 4D shape at all — these systems live behind
   // `analyzeSurfaceSystem4`/`buildSurfaceDE4` and the kernel's view lift,
@@ -26280,6 +26908,157 @@ async function runSurfaceDeSection(
 
     await canaryCheck("the M10 menger4 agreement leg");
 
+    // ----- S1: the SPHAIRA core's agreement leg — GATING -----
+    // The sphairahedron family's own leg, the carve legs' gate shape
+    // (fail=0, no exclusions — the scan fold is deterministic and bounded
+    // work by the cap, so no ensemble/ring/flip classifier applies) with
+    // the forward legs' buffer helper: the core DECLARES binding 1 (the
+    // face/term/piece table wire), so the maps slot carries the packed
+    // tables, not a zero stride.
+    if (sphairaSystems.length > 0) {
+      const sphairaEvalConfig: SurfaceKernelConfig = {
+        core: "sphaira",
+        variant: "private",
+        width: SURFACE_FOLD_BEAM_WIDTH,
+        stage2: false,
+        wg: surfaceWgFor(config, "private"),
+      };
+      const label = configLabel(sphairaEvalConfig);
+      status(`agreement: compiling ${label}…`);
+      activity.setState("gpu", `Surface DE agreement — ${label}`);
+      const sphairaLayout = surfaceForwardBindGroupLayout(device);
+      const sphairaPipelineLayout = device.createPipelineLayout({
+        label: "surface-de sphaira pipeline layout",
+        bindGroupLayouts: [sphairaLayout],
+      });
+      let sphairaPipeline: GPUComputePipeline | null = null;
+      try {
+        const code = surfaceDeKernelWgsl({
+          mode: "eval",
+          core: "sphaira",
+          width: sphairaEvalConfig.width,
+          workgroupSize: sphairaEvalConfig.wg,
+          sharedFrontier: false,
+          bnbStage2: false,
+        });
+        ({ pipeline: sphairaPipeline } = await buildSurfacePipeline(
+          device,
+          sphairaPipelineLayout,
+          code,
+          "evalQueries",
+          `surface-de eval ${label}`,
+        ));
+      } catch (e) {
+        compileFailed = true;
+        results.notes.push(`agreement ${label}: ${describeError(e)}`);
+      }
+      if (sphairaPipeline !== null) {
+        const pipeline = sphairaPipeline;
+        for (const sys of sphairaSystems) {
+          status(`agreement: ${label} × ${sys.name}…`);
+          await ensureSurfaceForwardEvalBuffers(
+            device,
+            sphairaLayout,
+            sys,
+            packSphairaGpuParams(sys.de, {
+              itemCount: sys.queries.length,
+              cutoff: 0,
+            }),
+            // The face/term/piece tables: the kernel's own binding-1 wire.
+            packSphairaGpuTables(sys.de),
+          );
+          const gpu = await runSurfaceEvalDispatch(
+            device,
+            pipeline,
+            sys,
+            sphairaEvalConfig.wg,
+          );
+          results.agreement.push(
+            compareSurfaceAgreement(sys, sphairaEvalConfig, gpu),
+          );
+          render();
+          await new Promise<void>((resolve) => setTimeout(resolve));
+        }
+      }
+      render();
+    }
+
+    await canaryCheck("the S1 sphaira agreement leg");
+
+    // ----- S2: the SPHAIRA4 core's agreement leg — GATING -----
+    // The fold one dimension up, behind the view lift — the composed
+    // oracle (the f64 lift, then the estimator) and the f32 twin carrying
+    // the same lift, exactly the M3/M7 discipline. No exclusions: the scan
+    // is deterministic and the lift an isometry.
+    if (sphaira4Systems.length > 0) {
+      const sphaira4EvalConfig: SurfaceKernelConfig = {
+        core: "sphaira4",
+        variant: "private",
+        width: SURFACE_FOLD_BEAM_WIDTH,
+        stage2: false,
+        wg: surfaceWgFor(config, "private"),
+      };
+      const label = configLabel(sphaira4EvalConfig);
+      status(`agreement: compiling ${label}…`);
+      activity.setState("gpu", `Surface DE agreement — ${label}`);
+      const sphaira4Layout = surfaceForwardBindGroupLayout(device);
+      const sphaira4PipelineLayout = device.createPipelineLayout({
+        label: "surface-de sphaira4 pipeline layout",
+        bindGroupLayouts: [sphaira4Layout],
+      });
+      let sphaira4Pipeline: GPUComputePipeline | null = null;
+      try {
+        const code = surfaceDeKernelWgsl({
+          mode: "eval",
+          core: "sphaira4",
+          width: sphaira4EvalConfig.width,
+          workgroupSize: sphaira4EvalConfig.wg,
+          sharedFrontier: false,
+          bnbStage2: false,
+        });
+        ({ pipeline: sphaira4Pipeline } = await buildSurfacePipeline(
+          device,
+          sphaira4PipelineLayout,
+          code,
+          "evalQueries",
+          `surface-de eval ${label}`,
+        ));
+      } catch (e) {
+        compileFailed = true;
+        results.notes.push(`agreement ${label}: ${describeError(e)}`);
+      }
+      if (sphaira4Pipeline !== null) {
+        const pipeline = sphaira4Pipeline;
+        for (const sys of sphaira4Systems) {
+          status(`agreement: ${label} × ${sys.name}…`);
+          await ensureSurfaceForwardEvalBuffers(
+            device,
+            sphaira4Layout,
+            sys,
+            packSphaira4GpuParams(sys.de, sys.view4, {
+              itemCount: sys.queries.length,
+              cutoff: 0,
+            }),
+            packSphairaGpuTables(sys.de),
+          );
+          const gpu = await runSurfaceEvalDispatch(
+            device,
+            pipeline,
+            sys,
+            sphaira4EvalConfig.wg,
+          );
+          results.agreement.push(
+            compareSurfaceAgreement(sys, sphaira4EvalConfig, gpu),
+          );
+          render();
+          await new Promise<void>((resolve) => setTimeout(resolve));
+        }
+      }
+      render();
+    }
+
+    await canaryCheck("the S2 sphaira4 agreement leg");
+
     // ----- The SHAPE-TRAP agreement legs (escape/bulb/escape4 + trap) -----
     // The trap is COLOR ONLY, so the CPU oracle values are the plain legs'
     // own — what these rows pin is everything the channel appends to the
@@ -28505,6 +29284,8 @@ async function runSurfaceDeSection(
       escape4GateFail ||
       mengerGateFail ||
       menger4GateFail ||
+      sphairaGateFail ||
+      sphaira4GateFail ||
       affine4GateFail ||
       fold4GateFail ||
       fold4SlabExtFailed ||
@@ -28541,37 +29322,39 @@ async function runSurfaceDeSection(
                       ? "escape4 agreement leg excluded too many queries from its f32-stability gate — see notes"
                       : mengerGateFail || menger4GateFail
                         ? "menger agreement leg: the f32 twin disagrees with the f64 oracle — the carve is not chaotic, so this is a bug or a tolerance-sized discontinuity — see notes"
-                        : affine4GateFail
-                          ? "affine4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
-                          : fold4GateFail
-                            ? "fold4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
-                            : fold4SlabExtFailed
-                              ? "fold4 slabExt A/B: slab/no-slab kernels disagree beyond tolerance at sliceHalfW 0 — see notes"
-                              : lens4GateFail
-                                ? "lens4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
-                                : lens4PackGuardFailed
-                                  ? "lens4 pack-guard: packSurface4GpuParams did not refuse a swirl-final slab query — see notes"
-                                  : cover4GateFail
-                                    ? "cover4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
-                                    : cover4IdentityFailed
-                                      ? "cover4 identity A/B: the cover's h=0 branch disagrees with the point kernel beyond tolerance — see notes"
-                                      : emitterOnlyFailed
-                                        ? "emitter-only eval/hit-info/shade agreement failure — see notes"
-                                        : tilingAbiFailed
-                                          ? "finite-tiling compile/bind/numeric ABI agreement failure — see notes"
-                                          : latticeTilingAbiFailed
-                                            ? "lattice-tiling eval compile/bind/numeric ABI agreement failure — see notes"
-                                            : latticeFrameFailed
-                                              ? "lattice carrier frame failure — see notes"
-                                              : transportGateFail
-                                                ? "transport agreement failure — see notes"
-                                                : finitePrimaryGateFail
-                                                  ? "finite primary status/depth agreement failure — see finitePrimaryAgreement/notes"
-                                                  : transportEnvelopeGateFail
-                                                    ? "transport envelope failure — see transportEnvelope/notes"
-                                                    : sphereInversionFailed
-                                                      ? "sphere-inversion compile/eval/march/frame failure — see sphereInversion and notes"
-                                                      : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
+                        : sphairaGateFail || sphaira4GateFail
+                          ? "sphaira agreement leg: the f32 twin disagrees with the f64 oracle — the scan fold is deterministic, so this is a bug or a tolerance-sized discontinuity — see notes"
+                          : affine4GateFail
+                            ? "affine4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
+                            : fold4GateFail
+                              ? "fold4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
+                              : fold4SlabExtFailed
+                                ? "fold4 slabExt A/B: slab/no-slab kernels disagree beyond tolerance at sliceHalfW 0 — see notes"
+                                : lens4GateFail
+                                  ? "lens4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
+                                  : lens4PackGuardFailed
+                                    ? "lens4 pack-guard: packSurface4GpuParams did not refuse a swirl-final slab query — see notes"
+                                    : cover4GateFail
+                                      ? "cover4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
+                                      : cover4IdentityFailed
+                                        ? "cover4 identity A/B: the cover's h=0 branch disagrees with the point kernel beyond tolerance — see notes"
+                                        : emitterOnlyFailed
+                                          ? "emitter-only eval/hit-info/shade agreement failure — see notes"
+                                          : tilingAbiFailed
+                                            ? "finite-tiling compile/bind/numeric ABI agreement failure — see notes"
+                                            : latticeTilingAbiFailed
+                                              ? "lattice-tiling eval compile/bind/numeric ABI agreement failure — see notes"
+                                              : latticeFrameFailed
+                                                ? "lattice carrier frame failure — see notes"
+                                                : transportGateFail
+                                                  ? "transport agreement failure — see notes"
+                                                  : finitePrimaryGateFail
+                                                    ? "finite primary status/depth agreement failure — see finitePrimaryAgreement/notes"
+                                                    : transportEnvelopeGateFail
+                                                      ? "transport envelope failure — see transportEnvelope/notes"
+                                                      : sphereInversionFailed
+                                                        ? "sphere-inversion compile/eval/march/frame failure — see sphereInversion and notes"
+                                                        : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
     } else if (gatingRows.length === 0 && !unprojRan) {
       // Informational-only rows (all widths ≠ SURFACE_FOLD_BEAM_WIDTH) and
       // no march-unproject gate verify nothing against a like-for-like
@@ -28607,6 +29390,8 @@ async function runSurfaceDeSection(
     for (const sys of escape4Systems) destroySurfaceForwardEvalBuffers(sys);
     for (const sys of mengerSystems) destroySurfaceForwardEvalBuffers(sys);
     for (const sys of menger4Systems) destroySurfaceForwardEvalBuffers(sys);
+    for (const sys of sphairaSystems) destroySurfaceForwardEvalBuffers(sys);
+    for (const sys of sphaira4Systems) destroySurfaceForwardEvalBuffers(sys);
     for (const sys of affine4Systems) destroySurface4EvalBuffers(sys);
     destroySurface4EvalBuffers(scheduledSystem4);
     destroySurface4EvalBuffers(chaosSystem4);
