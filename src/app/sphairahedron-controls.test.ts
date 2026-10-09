@@ -184,15 +184,44 @@ describe("sphairahedron-controls: rows and notes", () => {
     expect(finite.finite).toMatch(/^Refused: a finite construction needs/);
   });
 
-  it("discloses an authored value outside its slider's span as kept", () => {
-    const notes = sphairahedronControlNotes({
+  it("widens a J slider's span to reach an authored value past it, and discloses the widening", () => {
+    // The sphere is a free parameter; the fixed spans only cover the
+    // constructions' everyday scale. A value outside widens the span to
+    // itself (never clamps), so the numeric companion reads no red
+    // out-of-range state — and the row's note says why the span moved.
+    const block: SphairahedronAuthored = {
       family: "cube1",
       za: 0.5,
       zb: 1.0,
       inversion: { cx: 0.1, cy: 0, cz: 0, r: 9 },
-    });
-    expect(notes["inversion.r"]).toMatch(/outside this slider's range/);
-    expect(notes["inversion.r"]).toMatch(/kept as authored/);
+    };
+    const range = sphairahedronFieldRange(block, "inversion.r");
+    expect(range.min).toBe(0.2);
+    expect(range.max).toBe(9);
+    // An in-span component keeps the base span exactly.
+    const base = sphairahedronFieldRange(block, "inversion.cx");
+    expect(base.min).toBe(-2);
+    expect(base.max).toBe(2);
+    const notes = sphairahedronControlNotes(block);
+    expect(notes["inversion.r"]).toMatch(/widened/);
+    expect(notes["inversion.cx"]).toBe("");
+  });
+
+  it("discloses the walk's empty cloud on the sphere-less infinite families, and only there", () => {
+    const empty = sphairahedronControlNotes({ family: "tetra333" });
+    expect(empty.finite).toMatch(/walk keeps nothing/);
+    expect(empty.finite).toMatch(/Check Finite/);
+    const lifted = sphairahedronControlNotes({ family: "tetra4" });
+    expect(lifted.finite).toMatch(/walk keeps nothing/);
+    const terrain = sphairahedronControlNotes({ family: "prism2" });
+    expect(terrain.finite).toMatch(/walk keeps nothing/);
+    // A sphere-less cube construction still draws (measured: the walk
+    // keeps 5000/5000), so no empty-cloud note — and a refused finite
+    // intent keeps its own refusal, not this one.
+    expect(sphairahedronControlNotes({ family: "cube1" }).finite).toBe("");
+    expect(
+      sphairahedronControlNotes({ family: "cube1", inversion: {} }).finite,
+    ).toMatch(/^Refused: a finite construction needs/);
   });
 
   it("offers every shipped family id to the select", () => {
