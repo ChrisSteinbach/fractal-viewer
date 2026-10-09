@@ -2995,6 +2995,16 @@ const PRESETS = {
   // The contracting 4D fold frontier's preset: mandelboxKifs one dimension
   // up, the shipped way into the 4D fold kernel.
   hyperkifs,
+  // The PLAIN hyper-Menger sponge — the menger preset's construction one
+  // dimension up (the 48-survivor rule hyperMengerSpongeTransforms encodes),
+  // and the plain subject the 4D Menger showcases decorate: twistedSponge4
+  // shares its maps under a twist and a lens, mengerCarve4 traces the carve
+  // family's twisted construction, glassMenger4 poses a level-2 slice behind
+  // glass. None of that here: no twist, no lens, no render hint, no authored
+  // view — the explorer preset its 3D sibling is. Its w = 0 cross-section is
+  // the 3D Menger itself (the w indicator sits at 2 there, never in a middle
+  // third), so the 4D structure is what the other three axes' slabs add.
+  hyperMenger: hyperMengerSpongeTransforms,
   // The first 4D FLAME compositions: the 4D flame path (CPU + WGSL, both
   // w-depth colored) shipped with no preset reaching it. Each is a
   // composition no flat document can express — two interlocked rings of
