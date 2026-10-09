@@ -32,6 +32,10 @@ import type { FiniteSolidAuthored } from "../fractal/finite-solid";
 import { resolveTwist, twistIsTrivial } from "../fractal/twist";
 import type { TwistAuthored } from "../fractal/twist";
 import type { MengerTwistAuthored } from "../fractal/menger-twist";
+import {
+  SPHAIRAHEDRON_INVERSION_FIELDS,
+  type SphairahedronAuthored,
+} from "../fractal/sphairahedron";
 import { MENGER_TWIST_DEFAULTS } from "../fractal/menger-twist";
 import {
   SHAPE_TRAP_GEOMETRY_LEVEL_MAX,
@@ -592,6 +596,25 @@ export interface AppState {
    * keep the transforms' own render (disclosed beside the checkbox).
    */
   mengerTwist?: MengerTwistAuthored;
+  /**
+   * Optional sphairahedron block (`fractal/sphairahedron.ts`'s authored
+   * form). When present the block REPLACES the transform system as the
+   * scene's subject — the sphereInversion/mengerTwist blocks' shape, the
+   * third of them — and Surface renders the construction's limit set
+   * through its own scan-fold estimator; the block's family field decides
+   * the scene's dimension (`sphairahedronAuthoredDimension`), tetra4 the
+   * one 4D entry. Stored EXACTLY as authored or decoded — a block the
+   * resolver refuses (an unknown family, an out-of-region modulus, a field
+   * from a newer version) is kept verbatim and surfaces its refusal through
+   * the Surface gate, never clamped or dropped. Absent ⇒ byte-identical to
+   * every document predating the field, and every renderer reads the plain
+   * IFS attractor. Scene content: persists and rides shared links; the MORPH
+   * stance is the family's own (lerp the moduli through
+   * `buildSphairahedron`, `morph.ts`'s `lerpSphairahedron`). Points draws
+   * the inverse-iteration boundary sample; Flame/Solid refuse (disclosed
+   * beside the checkbox).
+   */
+  sphairahedron?: SphairahedronAuthored;
   numPoints: number;
   /** Multiplier on each render style's base point size; 1 = as authored. */
   pointSize: number;
@@ -2428,6 +2451,64 @@ export function setMengerTwist(
 ): AppState {
   if (!mengerTwist) return { ...state, mengerTwist: undefined };
   return { ...state, mengerTwist };
+}
+
+/**
+ * Install/replace the sphairahedron block, or clear it with `null` —
+ * {@link setMengerTwist}'s shape: stored AS AUTHORED with no normalization,
+ * because the resolver refuses rather than clamps and the Surface gate must
+ * describe the block the document actually carries. DELIBERATELY NO
+ * collapse-on-trivial: the block REPLACES the scene's subject and every
+ * present block renders a limit set (an infinite construction is the
+ * terrains' presentation, a real object), so presence/absence belongs to
+ * the panel's enabled checkbox alone.
+ */
+export function setSphairahedron(
+  state: AppState,
+  sphairahedron: SphairahedronAuthored | null,
+): AppState {
+  if (!sphairahedron) return { ...state, sphairahedron: undefined };
+  return { ...state, sphairahedron };
+}
+
+/** One sphairahedron field's merge edit — {@link setMengerTwistField}'s
+ * dotted-path merge shape. The moduli are SCALARS, so a merge is a plain
+ * write: an absent modulus stays absent (still the family default) while
+ * another moves, exactly the absent-means-default stability the menger
+ * vector fills deliver there. An inversion-sphere component merges into
+ * the authored sphere object the block carries, creating it when absent —
+ * the sphere is authored explicitly (module doc), so the first component
+ * moved authors the object mid-drag; the panel's picker action remains the
+ * way a sphere is CHOSEN. Sliders write only when the block is present
+ * (the enabled checkbox authors it), so a missing block is a no-op. No
+ * collapse: presence is the checkbox's (see {@link setSphairahedron}).
+ * `field` is the dotted path ("za", "zb", "z2", "inversion.cx",
+ * "inversion.r"). Refused drafts are kept for the panel to show — the
+ * merge never resolves, so an out-of-region modulus is still exactly what
+ * the gate's note describes. */
+export function setSphairahedronField(
+  state: AppState,
+  field: string,
+  value: number,
+): AppState {
+  if (!Number.isFinite(value)) return state;
+  if (!state.sphairahedron) return state;
+  const base: SphairahedronAuthored = { ...state.sphairahedron };
+  const [head, leaf] = field.split(".");
+  if (leaf === undefined) {
+    if (head === "za" || head === "zb" || head === "z2") {
+      return { ...state, sphairahedron: { ...base, [head]: value } };
+    }
+    return state;
+  }
+  if (head === "inversion" && SPHAIRAHEDRON_INVERSION_FIELDS.includes(leaf)) {
+    const raw: unknown = base.inversion;
+    const inv: Record<string, unknown> =
+      typeof raw === "object" && raw !== null ? raw : {};
+    inv[leaf] = value;
+    return { ...state, sphairahedron: { ...base, inversion: inv } };
+  }
+  return state;
 }
 
 /** One Menger-carve field's merge edit — {@link setChainTwistField}'s

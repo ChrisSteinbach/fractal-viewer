@@ -8565,3 +8565,75 @@ describe("menger-twist codec (the carve family's block)", () => {
     expect(encodeScene(toSnapshot(cleared))).toBe(encodeScene(baseSnapshot()));
   });
 });
+
+describe("sphairahedron codec (the sphairahedron family's block)", () => {
+  it("encodes a scene without the block byte-identically to one predating the field", () => {
+    const s = baseSnapshot();
+    const withUndefined = { ...s, sphairahedron: undefined };
+    expect(encodeScene(withUndefined)).toBe(encodeScene(s));
+    expect(decodeScene(encodeScene(s))!.sphairahedron).toBeUndefined();
+  });
+
+  it("round-trips a live block verbatim, the inversion sphere included", () => {
+    const block = {
+      family: "cube1",
+      za: 0.5,
+      zb: 1.0,
+      inversion: { cx: 0.1, cy: 0.2, cz: -0.3, r: 0.7 },
+    };
+    const hash = encodeScene({ ...baseSnapshot(), sphairahedron: block });
+    const decoded = decodeScene(hash)!;
+    expect(decoded.sphairahedron).toEqual(block);
+    expect(encodeScene(decoded)).toBe(hash);
+  });
+
+  it("preserves a refused block verbatim through decode then encode (unknown family, unknown key, future field)", () => {
+    const block = {
+      family: "cube99",
+      za: -1,
+      bogus: 1,
+      inversion: { future: [1, { nested: null }] },
+    } as unknown as SceneSnapshot["sphairahedron"];
+    const hash = encodeScene({ ...baseSnapshot(), sphairahedron: block });
+    const decoded = decodeScene(hash)!;
+    expect(decoded.sphairahedron).toEqual(block);
+    expect(encodeScene(decoded)).toBe(hash);
+  });
+
+  it("drops a value that cannot be a block (array, scalar, null) to absent without rejecting the scene", () => {
+    for (const raw of [[1, 2], 5, "sphere", null]) {
+      const body = encodeScene(baseSnapshot())
+        .slice(3)
+        .replace(/-/g, "+")
+        .replace(/_/g, "/");
+      const json = JSON.parse(
+        atob(body + "=".repeat((4 - (body.length % 4)) % 4)),
+      ) as Record<string, unknown>;
+      json.sphairahedron = raw;
+      const hash =
+        "v1=" +
+        btoa(JSON.stringify(json))
+          .replace(/\+/g, "-")
+          .replace(/\//g, "_")
+          .replace(/=+$/, "");
+      const decoded = decodeScene(hash);
+      expect(decoded, JSON.stringify(raw)).not.toBeNull();
+      expect(decoded!.sphairahedron).toBeUndefined();
+    }
+  });
+
+  it("clears the block when restoring a legacy snapshot without one", () => {
+    const base = initialState(true);
+    const withBlock = fromSnapshot(
+      {
+        ...baseSnapshot(),
+        sphairahedron: { family: "tetra333" },
+      },
+      base,
+    );
+    expect(withBlock.sphairahedron).toEqual({ family: "tetra333" });
+    const cleared = fromSnapshot(baseSnapshot(), base);
+    expect(cleared.sphairahedron).toBeUndefined();
+    expect(encodeScene(toSnapshot(cleared))).toBe(encodeScene(baseSnapshot()));
+  });
+});
