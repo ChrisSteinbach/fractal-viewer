@@ -12,7 +12,8 @@ import {
   sierpinskiTetrahedron,
 } from "../fractal/presets";
 import { transformColors } from "../fractal/color";
-import { setSphereInversion } from "./state";
+import { setSphereInversion, setSphairahedron } from "./state";
+import { PRESET_SPHAIRAHEDRONS } from "../fractal/presets";
 import { PEACE_SIGN_SHAPE } from "../fractal/shapes";
 import { to255 } from "../fractal/vec";
 
@@ -957,5 +958,89 @@ describe("deriveLegend under a sphere-inversion block", () => {
     );
 
     expect(legendOf(state).kind).toBe("hidden");
+  });
+});
+
+describe("deriveLegend sphairahedron subject key", () => {
+  // The sphaira block is the THIRD subject (behind the sphere-inversion and
+  // Menger-carve ones): its Points cloud and Surface session both wear one
+  // hue per fold FACE, so the key is one unauthored chip per resolved face.
+  function chips(spec: LegendSpec): string[] {
+    return items(spec).flatMap((item) =>
+      item.kind === "swatch" ? [item.color] : [],
+    );
+  }
+  function captions(spec: LegendSpec): string[] {
+    return items(spec).flatMap((item) =>
+      item.kind === "label" ? [item.text] : [],
+    );
+  }
+  function faceColors(count: number): string[] {
+    return transformColors(count).map(
+      ([r, g, b]) => `rgb(${to255(r)}, ${to255(g)}, ${to255(b)})`,
+    );
+  }
+
+  it("keys one chip per fold face in 3D Points and Surface, not the placeholder transforms", () => {
+    // Quasi-Sphere: cube type 1 — three ball faces + three wall faces.
+    const base = setSphairahedron(
+      {
+        ...initialState(true),
+        colorMode: "transform",
+        transforms: sierpinskiTetrahedron(),
+      },
+      PRESET_SPHAIRAHEDRONS.sphairaQuasisphere!(),
+    );
+    const views: [string, AppState][] = [
+      ["points", base],
+      [
+        "surface",
+        {
+          ...base,
+          renderMode: "surface",
+          surface: { ...base.surface, colorSource: "transform" },
+        },
+      ],
+    ];
+    for (const [label, state] of views) {
+      const spec = legendOf(state);
+      expect(chips(spec), label).toEqual(faceColors(6));
+      expect(captions(spec), label).toEqual([]);
+    }
+  });
+
+  it("keys the 4D family's four faces in the 4D view too", () => {
+    // Hexagram Orb (4D): one ball + the 333 wall system's three hyperplanes.
+    const state = setSphairahedron(
+      { ...initialState(true), fourDColor: "transform" },
+      PRESET_SPHAIRAHEDRONS.sphairaOrb4!(),
+    );
+    const spec = legendOf(state, { nonFlat: true });
+    expect(chips(spec)).toEqual(faceColors(4));
+  });
+
+  it("hides the key for a refused block", () => {
+    const state = setSphairahedron(
+      { ...initialState(true), colorMode: "transform" },
+      { family: "cube1", za: 5, zb: 5 },
+    );
+    expect(legendOf(state).kind).toBe("hidden");
+  });
+
+  it("falls through to the earlier subject when a sphere-inversion block is co-present", () => {
+    const state = setSphereInversion(
+      setSphairahedron(
+        { ...initialState(true), colorMode: "transform" },
+        PRESET_SPHAIRAHEDRONS.sphairaQuasisphere!(),
+      ),
+      { arrangement: "oct6", depth: 2 },
+    );
+    const spec = legendOf(state);
+    expect(chips(spec)).toEqual(
+      transformColors(5).map(
+        ([r, g, b]) => `rgb(${to255(r)}, ${to255(g)}, ${to255(b)})`,
+      ),
+    );
+    expect(captions(spec)).toEqual(["seed", "gen 1", "gen 4"]);
   });
 });

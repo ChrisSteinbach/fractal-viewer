@@ -17,6 +17,7 @@ import {
   resolveSphereInversion,
   sphereInversionGenerationSlots,
 } from "../fractal/sphere-inversion";
+import { resolveSphairahedron } from "../fractal/sphairahedron";
 
 /**
  * The color legend as DATA: what the panel's unobtrusive key for "what do the
@@ -249,6 +250,28 @@ function transformSwatches(transforms: readonly Transform[]): LegendSpec {
 }
 
 /**
+ * The sphairahedron subject's "By Transform" strip: one chip per fold FACE,
+ * all unauthored — the same `transformColors` spread the Points walk
+ * (`cloud-worker-core.ts`'s generationCount slots) and the Surface session
+ * (`surface-slots.ts`'s per-face shade slots) both wear, so the key cannot
+ * drift from either. No captions: faces are not generations and carry no
+ * word-length story.
+ */
+function faceSwatches(count: number): LegendSpec {
+  const palette = transformColors(count);
+  const items: LegendSwatchItem[] = [];
+  const shown = Math.min(count, LEGEND_MAX_SWATCHES);
+  for (let i = 0; i < shown; i++) {
+    const [r, g, b] = palette[i];
+    items.push({ kind: "swatch", color: cssRgb(r, g, b) });
+  }
+  if (count > LEGEND_MAX_SWATCHES) {
+    items.push({ kind: "label", text: `+${count - LEGEND_MAX_SWATCHES}` });
+  }
+  return { kind: "swatches", items };
+}
+
+/**
  * The sphere-inversion "By Transform" strip: one chip per GENERATION (word
  * length), `sphereInversionGenerationSlots(D)` of them — the count and the
  * unauthored `transformColors` spread both the Points sample
@@ -280,8 +303,27 @@ function generationSwatches(count: number): LegendSpec {
  * a sphere-inversion block replaces them — the block's generations. A block
  * the resolver refuses hides the key: Points draws an empty cloud for it and
  * Surface refuses to enter, so there are no colours to explain.
+ *
+ * The sphairahedron block is the third subject, behind the sphere-inversion
+ * AND Menger-carve ones (the derivation's and the cloud dispatcher's own
+ * order — a co-present earlier block draws ITS sample and discloses the
+ * sphaira block dormant, so the key narrates the earlier subject or falls
+ * through to the transforms). When the sphaira block IS the subject, its
+ * Points cloud and its Surface session both wear one hue per fold FACE
+ * (`cloud-worker-core.ts`'s generationCount = the resolved face count,
+ * `surface-slots.ts`'s shade slots), so the key is one unauthored chip per
+ * face — the plain transform strip's rule, not the generation strip's
+ * captions ("seed"/"gen N" name word lengths, and a face has none).
  */
 function transformKey(state: AppState): LegendSpec {
+  if (state.sphereInversion === undefined && state.mengerTwist === undefined) {
+    if (state.sphairahedron !== undefined) {
+      const resolution = resolveSphairahedron(state.sphairahedron);
+      if (!resolution.ok) return { kind: "hidden" };
+      return faceSwatches(resolution.construction.foldFaces.length);
+    }
+    return transformSwatches(state.transforms);
+  }
   if (state.sphereInversion === undefined) {
     return transformSwatches(state.transforms);
   }
