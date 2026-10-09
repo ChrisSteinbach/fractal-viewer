@@ -23,6 +23,15 @@ const REQUEST = {
   },
 } as const;
 
+const WILDCARD_REQUEST = {
+  algorithmVersion: SEEDED_MUTATION_ALGORITHM_VERSION,
+  nodeSeed: 0x51a7cafe,
+  childOrdinal: 3,
+  profile: {
+    wildcard: true,
+  },
+} as const;
+
 function scheduledParent(): SceneSnapshot {
   const snapshot = toSnapshot(initialState(false));
   snapshot.transforms = sierpinskiTetrahedron();
@@ -256,5 +265,18 @@ describe("Evolution exact-document mutation candidates", () => {
     expect(owned.transforms[0].position[0]).not.toBe(99);
     expect(owned.surface.lightAzimuth).not.toBe(99);
     expect(Object.isFrozen(owned.surface)).toBe(true);
+  });
+});
+
+describe("Evolution mutation candidates and the sphairahedron block", () => {
+  it("preserves the block untouched, wildcard included (the mutation grid authors no moduli)", () => {
+    const parent = scheduledParent();
+    parent.sphairahedron = { family: "cube1", za: 0.5, zb: 1.0 };
+    const candidate = accepted(
+      createEvolutionMutationCandidate(parent, WILDCARD_REQUEST),
+    );
+    // The block rides the parent document whole — never jittered, never
+    // dropped, never re-fetched from the family defaults.
+    expect(candidate.snapshot.sphairahedron).toEqual(parent.sphairahedron);
   });
 });

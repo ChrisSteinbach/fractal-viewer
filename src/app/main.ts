@@ -2967,6 +2967,7 @@ async function main(): Promise<void> {
       finalTransform: system.finalTransform ?? undefined,
       shapeTrap: system.shapeTrap ?? undefined,
       tiling: system.tiling ?? undefined,
+      sphairahedron: system.sphairahedron ?? undefined,
     };
   }
 
@@ -2981,6 +2982,7 @@ async function main(): Promise<void> {
       shapeTrap: state.shapeTrap ?? null,
       condensationDepthBand: state.condensationDepthBand ?? null,
       tiling: state.tiling ?? null,
+      sphairahedron: state.sphairahedron ?? null,
     };
   }
 
@@ -3088,17 +3090,21 @@ async function main(): Promise<void> {
       // The Menger-carve block is the second subject block, after it (the
       // derivation's own order): Points draws menger-sample.ts's rejection
       // boundary sample of the carved surface. The sphairahedron block is
-      // the third — Points draws the inverse-iteration walk.
+      // the third, and it INTERPOLATES (the family's decided morph stance —
+      // the moduli lerp through buildSphairahedron): the request carries
+      // the SAMPLE's block when a morph is in flight, whose cross-family/
+      // one-sided pairs pop the target's block (lerpSphairahedron returns
+      // it by reference), so both stances read one path.
       sphereInversion: state.sphereInversion ?? null,
       mengerTwist: state.mengerTwist ?? null,
-      sphairahedron: state.sphairahedron ?? null,
+      sphairahedron: morph?.system.sphairahedron ?? state.sphairahedron ?? null,
       fourD: scenePartsAreNonFlat(
         transforms,
         finalTransform,
         symmetry,
         state.sphereInversion,
         state.mengerTwist,
-        state.sphairahedron,
+        morph?.system.sphairahedron ?? state.sphairahedron,
       ),
       colorMode: state.colorMode,
       colorGamma: state.colorGamma,
