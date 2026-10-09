@@ -419,7 +419,8 @@ algebra, none inherited):
 - **Per-transform finishes DORMANT** (disclosed): the replaced transform
   system's state, unread. Per-FACE finishes keyed on the last-move-face
   attribution are a plausible future design (the wire already indexes one
-  material slot per face) — proposed, not shipped, for the panel child.
+  material slot per face) — proposed, not shipped; the accept-or-refuse
+  decision is a standing follow-up.
 - **Optics/transport REFUSED**: the estimator is not a certified lower
   bound, the transport doc's forward-family reason.
 
@@ -446,5 +447,128 @@ packer's fixed-index lane read took the 4D rows' radius from the
 w-coordinate lane (every sphaira4 query +Infinity). The GLSL arm's
 resolved sources stay under the strip threshold (41.0 KB plain, 59.3 KB
 with floor+finish+lighting; emitted 14.0 KB with the floor, far under the
-Mesa cliff). Session-level settle costs are the routing child's browser
-gate to measure — the kernels' own agreement is this run's.
+Mesa cliff). Session-level settle costs are the family gate's to measure
+(both engines' figures below); the kernels' own agreement is this run's.
+
+## The wiring (panel, persistence, Points, and the mode doors)
+
+**Persistence.** `state.sphairahedron?: SphairahedronAuthored` — stored AS
+AUTHORED, encoded only when present, decoded verbatim; refused blocks
+survive decode→encode byte for byte (the sphere-inversion block's wire
+contract, one subject over), the resolver owns every absent default, and
+any key outside the authored form is REFUSED at resolve time, named — a
+newer document's unknown field cannot silently render as an older one.
+Evolution crossover rides the block whole from the primary parent, and the
+snapshot-validation tripwires extended with it.
+
+**The panel** (`sphairahedron-controls.ts`, the Scene/Look family): an
+enable checkbox, a family select (keeps unread moduli across switches and
+drops a 4D-only `cw` on the way back to 3D — the panel offers no row to
+clear it, so keeping it would strand the scene on a refusal), and the
+cube/prism modulus sliders SCOPED DYNAMICALLY to the family's valid
+region: each slider's span is the exact interval the resolver's region
+admits GIVEN the other modulus. The region's curves are conics in the free
+modulus (each appendix boundary curve is a quadratic or linear
+inequality), so the admitted side is an interval and closed forms apply —
+pinned against the resolver over grids. A refusal firing mid-drag is poor
+authoring, so the sliders never refuse: a value outside every span cannot
+be authored through them at all. The finite checkbox and Choose-sphere
+button author the inversion; the sphere is AUTHORED, never defaulted (a
+picker refusal returns the block unchanged and discloses beside the row).
+
+**The J picker's port** (`sphairahedron-authoring.ts`):
+`authoredPickerInversion` runs the study's DE-sampling deterministic
+chooser over the resolved construction — the reflected reference and its
+radius variants first, then a ladder stepped along the divide's complement
+normal and one over the divide centroid at the wall triangle's scale, each
+candidate judged by an 8000-sample census of the DE sign (capped folds
+excluded from every reading, fixed seed); the first candidate whose union
+is a bounded blob with ≥ 12 minority-side samples wins, and a zero-union
+sweep REFUSES. Type 9's collapsed reflected reference is rescued by the
+radius variants exactly as measured in the study (pinned in
+`sphairahedron-controls.test.ts`).
+
+**Points.** `sphairahedron-sample.ts` is the walk: all-face involutions
+with a 24-move deep-fold acceptance, warmup 100, a bounded deterministic
+budget; the color slot is the walk's LAST-APPLIED FACE (one slot per fold
+face = the resolved face count, the By-Transform channel; no parallel
+color mode). FINITE ONLY, measured: the walk lands on the zero set at
+mean |de| 1.2e-17 (f64, the study's points-sheet subject), and the
+INFINITE families keep NOTHING — the greedy fold depth stays 0–4 moves on
+either RNG stream, the sampler draws empty, and the panel discloses. That
+gap is a filed follow-up (the walk's greedy acceptance cannot reach an
+unbounded limit set). The By-Transform legend keys the same face slots —
+the legend's transform key resolves the block and keys face swatches (no
+captions; faces are not generations), hidden for a refused block, falling
+through when an earlier subject block is co-present, exactly the
+derivation's and the cloud dispatcher's own subject order.
+
+**Morph and mutation.** `lerpSphairahedron` (in `morph.ts`) lerps moduli
+and J within the same family and finiteness and pops the target's block
+otherwise; midpoints resolve through `buildSphairahedron` — the region is
+not convex (the type-1 cusp and its moduli swap are both in-region, their
+midpoint is not), so a midpoint gate would break a legal glide;
+out-of-region intermediates render coherently (measured: the past-cusp
+parameters fold with the same algorithm), and the cusp swap's midpoint is
+a pinned legal morph state. The cloud request reads the block off the
+morph SAMPLE. Mutation preserves the block untouched, wildcard included.
+
+**The mode doors.** Flame and Solid refuse the family at the mode doors —
+one funnel in `switchRenderMode` (tooltips, a mid-session leave-with-toast,
+the flame backdrop on its gradient placeholder). The Surface session
+door's branch re-derives the gate (a timeline or import restore can bypass
+the button), refuses Balloon at the door, holds the 4D slab at zero, and
+does NO camera refit — the explorer's Points cloud is an exact boundary
+sample of the same set (the sphere-inversion arm's rationale). The offline
+force-frame key carries the RESOLVED construction — dim, family, and the
+moduli with an absent-moduli sentinel `default` (the defaults-must-match
+rule: a key that defaulted differently would re-create the stale-frame
+bug from the other side).
+
+**The presets.** Six constructions on the `PRESET_SPHAIRAHEDRONS` side
+table (absent means clear), each sphere an EXPLICIT J pasted from one
+authoring-time run of the picker — a preset factory stays pure and instant
+(the census is not preset-time work), and the presets' test pins every
+paste equal to `authoredPickerInversion` on the block's infinite form, so
+it cannot drift from the deterministic chooser. The sheets' parameters:
+cube type 1 at the canonical interior (0.5, 1.0) — the quasisphere; type 4
+(0.4, 0.3) and type 9 (0.3, 0.2) crater fields (type 9's bare reflected
+reference collapses the image construction — the paste IS the rescue); the
+finite tetra orb, J = (0, 0.4, 0) r 0.6 (the limit set IS the image
+sphere, hexagram-patterned by the group); the prism terrain at mid relief
+z2 = 1.5; and the tetra4 lift one dimension up (J = (0, 3.5, 0, 0) r 7 —
+the census is a passthrough there, so the first ladder candidate wins;
+`cw: 0` authored because every field a kind reads is authored), the parity
+rule's cheap reachability proof the panel row needed. The past-cusp pair
+(0.65, 1.3) stays harness-only. Saved views ride the factory's framing
+(eye at 2× the compact side's 92nd-percentile reach) at the fov the judged
+sheets rendered: de-preview's default zoom 0.55 IS tan(half-fov) by its
+edge-ray construction, so the app's equivalent is fov = 2·atan(0.55) =
+57.6216°, one constant for the family (every eye sits at 2× reach, so the
+subtended fraction is dimensionless). The eligibility sweep derives every
+preset through the document gate and pins the kinds: 3D degrades (the
+route names a different object than the transforms draw); 4D degrades on
+compute and refuses without it.
+
+**The family gate** (`scripts/sphairahedron-family.verify.mjs`, on the
+escape-family gate's pattern): every preset loads FROM THE MENU and
+settles; the walk lands with the legend narrating the face slots (chips ==
+face count); the presets are pairwise distinct objects; the engine readout
+and the SESSION-LEVEL settle costs print per row — MEASURED on the AMD RX
+7900 XTX (`--display=:0`, quiet=YES): compute 4.3–5.6 s per preset, the
+GLSL fallback arm 2.4–2.9 s. A block edit restarts a live session and
+moves the object. Under `--query=surfacegl` every leg runs on the GL
+fallback arm and the 4D preset's dark Surface button is its verdict; an
+out-of-region document (the past-cusp pair) is carried verbatim through
+the link and refused at the Surface door with the failing balls named —
+the resolver's refusal is what fires, verified at the browser level.
+
+**The fallback arm's first render.** The gate's surfacegl leg caught the
+arm's own comment terminating it: the header's citation "the uMen*/uBulb*
+precedent" contained a literal `*/`, the block comment closed
+mid-sentence, and the rest compiled as GLSL source (`'uBulb' : syntax
+error`) — the arm had NEVER compiled, invisible to the compute path, the
+bench, and every presence-based fragment pin. Fixed by rewording the
+citation; the guard is a comment-BALANCE pin over seven resolved arms
+(GLSL has no `*/` token outside a comment, so openers must equal closers
+in every resolution — presence pins cannot see an early terminator).
