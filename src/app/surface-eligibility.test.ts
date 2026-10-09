@@ -44,6 +44,7 @@ import {
   sphereInversionComputeOnlySubject,
   sphereInversionRenderModeRefusal,
   sphereInversionSessionRefusal,
+  subjectRenderModeRefusal,
   surfaceEligibilityHasRoute,
 } from "./surface-eligibility";
 import type { SurfaceEligibilityDocument } from "./surface-eligibility";
@@ -2196,6 +2197,27 @@ describe("the sphere-inversion route", () => {
         "flame",
       ),
     ).not.toBeNull();
+  });
+
+  it("the composite reads the subject families in derivation order and covers Points null", () => {
+    // The one answer both consumers of the shared mode buttons read — the
+    // door's toast and the buttons' disable — so its ORDER is load-bearing:
+    // an SI block names the SI reason even when a sphaira block is
+    // co-present, and a lone sphaira block names the sphaira reason.
+    expect(
+      subjectRenderModeRefusal(
+        { arrangement: "oct6" },
+        { family: "cube1" },
+        "flame",
+      ),
+    ).toMatch(/sphere-inversion scene/);
+    expect(
+      subjectRenderModeRefusal(null, { family: "cube1" }, "flame"),
+    ).toMatch(/sphairahedron scene/);
+    expect(subjectRenderModeRefusal(null, null, "flame")).toBeNull();
+    expect(
+      subjectRenderModeRefusal({ arrangement: "oct6" }, null, "points"),
+    ).toBeNull();
   });
 
   it("admits Points and Surface for a document carrying a block", () => {

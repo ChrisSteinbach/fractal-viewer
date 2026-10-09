@@ -864,6 +864,29 @@ export function sphairahedronRenderModeRefusal(
   return "Flame and Solid are unavailable for a sphairahedron scene. Use Points or Surface.";
 }
 
+/**
+ * The subject families' Flame/Solid refusal COMPOSITE — the one answer both
+ * consumers of the shared mode buttons read: `switchRenderMode`'s door
+ * (the toast on a refused entry) and the buttons' disable state (the
+ * affordance that must agree with the door). The first subject family in
+ * the derivation's order that refuses the mode names the reason; the Menger
+ * carve refuses neither mode. Extracted when the sphaira family's setter
+ * and the sphere-inversion one were found fighting over the same buttons —
+ * each wrote its own note, the later sync's null re-enabled what the
+ * earlier refusal had disabled, and the door held while the affordance
+ * lied (the si gate's toast phase caught it).
+ */
+export function subjectRenderModeRefusal(
+  sphereInversion: SphereInversionAuthored | null | undefined,
+  sphairahedron: SphairahedronAuthored | null | undefined,
+  mode: RenderMode,
+): string | null {
+  return (
+    sphereInversionRenderModeRefusal(sphereInversion, mode) ??
+    sphairahedronRenderModeRefusal(sphairahedron, mode)
+  );
+}
+
 /** The one machine fact the document cannot answer (module doc and
  * {@link deriveSurfaceEligibility}). */
 export interface SurfaceEligibilityOptions {

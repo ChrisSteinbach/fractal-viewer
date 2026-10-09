@@ -144,6 +144,7 @@ import {
   sphereInversionSessionRefusal,
   sphairahedronRenderModeRefusal,
   sphairahedronSessionRefusal,
+  subjectRenderModeRefusal,
   surfaceDescentRecordCount,
   surfaceEligibilityHasRoute,
   type SurfaceEligibilityResult,
@@ -8302,11 +8303,13 @@ async function main(): Promise<void> {
     stopMotionExportIfRunning();
     // Every door into a renderer funnels through here (the mode control,
     // load hints, shows), so the subject blocks' Flame/Solid refusals live
-    // here once — the sphere-inversion family's, then the sphairahedron
-    // one's (the same door, one subject over).
-    const familyRefusal =
-      sphereInversionRenderModeRefusal(state.sphereInversion, target) ??
-      sphairahedronRenderModeRefusal(state.sphairahedron, target);
+    // here once — the composite (the sphere-inversion family's, then the
+    // sphairahedron one's; the same door, one subject over).
+    const familyRefusal = subjectRenderModeRefusal(
+      state.sphereInversion,
+      state.sphairahedron,
+      target,
+    );
     if (familyRefusal !== null) {
       ui.flashToast(familyRefusal);
       return;
@@ -8497,6 +8500,7 @@ async function main(): Promise<void> {
     syncSphereInversionSurfaceSession();
     syncSphairahedronModes();
     syncSphairahedronSurfaceSession();
+    syncSubjectModeButtons();
     if (!evolutionReconciliationPaused) reconcileEvolutionDocument();
   }
 
@@ -8540,9 +8544,9 @@ async function main(): Promise<void> {
   // draws the preserved transforms, so it rests on its gradient placeholder
   // while a block is present.
   function syncSphereInversionModes(): void {
-    ui.setSphereInversionModeRefusal(
-      sphereInversionRenderModeRefusal(state.sphereInversion, "flame"),
-    );
+    // The scene's PRESENCE only — the mode buttons' refusal state is the
+    // composite's (syncSubjectModeButtons), never a per-family write.
+    ui.setSphereInversionScenePresent(state.sphereInversion !== undefined);
     const refusal = sphereInversionRenderModeRefusal(
       state.sphereInversion,
       state.renderMode,
@@ -8564,16 +8568,14 @@ async function main(): Promise<void> {
   }
 
   // The sphairahedron mode refusal, one subject over — the sphere-inversion
-  // sync's shape: disable both mode buttons with the reason on their
-  // tooltips, and when a block ARRIVES under a live Flame/Solid session
-  // (undo, a loaded link) leave for Points once this refresh returns, with
-  // the reason as a toast. The generated flame backdrop draws the preserved
-  // transforms, so it rests on its gradient placeholder while a block is
-  // present.
+  // sync's shape: the scene's presence rides refresh (the balloon dormancy
+  // note's input; the mode buttons are the composite's), and when a block
+  // ARRIVES under a live Flame/Solid session (undo, a loaded link) leave
+  // for Points once this refresh returns, with the reason as a toast. The
+  // generated flame backdrop draws the preserved transforms, so it rests on
+  // its gradient placeholder while a block is present.
   function syncSphairahedronModes(): void {
-    ui.setSphairahedronModeRefusal(
-      sphairahedronRenderModeRefusal(state.sphairahedron, "flame"),
-    );
+    ui.setSphairahedronScenePresent(state.sphairahedron !== undefined);
     const refusal = sphairahedronRenderModeRefusal(
       state.sphairahedron,
       state.renderMode,
@@ -8587,6 +8589,23 @@ async function main(): Promise<void> {
         }
       });
     }
+  }
+
+  // The shared Flame/Solid buttons' refusal state: the subject families'
+  // COMPOSITE (the door's own chain, so the affordance cannot disagree
+  // with the door), written by ONE setter. Before this, the two families'
+  // setters each wrote the buttons and the last sync won — the sphaira
+  // family's null note re-enabled the buttons an SI refusal had just
+  // disabled (the si gate's toast phase caught it; the sphaira gate
+  // doesn't run that phase, which is how the regression shipped).
+  function syncSubjectModeButtons(): void {
+    ui.setSubjectModeRefusal(
+      subjectRenderModeRefusal(
+        state.sphereInversion,
+        state.sphairahedron,
+        "flame",
+      ),
+    );
   }
 
   /**

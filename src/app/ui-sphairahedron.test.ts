@@ -100,9 +100,12 @@ describe("Sphairahedron section", () => {
       /Flame and Solid cannot draw a sphairahedron scene/,
     );
     expect(el<HTMLInputElement>("sphairahedronZaSlider").disabled).toBe(true);
-    // The refusal rides the mode buttons: main.ts's syncSphairahedronModes
-    // pushes it (refreshUi), the setter is its whole DOM contract.
-    ui.setSphairahedronModeRefusal(
+    // The refusal rides the mode buttons through the COMPOSITE: main.ts's
+    // syncSubjectModeButtons pushes subjectRenderModeRefusal (refreshUi),
+    // and setSubjectModeRefusal is its whole DOM contract — the one writer
+    // for the shared buttons (the per-family setters used to fight over
+    // them; the si gate's toast phase caught the clobber).
+    ui.setSubjectModeRefusal(
       "Flame and Solid are unavailable for a sphairahedron scene. Use Points or Surface.",
     );
     expect(el<HTMLButtonElement>("modeFlameBtn").disabled).toBe(true);
@@ -111,6 +114,37 @@ describe("Sphairahedron section", () => {
     );
     expect(el<HTMLButtonElement>("modeSolidBtn").disabled).toBe(true);
     expect(el<HTMLButtonElement>("modeSurfaceBtn").disabled).toBe(false);
+    // And the composite's null restores the default affordance — which a
+    // LATER family's sync must not turn into a clobber of an earlier
+    // family's disable (refreshUi writes the composite once, after both
+    // families' presence syncs).
+    ui.setSubjectModeRefusal(null);
+    expect(el<HTMLButtonElement>("modeFlameBtn").disabled).toBe(false);
+    expect(el<HTMLButtonElement>("modeSolidBtn").disabled).toBe(false);
+  });
+
+  it("keeps the SI family's refusal on the shared buttons through a sphaira presence sync", () => {
+    // The regression the composite closed: the sphaira setter's null note
+    // used to re-enable the buttons an SI refusal had just disabled. In the
+    // fixed wiring the buttons are written ONCE per refresh from the
+    // composite, so the SI family's disable survives the sphaira sync —
+    // pinned here in the exact sequence refreshUi runs.
+    const ui = new Ui(document);
+    ui.setSphereInversionScenePresent(true);
+    ui.setSubjectModeRefusal(
+      "Flame and Solid are unavailable for a sphere-inversion scene. Use Points or Surface.",
+    );
+    expect(el<HTMLButtonElement>("modeFlameBtn").disabled).toBe(true);
+    ui.setSphairahedronScenePresent(false);
+    // The recomputed composite still sees the SI block: the disable holds.
+    ui.setSubjectModeRefusal(
+      "Flame and Solid are unavailable for a sphere-inversion scene. Use Points or Surface.",
+    );
+    expect(el<HTMLButtonElement>("modeFlameBtn").disabled).toBe(true);
+    expect(el<HTMLButtonElement>("modeFlameBtn").title).toMatch(
+      /sphere-inversion scene/,
+    );
+    expect(el<HTMLButtonElement>("modeSolidBtn").disabled).toBe(true);
   });
 
   it("disables the replaced transform sections beside the dormancy reason", () => {
