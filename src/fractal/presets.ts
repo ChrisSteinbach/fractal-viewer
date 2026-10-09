@@ -3050,6 +3050,20 @@ const PRESETS = {
   // (the next preset load clears it) leaves an ordinary, valid scene.
   mengerCarve: sierpinskiTetrahedron,
   mengerCarve4: sierpinskiTetrahedron,
+  // The sphairahedron family's showcases — the exact constructions the
+  // owner-approved sheets rendered (the SUBJECT is the
+  // PRESET_SPHAIRAHEDRONS block, which replaces the transform system as
+  // the scene's subject in Points and Surface; the sphere-inversion
+  // presets' placeholder shape: the Sierpinski tetrahedron, the smallest
+  // contracting system every gate admits, and FLAT, so the block's own
+  // family field alone decides the scene's dimension). Removing the block
+  // later (the next preset load clears it) leaves an ordinary, valid scene.
+  sphairaQuasisphere: sierpinskiTetrahedron,
+  sphairaCraters4: sierpinskiTetrahedron,
+  sphairaCraters9: sierpinskiTetrahedron,
+  sphairaOrb: sierpinskiTetrahedron,
+  sphairaTerrain: sierpinskiTetrahedron,
+  sphairaOrb4: sierpinskiTetrahedron,
 } as const satisfies Record<string, () => Transform[]>;
 
 export type Preset = keyof typeof PRESETS;
@@ -3119,6 +3133,17 @@ export const PRESET_RENDER_HINTS: Partial<
   // escape-family route.
   mengerCarve: "surface",
   mengerCarve4: "surface",
+  // The sphairahedron family's payoff is the Surface render of its limit
+  // set (the walker's inverse-iteration cloud under-delivers the same way
+  // every non-chaos-game subject does, and the marcher's per-face
+  // hexagram shading is the deliverable). sphairaOrb4 is compute-only,
+  // like every 4D route without a fragment arm.
+  sphairaQuasisphere: "surface",
+  sphairaCraters4: "surface",
+  sphairaCraters9: "surface",
+  sphairaOrb: "surface",
+  sphairaTerrain: "surface",
+  sphairaOrb4: "surface",
   // Flat 2D sheets in the XY plane: the flame's log-density
   // exposure is what turns an IIM Julia set's tip-heavy point density into
   // a legible curve instead of a faint, mostly-empty sparkle.
@@ -3761,16 +3786,94 @@ export const PRESET_MENGER_TWISTS: Partial<
  * transform-system subject a leftover block would replace. Factories, so
  * the document never aliases the table.
  *
- * DELIBERATELY EMPTY in this child: the presets are the NEXT child's work
- * (each preset's explicit J is pinned to the approved sheets — the
- * picker's J, NOT the bare reflected reference, which collapses type 9's
- * image construction). The table exists NOW so the preset handler's
- * absent-means-clear line can run: a sphairahedron scene must not survive
- * an unrelated preset load carrying its block into the arriving system.
+ * EVERY ENTRY AUTHORS ITS SPHERE EXPLICITLY — the vocabulary's own rule (a
+ * finite request without one refuses) — and the sphere is the DE-sampling
+ * picker's J (`sphairahedron-authoring.ts`), run ONCE during authoring and
+ * pasted, never called at preset time (its census is 8000 DE evaluations;
+ * a preset factory must be pure and instant). The paste is kept honest by
+ * `sphairahedron-presets.test.ts`, which asserts each entry equals
+ * `authoredPickerInversion`'s output for the same block. The moduli sit
+ * inside each family's valid region (the resolver refuses otherwise and the
+ * preset's Surface button would go ineligible); the study's past-cusp panel
+ * (0.65, 1.3) is deliberately OUT and stays harness-only.
+ *
+ * The 4D twin's census is a PASSTHROUGH by the vocabulary's own rule (the
+ * tetra lift's finite limit set is an analytic 3-sphere — no pocket reading
+ * to make), so the picker returns its first ladder candidate there: the
+ * construction's bounding ball grown half a radius along the divide's
+ * complement normal. `sphairaOrb4` pins that, disclosed in the family doc.
  */
 export const PRESET_SPHAIRAHEDRONS: Partial<
   Record<Preset, () => SphairahedronAuthored>
-> = {};
+> = {
+  // The canonical interior quasi-sphere: cube type 1 at (0.5, 1.0), the
+  // owner-approved sheet's reference parameters, with the picker's J.
+  sphairaQuasisphere: () => ({
+    family: "cube1",
+    za: 0.5,
+    zb: 1.0,
+    inversion: {
+      cx: 1.2916666666666667,
+      cy: 1.25,
+      cz: 0.36084391824351614,
+      r: 0.6666666666666666,
+    },
+  }),
+  // The type-4 crater field at (0.4, 0.3).
+  sphairaCraters4: () => ({
+    family: "cube4",
+    za: 0.4,
+    zb: 0.3,
+    inversion: {
+      cx: 0.4816176470588236,
+      cy: 0.5403361344537814,
+      cz: -0.5430852584656618,
+      r: 0.6249999999999999,
+    },
+  }),
+  // The type-9 crater field at (0.3, 0.2) — the parameters whose bare
+  // reflected reference COLLAPSES the image construction for every
+  // parameter tried (union <= 1 sample); only the picker's radius variants
+  // rescue it, which is why a preset carries the picker's J and not the
+  // reference's.
+  sphairaCraters9: () => ({
+    family: "cube9",
+    za: 0.3,
+    zb: 0.2,
+    inversion: {
+      cx: 0.20328638497652574,
+      cy: 0.6131455399061032,
+      cz: -0.3806572769953052,
+      r: 0.66,
+    },
+  }),
+  // The tetra anchor's finite form: the limit set is the image of the
+  // divide plane under J — an exact sphere (the study's measured anchor),
+  // hexagram-patterned by the group.
+  sphairaOrb: () => ({
+    family: "tetra333",
+    inversion: { cx: 0, cy: 0.4, cz: 0, r: 0.6 },
+  }),
+  // The prism terrain at the mid relief z2 = 1.5.
+  sphairaTerrain: () => ({
+    family: "prism2",
+    z2: 1.5,
+    inversion: {
+      cx: -0.348018261991747,
+      cy: 1.3605102081940204,
+      cz: 0.2506915642533902,
+      r: 1.387953339880059,
+    },
+  }),
+  // The 4D twin: the tetra lift, the same picker rule (its census is a
+  // passthrough, so the first ladder candidate — the bounding ball grown
+  // half a radius along the divide normal). `cw: 0` is authored because
+  // every field a kind reads is authored (the Menger table's rule).
+  sphairaOrb4: () => ({
+    family: "tetra4",
+    inversion: { cx: 0, cy: 3.5, cz: 0, cw: 0, r: 7 },
+  }),
+};
 
 /** A preset's authored camera: where the eye is, what it looks at, and the
  * vertical field of view in degrees (`orbit.ts`'s `CameraPose.fov`). */
@@ -3880,6 +3983,61 @@ export const PRESET_VIEWS: Partial<Record<Preset, PresetView>> = {
   mengerCarve4: {
     camera: { eye: [2.2, 1.6, 2.8], target: [0, 0, 0], fov: 55 },
     fourD: { rotation: [["xw", 0.45]], w0: 0 },
+  },
+  // The sphairahedron family's framings: the study's own measured rule
+  // (the compact side's 92nd-percentile radius × 1.18, camera outside at
+  // twice the reach, deterministic seed), computed once per construction
+  // during authoring off the same DE the presets carry. The saved camera
+  // matters more here than for most presets: a sphairahedron Surface
+  // session does NOT refit (the walker's Points cloud is an exact boundary
+  // sample), so the preset's camera is the session's.
+  sphairaQuasisphere: {
+    camera: {
+      eye: [1.8661, 1.4385, 1.1331],
+      target: [1.3115, 1.0449, 0.4891],
+      fov: 55,
+    },
+  },
+  sphairaCraters4: {
+    camera: {
+      eye: [1.572, 0.7286, 0.4153],
+      target: [0.5205, -0.0177, -0.8058],
+      fov: 55,
+    },
+  },
+  sphairaCraters9: {
+    camera: {
+      eye: [0.8809, 0.6006, 0.4525],
+      target: [0.157, 0.0869, -0.3881],
+      fov: 55,
+    },
+  },
+  sphairaOrb: {
+    camera: {
+      eye: [0.6035, 0.4005, 0.7099],
+      target: [-0.007, -0.0327, 0.001],
+      fov: 55,
+    },
+  },
+  sphairaTerrain: {
+    camera: {
+      eye: [6.1978, 3.6549, 4.3054],
+      target: [1.9692, 0.654, -0.6052],
+      fov: 55,
+    },
+  },
+  // The 4D twin's rotor: one xw turn off the centre slice (the house's
+  // single-plane pose), w0 = 0 holding the 3-sphere's bulk at full slice
+  // weight. The block's inversion sphere is large (r = 7), so the framing
+  // rides the study's percentile reach around the quasi-sphere's own
+  // centroid, not the construction's bounding ball.
+  sphairaOrb4: {
+    camera: {
+      eye: [10.2094, 3.0264, 12.2207],
+      target: [-0.4499, -4.5383, -0.1578],
+      fov: 55,
+    },
+    fourD: { rotation: [["xw", 0.3]], w0: 0 },
   },
   // Both glass constructions use the dielectric study's accepted camera:
   // eye/target in world units, tan(vertical FOV / 2) = 0.39.

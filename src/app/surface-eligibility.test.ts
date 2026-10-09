@@ -5,6 +5,7 @@ import {
   PRESET_NAMES,
   PRESET_RENDER_HINTS,
   PRESET_SCHEDULES,
+  PRESET_SPHAIRAHEDRONS,
   PRESET_SPHERE_INVERSIONS,
   PRESET_SYMMETRIES,
   PRESET_TILINGS,
@@ -303,6 +304,7 @@ function presetDocument(preset: Preset): SurfaceEligibilityDocument {
     tiling: PRESET_TILINGS[preset] ?? null,
     sphereInversion: PRESET_SPHERE_INVERSIONS[preset]?.() ?? null,
     finiteSolid: PRESET_FINITE_SOLIDS[preset] ?? null,
+    sphairahedron: PRESET_SPHAIRAHEDRONS[preset]?.() ?? null,
   };
 }
 
@@ -324,6 +326,13 @@ function derivePreset(
     document.condensationDepthBand,
     document.sphereInversion ?? null,
     document.finiteSolid ?? null,
+    // The subject-block tail, exactly the neutral derivation's own: the
+    // chain twist is deliberately unread (its escape-lift clause), the
+    // Menger carve and sphairahedron blocks ARE the document-level
+    // routing.
+    null,
+    document.mengerTwist ?? null,
+    document.sphairahedron ?? null,
   );
 }
 
@@ -342,6 +351,9 @@ function expectNeutralParity(
     document.condensationDepthBand,
     document.sphereInversion ?? null,
     document.finiteSolid ?? null,
+    null,
+    document.mengerTwist ?? null,
+    document.sphairahedron ?? null,
   );
   expect(neutral).toEqual(legacyComplete);
   return neutral;
@@ -455,6 +467,29 @@ describe("deriveSurfaceEligibility over the shipped presets", () => {
       expect(result.status, `${preset}: ${result.note}`).not.toBe("ineligible");
       expect(result.kind, preset).toBe(kind);
     }
+  });
+
+  it("routes the sphairahedron showcases to the family's kinds by their block's dimension, not the placeholder transforms'", () => {
+    for (const [preset, kind] of [
+      ["sphairaQuasisphere", "sphairahedron"],
+      ["sphairaCraters4", "sphairahedron"],
+      ["sphairaCraters9", "sphairahedron"],
+      ["sphairaOrb", "sphairahedron"],
+      ["sphairaTerrain", "sphairahedron"],
+      ["sphairaOrb4", "sphairahedron4"],
+    ] as const) {
+      const result = derivePreset(preset);
+      expect(result.status, `${preset}: ${result.note}`).not.toBe("ineligible");
+      expect(result.kind, preset).toBe(kind);
+    }
+    // The 4D twin is compute-only (no 4D fragment arm — the escape4
+    // verdict, three families running).
+    const withoutCompute = derivePreset("sphairaOrb4", {
+      computeAvailable: false,
+    });
+    expect(withoutCompute.status).toBe("ineligible");
+    expect(withoutCompute.kind).toBe(null);
+    expect(withoutCompute.note).toContain("WebGPU compute");
   });
 
   it("keeps a plain 4D IFS eligible without compute (the fragment fallback exists)", () => {
