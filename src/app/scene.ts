@@ -94,6 +94,7 @@ import {
   setBulbSystem as packBulbSystem,
   setMengerSystem as packMengerSystem,
   setSphereInversionSystem as packSphereInversionSystem,
+  setSphairahedronSystem as packSphairahedronSystem,
   sphereInversionHitFloor,
   setEscapeSystem as packEscapeSystem,
   setSurfaceShapeTrapUniforms as packSurfaceShapeTrapUniforms,
@@ -151,6 +152,7 @@ import { resolveShapeTrap } from "../fractal/shape-trap";
 import { FINITE_SOLID_MAX_LEVEL } from "../fractal/finite-solid";
 import type { BulbDE } from "../fractal/bulb-de";
 import type { MengerDE } from "../fractal/menger-de";
+import type { SphairahedronDE } from "../fractal/sphairahedron-de";
 import { BULB_ITERATIONS } from "../fractal/bulb-de";
 import type { SurfaceDE } from "../fractal/surface-de";
 import { condensationTraversalDepth } from "../fractal/condensation-de";
@@ -5071,6 +5073,51 @@ export class FractalScene {
   }
 
   /**
+   * The sphairahedron limit set's WebGL fallback (`?surfacegl`, no adapter,
+   * device loss) — {@link setSphereInversionSystem}'s twin two families
+   * over: the construction's tables and one colour per FOLD FACE, flipping
+   * the material onto the SURFACE_SPHAIRA arm. No grid (gridless by
+   * decision, like the compute route), no balloon (refused for this
+   * family), the construction's OWN framing ball as focus (it has a
+   * centre — the carve's origin box does not), lighting and floor ball —
+   * the compute entry's choices — and the fold cap as the preview clamp
+   * the kernels themselves never read.
+   */
+  setSphairahedronSystem(de: SphairahedronDE, colors: readonly Vec3[]): void {
+    this.renderNeeded = true;
+    this.dropSurfaceGridTexture();
+    // The trap is refused at the route; the installer forces the channel
+    // off — this line keeps the stored block from resurrecting it.
+    this.surfaceShapeTrap = null;
+    this.surfaceShapeTrapLive = false;
+    packSphairahedronSystem(this.surfaceMaterial, de, colors);
+    const R = de.boundingRadius;
+    this.surfaceLightingBoundRadius = R;
+    this.surfaceFocusBall = {
+      center: [...de.boundCenter.slice(0, 3)] as Vec3,
+      radius: R,
+    };
+    this.surfaceBalloonBall = null;
+    this.applySurfaceBalloon();
+    this.surfaceGroundBall = {
+      center: [...de.boundCenter.slice(0, 3)] as Vec3,
+      radius: R,
+    };
+    this.applySurfaceGroundPlane();
+    this.activeSurfaceMaterial = this.surfaceMaterial;
+    this.surfaceQuad.material = this.surfaceMaterial;
+    this.installSurfaceDepth(de.foldCap, null);
+    // Bounded work per eval (the pass-restart scan, the baked cap) — the
+    // plain anchor entry and the legacy strip probe are right here too.
+    this.surfacePreviewGovernor.reset();
+    this.surfacePreviewPxCostMs = null;
+    this.surfaceFullPxCostMs = null;
+    this.surfaceDeFoldClass = false;
+    this.stripEvidence.reset();
+    this.flushStripBacklog();
+  }
+
+  /**
    * Turn the surface balloon on or off at a normalized radius
    * `rMult` (multiples of the raw DE-ball radius — buildBalloon's rMult,
    * the same continuous parameter as the explorer echo's slider). Applies
@@ -5903,6 +5950,52 @@ export class FractalScene {
     this.surfaceComputeBalloon = false;
     this.surfaceGroundBall = groundPlane
       ? { center: [0, 0, 0], radius: ballRadius }
+      : null;
+    this.surfaceComputeGroundPlane = groundPlane;
+    this.installSurfaceDepth(depth, null);
+    this.surfacePreviewGovernor.reset();
+    this.surfacePreviewPxCostMs = null;
+    this.flushStripBacklog();
+  }
+
+  /**
+   * The SPHAIRAHEDRON compute entry, both dimensions — the Menger entry's
+   * sibling one family over (core:"sphaira"/"sphaira4"): the construction
+   * fixed at create, marched by the fold cores. One difference: the
+   * framing ball has a CENTRE (the construction's own `bound`), so the
+   * focus and floor balls anchor there — the carve's origin-centred box
+   * does not — and the preview depth clamp is the FOLD CAP (a numerical
+   * guard the kernels never read; the value only shapes the preview
+   * tier's depth rung). No balloon ever (the session door refuses it), no
+   * trap channel (the gate refuses it), and a plain governor reset. A 4D
+   * session's rotor/slice rides every frame spec exactly as the other 4D
+   * kinds' do, with the slab held at zero (the packer throws on any other
+   * value).
+   */
+  enterSurfaceComputeSphairahedronSession(
+    fourD: boolean,
+    groundPlane: boolean,
+    ballCenter: readonly number[],
+    ballRadius: number,
+    depth: number,
+  ): void {
+    this.renderNeeded = true;
+    this.surfaceComputeActive = true;
+    this.surfaceCompute4 = fourD;
+    this.surfaceComputeShapeTrap = false;
+    this.surfaceShapeTrapLive = false;
+    this.surfaceLightingBoundRadius = ballRadius;
+    this.surfaceFocusBall = {
+      center: [...ballCenter.slice(0, 3)] as Vec3,
+      radius: ballRadius,
+    };
+    this.surfaceBalloonBall = null;
+    this.surfaceComputeBalloon = false;
+    this.surfaceGroundBall = groundPlane
+      ? {
+          center: [...ballCenter.slice(0, 3)] as Vec3,
+          radius: ballRadius,
+        }
       : null;
     this.surfaceComputeGroundPlane = groundPlane;
     this.installSurfaceDepth(depth, null);

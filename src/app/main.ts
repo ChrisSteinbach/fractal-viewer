@@ -142,6 +142,8 @@ import {
   sphereInversionComputeOnlySubject,
   sphereInversionRenderModeRefusal,
   sphereInversionSessionRefusal,
+  sphairahedronRenderModeRefusal,
+  sphairahedronSessionRefusal,
   surfaceDescentRecordCount,
   surfaceEligibilityHasRoute,
   type SurfaceEligibilityResult,
@@ -151,12 +153,20 @@ import { resolveMengerTwist } from "../fractal/menger-twist";
 import { buildMengerDE } from "../fractal/menger-de";
 import { buildMengerDE4 } from "../fractal/menger-de-4d";
 import {
+  resolveSphairahedron,
+  type SphairahedronConstruction,
+} from "../fractal/sphairahedron";
+import { buildSphairahedronDE } from "../fractal/sphairahedron-de";
+import { buildSphairahedronDE4 } from "../fractal/sphairahedron-de-4d";
+import { sphairahedronFragmentArmLimit } from "./surface-material";
+import {
   classifyTransformEdit,
   planTransformEdit,
   type PointsTransformEditEffect,
   type TransformEditPlan,
   type TransformEditSnapshot,
 } from "./transform-edit-effects";
+import { authoredPickerInversion } from "./sphairahedron-authoring";
 import {
   DEFAULT_FLAME_BALLOON_ECHO_WEIGHT,
   DEFAULT_GAMMA_THRESHOLD,
@@ -206,6 +216,7 @@ import {
   PRESET_SPHERE_INVERSIONS,
   PRESET_FINITE_SOLIDS,
   PRESET_MENGER_TWISTS,
+  PRESET_SPHAIRAHEDRONS,
   PRESET_SYMMETRIES,
   PRESET_SURFACE_PALETTES,
   PRESET_SURFACE_ROOMS,
@@ -430,6 +441,7 @@ import {
   setSphereInversion,
   setFiniteSolid,
   setMengerTwist,
+  setSphairahedron,
   setTiling,
   setTransforms,
   setTransformEmitter,
@@ -3075,15 +3087,18 @@ async function main(): Promise<void> {
       // block pops at a replace-load's first push — and decides `fourD`.
       // The Menger-carve block is the second subject block, after it (the
       // derivation's own order): Points draws menger-sample.ts's rejection
-      // boundary sample of the carved surface.
+      // boundary sample of the carved surface. The sphairahedron block is
+      // the third — Points draws the inverse-iteration walk.
       sphereInversion: state.sphereInversion ?? null,
       mengerTwist: state.mengerTwist ?? null,
+      sphairahedron: state.sphairahedron ?? null,
       fourD: scenePartsAreNonFlat(
         transforms,
         finalTransform,
         symmetry,
         state.sphereInversion,
         state.mengerTwist,
+        state.sphairahedron,
       ),
       colorMode: state.colorMode,
       colorGamma: state.colorGamma,
@@ -4277,6 +4292,7 @@ async function main(): Promise<void> {
     if (
       state.background.mode !== "flame" ||
       state.sphereInversion ||
+      state.sphairahedron ||
       backgroundMorphHeld
     ) {
       return;
@@ -4305,6 +4321,7 @@ async function main(): Promise<void> {
     if (
       state.background.mode !== "flame" ||
       state.sphereInversion ||
+      state.sphairahedron ||
       backgroundMorphHeld ||
       morphTween.active
     ) {
@@ -5898,6 +5915,7 @@ async function main(): Promise<void> {
     const key = surfaceComputeForceFrameKey(
       spec,
       surfaceSessionSphereInversion,
+      surfaceSessionSphairahedron,
     );
     if (key === surfaceComputeForceKey) return;
     renderer.cancel();
@@ -6427,6 +6445,12 @@ async function main(): Promise<void> {
   // (syncSphereInversionSurfaceSession) and the force-frame key's input.
   let surfaceSessionSphereInversion: SphereInversionConstruction | null = null;
   let surfaceSessionSphereInversionBlock = "null";
+  // The sphairahedron construction the live Surface session froze at create
+  // (null for every other kind), and the authored block JSON the session
+  // was entered with — the construction-edit restart's comparison
+  // (syncSphairahedronSurfaceSession) and the force-frame key's input.
+  let surfaceSessionSphairahedron: SphairahedronConstruction | null = null;
+  let surfaceSessionSphairahedronBlock = "null";
 
   const surfaceSession = new RenderSession<never>({
     start: () => {
@@ -6436,6 +6460,10 @@ async function main(): Promise<void> {
       surfaceSessionSphereInversion = null;
       surfaceSessionSphereInversionBlock = JSON.stringify(
         state.sphereInversion ?? null,
+      );
+      surfaceSessionSphairahedron = null;
+      surfaceSessionSphairahedronBlock = JSON.stringify(
+        state.sphairahedron ?? null,
       );
       // Re-run the shared document gate at the session door. The button has
       // already used this answer, but timeline/isolation restores and
@@ -6455,6 +6483,7 @@ async function main(): Promise<void> {
         state.finiteSolid ?? null,
         state.chainTwist ?? null,
         state.mengerTwist ?? null,
+        state.sphairahedron ?? null,
       );
       if (sessionEligibility.status === "ineligible") {
         ui.flashToast(
@@ -6852,6 +6881,118 @@ async function main(): Promise<void> {
           }
           surfaceGrid.cancel();
         } else if (
+          sessionEligibility.kind === "sphairahedron" ||
+          sessionEligibility.kind === "sphairahedron4"
+        ) {
+          // A SPHAIRAHEDRON block: the scene's subject, replacing the
+          // transform system (whose kaleidoscope, final lens and finishes
+          // stay dormant — the gate's note says so). The door above has
+          // already refused a refused block, tiling and a shape trap, so
+          // this arm reads the gate's kind rather than re-classifying.
+          // Balloon is the session half of the refusal; the 4D slab is
+          // held at zero (the packer throws on any other value).
+          const balloonRefusal = sphairahedronSessionRefusal({
+            balloonEcho: state.balloonEcho,
+          });
+          if (balloonRefusal) {
+            ui.flashToast(balloonRefusal);
+            queueMicrotask(() => surfaceSession.exit());
+            return {
+              post: () => {},
+              terminate: () => teardownSurfaceCompute(),
+            };
+          }
+          const resolution = resolveSphairahedron(state.sphairahedron!);
+          if (!resolution.ok) {
+            throw new Error(resolution.reasons.join("; "));
+          }
+          const construction = resolution.construction;
+          const fourD = construction.dim === 4;
+          // CONSTRUCTION FIXED AT CREATE: the face/term/piece tables pack
+          // from this DE once, and a block edit restarts the session
+          // (syncSphairahedronSurfaceSession). Built per dimension so the
+          // compute target's kind/DE pairing narrows.
+          const de3 = fourD ? null : buildSphairahedronDE(construction);
+          const de4 = fourD ? buildSphairahedronDE4(construction) : null;
+          const de = (de3 ?? de4)!;
+          surfaceSessionSphairahedron = construction;
+          surfaceSessionIs4D = fourD;
+          // The transforms are dormant (the gate's note), so the session is
+          // classic: null — no finish/pattern/optics slot is derived from a
+          // system the render does not draw.
+          sessionMaterials = null;
+          ui.setSurfaceSessionKind("sphairahedron");
+          if (fourD) {
+            // Thickness is held at zero (SPHAIRAHEDRON_SLAB_REFUSAL,
+            // disclosed on the row); the packer throws on any other value.
+            surface4SlabAvailable = false;
+            ui.setFourDSlabAvailable(false, "sphairahedron");
+          }
+          const R = de.boundingRadius;
+          const faceColors = transformColors(de.faceCount);
+          if (surfaceComputeAvailable()) {
+            computeTarget =
+              de3 !== null
+                ? {
+                    kind: "sphairahedron",
+                    de: de3,
+                    groundPlane: state.groundPlane,
+                  }
+                : {
+                    kind: "sphairahedron4",
+                    de: de4!,
+                    groundPlane: state.groundPlane,
+                  };
+            scene.enterSurfaceComputeSphairahedronSession(
+              fourD,
+              state.groundPlane,
+              de.boundCenter,
+              R,
+              de.foldCap,
+            );
+            if (fourD) {
+              scene.setSurface4View(fourDView.matrix(), liveSliceCenter(), 0);
+            }
+          } else {
+            // ?surfacegl, no adapter or a device loss in 3D: the
+            // SURFACE_SPHAIRA fragment arm, the WGSL core's GLSL twin over
+            // the same table wire and per-face slots. The arm's caps cover
+            // every shipped construction (the per-construction limit asked,
+            // never assumed) — past them the construction is compute-only,
+            // and mid-session loss exits with the gate's toast.
+            if (fourD) {
+              throw new Error(
+                "sphairahedron fragment arm is 3D only; 4D is compute-only",
+              );
+            }
+            const armLimit = sphairahedronFragmentArmLimit({
+              faceCount: de.faceCount,
+              termCount: de.termCount,
+              pieceCount: de.pieceCount,
+            });
+            if (armLimit !== null) {
+              ui.flashToast(
+                `Surface render stopped: this sphairahedron (past the ${armLimit} cap) needs WebGPU compute, which just became unavailable.`,
+              );
+              queueMicrotask(() => surfaceSession.exit());
+            } else {
+              surfaceWebglDetailToken = surfaceWebglDetail({
+                computeShaped: true,
+                supported: SurfaceComputeRenderer.supported(),
+                block: surfaceComputeBlock,
+              });
+              scene.setSphairahedronSystem(
+                de3 ?? buildSphairahedronDE(construction),
+                faceColors,
+              );
+            }
+          }
+          // No camera refit: the explorer's Points cloud is an exact
+          // boundary sample of this same set (the inverse-iteration walk),
+          // so the explorer's framing already fits the object — the
+          // sphere-inversion arm's rationale, one family over.
+          surfaceGrid.cancel();
+        } else if (
           sessionEligibility.kind === "finiteSolid" ||
           sessionEligibility.kind === "finiteSolid4"
         ) {
@@ -7035,6 +7176,7 @@ async function main(): Promise<void> {
             state.symmetry,
             state.sphereInversion,
             state.mengerTwist,
+            state.sphairahedron,
           ) ||
           // The chain twist's w extension makes the SET 4D even on a
           // flat document — the 4D chain's SO(4) rows are the only
@@ -8322,6 +8464,8 @@ async function main(): Promise<void> {
     refreshSurfaceEligibility();
     syncSphereInversionModes();
     syncSphereInversionSurfaceSession();
+    syncSphairahedronModes();
+    syncSphairahedronSurfaceSession();
     if (!evolutionReconciliationPaused) reconcileEvolutionDocument();
   }
 
@@ -8337,6 +8481,20 @@ async function main(): Promise<void> {
     if (
       JSON.stringify(state.sphereInversion ?? null) ===
       surfaceSessionSphereInversionBlock
+    ) {
+      return;
+    }
+    controlEffects.restartSurfaceRender();
+  }
+
+  // The sphairahedron restart, one subject over — the same construction-
+  // fixed-at-create rule (the kernel tables pack from the DE once), keyed
+  // on the authored JSON the session entered with.
+  function syncSphairahedronSurfaceSession(): void {
+    if (state.renderMode !== "surface") return;
+    if (
+      JSON.stringify(state.sphairahedron ?? null) ===
+      surfaceSessionSphairahedronBlock
     ) {
       return;
     }
@@ -8374,6 +8532,32 @@ async function main(): Promise<void> {
     }
   }
 
+  // The sphairahedron mode refusal, one subject over — the sphere-inversion
+  // sync's shape: disable both mode buttons with the reason on their
+  // tooltips, and when a block ARRIVES under a live Flame/Solid session
+  // (undo, a loaded link) leave for Points once this refresh returns, with
+  // the reason as a toast. The generated flame backdrop draws the preserved
+  // transforms, so it rests on its gradient placeholder while a block is
+  // present.
+  function syncSphairahedronModes(): void {
+    ui.setSphairahedronModeRefusal(
+      sphairahedronRenderModeRefusal(state.sphairahedron, "flame"),
+    );
+    const refusal = sphairahedronRenderModeRefusal(
+      state.sphairahedron,
+      state.renderMode,
+    );
+    if (refusal !== null) {
+      queueMicrotask(() => {
+        const mode = state.renderMode;
+        if (sphairahedronRenderModeRefusal(state.sphairahedron, mode)) {
+          switchRenderMode("points");
+          ui.flashToast(refusal);
+        }
+      });
+    }
+  }
+
   /**
    * Keep the Surface mode button's gate tracking the DOCUMENT. The
    * classification itself — five analyzers, the tracers' uniform caps, and
@@ -8404,6 +8588,7 @@ async function main(): Promise<void> {
       state.finiteSolid ?? null,
       state.chainTwist ?? null,
       state.mengerTwist ?? null,
+      state.sphairahedron ?? null,
     );
   }
 
@@ -9695,6 +9880,10 @@ async function main(): Promise<void> {
         // A rolled system is the new subject; a leftover sphere-inversion
         // block would replace it in Surface. random-system never rolls one.
         state = setSphereInversion(state, null);
+        // The sphairahedron block, same subject-replacement reason: a
+        // rolled system is the new subject, and random-system never rolls
+        // a block whose region it cannot defend.
+        state = setSphairahedron(state, null);
       },
       "always",
       morphMs,
@@ -11011,6 +11200,7 @@ async function main(): Promise<void> {
     // changed), and the transform editor's dormant-material notes.
     syncSphereInversion: () => refreshUi(),
     syncMengerTwist: () => refreshUi(),
+    syncSphairahedron: () => refreshUi(),
     applyBackground: applyBackgroundNow,
     trackAutoBackground,
     cancelBalloonSweep: () => {
@@ -11376,6 +11566,13 @@ async function main(): Promise<void> {
         // one, because it names a transform-system subject a leftover
         // block would replace.
         state = setMengerTwist(state, PRESET_MENGER_TWISTS[preset]?.() ?? null);
+        // The sphairahedron block a preset IS (PRESET_SPHAIRAHEDRONS) — the
+        // menger table's absent-means-clear rule: a leftover block would
+        // replace the arriving system's subject.
+        state = setSphairahedron(
+          state,
+          PRESET_SPHAIRAHEDRONS[preset]?.() ?? null,
+        );
         // The flame palette a preset was composed against
         // (PRESET_PALETTES) — set, never cleared: absent means "the user's
         // palette is fine", which is every preset that predates the table.
@@ -11440,6 +11637,28 @@ async function main(): Promise<void> {
     },
     onScheduleSnapshot: () => {
       installSchedule(state.transforms);
+    },
+    // The sphairahedron J picker's authoring action: resolve the block,
+    // pick the deterministic inversion sphere, author it — an ordinary
+    // undoable document edit ("always": the construction's framing ball
+    // moves with J, so the camera should re-fit; the Surface restart rides
+    // the block-JSON comparison). A picker refusal is a toast, nothing
+    // authored.
+    onSphairahedronPick: () => {
+      if (!state.sphairahedron) return;
+      const inversion = authoredPickerInversion(state.sphairahedron);
+      if (!inversion) {
+        ui.flashToast(
+          "No bounded inversion sphere found for this construction — the sphere stays as authored.",
+        );
+        return;
+      }
+      applyEdit(() => {
+        state = setSphairahedron(state, {
+          ...state.sphairahedron!,
+          inversion,
+        });
+      }, "always");
     },
     onScheduleDepth: (depth, phase) => {
       if (phase === "commit") {

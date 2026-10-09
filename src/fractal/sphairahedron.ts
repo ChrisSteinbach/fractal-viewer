@@ -609,8 +609,13 @@ function solveBalls(
 
 // -------------------------------------------------------------- inversion
 
-/** The inversion `I(x) = c + R²(x−c)/|x−c|²` in the sphere `j`. */
-function invertPoint(j: SphairahedronSphere, p: readonly number[]): number[] {
+/** The inversion `I(x) = c + R²(x−c)/|x−c|²` in the sphere `j` — the face
+ * group's generator, shared with the Points sampler's inverse-iteration
+ * walk (`sphairahedron-sample.ts`) so the walk cannot re-derive it. */
+export function invertPoint(
+  j: SphairahedronSphere,
+  p: readonly number[],
+): number[] {
   const d2 = dist(p, j.c) ** 2;
   const k = (j.r * j.r) / d2;
   return j.c.map((v, i) => v + k * (p[i] - v));

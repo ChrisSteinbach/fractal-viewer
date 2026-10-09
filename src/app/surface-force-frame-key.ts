@@ -1,6 +1,7 @@
 import { DEFAULT_BACKGROUND_SHAPE_CENTER } from "../fractal/background-shape";
 import { resolveShapeTrap } from "../fractal/shape-trap";
 import type { SphereInversionConstruction } from "../fractal/sphere-inversion";
+import type { SphairahedronConstruction } from "../fractal/sphairahedron";
 import { surfaceLightingLanes } from "../fractal/surface-lighting";
 import type { SurfaceComputeFrameSpec } from "./surface-compute";
 
@@ -32,9 +33,10 @@ import type { SurfaceComputeFrameSpec } from "./surface-compute";
  * ordered element list (splitting the result on `"|"` always recovers exactly
  * the list that was joined; there is no second way to have produced the same
  * string). Second, every OPTIONAL block (`view4`, `balloon`, `groundPlane`,
- * `bgShape`, and now `shapeTrap` — whose one JSON element is pipe-free
- * because the spec vocabulary's strings are fixed kind/combine literals) is
- * fixed-length when present and zero-length when
+ * `bgShape`, `shapeTrap`, `sphereInversion`, `sphairahedron` — whose one
+ * word-valued elements are fixed lowercase literals: the family ids and the
+ * absent-moduli sentinel "default", none of which is another block's tag)
+ * is fixed-length when present and zero-length when
  * absent, and every one of them but `view4` (whose contents are always
  * numeric, so it can never start with a word) opens with a tag literal that
  * no numeric field, and no other block's tag, can ever equal. So no
@@ -48,11 +50,14 @@ import type { SurfaceComputeFrameSpec } from "./surface-compute";
  * same injectivity, one indirection later. An optics block's per-slot
  * element is either the tag literal "none" or a comma-tuple of numbers, so
  * no element can masquerade as the next block's tag. Pattern's calibration
- * is a separately tagged fixed quartet inside the pattern-only region.
+ * is a separately tagged fixed quartet inside the pattern-only region. The
+ * `sphereInversion` and `sphairahedron` blocks are self-delimiting the same
+ * way (tag, then COUNTS before their tuples).
  */
 export function surfaceComputeForceFrameKey(
   spec: SurfaceComputeFrameSpec,
   sphereInversion: SphereInversionConstruction | null = null,
+  sphairahedron: SphairahedronConstruction | null = null,
 ): string {
   return [
     Array.from(spec.invProjView).join(","),
@@ -317,6 +322,55 @@ export function surfaceComputeForceFrameKey(
           ...sphereInversion.seed.map((m) =>
             [...m.center, m.radius, m.complement ? 1 : 0].join(","),
           ),
+        ]
+      : []),
+    // The sphairahedron construction: the sphere-inversion block's own
+    // precedent one family over — session-frozen renderer state (the
+    // face/term/piece tables pack from it once, at create), passed by the
+    // caller rather than riding the frame spec. A construction edit
+    // restarts the session, and the restart already clears the memo; this
+    // block makes the key say so on its own. Keyed on the RESOLVED
+    // construction, so an absent-default modulus and its explicit default
+    // key identically, exactly as the packer sees them. Tag, dimension,
+    // family, then the moduli the family reads, then the face/term
+    // COUNTS before their comma-tuples: self-delimiting like the
+    // sphere-inversion block, and every element is numeric after the tag,
+    // so no element can read as a tag.
+    ...(sphairahedron
+      ? [
+          "sphairahedron",
+          sphairahedron.dim,
+          sphairahedron.family,
+          ...(["za", "zb", "z2"] as const).map((k) =>
+            sphairahedron.moduli[k] === undefined
+              ? "default"
+              : String(sphairahedron.moduli[k]),
+          ),
+          // The finite/infinite split and the sphere itself: the packer's
+          // own inputs (the tables carry the IMAGE faces).
+          sphairahedron.finite ? 1 : 0,
+          ...(sphairahedron.inversion
+            ? [...sphairahedron.inversion.c, sphairahedron.inversion.r].map(
+                (v) => String(v),
+              )
+            : []),
+          // The fold faces at the packer's own resolution — the table
+          // wire's rows (kind + the dim-generic data lanes).
+          sphairahedron.foldFaces.length,
+          ...sphairahedron.foldFaces.map(({ face }) =>
+            face.kind === "sphere"
+              ? ["sphere", ...face.sphere.c, face.sphere.r].join(",")
+              : ["plane", ...face.plane.n, face.plane.h].join(","),
+          ),
+          sphairahedron.pieces.length,
+          ...sphairahedron.pieces.flatMap((piece) => [
+            piece.terms.length,
+            ...piece.terms.map((term) =>
+              term.kind === "sphere"
+                ? ["sphere", ...term.c, term.r, term.inside ? 1 : 0].join(",")
+                : ["plane", ...term.n, term.h, term.above ? 1 : 0].join(","),
+            ),
+          ]),
         ]
       : []),
   ].join("|");

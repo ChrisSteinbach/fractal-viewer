@@ -90,6 +90,7 @@ function mockEffects(shared = false): ControlEffects {
     restartSurfaceRender: vi.fn(),
     syncSphereInversion: vi.fn(),
     syncMengerTwist: vi.fn(),
+    syncSphairahedron: vi.fn(),
     applyBackground: vi.fn(),
     trackAutoBackground: vi.fn(),
     cancelBalloonSweep: vi.fn(),
@@ -2325,6 +2326,17 @@ describe("commit", () => {
       "sphereInversionCutRadiusSlider",
       "sphereInversionCutOffsetSlider",
       "sphereInversionDepthSlider",
+      // The sphairahedron family's sliders share the timing: a live Surface
+      // session restarts on release (the construction is fixed at create),
+      // never per tick.
+      "sphairahedronZaSlider",
+      "sphairahedronZbSlider",
+      "sphairahedronZ2Slider",
+      "sphairahedronCxSlider",
+      "sphairahedronCySlider",
+      "sphairahedronCzSlider",
+      "sphairahedronCwSlider",
+      "sphairahedronRSlider",
     ]);
   });
 });

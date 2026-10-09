@@ -1692,6 +1692,194 @@
           <p id="mengerTwistNote" class="flame-note hidden"></p>
         </details>
 
+        <!-- Sphairahedron is the third subject block (Sphere inversion, Menger
+             carve, Sphairahedron): the panel edits the authored form and the
+             resolver refuses rather than clamps. The moduli sliders are
+             scoped to the family's valid region so every reachable position
+             resolves; a value outside a span or refused is kept and
+             disclosed in the note beside its row. -->
+        <details
+          class="panel-section"
+          id="sphairahedronSection"
+          name="panel-section"
+        >
+          <summary>Sphairahedron</summary>
+          <p id="sphairahedronTimingHint" class="flame-hint">
+            Points redraws (following Auto-update); Surface restarts on release.
+          </p>
+          <details class="panel-explainer">
+            <summary>What the sphairahedron does</summary>
+            <p>
+              A prism of mirrors and spheres, tiled by inverting in its faces;
+              the drawn set is the limit of that tiling. A finite inversion
+              sphere closes it into a quasi-sphere; without one the set runs off
+              unbounded (a terrain).
+            </p>
+          </details>
+          <label class="checkbox-label">
+            <input
+              type="checkbox"
+              id="sphairahedronEnabledCheckbox"
+              aria-describedby="sphairahedronTimingHint sphairahedronNote"
+            />
+            Sphairahedron (replaces the transforms)
+          </label>
+          <div id="sphairahedronControls" class="hidden">
+            <label class="select-label">
+              Family
+              <select
+                id="sphairahedronFamily"
+                aria-describedby="sphairahedronTimingHint sphairahedronFamilyNote"
+              >
+                <optgroup label="3D">
+                  <option value="tetra333">Tetrahedron · 333</option>
+                  <option value="prism2">Prism · terrain</option>
+                  <option value="cube1">Cube · type 1</option>
+                  <option value="cube4">Cube · type 4</option>
+                  <option value="cube9">Cube · type 9</option>
+                </optgroup>
+                <optgroup label="4D">
+                  <option value="tetra4">Tetrahedron · 4D</option>
+                </optgroup>
+                <option value="__authored" hidden>Authored family</option>
+              </select>
+            </label>
+            <p id="sphairahedronFamilyNote" class="flame-note hidden"></p>
+            <div id="sphairahedronZaRow">
+              <label class="select-label">
+                Height zA: <span id="sphairahedronZaLabel">0.500</span>
+                <input
+                  type="range"
+                  id="sphairahedronZaSlider"
+                  min="0"
+                  max="0.75"
+                  step="0.005"
+                  value="0.5"
+                  aria-describedby="sphairahedronTimingHint sphairahedronZaNote"
+                />
+              </label>
+              <p id="sphairahedronZaNote" class="flame-note hidden"></p>
+            </div>
+            <div id="sphairahedronZbRow">
+              <label class="select-label">
+                Height zB: <span id="sphairahedronZbLabel">1.000</span>
+                <input
+                  type="range"
+                  id="sphairahedronZbSlider"
+                  min="0"
+                  max="1.5"
+                  step="0.005"
+                  value="1"
+                  aria-describedby="sphairahedronTimingHint sphairahedronZbNote"
+                />
+              </label>
+              <p id="sphairahedronZbNote" class="flame-note hidden"></p>
+            </div>
+            <div id="sphairahedronZ2Row" class="hidden">
+              <label class="select-label">
+                Ball height z2: <span id="sphairahedronZ2Label">1.500</span>
+                <input
+                  type="range"
+                  id="sphairahedronZ2Slider"
+                  min="-2.449489742783178"
+                  max="2.449489742783178"
+                  step="0.01"
+                  value="1.5"
+                  aria-describedby="sphairahedronTimingHint sphairahedronZ2Note"
+                />
+              </label>
+              <p id="sphairahedronZ2Note" class="flame-note hidden"></p>
+            </div>
+            <label class="checkbox-label">
+              <input
+                type="checkbox"
+                id="sphairahedronFiniteCheckbox"
+                aria-describedby="sphairahedronTimingHint sphairahedronFiniteNote"
+              />
+              Finite (close the set with an inversion sphere)
+            </label>
+            <p id="sphairahedronFiniteNote" class="flame-note hidden"></p>
+            <div id="sphairahedronInversionRows" class="hidden">
+              <button
+                type="button"
+                id="sphairahedronPickButton"
+                class="panel-button"
+              >
+                Choose sphere
+              </button>
+              <p id="sphairahedronPickNote" class="flame-note hidden"></p>
+              <label class="select-label">
+                Sphere centre x: <span id="sphairahedronCxLabel">0.000</span>
+                <input
+                  type="range"
+                  id="sphairahedronCxSlider"
+                  min="-2"
+                  max="2"
+                  step="0.01"
+                  value="0"
+                  aria-describedby="sphairahedronTimingHint sphairahedronCxNote"
+                />
+              </label>
+              <p id="sphairahedronCxNote" class="flame-note hidden"></p>
+              <label class="select-label">
+                Sphere centre y: <span id="sphairahedronCyLabel">0.000</span>
+                <input
+                  type="range"
+                  id="sphairahedronCySlider"
+                  min="-2"
+                  max="2"
+                  step="0.01"
+                  value="0"
+                  aria-describedby="sphairahedronTimingHint sphairahedronCyNote"
+                />
+              </label>
+              <p id="sphairahedronCyNote" class="flame-note hidden"></p>
+              <label class="select-label">
+                Sphere centre z: <span id="sphairahedronCzLabel">0.000</span>
+                <input
+                  type="range"
+                  id="sphairahedronCzSlider"
+                  min="-2"
+                  max="2"
+                  step="0.01"
+                  value="0"
+                  aria-describedby="sphairahedronTimingHint sphairahedronCzNote"
+                />
+              </label>
+              <p id="sphairahedronCzNote" class="flame-note hidden"></p>
+              <label class="select-label">
+                Sphere radius: <span id="sphairahedronRLabel">1.000</span>
+                <input
+                  type="range"
+                  id="sphairahedronRSlider"
+                  min="0.2"
+                  max="3"
+                  step="0.01"
+                  value="1"
+                  aria-describedby="sphairahedronTimingHint sphairahedronRNote"
+                />
+              </label>
+              <p id="sphairahedronRNote" class="flame-note hidden"></p>
+            </div>
+            <div id="sphairahedronCwRow" class="hidden">
+              <label class="select-label">
+                Sphere centre w: <span id="sphairahedronCwLabel">0.000</span>
+                <input
+                  type="range"
+                  id="sphairahedronCwSlider"
+                  min="-1"
+                  max="1"
+                  step="0.01"
+                  value="0"
+                  aria-describedby="sphairahedronTimingHint sphairahedronCwNote"
+                />
+              </label>
+              <p id="sphairahedronCwNote" class="flame-note hidden"></p>
+            </div>
+          </div>
+          <p id="sphairahedronNote" class="flame-note hidden"></p>
+        </details>
+
         <!-- Space tiling is authored Scene / Look geometry: the kind chooser
              picks the finite reflection group or the mirrored lattice; the
              independent ShapeSpec clip can only trim content inside the
