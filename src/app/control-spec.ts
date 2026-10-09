@@ -347,6 +347,11 @@ export interface ControlEffects {
   /** `regenerate()` gated on `state.autoUpdate` — for controls that reshape
    * the live point cloud, not just a render-only setting. */
   regenerateIfAutoUpdate(): void;
+  /** The subject-block edition of the above: the landing also arms the
+   * camera fit (the object is replaced wholesale — the preset-load rule).
+   * Slider ticks keep the plain form; the fit would fight the authoring
+   * hand. */
+  regenerateSubjectFitIfAutoUpdate(): void;
   /** Resume a document-true Points request when Auto-update is switched back
    * on after manual edits. Unlike `regenerateIfAutoUpdate`, this preference
    * edit does not itself make a settled cloud stale. */
@@ -1171,7 +1176,12 @@ function mengerTwistEffect(_s: AppState, fx: ControlEffects): void {
  * the mode refusals and the dormancy pass.
  */
 const sphairahedronEffect: ControlEffect = (_s, fx) => {
-  fx.regenerateIfAutoUpdate();
+  // The discrete edits (enable, family, finite stance) replace the subject
+  // wholesale — the landing fit frames the new object (the enable gesture
+  // seeds a FINITE cube1 whose sphere sits far from the placeholder
+  // transforms' cloud; without the fit both Points and Surface inherit a
+  // camera that frames nothing).
+  fx.regenerateSubjectFitIfAutoUpdate();
   fx.refreshSurfaceEligibility();
   fx.syncSphairahedron();
 };

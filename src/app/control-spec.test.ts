@@ -38,7 +38,7 @@ import {
 } from "./constants";
 import { pentatope } from "../fractal/presets";
 import { BUNDLED_SHAPES, BUNDLED_TRAP_SHAPES } from "./bundled-shapes";
-import { setFiniteSolid, setSphereInversion } from "./state";
+import { setFiniteSolid, setSphairahedron, setSphereInversion } from "./state";
 import { PRESET_SPHERE_INVERSIONS } from "../fractal/presets";
 
 /** Look up a table entry by its index.html element id. */
@@ -76,6 +76,7 @@ function mockEffects(shared = false): ControlEffects {
     activeRendererAcceptsSymmetryEdit: vi.fn(() => true),
     presentSharedFlameFrame: vi.fn(() => shared),
     regenerateIfAutoUpdate: vi.fn(),
+    regenerateSubjectFitIfAutoUpdate: vi.fn(),
     resumePointAutoUpdate: vi.fn(),
     syncPointBalloonEcho: vi.fn(),
     refreshSurfaceEligibility: vi.fn(),
@@ -2533,6 +2534,45 @@ describe("sphere-inversion controls", () => {
     const release = mockEffects();
     slider.commit?.(state, release, state);
     expect(release.syncSphereInversion).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("sphairahedron controls: the discrete edits arm the subject fit", () => {
+  // The discrete edits (enable, family, finite stance) replace the cloud's
+  // subject wholesale — the landing fit frames the new object, the
+  // preset-load rule one edit class over. A slider tick deforms the object
+  // in place and keeps the plain form: the fit would fight the authoring
+  // hand.
+  it("the enable, family and finite edits ask for the subject-fit regeneration", () => {
+    const withBlock = setSphairahedron(initialState(true), {
+      family: "cube1",
+      za: 0.5,
+      zb: 1.0,
+    });
+    for (const id of [
+      "sphairahedronEnabledCheckbox",
+      "sphairahedronFamily",
+      "sphairahedronFiniteCheckbox",
+    ]) {
+      const fx = mockEffects();
+      specById(id).effect?.(withBlock, fx, withBlock);
+      expect(fx.regenerateSubjectFitIfAutoUpdate, id).toHaveBeenCalledTimes(1);
+      expect(fx.regenerateIfAutoUpdate, id).not.toHaveBeenCalled();
+      expect(fx.syncSphairahedron, id).toHaveBeenCalledTimes(1);
+      expect(fx.refreshSurfaceEligibility, id).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("a slider tick keeps the plain regeneration — no subject fit", () => {
+    const withBlock = setSphairahedron(initialState(true), {
+      family: "cube1",
+      za: 0.5,
+      zb: 1.0,
+    });
+    const fx = mockEffects();
+    specById("sphairahedronZaSlider").effect?.(withBlock, fx, withBlock);
+    expect(fx.regenerateIfAutoUpdate).toHaveBeenCalledTimes(1);
+    expect(fx.regenerateSubjectFitIfAutoUpdate).not.toHaveBeenCalled();
   });
 });
 
