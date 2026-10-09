@@ -95,6 +95,11 @@ import { createSurfaceLightingStarter } from "./surface-lighting-starters";
 import { createSurfaceTransmissionStarter } from "./surface-transmission-starters";
 import { setSurfaceLighting } from "./state";
 import {
+  deriveSphairaGuides,
+  specToScaffold,
+  type SubjectGuideSpec,
+} from "./subject-guides";
+import {
   exactSurfaceRayCensus,
   type SurfaceRayCensus,
 } from "./surface-ray-census";
@@ -3207,6 +3212,11 @@ async function main(): Promise<void> {
       // fog/background, but does NOT touch the scaffold — a separate scene
       // object that otherwise keeps tumbling over the 3D cloud forever.
       scene.setFourDScaffold(null);
+      // The fall to flat also ends the preset scaffold's association (the
+      // document that carried it is gone) — refreshSubjectGuides below
+      // re-derives the subject arm for the new dimension.
+      presetScaffoldEdges = null;
+      scaffoldContent = "empty";
     }
 
     if (result.fourD) {
@@ -3296,6 +3306,11 @@ async function main(): Promise<void> {
     // A sphere-inversion sample refuses the echo the same way.
     scene.setLandedSphereInversionCloud(result.generationCount !== undefined);
     scene.setBalloonEchoEnabled(state.balloonEcho);
+    // The subject guides ride every Points arrival: a slider drag (or a
+    // morph's intermediates) deforms the block's construction live — the
+    // transform boxes' own per-tick rule, one subject over. The spec is
+    // derived ONCE here and shared with the fit branch below (an empty
+    // cloud frames the construction's own bound).
     if (result.pointTiling || state.tiling || pointTilingDisclosureWasStale) {
       ui.updateLabels(state);
     }
@@ -3318,15 +3333,27 @@ async function main(): Promise<void> {
     // own replaced landing, and the chase stands down while one waits: the
     // morph would otherwise follow the attractor toward a framing the
     // landing is about to replace.
+    // The subject guides ride every Points arrival: a slider drag (or a
+    // morph's intermediates) deforms the block's construction live — the
+    // transform boxes' own per-tick rule, one subject over. Derived ONCE
+    // here and shared with the fit branch below: an EMPTY cloud (the
+    // infinite families draw no points) frames the construction's own
+    // bound instead of a degenerate zero box at the origin.
+    const subjectSpec = state.sphairahedron
+      ? deriveSphairaGuides(state.sphairahedron)
+      : null;
+    refreshSubjectGuides(subjectSpec);
     const presetView = loadHints.takeView(request);
     if (presetView) {
       applyPresetView(presetView);
     } else if (request.fit && result.count > 0) {
+      fitCameraToAttractor();
+    } else if (request.fit && subjectSpec) {
       // An empty cloud (the sphaira families' infinite constructions) has
       // nothing to frame — the fit would park the camera on a degenerate
-      // zero box at the origin, and the subject-fit's disclosure owns the
-      // why instead.
-      fitCameraToAttractor();
+      // zero box at the origin. The construction's own framing ball is the
+      // truth the guides draw; frame that instead.
+      fitCameraToGuideFrame(subjectSpec);
     } else if (
       morphTween.active &&
       morphFinalFit &&
@@ -3664,6 +3691,38 @@ async function main(): Promise<void> {
     // A new whole-system frame starts from the ordinary lens even when the
     // Saved-view Continuous zoom mode remains armed. Fitting against a tiny
     // deep FOV would clamp at MAX_RADIUS and still crop the new attractor.
+    orbit.resetLens();
+    cameraTween.fitToBounds(bounds, {
+      fov: orbit.fov,
+      aspect: scene.camera.aspect,
+    });
+    syncContinuousZoomUi();
+  }
+
+  /**
+   * The empty-cloud landing's frame: the subject construction's own
+   * enclosing ball — the geometry the guides draw IS the object there (the
+   * infinite families' limit set is unbounded, so Points keeps nothing and
+   * the guides show the machinery instead). The same fit the attractor's
+   * frame gets, aimed at the construction's bound; the 4D bound's
+   * projection sits inside its xyz sphere, so a 3D fit is sound there too.
+   */
+  function fitCameraToGuideFrame(spec: SubjectGuideSpec): void {
+    const { center, radius } = spec.frame;
+    const r = Math.max(radius, 1e-6);
+    const bounds = {
+      minX: center[0] - r,
+      maxX: center[0] + r,
+      minY: center[1] - r,
+      maxY: center[1] + r,
+      minZ: center[2] - r,
+      maxZ: center[2] + r,
+      // The radial pair is unused by the fit's own math (boundsCenter +
+      // fitRadius read the box), but an honest ball reads |p| from the
+      // origin, not a zero floor.
+      minR: Math.max(0, Math.hypot(center[0], center[1], center[2]) - r),
+      maxR: Math.hypot(center[0], center[1], center[2]) + r,
+    };
     orbit.resetLens();
     cameraTween.fitToBounds(bounds, {
       fov: orbit.fov,
@@ -8442,16 +8501,96 @@ async function main(): Promise<void> {
     const available =
       canvasTransformGuidesEnabled(state.renderMode, viewIs4D) &&
       !subjectBlockPresent(state);
-    const visible = available && guidesShown();
     // An empty list removes stale box geometry outside flat Points. Selection
     // remains in AppState and the editor; only its canvas presentation rests.
     scene.updateGuides(
       available ? state.transforms : [],
       selectedBox(),
-      visible,
+      guidesShown(),
     );
-    // Grid/axes/scaffold follow the same flat-Points gate as the boxes.
-    scene.setGuidesVisible(visible);
+    // The grid, axes, the 4D scaffold and the subject guides follow the
+    // user's Show-guides control in the POINTS view — both the flat and the
+    // 4D projection. A repair, not a new behavior: the mode-gating work
+    // folded their visibility into the transform BOXES' flat-only gate,
+    // which silently hid the tumbling scaffold — and the grid — in the very
+    // 4D view the scaffold was built for (the original 4D mode followed the
+    // checkbox directly). The other render modes keep them off; their
+    // canvases are their own presentation.
+    scene.setGuidesVisible(
+      state.renderMode === "points" ? guidesShown() : false,
+    );
+    refreshSubjectGuides();
+  }
+
+  // The subject guides' block cache: the JSON the last derivation read —
+  // the guard that keeps a document edit from rebuilding unchanged geometry
+  // (refreshUi runs on every edit of ANY kind; the boxes rebuild
+  // unconditionally, but the subject spec costs a resolver run).
+  let subjectGuidesBlockJson: string | null = null;
+  // What the scaffold slot currently carries — the guard that keeps a
+  // per-arrival refresh from rebuilding unchanged geometry (the 4D Points
+  // view's arrivals can be per-drag-tick), and what the leave path reads to
+  // restore the loaded preset's own wireframe instead of leaving a hole.
+  let scaffoldContent: "subject" | "preset" | "empty" = "empty";
+  // The loaded preset's own tumbling wireframe (PRESET_SCAFFOLDS), kept
+  // here so the subject scaffold can yield the slot back to it.
+  let presetScaffoldEdges: [Vec4, Vec4][] | null = null;
+
+  /**
+   * Push the subject guides, both arms: the 3D spec (`updateSubjectGuides`
+   * — flat Points) and the 4D scaffold (`specToScaffold` →
+   * `setFourDScaffold`, whose per-tick re-pose rides the rotor). A view of
+   * the DOCUMENT's block, like the transform boxes are a view of the
+   * document's transforms — it updates on block edits (the compare-gated
+   * callers), mode and dimension changes (`refreshGuides`), and every
+   * Points arrival (a slider drag deforms the construction live, the
+   * boxes' own per-tick rule). `spec` may be pre-derived by the caller
+   * (the arrival shares its derivation with the fit branch); it is derived
+   * here when not handed one.
+   */
+  function refreshSubjectGuides(
+    spec: SubjectGuideSpec | null = state.sphairahedron
+      ? deriveSphairaGuides(state.sphairahedron)
+      : null,
+  ): void {
+    scene.updateSubjectGuides(
+      state.renderMode === "points" && !viewIs4D ? spec : null,
+      guidesShown(),
+    );
+    if (state.renderMode !== "points") return;
+    if (!viewIs4D) {
+      // The scaffold is a non-flat object; falling back to flat empties the
+      // slot (the arrival path's clear shares this branch).
+      if (scaffoldContent !== "empty") {
+        scene.setFourDScaffold(null);
+        scaffoldContent = "empty";
+      }
+      return;
+    }
+    if (spec && spec.dim === 4) {
+      // The subject's edges rebuild on every push — a J or modulus drag
+      // deforms the construction live, and this is the per-tick path (the
+      // boxes' own rule). The scaffold's per-tick rotor re-pose then takes
+      // over until the next push.
+      const scaffold = specToScaffold(spec);
+      scene.setFourDScaffold(scaffold.edges, scaffold.colors);
+      scaffoldContent = "subject";
+    } else if (scaffoldContent !== "empty") {
+      // The subject let go of the slot (block disabled, refused, or
+      // dimension-changed): the loaded preset's own wireframe shows again,
+      // or the slot empties when no preset carried one.
+      scene.setFourDScaffold(presetScaffoldEdges ?? [], undefined);
+      scaffoldContent = presetScaffoldEdges ? "preset" : "empty";
+    }
+  }
+
+  /** The block-JSON guard behind the edit-path callers: true when the
+   * sphaira block's content changed since the last derivation. */
+  function subjectGuidesStale(): boolean {
+    const json = JSON.stringify(state.sphairahedron ?? null);
+    if (json === subjectGuidesBlockJson) return false;
+    subjectGuidesBlockJson = json;
+    return true;
   }
 
   function refreshSurfaceLightGuides(): void {
@@ -8501,6 +8640,10 @@ async function main(): Promise<void> {
     syncSphairahedronModes();
     syncSphairahedronSurfaceSession();
     syncSubjectModeButtons();
+    // A block edit that reached the document through anything but the panel
+    // pipeline (an undo/redo step, a loaded link) still reshapes the subject
+    // guides — the pipeline's own hook covers only onScalarControl.
+    if (subjectGuidesStale()) refreshSubjectGuides();
     if (!evolutionReconciliationPaused) reconcileEvolutionDocument();
   }
 
@@ -8999,6 +9142,11 @@ async function main(): Promise<void> {
       applyBackgroundNow();
     }
     scene.setFourDScaffold(null);
+    // A decoded document replaces everything the previous scaffold described
+    // — the preset association dies with it; the arrival below re-derives
+    // the subject arm for the decoded document's own block, if any.
+    presetScaffoldEdges = null;
+    scaffoldContent = "empty";
     scene.setRenderStyle(state.renderStyle);
     // Mirror onRenderStyle: never leave a stale glow exposure on a non-glow style.
     if (state.renderStyle !== "glow") scene.setGlowExposure(1);
@@ -9943,6 +10091,11 @@ async function main(): Promise<void> {
     // showing — clear it unconditionally. (The camera auto-fit rides the
     // generation request — see applyEdit.)
     scene.setFourDScaffold(null);
+    // The rolled document ends the preset scaffold's association; the
+    // arrival below re-derives the subject arm (a rolled system carries no
+    // block, so the slot stays empty).
+    presetScaffoldEdges = null;
+    scaffoldContent = "empty";
   }
 
   // ── Evolution Lab ──────────────────────────────────────────────────────
@@ -11661,7 +11814,17 @@ async function main(): Promise<void> {
       // the polytope presets carry one (see PRESET_SCAFFOLDS); every other
       // preset (flat or non-flat) clears whatever the previous one left.
       // (The camera auto-fit rides the generation request — see applyEdit.)
-      scene.setFourDScaffold(PRESET_SCAFFOLDS[preset]?.() ?? null);
+      // The tumbling scaffold (Show guides toggles it with the grid/axes) —
+      // the polytope presets carry one (see PRESET_SCAFFOLDS); every other
+      // preset (flat or non-flat) clears whatever the previous one left.
+      // (The camera auto-fit rides the generation request — see applyEdit.)
+      // The slot's authority lives in refreshSubjectGuides: a subject
+      // block's own construction edges replace the preset's wireframe (the
+      // block IS the subject that wireframe illustrated), and the preset's
+      // shows again when the block leaves — so the preset's edges are
+      // remembered here and the sync decides.
+      presetScaffoldEdges = PRESET_SCAFFOLDS[preset]?.() ?? null;
+      refreshSubjectGuides();
       // A preset authored for a specific renderer (the Flame optgroup)
       // arms its render-mode hint AFTER applyEdit (which clears it); the
       // arriving cloud consumes it — see applyCloudResult — so the showcase
@@ -12074,6 +12237,11 @@ async function main(): Promise<void> {
       // edits, never a slider tick, so this is cheap on the drag paths.
       if (subjectBlockPresent(previous) !== subjectBlockPresent(state)) {
         refreshGuides();
+      } else if (subjectGuidesStale()) {
+        // A same-presence sphaira edit (family, finite stance, a J or
+        // modulus commit) reshapes the subject guides' construction —
+        // refresh just them, not the boxes.
+        refreshSubjectGuides();
       }
       // Threshold and the shared balloon toggle/radius can change the live
       // centre-density refusal without a new worker event.
