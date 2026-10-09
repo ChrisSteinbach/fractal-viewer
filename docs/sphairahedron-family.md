@@ -347,3 +347,104 @@ authors no parameters it cannot defend, and the region inequalities are
 exactly what a random nudge cannot guarantee). The 4D stance carries
 forward: the tetra4 family is exploration evidence the loop lifts;
 discreteness for a 4D cell is NOT claimed.
+
+## The Surface render (compute cores + fallback arm)
+
+The render child ships the family's own tracers: WGSL cores `core: "sphaira"`
+/ `"sphaira4"` in `surface-de-gpu.ts` (structurally the Menger carve cores one
+family over) and the `SURFACE_SPHAIRA` GLSL fallback arm in
+`surface-material.ts`. The kernel mirrors `estimateSphairahedronDistance`
+statement for statement — the pass-restart face scan over the construction's
+tables, `tileSDF(folded)/|λ| · 0.2` — with the measured fudge applied inside
+the estimate (the march step scale packs 1; the fudge IS the damping, exactly
+the reference's marching arithmetic) and NO cutoff (λ is not monotone, so
+there is no transportable running minimum — cutoff is accepted for signature
+parity and ignored).
+
+**The wire.** The fold's face system is a VARIABLE construction (4-6 faces,
+5-7 tile terms, 1 piece across the shipped families), so unlike the carve it
+is NOT bindingless: binding 1 is re-typed `sphTable: array<vec4f>` — one vec4
+pair per face and per term (coords in A, `[r_or_h, kind, sense]` in B; the
+lanes are dim-generic while the CPU twins' rows are dim-strided, so the
+packer reads each row's own tail lanes — the 4D rows' radius lives at
+stride−2, with the w coordinate at lane 3 where a fixed-index read would
+have taken the radius from), then one `[start, length]` vec4 per tile piece.
+The params VARIANT block carries only the counts vec4u (208 in 3D / 464 in
+4D, padded under the shared plane/balloon block's frozen offsets — the
+sphereInv/escape4 shape). The pass cap and the fudge are BAKED module
+constants: the cap is a numerical guard, never an object parameter, so
+`maxDepth` is inert (packed, never read — clamping passes would make far
+queries decision-unreliable, the carve's preview-clamped level budget
+inverted: there fewer levels IS a coarser object, here fewer passes is a
+wrong one).
+
+**Hit-info attribution (the per-face color source).** The hit-info's
+`firstChoice` is the fold's LAST-MOVE FACE — the vocabulary exposes the face
+order but carried no attribution, so the estimator twins' hits now carry
+`lastFace` (−1 when the fold never moved) in all three readings (the DE
+twins, the vocabulary scratch), and the kernels mirror it: one shade slot
+per fold face ("By Transform" wears one hue per face, the sphere-inversion
+route's per-generation rule), clamped to slot 0 when the fold never moved (a
+measure-zero attribution, documented kernel-side). `trap` is the move count
+over `SPHAIRAHEDRON_TRAP_NORM` (16) — the study's depth-color arm
+(`inversions + reflections` on a cycling hue) mapped to the app's ramp
+coordinate; the surface histogram concentrates at 5-9 moves, so 16 covers
+the measured range. rings/sheets are the fold's closest radial / y-plane
+approaches over the pass ends, normalized by the framing ball (the carve's
+vocabulary on the scan). The fold helper is SHARED between the value body
+and the hit-info in both dialects, so the attribution cannot drift.
+
+**Composition matrix** (each entry decided on the construction's own
+algebra, none inherited):
+
+- **Ground plane COMPOSES** — the bead's own line: the infinite families'
+  terrains are the draw and their plane is the limit set's own parabolic
+  fixed set, so the floor is the horizon presentation; the plane rides the
+  session ball like every core's and its crossing is classified only at
+  miss exits, so it cannot overdraw hits.
+- **Balloon REFUSED** (session door + codegen throw): the union bound
+  composes the session's estimator and needs it far-field SOUND outside the
+  echo ball; the accumulated-Jacobian estimate is a heuristic (the forward
+  families' own reason), and the infinite families are additionally
+  unbounded, so no enclosing-ball echo exists at all.
+- **Space tiling REFUSED** (document gate + packer throw): no tiling wrapper
+  certifies a fold estimator yet; the scan fold composes inversions that do
+  not commute with a lattice fold.
+- **Shape trap REFUSED** (document gate + packer throw): the fold scan has
+  no trap accumulator. The family's own color channel is the hit-info's
+  attribution above.
+- **4D slab REFUSED at any thickness** (packer throw + gate disclosure): a
+  segment through an inversion bends — no segment certificate, the
+  escape4/menger4 reason one construction over.
+- **Per-transform finishes DORMANT** (disclosed): the replaced transform
+  system's state, unread. Per-FACE finishes keyed on the last-move-face
+  attribution are a plausible future design (the wire already indexes one
+  material slot per face) — proposed, not shipped, for the panel child.
+- **Optics/transport REFUSED**: the estimator is not a certified lower
+  bound, the transport doc's forward-family reason.
+
+**ENGINE.** The 3D route prefers compute and falls back to the
+`SURFACE_SPHAIRA` fragment arm (one shade slot per face; the
+`sphairahedronFragmentArmLimit` per-construction caps — 6 faces / 8 terms /
+2 pieces — cover every shipped construction, asked never assumed, the
+sphere-inversion discipline). The 4D route is COMPUTE-ONLY (no 4D fragment
+arm exists — the escape4 verdict, three families running). The scene's
+third subject block, checked after the sphere-inversion and Menger-carve
+ones; the eligibility kinds are `sphairahedron` / `sphairahedron4` and
+`scene-dimension.ts` reads the family field.
+
+**MEASURED on the AMD RX 7900 XTX (`--display=:0`, quiet=YES baseline
+gpuBusy 3%)** — `npm run bench:surface`'s S1/S2 legs, the WGSL kernels
+pinned to the CPU twins: all five rows fail=0 over 700 queries each, zero
+exclusions (the scan is deterministic — no ensemble/ring/flip classifier,
+the carve legs' gate shape), maxAbsErr 2.44e-7..1.96e-6, p99
+2.14e-7..1.47e-6; the fround twins' realization noise maxAbs
+2.31e-7..2.45e-6. The legs caught two defects on their first runs, both
+fixed and pinned in the vitest table test: Tint parses a bare
+`select(a < b, c > d, e)`'s middle as a template list, and the table
+packer's fixed-index lane read took the 4D rows' radius from the
+w-coordinate lane (every sphaira4 query +Infinity). The GLSL arm's
+resolved sources stay under the strip threshold (41.0 KB plain, 59.3 KB
+with floor+finish+lighting; emitted 14.0 KB with the floor, far under the
+Mesa cliff). Session-level settle costs are the routing child's browser
+gate to measure — the kernels' own agreement is this run's.
