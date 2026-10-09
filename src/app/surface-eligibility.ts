@@ -25,6 +25,14 @@ import {
 import type { FiniteSolidAuthored } from "../fractal/finite-solid";
 import { resolveMengerTwist } from "../fractal/menger-twist";
 import type { MengerTwistAuthored } from "../fractal/menger-twist";
+import {
+  analyzeSphairahedronSystem,
+  resolveSphairahedron,
+} from "../fractal/sphairahedron";
+import type {
+  SphairahedronAuthored,
+  SphairahedronConstruction,
+} from "../fractal/sphairahedron";
 import { analyzeEscapeSystem, systemHasPowerLink } from "../fractal/escape-de";
 import { analyzeEscapeSystem4 } from "../fractal/escape-de-4d";
 import {
@@ -98,7 +106,9 @@ export type SurfaceRouteKind =
   | "finiteSolid"
   | "finiteSolid4"
   | "menger"
-  | "menger4";
+  | "menger4"
+  | "sphairahedron"
+  | "sphairahedron4";
 
 /** A narrowly-scoped action the mode gate can offer to resolve the refusal
  * it is currently disclosing. This is structured analyzer output, never
@@ -142,6 +152,7 @@ export interface SurfaceEligibilityDocument {
   finiteSolid?: FiniteSolidAuthored | null;
   chainTwist?: TwistAuthored | null;
   mengerTwist?: MengerTwistAuthored | null;
+  sphairahedron?: SphairahedronAuthored | null;
 }
 
 /**
@@ -195,6 +206,7 @@ function deriveSphereInversionEligibility(
   tiling: TilingSpec | null,
   opts: SurfaceEligibilityOptions,
   mengerTwist: MengerTwistAuthored | null = null,
+  sphairahedron: SphairahedronAuthored | null = null,
 ): SurfaceEligibilityResult {
   const resolution = resolveSphereInversion(block);
   if (!resolution.ok) {
@@ -240,9 +252,13 @@ function deriveSphereInversionEligibility(
   );
   // A co-present Menger-carve block is the other subject block — dormant
   // here (the derivation's subject order puts the inversion first), never
-  // silently ignored.
+  // silently ignored. A co-present sphairahedron block is the third, same
+  // treatment.
   if (mengerTwist) {
     disclosures.push(MENGER_DORMANT_ON_SPHERE_INVERSION);
+  }
+  if (sphairahedron) {
+    disclosures.push(SPHAIRAHEDRON_DORMANT_ON_SPHERE_INVERSION);
   }
   if (dim === 4) disclosures.push(SPHERE_INVERSION_SLAB_REFUSAL);
   // Authored glass the routing will not admit renders OPAQUE; say so here,
@@ -382,6 +398,31 @@ export const MENGER_BALLOON_REFUSAL =
 export const MENGER_SLAB_REFUSAL =
   "slice thickness is held at zero: a thick slice has no certified cover for the carve estimator";
 
+/** The SPHAIRAHEDRON ROUTE's shared wordings — the gate's refusals, the
+ * dormant clauses and the session refusals (one definition each, so the
+ * gate's note and the panel's beside-the-control notes cannot drift). The
+ * block REPLACES the transform system as the subject (the sphere-inversion
+ * and Menger-carve precedent, checked after both — the derivation's shipped
+ * subject order), so its combination policy is theirs verbatim. */
+export const SPHAIRAHEDRON_REFUSAL_TILING =
+  "Space tiling is not available with a sphairahedron (no tiling wrapper certifies a fold estimator yet)";
+export const SPHAIRAHEDRON_REFUSAL_TRAP =
+  "a shape trap is not available with a sphairahedron (the fold scan has no trap accumulator)";
+export const SPHAIRAHEDRON_DORMANT_KALEIDOSCOPE =
+  "the kaleidoscope is not read (the construction carries its own face symmetry)";
+export const SPHAIRAHEDRON_DORMANT_LENS =
+  "the final transform lens is not read";
+export const SPHAIRAHEDRON_DORMANT_FINISHES =
+  "per-transform finishes are not read";
+export const SPHAIRAHEDRON_DORMANT_ON_MENGER =
+  "the co-present sphairahedron block is dormant here — the Menger carve is the subject";
+export const SPHAIRAHEDRON_DORMANT_ON_SPHERE_INVERSION =
+  "the co-present sphairahedron block is dormant here — the sphere inversion is the subject";
+export const SPHAIRAHEDRON_SLAB_REFUSAL =
+  "slice thickness is held at zero: a thick slice has no segment certificate for the sphairahedron's scan fold";
+export const SPHAIRAHEDRON_BALLOON_SESSION_REASON =
+  "Balloon is not available with a sphairahedron scene.";
+
 /**
  * The FINITE-SOLID ROUTE. Unlike a sphere-inversion block, the finite-solid
  * block does NOT replace the transform system — it reroutes it. A SHAPED
@@ -444,6 +485,7 @@ function deriveMengerEligibility(
   shapeTrap: ShapeTrap | null,
   opts: SurfaceEligibilityOptions,
   chainTwist: TwistAuthored | null,
+  sphairahedron: SphairahedronAuthored | null = null,
 ): SurfaceEligibilityResult {
   const resolution = resolveMengerTwist(block);
   if (!resolution.ok) {
@@ -501,6 +543,9 @@ function deriveMengerEligibility(
   if (twist.verdict === "live") {
     dormant.push(MENGER_DORMANT_CHAIN_TWIST);
   }
+  if (sphairahedron) {
+    dormant.push(SPHAIRAHEDRON_DORMANT_ON_MENGER);
+  }
   const baseNote =
     dim === 4
       ? "Menger carve render: the block's w extension lifts the sponge to the 4D hyper-Menger, whose w-slice Surface marches through its own carve estimator rather than an IFS attractor."
@@ -509,6 +554,114 @@ function deriveMengerEligibility(
     status: "degraded",
     note: dormant.length > 0 ? `${baseNote} ${dormant.join("; ")}.` : baseNote,
     kind: dim === 4 ? "menger4" : "menger",
+  };
+}
+
+/**
+ * The SPHAIRAHEDRON ROUTE — the third subject-replacing block
+ * (`sphairahedron.ts`'s authored form), checked after the sphere-inversion
+ * and Menger-carve branches (the derivation's shipped subject order, pure
+ * addition: a co-presence under either earlier subject discloses the block
+ * dormant rather than reordering anything). The block REPLACES the
+ * transform system as the subject: the maps render nothing under it, the
+ * route always names the different object (the degraded channel's rule),
+ * and the construction's dimension decides — `sphairahedron` (3D) or
+ * `sphairahedron4` (the tetra lift), refused blocks included via
+ * `sphairahedronAuthoredDimension`'s repair-never-flips rule living one
+ * layer down (the scene dimension reads the same family field).
+ *
+ * COMBINATION POLICY (the two earlier subject blocks' shape): refused
+ * (document) — Space tiling and a shape trap, no wrapper or accumulator
+ * certificate covers the scan fold yet; disclosed DORMANT — the
+ * kaleidoscope, the final lens and per-transform finishes (a co-present
+ * Menger-carve block never reaches this route: the derivation's order
+ * routes it to the carve first, which discloses the sphairahedron block
+ * dormant in its own note). COMPOSES — the ground plane (the infinite families'
+ * limit set is their own parabolic fixed plane, so the floor is the
+ * horizon presentation) and authored lighting rigs; Balloon is REFUSED at
+ * the session door (the union bound composes a heuristic, not a certified
+ * bound — the forward families' own reason) and the 4D slab at any
+ * thickness (a segment through an inversion bends; no certificate —
+ * {@link SPHAIRAHEDRON_SLAB_REFUSAL}, disclosed here and enforced at
+ * pack). ENGINE: the 3D route PREFERS compute (`core: "sphaira"`) and
+ * falls back to the SURFACE_SPHAIRA fragment arm; the 4D route is
+ * COMPUTE-ONLY (no 4D fragment arm exists — the escape4 verdict, three
+ * families running), refused without compute.
+ */
+function deriveSphairahedronEligibility(
+  block: SphairahedronAuthored,
+  transforms: Transform[],
+  finalTransform: Transform | null,
+  symmetry: SymmetryParams,
+  shapeTrap: ShapeTrap | null,
+  tiling: TilingSpec | null,
+  opts: SurfaceEligibilityOptions,
+): SurfaceEligibilityResult {
+  const resolution = resolveSphairahedron(block);
+  if (!resolution.ok) {
+    return {
+      status: "ineligible",
+      note: `Sphairahedron scene refused: ${resolution.reasons.join("; ")}`,
+      kind: null,
+    };
+  }
+  const refusals: string[] = [];
+  if (tiling) {
+    refusals.push(SPHAIRAHEDRON_REFUSAL_TILING);
+  }
+  if (shapeTrap) {
+    refusals.push(SPHAIRAHEDRON_REFUSAL_TRAP);
+  }
+  if (refusals.length > 0) {
+    return {
+      status: "ineligible",
+      note: `Sphairahedron scene refused: ${refusals.join("; ")}`,
+      kind: null,
+    };
+  }
+  const construction: SphairahedronConstruction = resolution.construction;
+  const analysis = analyzeSphairahedronSystem(construction);
+  if (analysis.status === "ineligible") {
+    return {
+      status: "ineligible",
+      note: `Sphairahedron scene refused: ${analysis.reasons.join("; ")}`,
+      kind: null,
+    };
+  }
+  const dim = construction.dim;
+  // No 4D fragment arm exists (the escape4 verdict, three families
+  // running), so without compute the 4D route refuses rather than handing
+  // the session to a tracer that cannot draw it.
+  if (dim === 4 && !opts.computeAvailable) {
+    return {
+      status: "ineligible",
+      note: "4D sphairahedra render on WebGPU compute, which is unavailable here",
+      kind: null,
+    };
+  }
+  const dormant: string[] = [];
+  if (symmetry.order > 1) {
+    dormant.push(SPHAIRAHEDRON_DORMANT_KALEIDOSCOPE);
+  }
+  if (finalTransform) {
+    dormant.push(SPHAIRAHEDRON_DORMANT_LENS);
+  }
+  if (transforms.some((t) => t.finish !== undefined)) {
+    dormant.push(SPHAIRAHEDRON_DORMANT_FINISHES);
+  }
+  if (dim === 4) dormant.push(SPHAIRAHEDRON_SLAB_REFUSAL);
+  const baseNote =
+    dim === 4
+      ? "Sphairahedron render: Surface marches the w-slice of the tetra lift's limit set through its own fold estimator rather than an IFS attractor."
+      : "Sphairahedron render: Surface marches the sphairahedron's limit set through its own fold estimator rather than an IFS attractor.";
+  const degradations = [...analysis.degradations, ...dormant];
+  return {
+    status: "degraded",
+    note:
+      degradations.length > 0
+        ? `${baseNote} ${degradations.join("; ")}.`
+        : baseNote,
+    kind: dim === 4 ? "sphairahedron4" : "sphairahedron",
   };
 }
 
@@ -655,6 +808,23 @@ export function sphereInversionSessionRefusal(session: {
  * (`sphere-inversion-controls.ts`'s `SPHERE_INVERSION_DORMANT_REASON`). */
 export const SPHERE_INVERSION_BALLOON_SESSION_REASON =
   "Balloon is not available with a sphere-inversion scene.";
+
+/**
+ * The sphairahedron route's session-level half: Balloon is REFUSED — the
+ * balloon's union bound composes the session's estimator and needs it
+ * far-field SOUND outside the echo ball, and the sphairahedron's
+ * accumulated-Jacobian estimate is a heuristic (the forward families' own
+ * reason; the infinite families are additionally unbounded, so no
+ * enclosing-ball echo exists at all). Returns the refusal, or `null` when
+ * the session may proceed.
+ */
+export function sphairahedronSessionRefusal(session: {
+  balloonEcho: boolean;
+}): string | null {
+  return session.balloonEcho
+    ? `${SPHAIRAHEDRON_BALLOON_SESSION_REASON} Turn Balloon off to enter Surface.`
+    : null;
+}
 
 /**
  * The render-mode half of the family's per-mode verdict
@@ -1096,6 +1266,7 @@ export function deriveSurfaceEligibility(
   finiteSolid: FiniteSolidAuthored | null = null,
   chainTwist: TwistAuthored | null = null,
   mengerTwist: MengerTwistAuthored | null = null,
+  sphairahedron: SphairahedronAuthored | null = null,
 ): SurfaceEligibilityResult {
   // A sphere-inversion block replaces the transform system as the subject:
   // it takes precedence over, and is disjoint from, every gate below. A
@@ -1111,6 +1282,7 @@ export function deriveSurfaceEligibility(
       tiling,
       opts,
       mengerTwist,
+      sphairahedron,
     );
   }
   // A Menger-carve block is the second subject-replacing block: it takes
@@ -1127,6 +1299,21 @@ export function deriveSurfaceEligibility(
       shapeTrap,
       opts,
       chainTwist,
+      sphairahedron,
+    );
+  }
+  // A sphairahedron block is the third subject-replacing block, checked
+  // after the sphere-inversion and Menger-carve ones (the derivation's
+  // shipped subject order, pure addition — see the route's own doc).
+  if (sphairahedron) {
+    return deriveSphairahedronEligibility(
+      sphairahedron,
+      transforms,
+      finalTransform,
+      symmetry,
+      shapeTrap,
+      tiling,
+      opts,
     );
   }
   // A finite-solid block reroutes the SAME subject (the transform system,
@@ -1769,9 +1956,11 @@ export function deriveSurfaceDocumentEligibility(
     document.finiteSolid ?? null,
     // chainTwist is deliberately NOT passed (the derivation's escape-lift
     // clause would change evolution admission — its own decision to make);
-    // mengerTwist is: the subject-block precedence is a document-level
-    // routing fact, the same one sphereInversion already rides.
+    // mengerTwist and sphairahedron are: the subject-block precedence is a
+    // document-level routing fact, the same one sphereInversion already
+    // rides.
     null,
     document.mengerTwist ?? null,
+    document.sphairahedron ?? null,
   );
 }

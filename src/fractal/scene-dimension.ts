@@ -19,7 +19,11 @@
  * subject block, checked AFTER the sphere-inversion one (the derivation's
  * shipped precedence order): its own `w` extension decides
  * (`mengerTwistAuthoredDimension`), refused blocks included, for the same
- * repair-never-flips reason.
+ * repair-never-flips reason. A present sphairahedron block
+ * (`sphairahedron.ts`'s authored form) is the third, checked after both —
+ * the same order `deriveSurfaceEligibility` branches in — and its family
+ * field decides (`sphairahedronAuthoredDimension`), refused blocks
+ * included, for the same reason.
  *
  * Points routes through here too: a present sphere-inversion block replaces
  * the chaos game with `sphere-inversion-sample.ts`'s exact boundary
@@ -43,6 +47,10 @@ import {
   mengerTwistAuthoredDimension,
   type MengerTwistAuthored,
 } from "./menger-twist";
+import {
+  sphairahedronAuthoredDimension,
+  type SphairahedronAuthored,
+} from "./sphairahedron";
 import type { SymmetryParams, Transform } from "./types";
 
 /**
@@ -69,6 +77,24 @@ function mengerTwistSceneDimension(
   return mengerTwistAuthoredDimension(mengerTwist);
 }
 
+/**
+ * The sphairahedron block's dimension verdict for the SCENE derivation, or
+ * null when the value names no block at all — the Menger helper's shape one
+ * family over, reading only the family field.
+ */
+function sphairahedronSceneDimension(
+  sphairahedron: SphairahedronAuthored | null | undefined,
+): 3 | 4 | null {
+  if (
+    typeof sphairahedron !== "object" ||
+    sphairahedron === null ||
+    Array.isArray(sphairahedron)
+  ) {
+    return null;
+  }
+  return sphairahedronAuthoredDimension(sphairahedron);
+}
+
 /** Whether the scene's Surface subject is native 4D (module doc). */
 export function scenePartsAreNonFlat(
   transforms: readonly Transform[],
@@ -76,6 +102,7 @@ export function scenePartsAreNonFlat(
   symmetry: SymmetryParams,
   sphereInversion: SphereInversionAuthored | null | undefined,
   mengerTwist?: MengerTwistAuthored | null,
+  sphairahedron?: SphairahedronAuthored | null,
 ): boolean {
   if (sphereInversion !== null && sphereInversion !== undefined) {
     const dim = sphereInversionAuthoredDimension(sphereInversion);
@@ -83,6 +110,10 @@ export function scenePartsAreNonFlat(
   }
   if (mengerTwist !== null && mengerTwist !== undefined) {
     const dim = mengerTwistSceneDimension(mengerTwist);
+    if (dim !== null) return dim === 4;
+  }
+  if (sphairahedron !== null && sphairahedron !== undefined) {
+    const dim = sphairahedronSceneDimension(sphairahedron);
     if (dim !== null) return dim === 4;
   }
   return systemPartsAreNonFlat(transforms, finalTransform, symmetry);

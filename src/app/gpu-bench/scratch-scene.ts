@@ -332,6 +332,13 @@ export function deriveScratchRoute(scene: ScratchScene): ScratchRoute {
     ? { rotor: scene.view4.rotor, w0: scene.view4.w0, sliceHalfW: 0 }
     : IDENTITY_VIEW4;
   switch (kind) {
+    case "sphairahedron":
+    case "sphairahedron4":
+      // The gate routes the block; the scratch scene's sphairahedron leg
+      // lands with the family's compute cores.
+      throw new Error(
+        "the sphairahedron route is not wired into the scratch scene yet",
+      );
     case "ifs":
     case "ifs4": {
       const fourD = systemPartsAreNonFlat(

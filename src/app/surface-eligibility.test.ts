@@ -37,6 +37,7 @@ import {
   SURFACE_SHAPE_SOURCE_BUDGET_BYTES,
   deriveSurfaceDocumentEligibility,
   deriveSurfaceEligibility,
+  sphairahedronSessionRefusal,
   sphereInversionDormantDisclosures,
   sphereInversionComputeOnlySubject,
   sphereInversionRenderModeRefusal,
@@ -2890,5 +2891,185 @@ describe("the Menger carve's routing", () => {
     );
     expect(result.kind).toBe("sphereInversion");
     expect(result.note).toContain("Menger-carve block is dormant");
+  });
+});
+
+describe("the sphairahedron's routing", () => {
+  /** The flat placeholder transform system subject blocks ride (the
+   * Menger tests' own). */
+  const placeholder: Transform[] = [
+    {
+      id: 0,
+      position: [0.5, 0.5, 0.5],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+      variations: [],
+    },
+  ];
+
+  function derive(
+    sphairahedron: unknown,
+    opts: {
+      computeAvailable?: boolean;
+      tiling?: TilingSpec | null;
+      mengerTwist?: unknown;
+      symmetry?: SymmetryParams;
+      finalTransform?: Transform | null;
+      shapeTrap?: { shape: ShapeSpec } | null;
+    } = {},
+  ): ReturnType<typeof deriveSurfaceEligibility> {
+    return deriveSurfaceEligibility(
+      placeholder,
+      opts.finalTransform ?? null,
+      opts.symmetry ?? NO_SYMMETRY,
+      { computeAvailable: opts.computeAvailable ?? true },
+      null,
+      opts.shapeTrap ?? null,
+      opts.tiling ?? null,
+      undefined,
+      null,
+      null,
+      null,
+      opts.mengerTwist ?? null,
+      sphairahedron as never,
+    );
+  }
+
+  it("routes the tetra construction to the 3D kind, naming the different object", () => {
+    const result = derive({ family: "tetra333" });
+    expect(result.kind).toBe("sphairahedron");
+    expect(result.status).toBe("degraded");
+    expect(result.note).toContain("Sphairahedron render");
+    expect(result.note).toContain("rather than an IFS attractor");
+  });
+
+  it("routes the 4D family to sphairahedron4, refuses without compute, and discloses the slab", () => {
+    const result = derive({ family: "tetra4" });
+    expect(result.kind).toBe("sphairahedron4");
+    expect(result.note).toContain("w-slice");
+    expect(result.note).toContain("slice thickness is held at zero");
+    const withoutCompute = derive(
+      { family: "tetra4" },
+      { computeAvailable: false },
+    );
+    expect(withoutCompute.status).toBe("ineligible");
+    expect(withoutCompute.note).toContain("compute");
+    // A 3D family is untouched by the compute question.
+    expect(
+      derive({ family: "cube1" }, { computeAvailable: false }).status,
+    ).toBe("degraded");
+  });
+
+  it("refuses tiling and a shape trap", () => {
+    const tiled = derive({ family: "tetra333" }, { tiling: { group: "a3" } });
+    expect(tiled.status).toBe("ineligible");
+    expect(tiled.note).toContain("Space tiling");
+    const trapped = derive(
+      { family: "tetra333" },
+      {
+        shapeTrap: { shape: PEACE_SIGN_SHAPE },
+      },
+    );
+    expect(trapped.status).toBe("ineligible");
+    expect(trapped.note).toContain("shape trap");
+  });
+
+  it("discloses the dormant transform system: kaleidoscope, final lens, finishes", () => {
+    const symmetry = { order: 5, plane: "xz" as const, twist: 0 };
+    expect(derive({ family: "tetra333" }, { symmetry }).note).toContain(
+      "kaleidoscope is not read",
+    );
+    const final = {
+      id: 9,
+      position: [0, 0, 0] as [number, number, number],
+      rotation: [0, 0, 0] as [number, number, number],
+      scale: [1, 1, 1] as [number, number, number],
+      variations: [],
+    };
+    expect(
+      derive({ family: "tetra333" }, { finalTransform: final }).note,
+    ).toContain("final transform lens is not read");
+  });
+
+  it("routes a co-present Menger-carve block to the carve, disclosing the sphairahedron dormant", () => {
+    // The derivation's subject order routes the co-presence to the carve
+    // first — the sphairahedron route can never see a menger block.
+    const result = derive(
+      { family: "tetra333" },
+      { mengerTwist: { rotation: [0.3, 0, 0] } },
+    );
+    expect(result.kind).toBe("menger");
+    expect(result.note).toContain(
+      "sphairahedron block is dormant here — the Menger carve is the subject",
+    );
+  });
+
+  it("surfaces the resolver's refusal and the region gate verbatim, the block being the subject", () => {
+    const unknownFamily = derive({ family: "cube2" });
+    expect(unknownFamily.status).toBe("ineligible");
+    expect(unknownFamily.note).toContain("Sphairahedron scene refused");
+    // Past the prism's region: the crossing ball named.
+    const pastRegion = derive({ family: "prism2", z2: 2.6 });
+    expect(pastRegion.status).toBe("ineligible");
+    expect(pastRegion.note).toContain("valid region");
+  });
+
+  it("discloses the region boundary as the analyzer's degradation, still routed", () => {
+    const boundary = derive({ family: "prism2", z2: Math.sqrt(6) });
+    expect(boundary.kind).toBe("sphairahedron");
+    expect(boundary.status).toBe("degraded");
+    expect(boundary.note).toContain("region boundary");
+  });
+
+  it("defers to the sphere-inversion block, then to the carve, each disclosing the sphairahedron dormant", () => {
+    const underInversion = deriveSurfaceEligibility(
+      placeholder,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      null,
+      null,
+      undefined,
+      {
+        arrangement: "oct6",
+        radiusFraction: 0.9,
+        seed: { kind: "ball", size: 0.3 },
+      },
+      null,
+      null,
+      null,
+      { family: "tetra333" },
+    );
+    expect(underInversion.kind).toBe("sphereInversion");
+    expect(underInversion.note).toContain(
+      "sphairahedron block is dormant here — the sphere inversion is the subject",
+    );
+    const underMenger = deriveSurfaceEligibility(
+      placeholder,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      null,
+      null,
+      undefined,
+      null,
+      null,
+      null,
+      { rotation: [0.3, 0, 0] } as never,
+      { family: "tetra333" },
+    );
+    expect(underMenger.kind).toBe("menger");
+    expect(underMenger.note).toContain(
+      "sphairahedron block is dormant here — the Menger carve is the subject",
+    );
+  });
+
+  it("refuses a balloon session (the union bound composes a heuristic)", () => {
+    expect(sphairahedronSessionRefusal({ balloonEcho: true })).toContain(
+      "Balloon is not available with a sphairahedron",
+    );
+    expect(sphairahedronSessionRefusal({ balloonEcho: false })).toBeNull();
   });
 });
