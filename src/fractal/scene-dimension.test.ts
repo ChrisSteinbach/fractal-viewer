@@ -37,4 +37,61 @@ describe("scenePartsAreNonFlat", () => {
     ).toBe(true);
     expect(scenePartsAreNonFlat(flat, null, noSymmetry, {})).toBe(false);
   });
+
+  it("follows a sphairahedron block's family over the transforms, refused blocks included", () => {
+    expect(
+      scenePartsAreNonFlat(flat, null, noSymmetry, null, null, {
+        family: "tetra333",
+      }),
+    ).toBe(false);
+    expect(
+      scenePartsAreNonFlat(flat, null, noSymmetry, null, null, {
+        family: "tetra4",
+      }),
+    ).toBe(true);
+    // A refused 4D-family block (non-finite modulus) still names its
+    // dimension, so repairing the refusal never flips the scene.
+    expect(
+      scenePartsAreNonFlat(flat, null, noSymmetry, null, null, {
+        family: "tetra4",
+        z2: Number.NaN,
+      }),
+    ).toBe(true);
+    // Garbage that names no block at all keeps the transforms' flatness.
+    expect(
+      scenePartsAreNonFlat(
+        nonFlat,
+        null,
+        noSymmetry,
+        null,
+        null,
+        "nope" as never,
+      ),
+    ).toBe(true);
+    // The earlier subject blocks still win the precedence order.
+    expect(
+      scenePartsAreNonFlat(
+        flat,
+        null,
+        noSymmetry,
+        { arrangement: "ico12" },
+        null,
+        {
+          family: "tetra4",
+        },
+      ),
+    ).toBe(false);
+    expect(
+      scenePartsAreNonFlat(
+        flat,
+        null,
+        noSymmetry,
+        null,
+        { levels: 4, w: { rotation: { xw: 0.3 } } },
+        {
+          family: "tetra4",
+        },
+      ),
+    ).toBe(true);
+  });
 });
