@@ -28,52 +28,55 @@ export const PRE_PATTERN_SOURCE_HASHES: Record<
   string,
   { resolved: string; emitted: string }
 > = {
+  // resolved re-recorded for the alternatives chain's closing comment
+  // naming the sphairahedron fold — one comment paragraph, no code
+  // motion; the emitted bytes are comment-free and unmoved.
   "3D affine finish0": {
-    resolved: "f2bbdcc679b87d93",
+    resolved: "1f98436899cf5d88",
     emitted: "91d566a8234dee47",
   },
   "3D affine finish1": {
-    resolved: "cc132629850c9c6b",
+    resolved: "d96be25b54bf2d98",
     emitted: "0678ded3a8ff419b",
   },
   "3D lens finish0": {
-    resolved: "31bd45fe2ab1b0e2",
+    resolved: "9d831d4770d4ba2c",
     emitted: "b8b80b22b2b010aa",
   },
   "3D lens finish1": {
-    resolved: "c4e59eb6dd09c86e",
+    resolved: "aef25bc005bfa492",
     emitted: "d754e88870d23a6f",
   },
   "3D balloon finish0": {
-    resolved: "b3d7c243da2fb089",
+    resolved: "9e0bb35ffd947d21",
     emitted: "8a3ca649ed45d7c2",
   },
   "3D balloon finish1": {
-    resolved: "9d59d6f3e149f3fe",
+    resolved: "648c411b18d4067f",
     emitted: "9fe2b3cadb57aa32",
   },
   "3D plane finish0": {
-    resolved: "049c163ec1f6039f",
+    resolved: "0d606850ba40cb84",
     emitted: "4ede30dc81198664",
   },
   "3D plane finish1": {
-    resolved: "7cd47ab406b02572",
+    resolved: "f4278ce2a0d55b3a",
     emitted: "71aa043bc0cf3f17",
   },
   "3D lens+balloon finish0": {
-    resolved: "16daa7f3813870ae",
+    resolved: "55641a810d77d4cb",
     emitted: "e6302065ea497beb",
   },
   "3D lens+balloon finish1": {
-    resolved: "2dc188fcec04d2b0",
+    resolved: "fe0a25add8190f88",
     emitted: "fd44f5a17c42aeb3",
   },
   "3D lens+plane finish0": {
-    resolved: "8a7086106d042de8",
+    resolved: "209a99c7df543dec",
     emitted: "1c65d10713495ab7",
   },
   "3D lens+plane finish1": {
-    resolved: "2c860f71626793f2",
+    resolved: "2f19b020bb063824",
     emitted: "9dfff5fed89b0f1d",
   },
   "3D escape finish0": {

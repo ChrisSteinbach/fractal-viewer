@@ -10,6 +10,12 @@ import type { BulbDE } from "../fractal/bulb-de";
 import { BULB_ITERATIONS, BULB_STEP_SCALE } from "../fractal/bulb-de";
 import type { MengerDE } from "../fractal/menger-de";
 import { MENGER_STEP_SCALE } from "../fractal/menger-de";
+import type { SphairahedronDE } from "../fractal/sphairahedron-de";
+import {
+  SPHAIRAHEDRON_FOLD_CAP,
+  SPHAIRAHEDRON_STEP_SCALE,
+} from "../fractal/sphairahedron";
+import { packSphairaGpuTables } from "../fractal/surface-de-gpu";
 import type { EscapeDE } from "../fractal/escape-de";
 import {
   ESCAPE_STEP_SCALE,
@@ -4217,6 +4223,191 @@ ${sphereInversionArmGlsl()}
     return d;
   }
 #else
+#if SURFACE_SPHAIRA
+  /** Sphairahedron render: the IIS fold's pass-restart face scan over the
+   * construction's tables (sphairahedron-de.ts, the WGSL sphaira core's
+   * GLSL twin). Declared INSIDE the arm, the uMen*/uBulb* precedent: the
+   * other variants would pay these EMITTED bytes for uniforms they can
+   * never read. The tables are packSphairaGpuTables' wire unchanged
+   * (binding 1 on the kernel side): per face/term one vec4 pair — coords
+   * in A (xyz, w zero-padded; the walls lift with n = (a0, 0, a1, 0),
+   * exactly the CPU twin's wall lift) and [r_or_h, kind, sense] in B —
+   * then one [start, length] vec4 per tile piece. Caps 6 faces / 8
+   * terms / 2 pieces cover every shipped construction; a construction
+   * past them is compute-only (sphairahedronFragmentArmLimit, the
+   * sphere-inversion family's per-construction limit discipline). */
+  uniform vec4 uSphFaces[6];
+  uniform vec4 uSphTerms[8];
+  uniform vec4 uSphPieces[2];
+  /** (faceCount, termCount, pieceCount, 0) — the counts word, the WGSL
+   * params variant block's single member. */
+  uniform vec4 uSphParams;
+
+  /** The tile SDF at the folded point: min over pieces of the max-form
+   * intersections — negative inside the union of tiles, positive outside
+   * (sphairahedron-de.ts's tileSDF3, the reference's exact convention). */
+  float sphairaTileSDF(vec3 x) {
+    float best = 1e30;
+    for (int pi = 0; pi < int(uSphParams.z); pi++) {
+      vec2 seg = uSphPieces[pi].xy;
+      float d = -1e30;
+      for (int t = int(seg.x); t < int(seg.x + seg.y); t++) {
+        vec4 a = uSphTerms[t * 2];
+        vec4 b = uSphTerms[t * 2 + 1];
+        float v;
+        if (b.y < 0.5) {
+          v = length(x - a.xyz) - b.x;
+          if (b.z < 0.5) {
+            v = -v;
+          }
+        } else {
+          v = dot(a.xyz, x) - b.x;
+          if (b.z > 0.5) {
+            v = -v;
+          }
+        }
+        d = max(d, v);
+      }
+      best = min(best, d);
+    }
+    return best;
+  }
+
+  /** The fold, shared by both surfaceDE overloads so the attribution
+   * cannot drift between them (the WGSL core's own helper): per pass,
+   * scan the faces in the construction's order — scan order is PART of
+   * the algorithm once faces intersect — a face sphere holding the point
+   * on its REMOVED side inverts it (λ ×= R²/|p−c|²), a violated wall
+   * reflects it (λ unchanged); passes repeat until a clean one or the
+   * BAKED cap (a numerical guard, never an object parameter — no
+   * uMaxDepth here). A query at a face sphere's centre (within the baked
+   * relative pole floor) skips the inversion but keeps scanning — the
+   * pole contract. minR/minY track the closest radial / y-plane
+   * approaches over the pass ends (the hit overload's rings/sheets). */
+  const int SPHAIRA_CAP = 50;
+  const float SPHAIRA_FUDGE = 0.2;
+  const float SPHAIRA_POLE2 = 1e-24;
+
+  void sphairaFold(
+    vec3 p,
+    out vec3 x,
+    out float lambda,
+    out int moves,
+    out int lastFace,
+    out bool pole,
+    out bool capped,
+    out float minR,
+    out float minY
+  ) {
+    x = p;
+    lambda = 1.0;
+    moves = 0;
+    lastFace = -1;
+    pole = false;
+    capped = false;
+    minR = length(p);
+    minY = abs(p.y);
+    for (int pass = 0; pass < SPHAIRA_CAP; pass++) {
+      bool moved = false;
+      for (int fi = 0; fi < int(uSphParams.x); fi++) {
+        vec4 a = uSphFaces[fi * 2];
+        vec4 b = uSphFaces[fi * 2 + 1];
+        if (b.y < 0.5) {
+          vec3 d = x - a.xyz;
+          float d2 = dot(d, d);
+          float r2 = b.x * b.x;
+          bool removed = b.z > 0.5 ? d2 > r2 : d2 < r2;
+          if (removed) {
+            if (d2 < SPHAIRA_POLE2 * r2) {
+              pole = true;
+            } else {
+              float k = r2 / d2;
+              x = a.xyz + k * d;
+              lambda *= k;
+              moves++;
+              moved = true;
+              lastFace = fi;
+            }
+          }
+        } else {
+          float dd = dot(a.xyz, x) - b.x;
+          if (dd > 0.0) {
+            x -= 2.0 * dd * a.xyz;
+            moves++;
+            moved = true;
+            lastFace = fi;
+          }
+        }
+      }
+      minR = min(minR, length(x));
+      minY = min(minY, abs(x.y));
+      if (!moved) {
+        break;
+      }
+      if (pass == SPHAIRA_CAP - 1) {
+        capped = true;
+      }
+    }
+  }
+
+  /** The author-form estimate: tileSDF(folded)/|λ| · fudge — the fudge IS
+   * the damping (step scale 1, exactly the reference's marching
+   * arithmetic). POLE returns 0, not a member. Cutoff accepted for
+   * signature parity and ignored: λ is not monotone, so there is no
+   * transportable running minimum — every return IS the cutoff-0 result
+   * (the CPU states NO cutoff deliberately; the mirrors honor that). */
+  float surfaceDE(vec3 p, float cutoff) {
+    vec3 x;
+    float lambda;
+    int moves;
+    int lastFace;
+    bool pole;
+    bool capped;
+    float minR;
+    float minY;
+    sphairaFold(p, x, lambda, moves, lastFace, pole, capped, minR, minY);
+    if (pole) {
+      return 0.0;
+    }
+    return sphairaTileSDF(x) / abs(lambda) * SPHAIRA_FUDGE;
+  }
+
+  float surfaceDE(vec3 p) {
+    return surfaceDE(p, 0.0);
+  }
+
+  /** Hit-shading overload: the same fold, with the scan family's extras —
+   * firstChoice is the fold's LAST-MOVE FACE (the per-face color source;
+   * a never-moved fold clamps to slot 0, the kernel-side attribution's
+   * own rule), trap the move count over the trap normalizer (the study's
+   * depth-color arm on the app ramp), rings/sheets the fold's closest
+   * radial / y-plane approaches normalized by the marching ball. */
+  float surfaceDE(
+    vec3 p,
+    out int firstChoice,
+    out float trap,
+    out float rings,
+    out float sheets
+  ) {
+    vec3 x;
+    float lambda;
+    int moves;
+    int lastFace;
+    bool pole;
+    bool capped;
+    float minR;
+    float minY;
+    sphairaFold(p, x, lambda, moves, lastFace, pole, capped, minR, minY);
+    firstChoice = max(lastFace, 0);
+    trap = clamp(float(moves) / 16.0, 0.0, 1.0);
+    rings = clamp(minR / uBoundingRadius, 0.0, 1.0);
+    sheets = clamp(minY / uBoundingRadius, 0.0, 1.0);
+    if (pole) {
+      return 0.0;
+    }
+    return sphairaTileSDF(x) / abs(lambda) * SPHAIRA_FUDGE;
+  }
+#else
 #if SURFACE_FOLD_LENS
   // Compile every descent body below under a CORE name: the fold-lens
   // wrapper past the hit variants owns the public surfaceDE overloads and
@@ -6124,10 +6315,12 @@ ${foldValueFormGlsl(shadeDeWidth)}
   }
 #endif
 
-// Closes SURFACE_MENGER's #else arm, then SURFACE_BULB's #else arm, then
-// SURFACE_ESCAPE's: everything from the fold-lens rename through the lens
-// wrapper exists only when NEITHER forward-orbit variant (escape, bulb) nor
-// the menger carve is on.
+// Closes SURFACE_SPHAIRA's #else arm, then SURFACE_MENGER's #else arm,
+// then SURFACE_BULB's #else arm, then SURFACE_ESCAPE's: everything from
+// the fold-lens rename through the lens wrapper exists only when NEITHER
+// forward-orbit variant (escape, bulb), the menger carve, nor the
+// sphairahedron fold is on.
+#endif
 #endif
 #endif
 #endif
@@ -7970,6 +8163,19 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uMenM: { value: new THREE.Matrix3() },
       uMenB: { value: new THREE.Vector3() },
       uMenParams: { value: new THREE.Vector4(1, 0, 0, 0) },
+      // Sphairahedron fold render: inert defaults; alive only under the
+      // SURFACE_SPHAIRA define (counts 0 so a stray enabled scan reads no
+      // faces; the tables zero — the setter fills them from the DE).
+      uSphFaces: {
+        value: Array.from({ length: 6 }, () => new THREE.Vector4()),
+      },
+      uSphTerms: {
+        value: Array.from({ length: 8 }, () => new THREE.Vector4()),
+      },
+      uSphPieces: {
+        value: Array.from({ length: 2 }, () => new THREE.Vector4()),
+      },
+      uSphParams: { value: new THREE.Vector4(0, 0, 0, 0) },
       // The shape trap's live pose/mode quantities — read only under the
       // SURFACE_SHAPE_TRAP arms (uTrapPose is position.xyz + invScale;
       // uTrapParams is mode/threshold/fade). Identity/off defaults so a
@@ -8093,6 +8299,7 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       SURFACE_ESCAPE: 0,
       SURFACE_BULB: 0,
       SURFACE_MENGER: 0,
+      SURFACE_SPHAIRA: 0,
       SURFACE_BALLOON: 0,
       SURFACE_GROUND_PLANE: 0,
       SURFACE_FINISH: 0,
@@ -8457,7 +8664,11 @@ export function setSurfaceSystem(
     de.symmetry.stepSin,
   );
   u.uBoundingRadius.value = de.boundingRadius;
-  (u.uBoundCenter.value as THREE.Vector3).set(...de.boundCenter);
+  (u.uBoundCenter.value as THREE.Vector3).set(
+    de.boundCenter[0],
+    de.boundCenter[1],
+    de.boundCenter[2],
+  );
   u.uEscapeRadius.value = de.escapeRadius;
   u.uMaxDepth.value = condensationTraversalDepth(de, de.maxDepth);
   u.uStepScale.value = de.stepScale;
@@ -9594,6 +9805,9 @@ export function surfaceFragmentResolvedFor(
   // The Menger carve's arm, appended last so every positional caller
   // keeps its meaning (the sphereInversion flag's own reason).
   menger = 0,
+  // The sphairahedron fold's arm, appended last so every positional
+  // caller keeps its meaning (the menger flag's own reason).
+  sphaira = 0,
 ): string {
   if (sphereInversion !== 0) {
     // The arm replaces the descent bodies wholesale (the escape/bulb
@@ -9642,6 +9856,32 @@ export function surfaceFragmentResolvedFor(
     if (clashes.length > 0) {
       throw new RangeError(
         `SURFACE_MENGER cannot compile with ${clashes.join(", ")}`,
+      );
+    }
+  }
+  if (sphaira !== 0) {
+    // The fold arm replaces the descent bodies wholesale (the
+    // escape/bulb/menger precedent — it sits beside them in the
+    // alternatives chain, so any of these flags on would resolve the
+    // sphaira's text away or leave the session expecting machinery the
+    // arm deleted). The WGSL sphaira core refuses the same set.
+    const clashes = [
+      escape !== 0 && "SURFACE_ESCAPE",
+      bulb !== 0 && "SURFACE_BULB",
+      menger !== 0 && "SURFACE_MENGER",
+      lens !== 0 && "SURFACE_FOLD_LENS",
+      balloon !== 0 && "SURFACE_BALLOON",
+      trap !== null && "SURFACE_SHAPE_TRAP",
+      condensation !== null && "SURFACE_CONDENSATION",
+      schedule !== 0 && "SURFACE_SCHEDULE",
+      chaos !== 0 && "SURFACE_CHAOS",
+      post !== 0 && "SURFACE_POST",
+      tiling !== null && "SURFACE_TILING",
+      optics !== 0 && "SURFACE_OPTICS",
+    ].filter((clash): clash is string => clash !== false);
+    if (clashes.length > 0) {
+      throw new RangeError(
+        `SURFACE_SPHAIRA cannot compile with ${clashes.join(", ")}`,
       );
     }
   }
@@ -9778,6 +10018,7 @@ export function surfaceFragmentResolvedFor(
     SURFACE_ESCAPE: escape,
     SURFACE_BULB: bulb,
     SURFACE_MENGER: menger,
+    SURFACE_SPHAIRA: sphaira,
     SURFACE_FOLD_LENS: lens,
     SURFACE_BALLOON: balloon,
     SURFACE_GROUND_PLANE: plane,
@@ -9918,6 +10159,7 @@ export function surfaceFragmentFor(
   opticsBackend = 0,
   slabCapable = false,
   menger = 0,
+  sphaira = 0,
 ): string {
   const resolved = surfaceFragmentResolvedFor(
     escape,
@@ -9942,6 +10184,7 @@ export function surfaceFragmentFor(
     opticsBackend,
     slabCapable,
     menger,
+    sphaira,
   );
   return plane !== 0 || resolved.length > SURFACE_GLSL_STRIP_BYTES
     ? stripGlslSource(resolved)
@@ -10698,9 +10941,231 @@ export function setMengerSystem(
   }
 }
 
-/** The balloon inverted-union's uniform payload, built by scene.ts from
- * fractal/balloon-de.ts's conventions — see
- * {@link setSurfaceBalloon}. */
+/** The GLSL sphaira arm's per-table caps — every shipped construction
+ * fits (4-6 faces, 5-7 terms, 1 piece); a construction past them is
+ * COMPUTE-ONLY (`sphairahedronFragmentArmLimit`, the sphere-inversion
+ * family's per-construction limit discipline — asked, never assumed from
+ * the dimension). */
+export const SURFACE_SPHAIRA_MAX_FACES = 6;
+export const SURFACE_SPHAIRA_MAX_TERMS = 8;
+export const SURFACE_SPHAIRA_MAX_PIECES = 2;
+
+/**
+ * The ONE routing answer the sphaira fragment arm turns on: null when the
+ * WebGL tracer can draw this construction, else the cap it past — the
+ * subject phrase the gate names and the routing seam reads, exactly
+ * `sphereInversionComputeOnlySubject`'s discipline (a per-dimension "3D
+ * always has an arm" would be true by coincidence, and one construction
+ * past a cap would throw a RangeError into a render that had already been
+ * promised).
+ */
+export function sphairahedronFragmentArmLimit(de: {
+  faceCount: number;
+  termCount: number;
+  pieceCount: number;
+}): "faces" | "terms" | "pieces" | null {
+  if (de.faceCount > SURFACE_SPHAIRA_MAX_FACES) return "faces";
+  if (de.termCount > SURFACE_SPHAIRA_MAX_TERMS) return "terms";
+  if (de.pieceCount > SURFACE_SPHAIRA_MAX_PIECES) return "pieces";
+  return null;
+}
+
+/**
+ * Pack a {@link SphairahedronDE} and flip the material onto the SPHAIRA
+ * variant — {@link setMengerSystem}'s twin one family over. The tables
+ * are `packSphairaGpuTables`' wire unchanged (the WGSL core's binding 1,
+ * which the bench legs pin to the CPU oracle), the counts word mirrors
+ * the WGSL params variant block, and `colors` is one sRGB colour per
+ * FOLD FACE — the hit-info's last-move-face attribution (the compute
+ * wire's slot rule; each slot's trap coordinate is its face index over
+ * faceCount − 1, computed here so the two tracers cannot drift). The
+ * descent's shared uniforms are packed inert with the construction's
+ * framing ball as both marching and visible sphere and step scale 1 (the
+ * fudge IS the damping). Throws past the block's caps
+ * ({@link sphairahedronFragmentArmLimit}) and for a colour count that is
+ * not one per face.
+ *
+ * Ground plane and finish defines are preserved; the balloon, pattern and
+ * optics defines are dropped (the fold refuses all three). Neither is
+ * session state this arm can carry.
+ */
+export function setSphairahedronSystem(
+  material: THREE.ShaderMaterial,
+  de: SphairahedronDE,
+  colors: readonly Vec3[],
+): void {
+  const limit = sphairahedronFragmentArmLimit({
+    faceCount: de.faceCount,
+    termCount: de.termCount,
+    pieceCount: de.pieceCount,
+  });
+  if (limit !== null) {
+    throw new RangeError(
+      `sphairahedron construction (${de.faceCount} faces, ${de.termCount} terms, ${de.pieceCount} pieces) does not fit the 3D fragment arm: past the ${limit} cap`,
+    );
+  }
+  if (colors.length !== de.faceCount) {
+    throw new RangeError(
+      `sphairahedron fold needs ${de.faceCount} face colours, got ${colors.length}`,
+    );
+  }
+  installSurfaceTiling(material, null, false, de.boundingRadius);
+  const postBlockChanged = installSurfacePostBlock(material, false);
+  setSurfaceGrid(material, null);
+  const u = material.uniforms;
+  // The tables: packSphairaGpuTables' wire, vec4 pair per face/term and
+  // the piece table at the tail — the kernel's binding 1, one layout
+  // contract.
+  const table = packSphairaGpuTables(de);
+  const faceUniforms = u.uSphFaces.value as THREE.Vector4[];
+  const termUniforms = u.uSphTerms.value as THREE.Vector4[];
+  const pieceUniforms = u.uSphPieces.value as THREE.Vector4[];
+  const facesVec4s = de.faceCount * 2;
+  for (let i = 0; i < faceUniforms.length; i++) {
+    const o = i * 4;
+    if (i < facesVec4s) {
+      faceUniforms[i].set(table[o], table[o + 1], table[o + 2], table[o + 3]);
+    } else {
+      faceUniforms[i].set(0, 0, 0, 0);
+    }
+  }
+  const termsVec4s = de.termCount * 2;
+  for (let i = 0; i < termUniforms.length; i++) {
+    const o = (facesVec4s + i) * 4;
+    if (i < termsVec4s) {
+      termUniforms[i].set(table[o], table[o + 1], table[o + 2], table[o + 3]);
+    } else {
+      termUniforms[i].set(0, 0, 0, 0);
+    }
+  }
+  for (let pi = 0; pi < pieceUniforms.length; pi++) {
+    const o = (facesVec4s + termsVec4s + pi) * 4;
+    if (pi < de.pieceCount) {
+      pieceUniforms[pi].set(table[o], table[o + 1], table[o + 2], table[o + 3]);
+    } else {
+      pieceUniforms[pi].set(0, 0, 0, 0);
+    }
+  }
+  (u.uSphParams.value as THREE.Vector4).set(
+    de.faceCount,
+    de.termCount,
+    de.pieceCount,
+    0,
+  );
+  const colorsArray = u.uMapColor.value as THREE.Vector3[];
+  colors.forEach((c, i) => colorsArray[i].set(c[0], c[1], c[2]));
+  const denom = Math.max(1, de.faceCount - 1);
+  const trapArray = u.uTrapIndex.value as number[];
+  for (let i = 0; i < de.faceCount; i++) trapArray[i] = i / denom;
+  u.uMapCount.value = de.faceCount;
+  u.uSymOrder.value = 1;
+  u.uSymPlane.value = 1;
+  (u.uSymStep.value as THREE.Vector2).set(1, 0);
+  u.uBoundingRadius.value = de.boundingRadius;
+  (u.uBoundCenter.value as THREE.Vector3).set(
+    de.boundCenter[0],
+    de.boundCenter[1],
+    de.boundCenter[2],
+  );
+  u.uEscapeRadius.value = de.boundingRadius * 2;
+  // Inert: the fold's pass cap is BAKED (a numerical guard, never an
+  // object parameter — the preview tier's clamp would make far queries
+  // decision-unreliable), so the slot carries the full cap for display
+  // consistency and the body never reads it.
+  u.uMaxDepth.value = SPHAIRAHEDRON_FOLD_CAP;
+  u.uStepScale.value = SPHAIRAHEDRON_STEP_SCALE;
+  u.uVisibleRadius.value = de.visibleBoundingRadius;
+  (u.uFinalInvM.value as THREE.Matrix3).identity();
+  (u.uFinalInvT.value as THREE.Vector3).set(0, 0, 0);
+  u.uFinalSigmaMin.value = 1;
+  (u.uLensParams.value as THREE.Vector4).set(0, 1, 1, 1);
+  (u.uLensInvM.value as THREE.Matrix3).identity();
+  (u.uLensInvT.value as THREE.Vector3).set(0, 0, 0);
+  // Preserve the balloon, ground-plane and finish flags exactly like
+  // setMengerSystem — orthogonal session state their own setters own.
+  const balloon = material.defines.SURFACE_BALLOON === 1 ? 1 : 0;
+  const plane = material.defines.SURFACE_GROUND_PLANE === 1 ? 1 : 0;
+  const finish = material.defines.SURFACE_FINISH === 1 ? 1 : 0;
+  const pattern = material.defines.SURFACE_PATTERN === 1 ? 1 : 0;
+  // A stale optics define cannot survive a swap onto the fold arm — see
+  // setEscapeSystem's note.
+  const opticsStale = material.defines.SURFACE_OPTICS === 1;
+  setSurfaceShapeMeshSdf(material, []);
+  if (
+    material.defines.SURFACE_SPHAIRA !== 1 ||
+    material.defines.SURFACE_ESCAPE !== 0 ||
+    material.defines.SURFACE_BULB !== 0 ||
+    material.defines.SURFACE_MENGER === 1 ||
+    material.defines.SURFACE_FOLDS !== 0 ||
+    material.defines.SURFACE_SPHERE_INVERSION === 1 ||
+    material.defines.SURFACE_FOLD_LENS !== 0 ||
+    material.defines.SURFACE_SCHEDULE === 1 ||
+    material.defines.SURFACE_CHAOS === 1 ||
+    material.defines.SURFACE_CONDENSATION !== 0 ||
+    material.defines.SURFACE_POST === 1 ||
+    material.defines.SURFACE_SHAPE_TRAP !== 0 ||
+    materialTrapGeometry(material) !== 0 ||
+    postBlockChanged ||
+    opticsStale
+  ) {
+    material.defines.SURFACE_SPHAIRA = 1;
+    material.defines.SURFACE_ESCAPE = 0;
+    material.defines.SURFACE_BULB = 0;
+    material.defines.SURFACE_MENGER = 0;
+    // A previous sphere-inversion session hands the bodies back too.
+    delete material.defines.SURFACE_SPHERE_INVERSION;
+    installSphereInversionBlock(material, false);
+    delete material.defines.SURFACE_OPTICS;
+    delete material.defines.SURFACE_POST;
+    material.defines.SURFACE_FOLDS = 0;
+    material.defines.SURFACE_FOLD_LENS = 0;
+    delete material.defines.SURFACE_SCHEDULE;
+    delete material.defines.SURFACE_CHAOS;
+    u.uScheduleCount.value = 0;
+    u.uScheduleDepth.value = 0;
+    // The trap is refused: forced off whatever the document carries — the
+    // call site's route already refused it at the gate.
+    material.defines.SURFACE_SHAPE_TRAP = 0;
+    delete material.defines.SURFACE_TRAP_GEOMETRY;
+    material.defines.SURFACE_CONDENSATION = 0;
+    u.uCondCount.value = 0;
+    (
+      material.userData as {
+        surfaceCondensationShapeKey?: string | null;
+        surfaceCondensationShapes?: ShapeSpec[] | null;
+      }
+    ).surfaceCondensationShapeKey = null;
+    (
+      material.userData as { surfaceCondensationShapes?: ShapeSpec[] | null }
+    ).surfaceCondensationShapes = null;
+    material.fragmentShader = surfaceFragmentFor(
+      0,
+      0,
+      balloon,
+      plane,
+      0,
+      finish,
+      pattern,
+      undefined,
+      null,
+      null,
+      false,
+      0,
+      0,
+      0,
+      null,
+      0,
+      material.defines.SURFACE_LIGHTING === 1 ? 1 : 0,
+      0, // sphereInversion — handed back above
+      0, // optics — the fold arm refuses the transport
+      0, // opticsBackend
+      false, // slabCapable
+      0, // menger
+      1, // sphaira
+    );
+    material.needsUpdate = true;
+  }
+}
 export interface SurfaceBalloonSpec {
   /** The DE ball's center (balloon-de.ts's balloonBall convention). */
   center: Vec3;
