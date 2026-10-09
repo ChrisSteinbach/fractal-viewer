@@ -193,6 +193,8 @@ import {
   setMengerTwist,
   setMengerTwistField,
   setSphereInversion,
+  setSphairahedron,
+  setSphairahedronField,
   updateTransform,
 } from "./state";
 import { autoBackground, resolveBackground } from "./background";
@@ -206,6 +208,7 @@ import {
 } from "../fractal/presets";
 import { seedCustomStops } from "../fractal/palette";
 import type { CustomPalette } from "../fractal/palette";
+import type { SphairahedronAuthored } from "../fractal/sphairahedron";
 import { mulberry32 } from "../fractal/rng";
 import { chaosRowIsNonTrivial, MAX_TRANSFORMS } from "../fractal/chaos-game";
 import type { ShapeTrap, Transform, Vec3 } from "../fractal/types";
@@ -3090,6 +3093,74 @@ describe("setMengerTwist / setMengerTwistField (the carve family's block)", () =
     ).toEqual(withOffset.mengerTwist);
     expect(setMengerTwistField(withOffset, "bogus", 1).mengerTwist).toEqual(
       withOffset.mengerTwist,
+    );
+  });
+});
+
+describe("setSphairahedron / setSphairahedronField (the sphairahedron family's block)", () => {
+  const block: SphairahedronAuthored = {
+    family: "cube1",
+    za: 0.5,
+    zb: 1.0,
+    inversion: { cx: 0.1, cy: 0.2, cz: -0.3, r: 0.7 },
+  };
+
+  it("stores the block as authored and clears it with null", () => {
+    const withBlock = setSphairahedron(initialState(true), block);
+    expect(withBlock.sphairahedron).toEqual(block);
+    const cleared = setSphairahedron(withBlock, null);
+    expect(cleared.sphairahedron).toBeUndefined();
+  });
+
+  it("merges one modulus at a time with NO collapse and NO default materialization", () => {
+    const base = initialState(true);
+    // No block: a no-op — the checkbox authors presence.
+    expect(
+      setSphairahedronField(base, "za", 0.6).sphairahedron,
+    ).toBeUndefined();
+    // An absent block sibling modulus stays absent while another moves —
+    // the absent field keeps rendering the family default, so the block
+    // never silently pins a stale explicit value.
+    const partial = setSphairahedronField(
+      setSphairahedron(base, { family: "cube1" }),
+      "za",
+      0.6,
+    );
+    expect(partial.sphairahedron).toEqual({ family: "cube1", za: 0.6 });
+    const both = setSphairahedronField(partial, "zb", 1.1);
+    expect(both.sphairahedron).toEqual({ family: "cube1", za: 0.6, zb: 1.1 });
+    // Back onto the family default does NOT remove the key — presence is
+    // the checkbox's (the menger carve's rule, not the fold-lengths').
+    const backToDefault = setSphairahedronField(both, "za", 0.5);
+    expect(backToDefault.sphairahedron).toEqual({
+      family: "cube1",
+      za: 0.5,
+      zb: 1.1,
+    });
+  });
+
+  it("merges inversion-sphere components, authoring the sphere object on the first move", () => {
+    const base = setSphairahedron(initialState(true), { family: "cube1" });
+    const moved = setSphairahedronField(base, "inversion.cx", 0.25);
+    expect(moved.sphairahedron).toEqual({
+      family: "cube1",
+      inversion: { cx: 0.25 },
+    });
+    const finished = setSphairahedronField(
+      setSphairahedronField(moved, "inversion.r", 0.8),
+      "inversion.cw",
+      -0.5,
+    );
+    expect(finished.sphairahedron).toEqual({
+      family: "cube1",
+      inversion: { cx: 0.25, r: 0.8, cw: -0.5 },
+    });
+    // A non-finite value and an unknown path are no-ops.
+    expect(
+      setSphairahedronField(finished, "inversion.cy", Number.NaN).sphairahedron,
+    ).toEqual(finished.sphairahedron);
+    expect(setSphairahedronField(finished, "bogus", 1).sphairahedron).toEqual(
+      finished.sphairahedron,
     );
   });
 });

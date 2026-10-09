@@ -560,6 +560,20 @@ describe("crossover-v1 field policy", () => {
     }
   });
 
+  it("carries the sphairahedron block whole from the primary parent, never mixed", () => {
+    const primary = snapshot();
+    const secondary = snapshot();
+    primary.sphairahedron = { family: "cube1", za: 0.5, zb: 1.0 };
+    secondary.sphairahedron = { family: "prism2", z2: 1.5 };
+    const plan = prepared({ snapshot: primary }, { snapshot: secondary });
+    for (let seed = 0; seed < 32; seed += 1) {
+      const child = attempt(plan, seed).snapshot;
+      // One authored subject, never mixed: the child carries the PRIMARY's
+      // block verbatim (the other subject blocks' rule).
+      expect(child.sphairahedron).toEqual(primary.sphairahedron);
+    }
+  });
+
   it("preserves absent versus explicitly-undefined optional global blocks", () => {
     const primary = snapshot();
     const secondary = snapshot();

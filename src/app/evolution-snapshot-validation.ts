@@ -388,6 +388,7 @@ const SCENE_FIELDS = {
   finiteSolid: true,
   chainTwist: true,
   mengerTwist: true,
+  sphairahedron: true,
 } satisfies Fields<SceneSnapshot>;
 
 function object(
@@ -921,6 +922,18 @@ function mengerTwistBlock(value: unknown, path: string): void {
   jsonValue(value, path, 0);
 }
 
+/**
+ * The sphairahedron block's verbatim twin: same contract, same reasoning —
+ * `sphairahedron.ts`'s `resolveSphairahedron` refuses rather than throws,
+ * so the crossover carries the block through untouched.
+ */
+function sphairahedronBlock(value: unknown, path: string): void {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError(`${path} must be an object`);
+  }
+  jsonValue(value, path, 0);
+}
+
 function jsonValue(value: unknown, path: string, depth: number): void {
   if (depth > 32) throw new RangeError(`${path} nests too deeply`);
   if (
@@ -1397,6 +1410,9 @@ export function assertValidEvolutionSceneSnapshot(
   }
   if (scene.mengerTwist !== undefined) {
     mengerTwistBlock(scene.mengerTwist, "snapshot.mengerTwist");
+  }
+  if (scene.sphairahedron !== undefined) {
+    sphairahedronBlock(scene.sphairahedron, "snapshot.sphairahedron");
   }
 
   param(

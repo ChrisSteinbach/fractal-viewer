@@ -679,3 +679,30 @@ describe("crossover-v1 validation of the sphere-inversion block", () => {
     }).toThrow(/JSON values/);
   });
 });
+
+describe("crossover-v1 validation of the sphairahedron block", () => {
+  it("accepts a block the resolver refuses, unknown keys included, because the document preserves it verbatim", () => {
+    const snapshot = toSnapshot(initialState(false));
+    snapshot.sphairahedron = {
+      family: "cube99",
+      za: -1,
+      future: [1, { nested: null }],
+    } as unknown as SceneSnapshot["sphairahedron"];
+    expect(() => {
+      assertValidEvolutionSceneSnapshot(snapshot);
+    }).not.toThrow();
+  });
+
+  it("rejects a block that is not a plain object of JSON values", () => {
+    const array = toSnapshot(initialState(false));
+    array.sphairahedron = [] as unknown as SceneSnapshot["sphairahedron"];
+    expect(() => {
+      assertValidEvolutionSceneSnapshot(array);
+    }).toThrow(/sphairahedron must be an object/);
+    const nonFinite = toSnapshot(initialState(false));
+    nonFinite.sphairahedron = { family: "cube1", za: Infinity };
+    expect(() => {
+      assertValidEvolutionSceneSnapshot(nonFinite);
+    }).toThrow(/JSON values/);
+  });
+});

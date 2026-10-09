@@ -149,6 +149,7 @@ import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
 import type { FiniteSolidAuthored } from "../fractal/finite-solid";
 import type { TwistAuthored } from "../fractal/twist";
 import type { MengerTwistAuthored } from "../fractal/menger-twist";
+import type { SphairahedronAuthored } from "../fractal/sphairahedron";
 import type { TilingGroup, TilingSpec } from "../fractal/tiling";
 import { isMeshAssetId } from "../fractal/mesh-shapes";
 import { resolveCondensationDepthBand } from "../fractal/condensation-de";
@@ -233,6 +234,13 @@ export interface SceneSnapshot {
    * JSON object as-is so a refused block survives decode → encode exactly.
    */
   mengerTwist?: MengerTwistAuthored;
+  /**
+   * Optional sphairahedron block (see {@link AppState.sphairahedron}). Same
+   * wire discipline as `sphereInversion`: written only when present, the
+   * authored JSON VERBATIM, and {@link decodeSphairahedron} keeps any plain
+   * JSON object as-is so a refused block survives decode → encode exactly.
+   */
+  sphairahedron?: SphairahedronAuthored;
   numPoints: number;
   pointSize: number;
   colorMode: ColorMode;
@@ -510,6 +518,9 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     ...(state.mengerTwist !== undefined
       ? { mengerTwist: state.mengerTwist }
       : {}),
+    ...(state.sphairahedron !== undefined
+      ? { sphairahedron: state.sphairahedron }
+      : {}),
     numPoints: state.numPoints,
     pointSize: state.pointSize,
     colorMode: state.colorMode,
@@ -615,6 +626,8 @@ export function fromSnapshot(
     chainTwist: snapshot.chainTwist,
     // The Menger-carve block, same scene-content reason.
     mengerTwist: snapshot.mengerTwist,
+    // The sphairahedron block, same scene-content reason.
+    sphairahedron: snapshot.sphairahedron,
     balloonEcho: snapshot.balloonEcho ?? false,
     balloonRadius: snapshot.balloonRadius ?? DEFAULT_BALLOON_RADIUS,
     balloonPaletteId: snapshot.balloonPaletteId ?? DEFAULT_BALLOON_PALETTE,
@@ -1418,6 +1431,21 @@ function decodeChainTwist(raw: unknown): TwistAuthored | undefined {
  * pre-validates a field. Never throws.
  */
 function decodeMengerTwist(raw: unknown): MengerTwistAuthored | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  return raw;
+}
+
+/**
+ * Keep one untrusted `sphairahedron` wire value as-is when it can be a block
+ * at all — {@link decodeChainTwist}'s contract verbatim: a plain JSON
+ * object survives (refused blocks included), everything else drops to
+ * absent. `sphairahedron.ts`'s `resolveSphairahedron` is written for such
+ * untrusted values (wrong types refuse, never coerce), so nothing here
+ * pre-validates a field. Never throws.
+ */
+function decodeSphairahedron(raw: unknown): SphairahedronAuthored | undefined {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return undefined;
   }
@@ -3377,6 +3405,7 @@ export function encodeScene(s: SceneSnapshot): string {
     finiteSolid?: FiniteSolidAuthored;
     chainTwist?: TwistAuthored;
     mengerTwist?: MengerTwistAuthored;
+    sphairahedron?: SphairahedronAuthored;
     numPoints: number;
     pointSize: number;
     colorMode: ColorMode;
@@ -3733,6 +3762,11 @@ export function encodeScene(s: SceneSnapshot): string {
   if (s.mengerTwist !== undefined && s.mengerTwist !== null) {
     payload.mengerTwist = s.mengerTwist;
   }
+  // The sphairahedron block, written only when present and VERBATIM — the
+  // chain-twist reasoning again (decodeSphairahedron's contract).
+  if (s.sphairahedron !== undefined && s.sphairahedron !== null) {
+    payload.sphairahedron = s.sphairahedron;
+  }
   // Written only when present, like finalTransform above — never-authored
   // scenes keep their short URLs. Encoded as hex (per-stop strings for an
   // authored gradient, one concatenated ramp string for an imported one) for
@@ -4011,6 +4045,10 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     // decodeMengerTwist.
     const mengerTwist = decodeMengerTwist(o.mengerTwist);
 
+    // sphairahedron: optional block — same verbatim discipline; see
+    // decodeSphairahedron.
+    const sphairahedron = decodeSphairahedron(o.sphairahedron);
+
     // colorMode / renderStyle: exact known-string matches only. ---------------
     const { colorMode, renderStyle } = o;
     if (typeof colorMode !== "string" || !VALID_COLOR_MODES.has(colorMode))
@@ -4225,6 +4263,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       finiteSolid,
       chainTwist,
       mengerTwist,
+      sphairahedron,
       numPoints,
       pointSize,
       colorMode: colorMode as ColorMode,
