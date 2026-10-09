@@ -133,6 +133,22 @@ export const GATE_MAP: GateMapEntry[] = [
     ],
   },
   {
+    name: "sphairahedron-family",
+    kind: "gate",
+    cost: "cache-eligible",
+    modules: [
+      "src/fractal/sphairahedron.ts",
+      "src/fractal/sphairahedron-de.ts",
+      "src/fractal/sphairahedron-de-4d.ts",
+      "src/fractal/sphairahedron-sample.ts",
+      "src/fractal/surface-de-gpu.ts",
+      "src/app/surface-compute.ts",
+      "src/app/sphairahedron-controls.ts",
+      "src/fractal/presets.ts",
+      "src/app/ui.ts",
+    ],
+  },
+  {
     name: "surface-4d-lift",
     kind: "gate",
     cost: "cache-eligible",
