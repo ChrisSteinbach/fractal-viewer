@@ -281,6 +281,8 @@ describe("surfaceDeKernelWgsl sphaira cores", () => {
       mode: "eval",
       width: 4,
       workgroupSize: 16,
+      sharedFrontier: false,
+      bnbStage2: false,
       core: "sphaira4",
     });
     expect(src).toContain("fn liftSphaira4(");
@@ -291,6 +293,8 @@ describe("surfaceDeKernelWgsl sphaira cores", () => {
       mode: "eval",
       width: 4,
       workgroupSize: 16,
+      sharedFrontier: false,
+      bnbStage2: false,
       core: "sphaira4",
       groundPlane: true,
     });
@@ -310,6 +314,8 @@ describe("surfaceDeKernelWgsl sphaira cores", () => {
       mode: "shade",
       width: 4,
       workgroupSize: 16,
+      sharedFrontier: false,
+      bnbStage2: false,
       core: "sphaira4",
     });
     expect(src4).toContain("info.firstChoice = max(f.lastFace, 0);");
