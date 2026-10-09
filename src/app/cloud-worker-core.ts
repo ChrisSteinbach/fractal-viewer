@@ -71,6 +71,19 @@ import {
 } from "../fractal/menger-sample";
 import { resolveMengerTwist } from "../fractal/menger-twist";
 import type { MengerTwistAuthored } from "../fractal/menger-twist";
+import {
+  buildSphairahedron,
+  resolveSphairahedron,
+  sphairahedronAuthoredDimension,
+} from "../fractal/sphairahedron";
+import type {
+  SphairahedronAuthored,
+  SphairahedronConstruction,
+} from "../fractal/sphairahedron";
+import {
+  sampleSphairahedronCloud,
+  SPHAIRAHEDRON_POINTS_MAX,
+} from "../fractal/sphairahedron-sample";
 import type {
   Bounds,
   Bounds4,
@@ -151,6 +164,19 @@ export interface CloudRequest {
    * like `schedule`: the block never interpolates, so a replace-load's
    * target block applies from the first intermediate. */
   mengerTwist?: MengerTwistAuthored | null;
+  /** The raw authored sphairahedron block, or `null`/absent. When present
+   * (and neither earlier subject block took it first) it REPLACES the
+   * transform system as the cloud's subject: the worker resolves it in
+   * its own realm and draws `sphairahedron-sample.ts`'s inverse-iteration
+   * walk of the limit set instead of running the chaos game, and `fourD`
+   * is the block's dimension (`scene-dimension.ts`). READ FROM THE MORPH
+   * SAMPLE when one is in flight — the family's own stance lerps the
+   * moduli through `buildSphairahedron` (`morph.ts`'s
+   * `lerpSphairahedron`), so unlike the two earlier blocks this one DOES
+   * interpolate, and the request carries the sampled block; a replace-load
+   * pair (cross-family, infinite↔finite, one-sided) pops the target's
+   * block from the first intermediate exactly as the others'. */
+  sphairahedron?: SphairahedronAuthored | null;
   /** 3D color bake inputs (`buildColors`); unused on the 4D path, where color
    * is shader-owned or rebaked main-side per mode (see main.ts's
    * `applyFourDColor`). */
@@ -361,6 +387,9 @@ export function generateCloud(request: CloudRequest): CloudResult {
   }
   if (request.mengerTwist) {
     return generateMengerCloud(request, request.mengerTwist);
+  }
+  if (request.sphairahedron) {
+    return generateSphairahedronCloud(request, request.sphairahedron);
   }
 
   // Guard the raw authored wire before mesh installation, session fitting,
@@ -907,6 +936,156 @@ function generateMengerCloud(
  * the family). The cloud is the untiled carve's boundary. */
 export const MENGER_POINT_TILING_NOTE =
   "Space tiling is not available with a Menger carve; Points draws the untiled carve.";
+
+/** The tiling refusal a sphairahedron Points cloud discloses — the
+ * menger note's shape, the family's own combination policy (no tiling
+ * wrapper certifies a fold estimator yet). The cloud is the untiled
+ * construction's limit-set sample. */
+export const SPHAIRAHEDRON_POINT_TILING_NOTE =
+  "Space tiling is not available with a sphairahedron; Points draws the untiled set.";
+
+/**
+ * Whether a resolution refusal is EXACTLY the family's valid-region one —
+ * the only refusal a MORPH intermediate can carry: the region is not
+ * convex (the type-1 cusp and its moduli swap are both in-region; their
+ * midpoint is not), so same-family lerps land out-of-region mid-glide and
+ * the family's decided stance renders them coherently through the
+ * construction-existence path (`buildSphairahedron`) instead of drawing
+ * nothing. Every other refusal (unknown family, malformed moduli, a
+ * finite request without its sphere, a degenerate construction) draws an
+ * empty cloud — the refused-block rule the other subject blocks run.
+ * The region reasons' text is `resolveSphairahedron`'s own regionRead
+ * shape, matched by prefix so the contract cannot silently widen.
+ */
+function sphairahedronRegionOnly(reasons: readonly string[]): boolean {
+  return (
+    reasons.length > 0 &&
+    reasons.every((reason) => /^ball .+ crosses the wall/.test(reason))
+  );
+}
+
+/**
+ * A sphairahedron document's cloud: `sphairahedron-sample.ts`'s
+ * inverse-iteration walk of the construction's limit set, at most
+ * {@link SPHAIRAHEDRON_POINTS_MAX} points from the request's own seed,
+ * shaped exactly like a chaos-game result so every downstream consumer
+ * (upload, framing, 4D projection) is unchanged. Each point's
+ * last-inversion FACE rides `transformIndices` — the color slot — and
+ * `generationCount` says so (one slot per fold face, the sphere-inversion
+ * sample's exact convention; the count is the surface route's own face
+ * count, so "By Transform" wears the same hue-per-face both modes). A
+ * refused block draws an EMPTY cloud of the request's dimension — except
+ * the region-only refusal a morph intermediate carries, which renders
+ * through the construction-existence path (the family's decided morph
+ * stance, {@link sphairahedronRegionOnly}); a still-unbuildable block
+ * draws nothing. An authored tiling block is disclosed as refused rather
+ * than silently dropped.
+ */
+function generateSphairahedronCloud(
+  request: CloudRequest,
+  authored: SphairahedronAuthored,
+): CloudResult {
+  const resolution = resolveSphairahedron(authored);
+  let construction: SphairahedronConstruction | null = resolution.ok
+    ? resolution.construction
+    : null;
+  if (!resolution.ok && sphairahedronRegionOnly(resolution.reasons)) {
+    // The morph stance's existence path. The family id is a shipped id
+    // (a region refusal implies the family resolved); the sphere is
+    // rebuilt at the family's own dimension — a 4D family's centre is
+    // length 4 with the authored-or-zero w, a 3D one length 3 — exactly
+    // what the resolver itself builds before its region check.
+    const dim = sphairahedronAuthoredDimension(authored);
+    const inv = authored.inversion;
+    const cx = inv?.cx ?? 0;
+    const cy = inv?.cy ?? 0;
+    const cz = inv?.cz ?? 0;
+    try {
+      construction = buildSphairahedron(
+        authored.family as Parameters<typeof buildSphairahedron>[0],
+        { za: authored.za, zb: authored.zb, z2: authored.z2 },
+        inv
+          ? {
+              c: dim === 4 ? [cx, cy, cz, inv.cw ?? 0] : [cx, cy, cz],
+              r: inv.r ?? 1,
+            }
+          : null,
+      );
+    } catch {
+      construction = null;
+    }
+  }
+  const fourD = construction?.dim === 4;
+  if (construction && fourD !== request.fourD) {
+    throw new Error(
+      "sphairahedron cloud request's fourD disagrees with its block",
+    );
+  }
+  const generationCount = construction?.foldFaces.length ?? 1;
+  const cap = Math.min(request.numPoints, SPHAIRAHEDRON_POINTS_MAX);
+  const rng = mulberry32(request.seed);
+  const cloud = construction
+    ? sampleSphairahedronCloud(construction, cap, rng)
+    : null;
+  const count = cloud?.count ?? 0;
+  const positions = cloud?.positions ?? new Float32Array(0);
+  const transformIndices = cloud?.faces ?? new Uint8Array(0);
+  const disclosure = request.tiling
+    ? {
+        pointTiling: {
+          availability: "refused",
+          note: SPHAIRAHEDRON_POINT_TILING_NOTE,
+        } satisfies PointTilingOutcome,
+      }
+    : {};
+  if (request.fourD) {
+    const w =
+      cloud && "w" in cloud ? (cloud.w as Float32Array) : new Float32Array(0);
+    const { bounds, center, radius, originRadius } = sampledBounds4(
+      positions,
+      w,
+      count,
+    );
+    return {
+      id: request.id,
+      fourD: true,
+      positions,
+      w,
+      transformIndices,
+      count,
+      bounds,
+      center,
+      radius,
+      originRadius,
+      frameRadius: framingRadius4(positions, w, count, center),
+      generationCount,
+      ...disclosure,
+    };
+  }
+  const result: ChaosGameResult = {
+    positions,
+    transformIndices,
+    count,
+    bounds: sampledBounds3(positions, count),
+  };
+  const colors = buildColors(
+    result,
+    sphereInversionColorSlots(generationCount),
+    request.colorMode,
+    request.colorGamma,
+    request.rampPalette,
+    request.positionAxisColors,
+  );
+  return {
+    id: request.id,
+    fourD: false,
+    ...result,
+    colors,
+    frameBounds: framingBounds(positions, count),
+    generationCount,
+    ...disclosure,
+  };
+}
 
 /**
  * The buffers to move (zero-copy ownership transfer, not clone) when posting

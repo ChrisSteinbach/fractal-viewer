@@ -6,9 +6,16 @@ export type PanelDimension = "flat" | "nonFlat";
 
 /** Which object an active Surface session is actually marching. Keep this
  * separate from SurfaceRouteKind: active-session applicability and predicted
- * next-entry routing are different facts. */
+ * next-entry routing are different facts. The sphairahedron family reports
+ * ONE kind for both dimensions (the sphereInversion convention). */
 export type SurfaceSessionKind =
-  "ifs" | "escape" | "bulb" | "sphereInversion" | "finiteSolid" | "menger";
+  | "ifs"
+  | "escape"
+  | "bulb"
+  | "sphereInversion"
+  | "finiteSolid"
+  | "menger"
+  | "sphairahedron";
 
 export interface PanelContext {
   renderMode: RenderMode;

@@ -846,6 +846,24 @@ export function sphereInversionRenderModeRefusal(
   return "Flame and Solid are unavailable for a sphere-inversion scene. Use Points or Surface.";
 }
 
+/**
+ * The sphairahedron block's render-mode verdict — the sphere-inversion
+ * helper's twin one family over, with the family's own Points difference:
+ * Points draws the FINITE constructions' limit set (the inverse-iteration
+ * walk, `sphairahedron-sample.ts`), so the refusal covers Flame and Solid
+ * only, whether or not the block resolves (a refused block is still the
+ * scene's subject, and drawing the preserved transforms instead would show
+ * a different object).
+ */
+export function sphairahedronRenderModeRefusal(
+  block: SphairahedronAuthored | null | undefined,
+  mode: RenderMode,
+): string | null {
+  if (block === null || block === undefined) return null;
+  if (mode !== "flame" && mode !== "solid") return null;
+  return "Flame and Solid are unavailable for a sphairahedron scene. Use Points or Surface.";
+}
+
 /** The one machine fact the document cannot answer (module doc and
  * {@link deriveSurfaceEligibility}). */
 export interface SurfaceEligibilityOptions {
