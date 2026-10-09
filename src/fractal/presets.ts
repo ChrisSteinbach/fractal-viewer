@@ -3995,35 +3995,35 @@ export const PRESET_VIEWS: Partial<Record<Preset, PresetView>> = {
     camera: {
       eye: [1.8661, 1.4385, 1.1331],
       target: [1.3115, 1.0449, 0.4891],
-      fov: 55,
+      fov: 57.6216,
     },
   },
   sphairaCraters4: {
     camera: {
       eye: [1.572, 0.7286, 0.4153],
       target: [0.5205, -0.0177, -0.8058],
-      fov: 55,
+      fov: 57.6216,
     },
   },
   sphairaCraters9: {
     camera: {
       eye: [0.8809, 0.6006, 0.4525],
       target: [0.157, 0.0869, -0.3881],
-      fov: 55,
+      fov: 57.6216,
     },
   },
   sphairaOrb: {
     camera: {
       eye: [0.6035, 0.4005, 0.7099],
       target: [-0.007, -0.0327, 0.001],
-      fov: 55,
+      fov: 57.6216,
     },
   },
   sphairaTerrain: {
     camera: {
       eye: [6.1978, 3.6549, 4.3054],
       target: [1.9692, 0.654, -0.6052],
-      fov: 55,
+      fov: 57.6216,
     },
   },
   // The 4D twin's rotor: one xw turn off the centre slice (the house's
@@ -4035,7 +4035,7 @@ export const PRESET_VIEWS: Partial<Record<Preset, PresetView>> = {
     camera: {
       eye: [10.2094, 3.0264, 12.2207],
       target: [-0.4499, -4.5383, -0.1578],
-      fov: 55,
+      fov: 57.6216,
     },
     fourD: { rotation: [["xw", 0.3]], w0: 0 },
   },
