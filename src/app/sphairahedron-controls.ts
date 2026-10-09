@@ -45,6 +45,7 @@ import {
   type SphairahedronAuthored,
   type SphairahedronFamilyId,
 } from "../fractal/sphairahedron";
+import { SPHAIRAHEDRON_WALK_EMPTY_FAMILIES } from "../fractal/sphairahedron-sample";
 import { authoredPickerInversion } from "./sphairahedron-authoring";
 
 /** The numeric fields the panel exposes. */
@@ -67,6 +68,44 @@ export interface SphairahedronFieldRange {
   max: number;
   step: number;
   precision: number;
+}
+
+/** The J rows' FIXED spans, before a widening — the notes' comparison base
+ * (a widened row discloses itself). Keyed by the authored-field suffix. */
+export const SPHAIRAHEDRON_INVERSION_BASE_RANGES: Record<
+  "cx" | "cy" | "cz" | "cw" | "r",
+  SphairahedronFieldRange
+> = {
+  cx: { min: -2, max: 2, step: 0.01, precision: 3 },
+  cy: { min: -2, max: 2, step: 0.01, precision: 3 },
+  cz: { min: -2, max: 2, step: 0.01, precision: 3 },
+  cw: { min: -1, max: 1, step: 0.01, precision: 3 },
+  r: { min: 0.2, max: 3, step: 0.01, precision: 3 },
+};
+
+/**
+ * A value outside a span widens that slider to itself (the module doc's
+ * rule, the J rows' edition): the inversion sphere is a FREE parameter and
+ * the fixed spans only cover the constructions' everyday scale — the
+ * picker's J for a larger family or a higher modulus legitimately lands
+ * outside them, and a slider that cannot reach its own authored value
+ * shows the numeric companion's red out-of-range state and strands the
+ * value. Extending the span to reach the value exactly keeps the display
+ * verbatim (never clamped) AND the control usable; the widening itself is
+ * disclosed by the row's note (sphairahedronControlNotes compares the base
+ * span). `raw` is untrusted — an imported document's field.
+ */
+function widenSpanToAuthored(
+  span: SphairahedronFieldRange,
+  raw: unknown,
+): SphairahedronFieldRange {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return span;
+  if (raw >= span.min && raw <= span.max) return span;
+  return {
+    ...span,
+    min: Math.min(span.min, raw),
+    max: Math.max(span.max, raw),
+  };
 }
 
 /** The value a select shows when the document names a family this version
@@ -302,11 +341,20 @@ export function sphairahedronFieldRange(
       case "inversion.cx":
       case "inversion.cy":
       case "inversion.cz":
-        return { min: -2, max: 2, step: 0.01, precision: 3 };
+        return widenSpanToAuthored(
+          { min: -2, max: 2, step: 0.01, precision: 3 },
+          inversionOf(block)?.[field.slice("inversion.".length)],
+        );
       case "inversion.cw":
-        return { min: -1, max: 1, step: 0.01, precision: 3 };
+        return widenSpanToAuthored(
+          { min: -1, max: 1, step: 0.01, precision: 3 },
+          inversionOf(block)?.cw,
+        );
       case "inversion.r":
-        return { min: 0.2, max: 3, step: 0.01, precision: 3 };
+        return widenSpanToAuthored(
+          { min: 0.2, max: 3, step: 0.01, precision: 3 },
+          inversionOf(block)?.r,
+        );
     }
   }
   const family = sphairahedronFamily(block);
@@ -558,6 +606,21 @@ export function sphairahedronControlNotes(
   ];
   const family = sphairahedronFamily(block);
   const finite = sphairahedronIsFinite(block);
+  if (
+    !finite &&
+    family !== null &&
+    SPHAIRAHEDRON_WALK_EMPTY_FAMILIES.includes(family) &&
+    notes.finite === ""
+  ) {
+    // The empty-cloud disclosure the walk's own scope note promises: these
+    // families' sphere-less limit set is unbounded (the tetra's is the
+    // plane y = 0), the bounded walk keeps nothing, and Points draws empty
+    // with no error. Say why, and name the affordance that fixes it. The
+    // sphere-less CUBE constructions still draw, so the predicate is the
+    // family AND the sphere's absence — never the sphere alone.
+    notes.finite =
+      "The walk keeps nothing here: an infinite family's limit set is unbounded. Check Finite to draw it.";
+  }
   for (const field of numericFields) {
     if (notes[field] !== "") continue;
     // A field the family does not read (za/zb on the tetra/prism, z2 on
@@ -574,7 +637,22 @@ export function sphairahedronControlNotes(
     const raw = sphairahedronFieldAuthored(block, field);
     if (typeof raw !== "number" || !Number.isFinite(raw)) continue;
     const range = sphairahedronFieldRange(block, field);
-    if (raw >= range.min && raw <= range.max) continue;
+    if (raw >= range.min && raw <= range.max) {
+      // The J rows' widening disclosure: the span extended itself to reach
+      // an authored value past the family's everyday scale (the J rows'
+      // edition of the widening rule), so the value is in-range and the
+      // slider can reach it — say why the span is wider than the base.
+      const suffix = field.startsWith("inversion.")
+        ? (field.slice(
+            "inversion.".length,
+          ) as keyof typeof SPHAIRAHEDRON_INVERSION_BASE_RANGES)
+        : null;
+      const base = suffix ? SPHAIRAHEDRON_INVERSION_BASE_RANGES[suffix] : null;
+      if (base && (range.min < base.min || range.max > base.max)) {
+        notes[field] = "Slider range widened to reach the authored value.";
+      }
+      continue;
+    }
     notes[field] =
       `${formatNumber(raw, range.precision)} is outside this slider's range ` +
       `${String(range.min)} to ${String(range.max)}; kept as authored.`;

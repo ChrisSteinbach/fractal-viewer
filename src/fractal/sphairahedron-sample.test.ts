@@ -14,6 +14,7 @@ import {
   sampleSphairahedronCloud,
   SPHAIRAHEDRON_POINTS_MAX,
   SPHAIRAHEDRON_POINTS_MIN_FOLDS,
+  SPHAIRAHEDRON_WALK_EMPTY_FAMILIES,
 } from "./sphairahedron-sample";
 import { mulberry32 } from "./rng";
 import type { Vec3, Vec4 } from "./types";
@@ -122,6 +123,34 @@ describe("sphairahedron-sample (the inverse-iteration walk)", () => {
     const construction = constructionOf({ family: "tetra333" });
     const cloud = sampleSphairahedronCloud(construction, 2000, mulberry32(11));
     expect(cloud.count).toBe(0);
+  });
+
+  it("names exactly the families the walk draws empty for — measured, family-keyed, not sphere-keyed", () => {
+    // SPHAIRAHEDRON_WALK_EMPTY_FAMILIES is the panel's empty-cloud
+    // disclosure predicate, so it must equal the walk's own keep-behavior:
+    // each named family's sphere-less construction keeps nothing, each
+    // unnamed one keeps its draw (measured, mulberry32(1), ask 5000).
+    expect(SPHAIRAHEDRON_WALK_EMPTY_FAMILIES).toEqual([
+      "tetra333",
+      "tetra4",
+      "prism2",
+    ]);
+    for (const family of SPHAIRAHEDRON_WALK_EMPTY_FAMILIES) {
+      const cloud = sampleSphairahedronCloud(
+        constructionOf({ family }),
+        2000,
+        mulberry32(1),
+      );
+      expect(cloud.count, family).toBe(0);
+    }
+    for (const family of ["cube1", "cube4", "cube9"] as const) {
+      const cloud = sampleSphairahedronCloud(
+        constructionOf({ family }),
+        2000,
+        mulberry32(1),
+      );
+      expect(cloud.count, family).toBe(2000);
+    }
   });
 
   it("keeps only deep folds (the acceptance threshold is the study's 24)", () => {

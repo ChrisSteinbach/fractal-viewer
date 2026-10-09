@@ -63,6 +63,7 @@ import {
   invertPoint,
   makeSphairahedronScratch,
   type SphairahedronConstruction,
+  type SphairahedronFamilyId,
   type SphairahedronScratch,
 } from "./sphairahedron";
 import type { Rng } from "./rng";
@@ -95,6 +96,18 @@ function applyFace(
  * the same two-seconds-of-worker-time rule (one walk step costs one
  * inversion plus, for candidates, one fold probe). */
 export const SPHAIRAHEDRON_POINTS_MAX = 500_000;
+
+/** The families whose SPHERE-LESS construction the walk keeps nothing for:
+ * their face group's limit set is unbounded (the tetra's plane y = 0, the
+ * prism terrains), so the deep-fold acceptance never fires and the Points
+ * cloud draws empty. MEASURED on the bare family defaults, mulberry32(1),
+ * ask 5000: the tetra pair and the prism keep 0, each cube family keeps
+ * 5000 — a sphere-less CUBE construction still draws. The finite stance
+ * (an inversion sphere) bounds every family's set, so the predicate for
+ * the panel's empty-cloud disclosure is family here AND sphere absent,
+ * never the sphere alone. */
+export const SPHAIRAHEDRON_WALK_EMPTY_FAMILIES: readonly SphairahedronFamilyId[] =
+  ["tetra333", "tetra4", "prism2"];
 
 /** Minimum fold depth (moves) a kept point's own fold must report — the
  * study's acceptance threshold, measured: at 24 the sampled cloud reads
