@@ -987,6 +987,68 @@ describe("Twisted sponge showcases", () => {
   });
 });
 
+describe("Plain hyper-Menger", () => {
+  // Every 4D Menger preset decorates one plain subject: twistedSponge4
+  // shares the hyper-Menger's 48 maps under the reference twist plus a
+  // sphere-fold lens, mengerCarve4 traces the carve family's twisted
+  // construction (whose w extension must be non-trivial for the scene to be
+  // 4D at all), and glassMenger4 poses a level-2 slice behind glass. The
+  // plain preset IS the subject — the menger preset's construction one
+  // dimension up, hint-less and view-less exactly like its 3D sibling.
+  it("hyperMenger is the plain 48-map sponge, the explorer preset its 3D sibling is", () => {
+    expect(presetTransforms("hyperMenger")).toEqual(
+      hyperMengerSpongeTransforms(),
+    );
+    expect(presetTransforms("hyperMenger")).toHaveLength(48);
+    // The plain construction: every map contracts by 1/3 on x/y/z, carries
+    // its own w offset, and authors nothing else — no rotation, no
+    // variation, no post, no finish, no chaos rows.
+    for (const t of presetTransforms("hyperMenger")) {
+      expect(t.scale).toEqual([1 / 3, 1 / 3, 1 / 3]);
+      expect(t.rotation).toEqual([0, 0, 0]);
+      expect(t.variations).toBeUndefined();
+      expect(t.post).toBeUndefined();
+      expect(t.chaos).toBeUndefined();
+      expect([-0.5, 0, 0.5]).toContain(t.w?.position);
+    }
+    // The discipline the plain sibling lives by: absent everywhere the
+    // showcases author.
+    expect(PRESET_RENDER_HINTS.hyperMenger).toBeUndefined();
+    expect(PRESET_FINALS.hyperMenger?.() ?? null).toBeNull();
+    expect(PRESET_VIEWS.hyperMenger).toBeUndefined();
+    expect(PRESET_SCAFFOLDS.hyperMenger).toBeUndefined();
+    expect(PRESET_SYMMETRIES.hyperMenger).toBeUndefined();
+    expect(PRESET_TILINGS.hyperMenger).toBeUndefined();
+    expect(PRESET_TRAPS.hyperMenger).toBeUndefined();
+    expect(PRESET_SCHEDULES.hyperMenger).toBeUndefined();
+    expect(PRESET_PALETTES.hyperMenger).toBeUndefined();
+    // The system is genuinely 4D (the w=±0.5 rows carry the fourth axis),
+    // and the surface gate admits the plain affine maps.
+    expect(
+      systemPartsAreNonFlat(presetTransforms("hyperMenger"), null, {
+        order: 1,
+        plane: "xz",
+      }),
+    ).toBe(true);
+    const analysis = analyzeSurfaceSystem4(presetTransforms("hyperMenger"));
+    expect(analysis.status, analysis.reasons.join("; ")).toBe("eligible");
+    // The attractor converges bounded on all four axes, with the w extent
+    // in the same class as the spatial ones — a sponge, not a sheet.
+    const result = runChaosGame4(
+      presetTransforms("hyperMenger").map(toTransform4),
+      20000,
+      mulberry32(11),
+    );
+    expect(result.count).toBe(20000);
+    for (const w of result.w) expect(Number.isFinite(w)).toBe(true);
+    for (const p of result.positions) expect(Number.isFinite(p)).toBe(true);
+    const { minX, maxX, minY, maxY, minZ, maxZ, minW, maxW } = result.bounds;
+    const extents = [maxX - minX, maxY - minY, maxZ - minZ, maxW - minW];
+    for (const extent of extents) expect(extent).toBeGreaterThan(0.2);
+    for (const extent of extents) expect(extent).toBeLessThan(2.1);
+  });
+});
+
 describe("Surface swirl showcases", () => {
   for (const [name, sibling, dimension] of [
     ["swirlTetrahedron", "sierpinski", 3],
