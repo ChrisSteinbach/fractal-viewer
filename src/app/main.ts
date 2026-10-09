@@ -2877,6 +2877,8 @@ async function main(): Promise<void> {
   // even when the PREVIOUS system was already non-flat too (e.g. switching
   // from the double-rotation spiral straight to the pentatope). `fit` asks
   // the arrival handler to auto-frame the camera on the fresh result.
+  let subjectFitPending = false;
+
   function regenerate(replaced = false, fit = false): void {
     // A document-true generation declares any in-flight morph over:
     // snap it — its terminal request goes out first, then this request
@@ -2892,8 +2894,15 @@ async function main(): Promise<void> {
     // this call IS the coalesced run (the coalescer clears its handle before
     // invoking us).
     regenScheduler.cancel();
+    // A pending subject fit arms this request: a discrete subject-block edit
+    // replaced the cloud's subject wholesale, and the object the camera
+    // should frame is somewhere else — the fit rides whichever regenerate
+    // actually runs, so a superseding slider tick keeps the intent. Consumed
+    // here so it can never surprise a later, unrelated regeneration.
+    const fitIntent = fit || subjectFitPending;
+    subjectFitPending = false;
     markLandedPointCloudStale();
-    cloudGenerator.request(cloudParams(replaced, fit));
+    cloudGenerator.request(cloudParams(replaced, fitIntent));
   }
 
   /**
@@ -3311,7 +3320,11 @@ async function main(): Promise<void> {
     const presetView = loadHints.takeView(request);
     if (presetView) {
       applyPresetView(presetView);
-    } else if (request.fit) {
+    } else if (request.fit && result.count > 0) {
+      // An empty cloud (the sphaira families' infinite constructions) has
+      // nothing to frame — the fit would park the camera on a degenerate
+      // zero box at the origin, and the subject-fit's disclosure owns the
+      // why instead.
       fitCameraToAttractor();
     } else if (
       morphTween.active &&
@@ -11150,6 +11163,18 @@ async function main(): Promise<void> {
     regenerateIfAutoUpdate: () => {
       markLandedPointCloudStale();
       if (state.autoUpdate) regenScheduler.schedule();
+    },
+    regenerateSubjectFitIfAutoUpdate: () => {
+      markLandedPointCloudStale();
+      if (state.autoUpdate) {
+        // The discrete subject edits (enable, family, finite stance) replace
+        // the cloud's subject wholesale — the object is somewhere else, so
+        // the landing fit frames it (the preset-load rule, one edit class
+        // over). A J/moduli slider tick deliberately does NOT: the object
+        // deforms in place and the fit would fight the authoring hand.
+        subjectFitPending = true;
+        regenScheduler.schedule();
+      }
     },
     resumePointAutoUpdate: () => {
       if (state.autoUpdate && !landedPointTilingMatchesAuthored) {
