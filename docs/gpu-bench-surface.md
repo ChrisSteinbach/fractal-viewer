@@ -146,6 +146,40 @@ before this run; the production frames completed with zero
 exhausted/active rays on both cores, and the twisted-vs-classic A/B
 renders the bent carve against the textbook sponge.
 
+The sphairahedron family adds the S1 (3D) and S2 (4D) agreement legs and
+three/two fixtures — `sphairaTetraReference` (the infinite tetra, the
+analytic plane anchor's own family), `sphairaTetraFinite` (the tests'
+pinned inversion sphere) and `sphairaCubeFinite` (the reflected-reference
+first candidate) in 3D; `sphaira4TetraReference` (identity view) and
+`sphaira4TetraTilted` (the pose rotor turned, w0 0.3) in 4D. The IIS fold
+is NOT a forward orbit and NOT chaotic — it is a pass-restart face scan
+bounded by the baked cap (`docs/sphairahedron-family.md`) — so the legs
+deliberately carry NO ensemble/ring/flip classifier: the plain comparator
+pins all 700 queries per fixture at fail=0, exactly the carve legs' gate,
+with the query mix re-bracketed against the sphaira DE
+(`sphairaQueries`/`sphaira4Queries`: uniform points in the framing ball's
+1.2 R cube + a `DE < 0.005 R` bisection shell + a cluster at the framing
+centre). The 4D rows compare against the COMPOSED f64 oracle (view lift,
+then `estimateSphairahedronDistance4`) and the f32 twin carries the same
+lift. The twins' twin-vs-oracle agreement is additionally GATED in the
+systems loop — a scan row over tolerance is a bug or a tolerance-sized
+discontinuity, never orbit noise — and each system's measured
+realization noise is noted. Unlike the carve, the core DECLARES binding 1
+(the face/term/piece table wire), so both legs pass the packed
+`sphTable` in the maps slot rather than a zero stride.
+
+MEASURED on the AMD RX 7900 XTX (`--display=:0`, quiet=YES baseline
+gpuBusy 3%, the run whose overall section verdict was `pass`): all five
+sphaira rows fail=0 over 700 queries each, zero exclusions, maxAbsErr
+2.44e-7..1.96e-6, p99 2.14e-7..1.47e-6; the f32 twins' realization noise
+maxAbs 2.31e-7..2.45e-6. Two defects the legs caught on their first runs,
+both fixed and pinned in the vitest table test: Tint parses a bare
+`select(a < b, c > d, e)`'s middle as a template list (the S1 leg's first
+compile), and the table packer's fixed-index lane read took the 4D rows'
+radius from the w-coordinate lane (the S2 leg's first run — every query
++Infinity). Session-level settle costs are the routing child's browser
+gate to measure (the kernels' own agreement is this run's).
+
 `marchUnprojectChaos` and `computeFrameChaos` apply the schedule rows' same
 anti-vacuity discipline to that graph. The march must dispatch, complete,
 agree on every included ray and produce a nonempty/non-full hit mix on both
