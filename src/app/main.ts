@@ -8288,12 +8288,12 @@ async function main(): Promise<void> {
     // clip's subject (every chokepoint finalizes the partial clip).
     stopMotionExportIfRunning();
     // Every door into a renderer funnels through here (the mode control,
-    // load hints, shows), so the family's Flame/Solid refusal lives here
-    // once.
-    const familyRefusal = sphereInversionRenderModeRefusal(
-      state.sphereInversion,
-      target,
-    );
+    // load hints, shows), so the subject blocks' Flame/Solid refusals live
+    // here once — the sphere-inversion family's, then the sphairahedron
+    // one's (the same door, one subject over).
+    const familyRefusal =
+      sphereInversionRenderModeRefusal(state.sphereInversion, target) ??
+      sphairahedronRenderModeRefusal(state.sphairahedron, target);
     if (familyRefusal !== null) {
       ui.flashToast(familyRefusal);
       return;
