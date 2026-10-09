@@ -8398,14 +8398,25 @@ async function main(): Promise<void> {
     switchRenderMode(target);
   }
 
+  /** A subject block — a sphere inversion, the Menger carve, a
+   * sphairahedron — replaces the transform system as the Points subject:
+   * under one, the transform boxes draw nothing meaningful and hit-test
+   * nothing. The ONE presence definition shared by the guides' visibility
+   * gate, the box hit-test, and the panel pipeline's refresh trigger (a
+   * discrete edit whose apply flips this must refresh the guides — the
+   * panel path runs no other call site that would). */
+  function subjectBlockPresent(s: AppState): boolean {
+    return !!(s.sphereInversion || s.mengerTwist || s.sphairahedron);
+  }
+
   // Panel selection and canvas manipulation are separate: the shared editor
   // keeps its target through every renderer, while only flat Points exposes a
   // numbered guide box to highlight, hit-test, or drag. Final/camera selections
   // still map to no box, as before.
   function selectedBox(): number | null {
-    // A sphere-inversion block replaces the transform system in Points, so
-    // no transform box is drawn to hit-test.
-    if (state.sphereInversion) return null;
+    // A subject block replaces the transform system in Points, so no
+    // transform box is drawn to hit-test.
+    if (subjectBlockPresent(state)) return null;
     return canvasTransformTarget(
       state.renderMode,
       viewIs4D,
@@ -8422,11 +8433,12 @@ async function main(): Promise<void> {
   }
 
   function refreshGuides(): void {
-    // The guides draw the transform system, which a sphere-inversion block
-    // replaces as the Points subject.
+    // The guides draw the transform system, which a subject block replaces
+    // as the Points subject (each family's cloud is its own sampler's
+    // output; the transforms render nothing under them).
     const available =
       canvasTransformGuidesEnabled(state.renderMode, viewIs4D) &&
-      !state.sphereInversion;
+      !subjectBlockPresent(state);
     const visible = available && guidesShown();
     // An empty list removes stale box geometry outside flat Points. Selection
     // remains in AppState and the editor; only its canvas presentation rests.
@@ -12034,6 +12046,16 @@ async function main(): Promise<void> {
       state = candidate;
       ui.updateLabels(state);
       spec.effect?.(state, controlEffects, previous);
+      // A discrete edit whose apply flipped the subject-block presence
+      // (a sphere-inversion / Menger / sphairahedron block arriving or
+      // leaving) changes what the guides draw — the transform boxes are
+      // meaningless under a subject — so refresh them here. The panel
+      // pipeline runs no other refreshGuides call site (applyEdit's is the
+      // whole-system path), and presence flips only on the checkbox/select
+      // edits, never a slider tick, so this is cheap on the drag paths.
+      if (subjectBlockPresent(previous) !== subjectBlockPresent(state)) {
+        refreshGuides();
+      }
       // Threshold and the shared balloon toggle/radius can change the live
       // centre-density refusal without a new worker event.
       ui.setSolidBalloonAvailable(scene.solidBalloonAvailable());
