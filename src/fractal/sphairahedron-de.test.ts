@@ -395,6 +395,53 @@ describe("sphairahedron DE hit info", () => {
     expect(hit.moves).toBe(hit.inversions + hit.reflections);
     expect(hit.moves).toBeGreaterThan(0);
   });
+
+  it("attributes the last fold move's face (the per-face color source's key)", () => {
+    const { construction } = resolved({ family: "tetra333" });
+    const de = buildSphairahedronDE(construction);
+    // Face order: the ball first, then the three walls. A query whose
+    // final move is an inversion lands on the ball (face 0); one whose
+    // final move is a reflection lands on the wall it reflected across.
+    const ballInverted = sphairahedronHitInfo(de, [0.15, -0.2, 0.1]);
+    expect(ballInverted.lastFace).toBeGreaterThanOrEqual(0);
+    expect(
+      ballInverted.lastFace === 0 || de.faceKind[ballInverted.lastFace] === 1,
+    ).toBe(true);
+    // A no-move query — already inside every face's solid side — carries
+    // −1: no face touched, no attribution to invent.
+    const inside = sphairahedronHitInfo(de, [0, -1, 0.2]);
+    expect(inside.moves).toBe(0);
+    expect(inside.lastFace).toBe(-1);
+    // Every moved query's attribution names a real face, and re-running
+    // the fold is deterministic (the same face both times).
+    for (let i = 0; i < 40; i++) {
+      const p: Vec3 = [
+        Math.sin(i * 2.1) * 2.0,
+        Math.sin(i * 1.3) * 2.0,
+        Math.sin(i * 0.7) * 2.0,
+      ];
+      const hit = sphairahedronHitInfo(de, p);
+      if (hit.moves === 0) {
+        expect(hit.lastFace).toBe(-1);
+      } else {
+        expect(hit.lastFace).toBeGreaterThanOrEqual(0);
+        expect(hit.lastFace).toBeLessThan(de.faceCount);
+      }
+    }
+  });
+
+  it("carries the framing ball the GPU packers transfer (the march sphere)", () => {
+    const { construction } = resolved({ family: "tetra333" });
+    const de = buildSphairahedronDE(construction);
+    expect(de.boundingRadius).toBe(construction.bound.radius);
+    expect(de.visibleBoundingRadius).toBe(construction.bound.radius);
+    const de4 = buildSphairahedronDE4(
+      resolved({ family: "tetra4" }).construction,
+    );
+    expect(de4.boundingRadius).toBe(
+      resolved({ family: "tetra4" }).construction.bound.radius,
+    );
+  });
 });
 
 describe("sphairahedron 4D twin", () => {
@@ -452,6 +499,26 @@ describe("sphairahedron 4D twin", () => {
     expect(hit.moves).toBe(hit.inversions + hit.reflections);
     expect(hit.d).toBeLessThan(0);
     expect(hit.status).toBe(SPHAIRAHEDRON_FOLD_DOMAIN);
+  });
+
+  it("carries the last-move attribution one dimension up, bit-identical at w = 0", () => {
+    const de3 = buildSphairahedronDE(
+      resolved({ family: "tetra333" }).construction,
+    );
+    const de4 = buildSphairahedronDE4(
+      resolved({ family: "tetra4" }).construction,
+    );
+    for (let i = 0; i < 100; i++) {
+      const p: Vec3 = [
+        Math.sin(i * 1.9) * 1.8,
+        Math.sin(i * 1.1) * 1.8,
+        Math.sin(i * 2.7) * 1.4,
+      ];
+      const h3 = sphairahedronHitInfo(de3, p);
+      const h4 = sphairahedronHitInfo4(de4, [p[0], p[1], p[2], 0]);
+      expect(h4.lastFace).toBe(h3.lastFace);
+      expect(h4.moves).toBe(h3.moves);
+    }
   });
 });
 

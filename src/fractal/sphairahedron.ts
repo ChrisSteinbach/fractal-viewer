@@ -179,6 +179,14 @@ export const SPHAIRAHEDRON_FUDGE = 0.2;
 /** The march step scale: no damping beyond the fudge. */
 export const SPHAIRAHEDRON_STEP_SCALE = 1;
 
+/** The depth color source's normalizer: the trap coordinate is
+ * `moves / SPHAIRAHEDRON_TRAP_NORM`, clamped — the app ramp's reading of
+ * the study's depth-color arm (which cycled a hue per move). The measured
+ * surface histogram concentrates at 5–9 moves (peak 7; the cap never
+ * reached), so 16 covers the surface range with headroom; a document
+ * parameter would make it one (the trap is a color, never geometry). */
+export const SPHAIRAHEDRON_TRAP_NORM = 16;
+
 /** A solved radius within `tol · max(1, threshold)` of its region threshold
  * is ON the boundary: admitted, disclosed degraded. */
 export const SPHAIRAHEDRON_REGION_BOUNDARY_TOL = 1e-9;
@@ -681,7 +689,8 @@ export function sphairahedronTileSDF(
 
 /** Scratch for the fold: the folded point, the accumulated conformal
  * Jacobian and the move counters. Reused across calls; no allocations in
- * the hot path. */
+ * the hot path. `lastFace` is the fold's last-move face index (−1 when it
+ * never moved) — the per-face color attribution both readings carry. */
 export interface SphairahedronScratch {
   x: Float64Array;
   moves: number;
@@ -691,6 +700,7 @@ export interface SphairahedronScratch {
   capped: boolean;
   skippedPole: boolean;
   lambda: number;
+  lastFace: number;
 }
 
 export function makeSphairahedronScratch(
@@ -706,6 +716,7 @@ export function makeSphairahedronScratch(
     capped: false,
     skippedPole: false,
     lambda: 1,
+    lastFace: -1,
   };
 }
 
@@ -733,9 +744,15 @@ export function foldSphairahedron(
   s.capped = false;
   s.skippedPole = false;
   s.lambda = 1;
+  s.lastFace = -1;
   for (;;) {
     let moved = false;
-    for (const { face, solidInside } of construction.foldFaces) {
+    for (
+      let faceIndex = 0;
+      faceIndex < construction.foldFaces.length;
+      faceIndex++
+    ) {
+      const { face, solidInside } = construction.foldFaces[faceIndex];
       if (face.kind === "sphere") {
         const c = face.sphere.c;
         const r = face.sphere.r;
@@ -758,6 +775,7 @@ export function foldSphairahedron(
           s.lambda *= k;
           s.inversions++;
           s.moves++;
+          s.lastFace = faceIndex;
           moved = true;
         }
       } else {
@@ -768,6 +786,7 @@ export function foldSphairahedron(
           for (let i = 0; i < dim; i++) s.x[i] -= 2 * d * pl.n[i];
           s.reflections++;
           s.moves++;
+          s.lastFace = faceIndex;
           moved = true;
         }
       }

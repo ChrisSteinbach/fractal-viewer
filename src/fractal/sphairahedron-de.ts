@@ -63,8 +63,13 @@ import type { Vec3 } from "./types";
 /** The flattened construction both estimator twins read. Face stride 5:
  * sphere `[c0, c1, c2, r, solidInside]`, plane `[n0, n1, n2, h, 0]`. Term
  * stride 5: sphere `[c0, c1, c2, r, inside]`, plane `[n0, n1, n2, h,
- * above]`. */
+ * above]`. The two radii are the construction's own framing ball — the
+ * march entry/exit sphere and the visible-extent normalizer the GPU and
+ * GLSL packers transfer (the escape/bulb packers' `boundingRadius`
+ * convention; the framing ball IS what the caller frames on). */
 export interface SphairahedronDE {
+  readonly boundingRadius: number;
+  readonly visibleBoundingRadius: number;
   readonly foldCap: number;
   readonly faceCount: number;
   readonly faceKind: Int32Array;
@@ -134,6 +139,8 @@ function flatten(construction: SphairahedronConstruction): SphairahedronDE {
     });
   });
   return {
+    boundingRadius: construction.bound.radius,
+    visibleBoundingRadius: construction.bound.radius,
     foldCap: construction.foldCap,
     faceCount,
     faceKind,
@@ -157,6 +164,10 @@ let foldReflections = 0;
 let foldPasses = 0;
 let foldCapped = false;
 let foldPole = false;
+/** The face index of the fold's last move — the per-face color source's
+ * attribution (the sphere-inversion hit's attribution discipline). −1 when
+ * the fold never moved (a query already inside every face's solid side). */
+let foldLastFace = -1;
 
 function fold3(de: SphairahedronDE, p: Vec3): void {
   let x = p[0];
@@ -169,6 +180,7 @@ function fold3(de: SphairahedronDE, p: Vec3): void {
   let passes = 0;
   let capped = false;
   let pole = false;
+  let lastFace = -1;
   const fk = de.faceKind;
   const fd = de.faceData;
   const poleFloor2 = SPHAIRAHEDRON_POLE_FLOOR * SPHAIRAHEDRON_POLE_FLOOR;
@@ -197,6 +209,7 @@ function fold3(de: SphairahedronDE, p: Vec3): void {
           inversions++;
           moves++;
           moved = true;
+          lastFace = fi;
         }
       } else {
         const d = fd[o] * x + fd[o + 1] * y + fd[o + 2] * z - fd[o + 3];
@@ -207,6 +220,7 @@ function fold3(de: SphairahedronDE, p: Vec3): void {
           reflections++;
           moves++;
           moved = true;
+          lastFace = fi;
         }
       }
     }
@@ -227,6 +241,7 @@ function fold3(de: SphairahedronDE, p: Vec3): void {
   foldPasses = passes;
   foldCapped = capped;
   foldPole = pole;
+  foldLastFace = lastFace;
 }
 
 /** Max of a tile piece's member SDFs at `(x, y, z)` — negative inside that
@@ -292,6 +307,7 @@ function evaluate3(
       hit.reflections = foldReflections;
       hit.passes = foldPasses;
       hit.capped = false;
+      hit.lastFace = foldLastFace;
     }
     return 0;
   }
@@ -308,6 +324,7 @@ function evaluate3(
     hit.reflections = foldReflections;
     hit.passes = foldPasses;
     hit.capped = foldCapped;
+    hit.lastFace = foldLastFace;
   }
   return v;
 }
@@ -333,6 +350,11 @@ export interface SphairahedronHit {
   reflections: number;
   passes: number;
   capped: boolean;
+  /** The face index of the fold's last move — the per-face color source's
+   * attribution. −1 when the fold never moved (a query already inside
+   * every face's solid side; the kernel-side `firstChoice` clamps such a
+   * hit to slot 0, a measure-zero attribution documented there). */
+  lastFace: number;
 }
 
 export function makeSphairahedronHit(): SphairahedronHit {
@@ -344,6 +366,7 @@ export function makeSphairahedronHit(): SphairahedronHit {
     reflections: 0,
     passes: 0,
     capped: false,
+    lastFace: -1,
   };
 }
 
