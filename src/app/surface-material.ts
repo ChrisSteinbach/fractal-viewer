@@ -4226,7 +4226,8 @@ ${sphereInversionArmGlsl()}
 #if SURFACE_SPHAIRA
   /** Sphairahedron render: the IIS fold's pass-restart face scan over the
    * construction's tables (sphairahedron-de.ts, the WGSL sphaira core's
-   * GLSL twin). Declared INSIDE the arm, the uMen*/uBulb* precedent: the
+   * GLSL twin). Declared INSIDE the arm, the uMengerTwist/uBulb precedent:
+   * the
    * other variants would pay these EMITTED bytes for uniforms they can
    * never read. The tables are packSphairaGpuTables' wire unchanged
    * (binding 1 on the kernel side): per face/term one vec4 pair — coords

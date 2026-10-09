@@ -1639,6 +1639,110 @@ describe("the fold's authored lengths in the GLSL tracer", () => {
   });
 });
 
+describe("the resolved GLSL's comment balance", () => {
+  // A `*/` inside a comment's TEXT closes it early and the rest of the
+  // comment compiles as source — the sphaira arm shipped exactly this
+  // ("the uMen*/uBulb* precedent") and only the ?surfacegl gate leg
+  // could see it: the WGSL cores and every presence pin stayed green.
+  // GLSL has no `*/` token outside a comment, so openers must equal
+  // closers in every resolved arm; the same holds for a text `/*`.
+  const balance = (source: string): { open: number; close: number } => ({
+    open: (source.match(/\/\*/g) ?? []).length,
+    close: (source.match(/\*\//g) ?? []).length,
+  });
+  const arms: Array<[string, Parameters<typeof surfaceFragmentResolvedFor>]> = [
+    ["plain", [0, 0]],
+    ["escape", [1, 0]],
+    ["bulb", [0, 0, 0, 0, 1]],
+    [
+      "menger",
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        null,
+        false,
+        0,
+        0,
+        0,
+        null,
+        0,
+        0,
+        0,
+        0,
+        0,
+        false,
+        1,
+        0,
+      ],
+    ],
+    [
+      "sphaira",
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        null,
+        false,
+        0,
+        0,
+        0,
+        null,
+        0,
+        0,
+        0,
+        0,
+        0,
+        false,
+        0,
+        1,
+      ],
+    ],
+    [
+      "sphereInversion",
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        null,
+        false,
+        0,
+        0,
+        0,
+        null,
+        0,
+        0,
+        1,
+      ],
+    ],
+    ["plane+finish", [0, 0, 0, 1, 0, 1]],
+  ];
+  for (const [name, args] of arms) {
+    it(`balances in the ${name} arm`, () => {
+      const { open, close } = balance(surfaceFragmentResolvedFor(...args));
+      expect(close, `unbalanced GLSL comments in ${name}`).toBe(open);
+    });
+  }
+});
+
 describe("SURFACE_SPHAIRA GLSL arm", () => {
   const resolved = surfaceFragmentResolvedFor(
     0,
