@@ -70,6 +70,9 @@ import type { Vec3 } from "./types";
 export interface SphairahedronDE {
   readonly boundingRadius: number;
   readonly visibleBoundingRadius: number;
+  /** The framing ball's centre — the march sphere's anchor (the
+   * construction's own `bound`). */
+  readonly boundCenter: readonly number[];
   readonly foldCap: number;
   readonly faceCount: number;
   readonly faceKind: Int32Array;
@@ -141,6 +144,7 @@ function flatten(construction: SphairahedronConstruction): SphairahedronDE {
   return {
     boundingRadius: construction.bound.radius,
     visibleBoundingRadius: construction.bound.radius,
+    boundCenter: construction.bound.center,
     foldCap: construction.foldCap,
     faceCount,
     faceKind,
