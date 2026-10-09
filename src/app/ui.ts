@@ -10930,7 +10930,7 @@ export class Ui {
       if (fullyIneligible) {
         const detail = eligibility.note ?? "not marchable";
         const sentence = /[.!?]$/.test(detail) ? detail : `${detail}.`;
-        return `Surface render unavailable: ${sentence} This ${feature} stays authored for the next eligible Surface.`;
+        return `Surface render unavailable: ${sentence} The ${feature} stays authored.`;
       }
       if (headOnly) {
         return eligibility.kind === "finiteSolid" ||

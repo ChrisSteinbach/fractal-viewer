@@ -3,8 +3,13 @@ import type { SurfaceComputeFrameSpec } from "./surface-compute";
 import { CLASSIC_SURFACE_FINISH } from "../fractal/surface-finish";
 import { resolveShapeTrap } from "../fractal/shape-trap";
 import { PEACE_SIGN_SHAPE } from "../fractal/shapes";
-import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
+import { resolveSphairahedron } from "../fractal/sphairahedron";
+import type {
+  SphairahedronAuthored,
+  SphairahedronConstruction,
+} from "../fractal/sphairahedron";
 import { resolveSphereInversion } from "../fractal/sphere-inversion";
+import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
 import type {
   SphereInversionAuthored,
   SphereInversionConstruction,
@@ -770,6 +775,81 @@ describe("surfaceComputeForceFrameKey's sphere-inversion construction", () => {
       surfaceComputeForceFrameKey(
         spec,
         construction({ arrangement: "cross8" }),
+      ),
+    );
+  });
+});
+
+describe("the sphairahedron construction block", () => {
+  function construction(
+    block: SphairahedronAuthored,
+  ): SphairahedronConstruction {
+    const resolution = resolveSphairahedron(block);
+    if (!resolution.ok) throw new Error(resolution.reasons.join("; "));
+    return resolution.construction;
+  }
+
+  it("leaves a key without a construction byte-identical to the one-argument key", () => {
+    const spec = baseSpec();
+    expect(surfaceComputeForceFrameKey(spec, null, null)).toBe(
+      surfaceComputeForceFrameKey(spec),
+    );
+  });
+
+  it("changes whenever the resolved construction changes, and not otherwise", () => {
+    const spec = baseSpec();
+    const plain = surfaceComputeForceFrameKey(spec, null, null);
+    const key = surfaceComputeForceFrameKey(
+      spec,
+      null,
+      construction({ family: "cube1", za: 0.5, zb: 1.0 }),
+    );
+    expect(key).not.toBe(plain);
+    // An absent-default modulus and its explicit value key IDENTICALLY
+    // (the defaults-must-match rule — the packer's own absent reading).
+    expect(
+      surfaceComputeForceFrameKey(
+        spec,
+        null,
+        construction({ family: "cube1" }),
+      ),
+    ).toBe(key);
+    // A modulus edit repaints every hit.
+    expect(
+      surfaceComputeForceFrameKey(
+        spec,
+        null,
+        construction({ family: "cube1", za: 0.55, zb: 1.0 }),
+      ),
+    ).not.toBe(key);
+    // A sphere (finite) edit repaints every hit.
+    expect(
+      surfaceComputeForceFrameKey(
+        spec,
+        null,
+        construction({
+          family: "cube1",
+          za: 0.5,
+          zb: 1.0,
+          inversion: { cx: 0.1, cy: -1, cz: 0, r: 0.8 },
+        }),
+      ),
+    ).not.toBe(key);
+  });
+
+  it("tells a 3D construction from the native 4D one", () => {
+    const spec = baseSpec();
+    expect(
+      surfaceComputeForceFrameKey(
+        spec,
+        null,
+        construction({ family: "tetra333" }),
+      ),
+    ).not.toBe(
+      surfaceComputeForceFrameKey(
+        spec,
+        null,
+        construction({ family: "tetra4" }),
       ),
     );
   });

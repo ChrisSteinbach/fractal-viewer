@@ -7,7 +7,9 @@ import {
   setSchedule,
   setShapeTrap,
   setSphereInversion,
+  setSphairahedron,
 } from "./state";
+import { defaultSphairahedronBlock } from "./sphairahedron-controls";
 import type { AppState } from "./state";
 import {
   defaultTransforms,
@@ -217,6 +219,18 @@ function walkCases(): WalkCase[] {
       ),
     },
     {
+      label: "sphairahedron (finite cube, the enable gesture's block)",
+      state: setSphairahedron(stateWith(), defaultSphairahedronBlock()),
+    },
+    {
+      label: "sphairahedron (surface, infinite prism)",
+      state: setSphairahedron(stateWith({ renderMode: "surface" }), {
+        family: "prism2",
+        z2: 1.5,
+      }),
+      setup: (ui) => ui.setSurfaceSessionKind("sphairahedron"),
+    },
+    {
       label: "solid tiling worker-baked",
       state: stateWith({
         renderMode: "solid",
@@ -292,6 +306,10 @@ function renderPanel(entry: WalkCase): void {
     entry.state.tiling ?? null,
     entry.state.condensationDepthBand,
     entry.state.sphereInversion ?? null,
+    entry.state.finiteSolid ?? null,
+    entry.state.chainTwist ?? null,
+    entry.state.mengerTwist ?? null,
+    entry.state.sphairahedron ?? null,
   );
   ui.setSurfaceEligibility(
     eligibility.status,
