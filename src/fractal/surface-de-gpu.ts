@@ -3872,6 +3872,14 @@ export function packSphairaGpuTables(
   const dim = de.faceData.length === de.faceCount * 5 ? 3 : 4;
   const coords = dim === 3 ? 3 : 4;
   const stride = dim === 3 ? 5 : 6;
+  // The CPU twins' rows are dim-strided: [c0..c(dim-1), r_or_h, sense] —
+  // 3D stride 5 (r at lane 3, sense at 4), 4D stride 6 (r at lane 4,
+  // sense at 5). The GPU B lanes are dim-GENERIC ([r_or_h, kind, sense,
+  // 0]), so the packer reads the row's own tail lanes, never fixed
+  // indices — the 4D rows' w coordinate lives at lane 3, exactly where a
+  // fixed-index read would have taken the radius from.
+  const valueLane = stride - 2;
+  const senseLane = stride - 1;
   const vec4s =
     de.faceCount * 2 + (de.termData.length / stride) * 2 + de.pieceCount;
   const out = new Float32Array(vec4s * 4);
@@ -3880,10 +3888,9 @@ export function packSphairaGpuTables(
     for (let k = 0; k < coords; k++) out[o + k] = de.faceData[fi * stride + k];
     if (coords === 3) out[o + 3] = 0;
     const kind = de.faceKind[fi];
-    const sense = kind === 0 ? de.faceData[fi * stride + 4] : 0;
-    out[o + 4] = de.faceData[fi * stride + 3];
+    out[o + 4] = de.faceData[fi * stride + valueLane];
     out[o + 5] = kind;
-    out[o + 6] = sense;
+    out[o + 6] = kind === 0 ? de.faceData[fi * stride + senseLane] : 0;
     out[o + 7] = 0;
     o += 8;
   }
@@ -3892,9 +3899,9 @@ export function packSphairaGpuTables(
     for (let k = 0; k < coords; k++) out[o + k] = de.termData[t * stride + k];
     if (coords === 3) out[o + 3] = 0;
     const kind = de.termKind[t];
-    out[o + 4] = de.termData[t * stride + 3];
+    out[o + 4] = de.termData[t * stride + valueLane];
     out[o + 5] = kind;
-    out[o + 6] = de.termData[t * stride + 4];
+    out[o + 6] = de.termData[t * stride + senseLane];
     out[o + 7] = 0;
     o += 8;
   }
@@ -18161,7 +18168,7 @@ fn sphairaFold3(p: vec3f) -> SphairaFold {
         let d2 = dot(d, d);
         let r = b.x;
         let r2 = r * r;
-        let removed = select(d2 < r2, d2 > r2, b.z > 0.5);
+        let removed = select((d2 < r2), (d2 > r2), b.z > 0.5);
         if (removed) {
           if (d2 < poleFloor2 * r2) {
             pole = true;
@@ -18333,7 +18340,7 @@ fn sphairaFold4(p: vec4f) -> SphairaFold4 {
         let d2 = dot(d, d);
         let r = b.x;
         let r2 = r * r;
-        let removed = select(d2 < r2, d2 > r2, b.z > 0.5);
+        let removed = select((d2 < r2), (d2 > r2), b.z > 0.5);
         if (removed) {
           if (d2 < poleFloor2 * r2) {
             pole = true;

@@ -249,6 +249,16 @@ describe("packSphairaGpuTables (binding 1, sphTable)", () => {
     const t4 = packSphairaGpuTables(de4t);
     expect(t4[8 + 3]).toBe(de4t.faceData[1 * 6 + 3]);
     expect(t4[8 + 3]).toBe(0);
+    // The B lanes read the ROW'S OWN TAIL (r at stride−2, sense at
+    // stride−1), not fixed indices — the 4D rows' w coordinate lives at
+    // lane 3, exactly where a fixed-index read would have taken the
+    // radius from. Face 0 is the unit ball: B = (1, 0, 0, 0).
+    expect(t4[4]).toBe(1);
+    expect(t4[5]).toBe(0);
+    expect(t4[6]).toBe(0);
+    // And the walls' h: face 1's B = (h, 1, 0, 0).
+    expect(t4[8 + 4]).toBe(de4t.faceData[1 * 6 + 4]);
+    expect(t4[8 + 5]).toBe(1);
   });
 });
 
