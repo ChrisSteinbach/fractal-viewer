@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { Ui } from "./ui";
+import { Ui, type UiHandlers } from "./ui";
 import { initialState, setSphairahedron } from "./state";
 import type { AppState } from "./state";
 import { defaultSphairahedronBlock } from "./sphairahedron-controls";
@@ -29,6 +29,13 @@ function el<T extends HTMLElement = HTMLElement>(id: string): T {
 
 function hidden(id: string): boolean {
   return el(id).classList.contains("hidden");
+}
+
+/** Handlers whose every member is an unused vi.fn() — the bind() calls
+ * here care about one optional member each, and the interface's breadth
+ * makes a literal listing noise (ui.test.ts keeps the spelled-out copy). */
+function noopHandlers(): UiHandlers {
+  return new Proxy({}, { get: () => vi.fn() }) as unknown as UiHandlers;
 }
 
 function withBlock(
@@ -173,5 +180,160 @@ describe("Sphairahedron section", () => {
     // The refused block stays verbatim (never clamped away).
     expect(el<HTMLInputElement>("sphairahedronZaSlider").value).toBe("0.9");
     expect(el("sphairahedronZaNote").textContent).toMatch(/^Refused: ball /);
+  });
+});
+
+describe("Sphairahedron per-face finish rows", () => {
+  it("labels the faces by kind in scan order and hides the rows past the face count", () => {
+    const ui = new Ui(document);
+
+    // Infinite cube: balls then walls — Ball 1..3, Wall 1..3, six rows.
+    ui.updateLabels(withBlock({ family: "cube1", za: 0.5, zb: 1.0 }));
+    for (let face = 0; face < 6; face++) {
+      expect(hidden(`sphairahedronFaceFinishRow${face}`)).toBe(false);
+    }
+    expect(el("sphairahedronFaceFinishLabel0").textContent).toBe("Ball 1");
+    expect(el("sphairahedronFaceFinishLabel2").textContent).toBe("Ball 3");
+    expect(el("sphairahedronFaceFinishLabel3").textContent).toBe("Wall 1");
+    expect(el("sphairahedronFaceFinishLabel5").textContent).toBe("Wall 3");
+
+    // Tetra: four faces, rows 5 and 6 hide.
+    ui.updateLabels(withBlock({ family: "tetra333" }));
+    for (let face = 0; face < 4; face++) {
+      expect(hidden(`sphairahedronFaceFinishRow${face}`)).toBe(false);
+    }
+    expect(hidden("sphairahedronFaceFinishRow4")).toBe(true);
+    expect(hidden("sphairahedronFaceFinishRow5")).toBe(true);
+  });
+
+  it("reflects the document: classic absent, a bundle by name, non-bundle values Custom", () => {
+    const ui = new Ui(document);
+    // The metal bundle's full six values (a bundle names ALL of them; a
+    // partial finish is Custom even when one field happens to match).
+    const metal = {
+      specular: 0.8,
+      shininess: 24,
+      metalness: 1,
+      reflect: 0.45,
+      transmit: 0,
+      reflectionTint: 1,
+    };
+    const finishes = [null, metal, { specular: 0.2 }, null, null, null];
+    ui.updateLabels(withBlock({ family: "cube1", za: 0.5, zb: 1.0, finishes }));
+    const value = (face: number) =>
+      (
+        document.getElementById(
+          `sphairahedronFaceFinish${face}`,
+        ) as HTMLSelectElement
+      ).value;
+    expect(value(0)).toBe("classic");
+    expect(value(1)).toBe("metal");
+    // A partial finish that is nobody's bundle reads Custom (disabled, but
+    // shown — the transform group's pattern).
+    expect(value(2)).toBe("custom");
+    expect(value(3)).toBe("classic");
+  });
+
+  it("names the picked bundle's values and Classic clears, through the one handler", () => {
+    const picked: Array<[number, unknown]> = [];
+    const ui = new Ui(document);
+    ui.bind({
+      ...noopHandlers(),
+      onSphairahedronFaceFinish: (face, finish) => {
+        picked.push([face, finish]);
+      },
+    });
+    ui.updateLabels(withBlock({ family: "cube1", za: 0.5, zb: 1.0 }));
+    const select = document.getElementById(
+      "sphairahedronFaceFinish1",
+    ) as HTMLSelectElement;
+    select.value = "matte";
+    select.dispatchEvent(new Event("change"));
+    expect(picked).toEqual([
+      [
+        1,
+        {
+          specular: 0,
+          shininess: 32,
+          metalness: 0,
+          reflect: 0,
+          transmit: 0,
+          reflectionTint: 1,
+        },
+      ],
+    ]);
+    select.value = "classic";
+    select.dispatchEvent(new Event("change"));
+    expect(picked[1]).toEqual([1, null]);
+  });
+
+  it("discloses the finite-flip re-mapping only while a finish is authored", () => {
+    const ui = new Ui(document);
+    ui.updateLabels(withBlock({ family: "cube1", za: 0.5, zb: 1.0 }));
+    expect(hidden("sphairahedronFaceFinishNote")).toBe(true);
+    ui.updateLabels(
+      withBlock({
+        family: "cube1",
+        za: 0.5,
+        zb: 1.0,
+        finishes: [{ metalness: 1 }],
+      }),
+    );
+    expect(hidden("sphairahedronFaceFinishNote")).toBe(false);
+    expect(el("sphairahedronFaceFinishNote").textContent).toMatch(
+      /Flipping Finite reorders the faces/,
+    );
+  });
+
+  it("disables the finish selects in Flame and Solid beside the mode reason", () => {
+    const ui = new Ui(document);
+    const state = withBlock({
+      family: "cube1",
+      za: 0.5,
+      zb: 1.0,
+      finishes: [{ metalness: 1 }],
+    });
+    ui.updateLabels(withBlock(state.sphairahedron!, { renderMode: "flame" }));
+    for (let face = 0; face < 6; face++) {
+      expect(
+        (
+          document.getElementById(
+            `sphairahedronFaceFinish${face}`,
+          ) as HTMLSelectElement
+        ).disabled,
+      ).toBe(true);
+    }
+    // And back in Points they re-enable.
+    ui.updateLabels(state);
+    expect(
+      (document.getElementById("sphairahedronFaceFinish0") as HTMLSelectElement)
+        .disabled,
+    ).toBe(false);
+  });
+
+  it("routes a refused finishes list onto the group's note with the off/on repair", () => {
+    const ui = new Ui(document);
+    ui.updateLabels(
+      withBlock({
+        family: "cube1",
+        za: 0.5,
+        zb: 1.0,
+        // An optics key is REFUSED (typed SurfaceFinish has no such field —
+        // the refusal exists for the runtime wire, so the test authors it
+        // past the type).
+        finishes: [
+          { optics: { model: "dielectric" as const } },
+        ] as unknown as Exclude<
+          Parameters<typeof setSphairahedron>[1],
+          null
+        >["finishes"],
+      }),
+    );
+    expect(el("sphairahedronFaceFinishNote").textContent).toMatch(
+      /^Refused: sphairahedron faces do not render optics/,
+    );
+    expect(el("sphairahedronFaceFinishNote").textContent).toMatch(
+      /turn Sphairahedron off and on/,
+    );
   });
 });

@@ -8587,6 +8587,19 @@ describe("sphairahedron codec (the sphairahedron family's block)", () => {
     expect(encodeScene(decoded)).toBe(hash);
   });
 
+  it("round-trips the per-face finishes verbatim (null entries included)", () => {
+    const block = {
+      family: "cube1",
+      za: 0.5,
+      zb: 1.0,
+      finishes: [{ metalness: 1 }, null, { specular: 0.9 }],
+    };
+    const hash = encodeScene({ ...baseSnapshot(), sphairahedron: block });
+    const decoded = decodeScene(hash)!;
+    expect(decoded.sphairahedron).toEqual(block);
+    expect(encodeScene(decoded)).toBe(hash);
+  });
+
   it("preserves a refused block verbatim through decode then encode (unknown family, unknown key, future field)", () => {
     const block = {
       family: "cube99",

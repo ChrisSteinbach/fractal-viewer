@@ -1,11 +1,14 @@
 import {
+  SPHAIRAHEDRON_AUTHORED_FIELDS,
   SPHAIRAHEDRON_FAMILIES,
   SPHAIRAHEDRON_FOLD_CAP,
+  SPHAIRAHEDRON_MAX_FACE_SLOTS,
   analyzeSphairahedronSystem,
   buildSphairahedron,
   defaultSphairahedronInversion,
   resolveSphairahedron,
   sphairahedronAuthoredDimension,
+  sphairahedronFinishFor,
   sphairahedronTileSDF,
   foldSphairahedron,
   makeSphairahedronScratch,
@@ -504,6 +507,126 @@ describe("sphairahedron authored dimension", () => {
 describe("sphairahedron shared constants", () => {
   it("carries the measured fudge, step scale and cap", () => {
     expect(SPHAIRAHEDRON_FOLD_CAP).toBe(50);
+  });
+
+  it("carries the face-slot cap the finishes list is validated against", () => {
+    // The cube families' max: three balls + three walls. The tetras fold
+    // four, the prism five — 6 covers every shipped construction.
+    expect(SPHAIRAHEDRON_MAX_FACE_SLOTS).toBe(6);
+    expect(SPHAIRAHEDRON_AUTHORED_FIELDS).toContain("finishes");
+  });
+});
+
+describe("sphairahedron per-face finishes (the authored field)", () => {
+  const FINISHED: SphairahedronAuthored = {
+    family: "cube1",
+    za: 0.5,
+    zb: 1.0,
+    finishes: [{ specular: 1 }, null, { metalness: 1 }],
+  };
+
+  it("refuses a finishes value that is not a list", () => {
+    expect(
+      refusal({
+        family: "cube1",
+        finishes: 7,
+      } as unknown as SphairahedronAuthored),
+    ).toMatch(/finishes is not a list/);
+    expect(
+      refusal({
+        family: "cube1",
+        finishes: { 0: {} },
+      } as unknown as SphairahedronAuthored),
+    ).toMatch(/finishes is not a list/);
+  });
+
+  it("refuses a list past the face-slot cap", () => {
+    expect(
+      refusal({
+        family: "cube1",
+        finishes: [null, null, null, null, null, null, null],
+      }),
+    ).toMatch(/finishes must have at most 6 entries/);
+  });
+
+  it("refuses a non-object entry", () => {
+    expect(
+      refusal({
+        family: "cube1",
+        finishes: [{ specular: 1 }, 5],
+      } as unknown as SphairahedronAuthored),
+    ).toMatch(/finish 1 is not an object/);
+    expect(
+      refusal({
+        family: "cube1",
+        finishes: [[]],
+      } as unknown as SphairahedronAuthored),
+    ).toMatch(/finish 0 is not an object/);
+  });
+
+  it("refuses unknown finish fields by name and the optics key with the family's own reason", () => {
+    expect(
+      refusal({ family: "cube1", finishes: [{ gloss: 0.5 }] as never }),
+    ).toMatch(/unknown finish field "gloss" \(not readable by this version\)/);
+    expect(
+      refusal({
+        family: "cube1",
+        finishes: [
+          { specular: 1, optics: { model: "dielectric" } },
+        ] as unknown as SphairahedronAuthored["finishes"],
+      }),
+    ).toMatch(
+      /sphairahedron faces do not render optics \("optics" is not a finish field here\)/,
+    );
+  });
+
+  it("refuses a non-finite finish leaf", () => {
+    expect(
+      refusal({
+        family: "cube1",
+        finishes: [{ specular: Number.NaN }],
+      }),
+    ).toMatch(/finish 0 specular is not a finite number/);
+    expect(
+      refusal({
+        family: "cube1",
+        finishes: [{ shininess: "high" }],
+      } as unknown as SphairahedronAuthored),
+    ).toMatch(/finish 0 shininess is not a finite number/);
+  });
+
+  it("resolves a finished block, geometry untouched by the field", () => {
+    const plain = resolved({ family: "cube1", za: 0.5, zb: 1.0 });
+    const finished = resolved(FINISHED);
+    // The finishes ride the AUTHORED form verbatim; the RESOLVED
+    // construction is the geometry alone and must not differ.
+    expect(finished.construction).toEqual(plain.construction);
+  });
+
+  it("reads the list dense: absent, short and null entries all mean classic", () => {
+    expect(sphairahedronFinishFor({ family: "cube1" }, 0)).toBeUndefined();
+    expect(
+      sphairahedronFinishFor({ family: "cube1", finishes: [] }, 0),
+    ).toBeUndefined();
+    expect(sphairahedronFinishFor(FINISHED, 0)).toEqual({ specular: 1 });
+    expect(sphairahedronFinishFor(FINISHED, 1)).toBeUndefined();
+    expect(sphairahedronFinishFor(FINISHED, 2)).toEqual({ metalness: 1 });
+    // No last-covers clamp: a face past the list is classic even when the
+    // last entry carries a finish.
+    expect(sphairahedronFinishFor(FINISHED, 3)).toBeUndefined();
+    expect(sphairahedronFinishFor(FINISHED, 5)).toBeUndefined();
+    expect(sphairahedronFinishFor(FINISHED, 9)).toBeUndefined();
+  });
+
+  it("accepts null entries and a full-length list", () => {
+    const block: SphairahedronAuthored = {
+      family: "cube1",
+      za: 0.5,
+      zb: 1.0,
+      finishes: [null, null, null, null, null, null],
+    };
+    const plain = resolved({ family: "cube1", za: 0.5, zb: 1.0 });
+    expect(resolved(block).construction).toEqual(plain.construction);
   });
 });
 

@@ -4778,6 +4778,12 @@ export class Ui {
     ) {
       const select = this.sphairahedronFaceFinishSelects[face];
       select.addEventListener("change", () => {
+        // Classic is the explicit null — the write rule's clearing entry —
+        // never the classic record itself (the document stays minimal).
+        if (select.value === "classic") {
+          handlers.onSphairahedronFaceFinish?.(face, null);
+          return;
+        }
         const bundle = FINISH_BUNDLES.find(
           (entry) => entry.id === select.value && !entry.optics,
         );
