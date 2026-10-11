@@ -1639,6 +1639,38 @@ describe("the fold's authored lengths in the GLSL tracer", () => {
         1,
       ).length,
     ).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+    // The sphaira + finish combination — the per-face finishes' GLSL
+    // fallback program, reachable only through the finish gate's flip
+    // sites reading the subject defines — resolves to 43836 B (21700 B
+    // under the threshold, measured 2026-10-11): the finish arm's ~2.4 KB
+    // of shade text rides the size rule like any other paragraph.
+    expect(
+      surfaceFragmentResolvedFor(
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        undefined,
+        null,
+        null,
+        false,
+        0,
+        0,
+        0,
+        null,
+        0,
+        0,
+        0,
+        0,
+        0,
+        false,
+        0,
+        1,
+      ).length,
+    ).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
   });
 });
 

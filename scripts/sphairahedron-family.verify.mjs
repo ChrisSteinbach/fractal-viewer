@@ -594,9 +594,175 @@ async function main() {
       }
     }
 
+    // --- 7: the per-face finishes compile and shade, end to end, on
+    // whichever engine this run drives. The WGSL sphaira cores had NEVER
+    // compiled with `finish: true` before this leg existed — the shared
+    // shade entry serves every core, but that was a reading, not a render.
+    // The leg authors two DIFFERENT finishes on two faces THROUGH THE
+    // PANEL ROWS (face 0 Metal, face 3 Matte — the cube's scan order,
+    // balls first), so the whole wire is exercised: the row select, the
+    // write rule, the block-JSON latch, the session restart, the slots'
+    // per-face materials on both engines. A settled render must still
+    // cover the object (a compile failure or a dropped arm draws
+    // nothing), the document must carry the finishes verbatim, and the
+    // finished picture must differ from the classic one — a finish that
+    // shades nothing is the vacuous pass the coverage leg exists to
+    // catch. Keyed on the quasisphere like the other cube-document legs.
+    if (wanted.some((p) => p.key === "sphairaQuasisphere")) {
+      const { context, page, consoleLines } = await openApp(browser, args);
+      try {
+        await loadPreset(page, "sphairaQuasisphere");
+        const entry = await enterSurface(page);
+        if (!entry.entered) {
+          failures.push(`finish check: Surface disabled — ${entry.reason}`);
+        } else {
+          const plain = await waitSettled(page, args);
+          if (!plain.ok) {
+            failures.push("finish check: the classic session never settled");
+          } else {
+            const plainShot = path.join(args.outdir, "finish-classic.png");
+            await page
+              .locator("canvas")
+              .first()
+              .screenshot({ path: plainShot });
+            // Open the section and author the two finishes through the
+            // per-face rows. The rows live below the sphere sliders, so
+            // the section is open by the same ancestor-opening dance the
+            // restart leg uses.
+            const authored = await page.evaluate(() => {
+              const first = document.getElementById("sphairahedronFaceFinish0");
+              const details = first?.closest("details");
+              let root = details;
+              while (root?.parentElement) {
+                const ancestor = root.parentElement.closest("details");
+                if (!ancestor) break;
+                root = ancestor;
+                if (ancestor.open) break;
+                ancestor.open = true;
+              }
+              if (details && !details.open) details.open = true;
+              const pick = (id, value) => {
+                const el = document.getElementById(id);
+                if (!el) return `missing #${id}`;
+                el.value = value;
+                el.dispatchEvent(new Event("change", { bubbles: true }));
+                return null;
+              };
+              const errors = [
+                pick("sphairahedronFaceFinish0", "metal"),
+                pick("sphairahedronFaceFinish3", "matte"),
+              ].filter(Boolean);
+              const labels = [0, 1, 2, 3, 4, 5].map(
+                (f) =>
+                  document.getElementById(`sphairahedronFaceFinishLabel${f}`)
+                    ?.textContent ?? "",
+              );
+              return { errors, labels };
+            });
+            if (authored.errors.length > 0) {
+              failures.push(
+                `finish check: the panel rows are broken — ${authored.errors.join("; ")}`,
+              );
+            } else {
+              console.error(
+                `[sphaira-family] finish check: rows labeled ${JSON.stringify(authored.labels)}`,
+              );
+              const finished = await waitSettled(page, args);
+              if (!finished.ok) {
+                failures.push(
+                  "finish check: the restarted session never settled after the finish edit",
+                );
+                for (const line of diagnosticConsoleLines(consoleLines)) {
+                  console.error(
+                    `[sphaira-family]   console: ${line.slice(0, 300)}`,
+                  );
+                }
+              } else {
+                const carried = await page.evaluate(READ_SPHAIRA_BLOCK);
+                const finishes = carried.ok ? carried.block?.finishes : null;
+                // The write rule strips classic-valued fields, so Metal
+                // stores its four non-classic numbers and Matte its one
+                // (specular 0 vs classic 0.4) — the minimal documents the
+                // write rule's contract keeps. Matte was authored on face
+                // 3 (the first WALL row in the cube's balls-then-walls
+                // scan — the mixed-kind slot the panel labels "Wall 1").
+                if (
+                  !Array.isArray(finishes) ||
+                  JSON.stringify(finishes[0]) !==
+                    JSON.stringify({
+                      specular: 0.8,
+                      shininess: 24,
+                      metalness: 1,
+                      reflect: 0.45,
+                    }) ||
+                  JSON.stringify(finishes[1]) !== "null" ||
+                  JSON.stringify(finishes[3]) !==
+                    JSON.stringify({
+                      specular: 0,
+                    })
+                ) {
+                  failures.push(
+                    `finish check: the document does not carry the authored finishes verbatim (${JSON.stringify(finishes)})`,
+                  );
+                }
+                const census = finished.state.census;
+                if (!census || !(census.covered > 0)) {
+                  failures.push(
+                    `finish check: the finished render covers nothing (census=${JSON.stringify(census)}) — the finish arm did not compile into the session`,
+                  );
+                  console.error(
+                    `[sphaira-family] finish check: NO COVERAGE (engine=${finished.state.engine})`,
+                  );
+                  for (const line of diagnosticConsoleLines(consoleLines)) {
+                    console.error(
+                      `[sphaira-family]   console: ${line.slice(0, 300)}`,
+                    );
+                  }
+                } else {
+                  const finishedShot = path.join(
+                    args.outdir,
+                    "finish-auth.png",
+                  );
+                  await page
+                    .locator("canvas")
+                    .first()
+                    .screenshot({ path: finishedShot });
+                  const diffContext3 = await browser.newContext({
+                    ignoreHTTPSErrors: true,
+                  });
+                  const diffPage3 = await diffContext3.newPage();
+                  await diffPage3.goto("about:blank");
+                  const frac = await differingFraction(
+                    diffPage3,
+                    plainShot,
+                    finishedShot,
+                  );
+                  await diffContext3.close();
+                  const ok = frac >= DIFFER_FRACTION;
+                  console.error(
+                    `[sphaira-family] finish check: engine=${finished.state.engine} ` +
+                      `census covered ${census.covered}/${census.rays}, ` +
+                      `${(100 * frac).toFixed(2)}% of pixels differ ${ok ? "OK" : "TOO SIMILAR"}`,
+                  );
+                  if (!ok) {
+                    failures.push(
+                      `finish check: the authored finishes render the same picture ` +
+                        `(${(100 * frac).toFixed(2)}% differing, need ${100 * DIFFER_FRACTION}%) — the materials are not reaching the shade entry`,
+                    );
+                  }
+                }
+              }
+            }
+          }
+        }
+      } finally {
+        await context.close();
+      }
+    }
+
     // --- the block survives the share link, byte for byte, and an
     // out-of-region edit refuses at load. Both legs key on the
-    // QUASISPHERE (cube1): the refusal leg patches cube moduli, which a
+    // QUASPHERE (cube1): the refusal leg patches cube moduli, which a
     // tetra family does not read (a field the family ignores is never a
     // refusal — the module contract), so it needs a cube document.
     if (wanted.some((p) => p.key === "sphairaQuasisphere")) {
