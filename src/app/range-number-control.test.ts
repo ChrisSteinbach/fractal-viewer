@@ -198,6 +198,65 @@ describe("enhanceRangeWithNumber", () => {
     },
   );
 
+  it.each([
+    ["2.051", "2.051", "2.051", "-2", "2.051"],
+    ["-2.5", "-2.5", "-2.500", "-2.5", "2"],
+  ])(
+    "widenToDraft: the out-of-bounds draft %j widens both elements to itself and applies",
+    (draft, value, shown, min, max) => {
+      const slider = range({ min: -2, max: 2, value: 0 });
+      const onInput = vi.fn();
+      const onCommit = vi.fn();
+      const control = enhanceRangeWithNumber(slider, {
+        min: -2,
+        max: 2,
+        step: 0.01,
+        precision: 3,
+        widenToDraft: true,
+        onInput,
+        onCommit,
+      });
+
+      control.numberInput.value = draft;
+      control.numberInput.dispatchEvent(new Event("change", { bubbles: true }));
+
+      expect(onInput).toHaveBeenCalledWith(Number(value), "number");
+      expect(onCommit).toHaveBeenCalledWith(Number(value));
+      expect(control.error.hidden).toBe(true);
+      expect(control.numberInput.getAttribute("aria-invalid")).toBeNull();
+      expect(control.numberInput.value).toBe(shown);
+      expect(control.numberInput.min).toBe(min);
+      expect(control.numberInput.max).toBe(max);
+      expect(slider.min).toBe(min);
+      expect(slider.max).toBe(max);
+      expect(slider.value).toBe(value);
+    },
+  );
+
+  it("widenToDraft: the widening does not bypass the other draft checks", () => {
+    const slider = range({ min: -2, max: 2, value: 0 });
+    const onInput = vi.fn();
+    const onCommit = vi.fn();
+    const control = enhanceRangeWithNumber(slider, {
+      min: -2,
+      max: 2,
+      step: 0.01,
+      precision: 3,
+      widenToDraft: true,
+      onInput,
+      onCommit,
+    });
+
+    control.numberInput.value = "2.0515";
+    control.numberInput.dispatchEvent(new Event("change"));
+
+    expect(onInput).not.toHaveBeenCalled();
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(control.numberInput.validationMessage).toBe(
+      "Use at most 3 decimal places.",
+    );
+  });
+
   it("restores the last accepted value and clears validation on Escape without callbacks", () => {
     const slider = range({ value: 2 });
     const onInput = vi.fn();

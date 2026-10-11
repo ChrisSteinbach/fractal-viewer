@@ -511,6 +511,13 @@ export interface NumericControlSpec {
   precision?: number;
   /** Require exact entry to land on the semantic step grid. */
   enforceStep?: boolean;
+  /** Typed entry outside the span widens the span instead of refusing —
+   * `range-number-control.ts`'s `widenToDraft`. Only where the span is a
+   * convenience affordance narrower than the value's real domain (the
+   * sphairahedron J rows, the sphere-inversion seed rows): a row whose
+   * span IS the resolver's domain (the region-scoped moduli) refuses
+   * instead, which is honest there. */
+  widenToDraft?: boolean;
   /** Presentation mapping for a retained slider. Omitted means identity. */
   rangeToNumber?: (raw: number) => number;
   numberToRange?: (value: number) => number;
@@ -787,6 +794,14 @@ function sphereInversionRange(
       {
         precision: range.precision,
         ...(field === "depth" ? { enforceStep: true } : {}),
+        // The measured public ranges are affordance spans narrower than
+        // the resolver's own domains (radius fraction to 1, depth to 32,
+        // any positive length), and a shared link or an authored
+        // construction can carry values past them — so typed entry widens
+        // the span instead of refusing, the sphairahedron J rows' rule one
+        // subject over. The widening does not bypass the step grid: depth
+        // still enforces whole numbers, now across its full 0..32 domain.
+        widenToDraft: true,
         bounds: (s) =>
           sphereInversionFieldRange(s.sphereInversion ?? probe, field),
       },
@@ -1117,6 +1132,7 @@ function numericControl(
     | "rangeToNumber"
     | "numberToRange"
     | "bounds"
+    | "widenToDraft"
   > = {},
 ): NumericControlSpec {
   const stepText = String(step);
@@ -1133,6 +1149,7 @@ function numericControl(
     apply,
     ...(options.allowedValues ? { allowedValues: options.allowedValues } : {}),
     ...(options.enforceStep ? { enforceStep: true } : {}),
+    ...(options.widenToDraft ? { widenToDraft: true } : {}),
     ...(options.rangeToNumber ? { rangeToNumber: options.rangeToNumber } : {}),
     ...(options.bounds ? { bounds: options.bounds } : {}),
     ...(options.numberToRange ? { numberToRange: options.numberToRange } : {}),
@@ -1237,6 +1254,15 @@ function sphairahedronRange(
       {
         precision: 3,
         bounds: (s) => sphairahedronFieldRange(blockOf(s), field),
+        // The J rows' spans are convenience spans around the constructions'
+        // everyday scale (sphairahedron-controls.ts); the sphere itself is
+        // a FREE parameter of the family — any finite centre and positive
+        // radius resolve — so typed entry widens the span instead of
+        // refusing (the picker's ladder is scale-relative, so the app's
+        // own Choose-sphere button authors values past ±2 routinely). The
+        // moduli rows above do NOT widen: their span IS the resolver's
+        // valid region, and refusal at entry is honest there.
+        ...(field.startsWith("inversion.") ? { widenToDraft: true } : {}),
       },
     ),
     read: (s) => String(value(s)),

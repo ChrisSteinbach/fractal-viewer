@@ -21,6 +21,21 @@ export interface RangeNumberControlOptions extends RangeNumberBounds {
    * model parameters deliberately leave this false: `step` remains the
    * keyboard increment while direct entry may use finer exact precision. */
   enforceStep?: boolean;
+  /** Let a typed value outside the bounds WIDEN the bounds to itself
+   * instead of refusing. Only for rows whose span is a convenience
+   * affordance NARROWER than the value's real domain — the sphairahedron
+   * J rows and the sphere-inversion seed rows, whose resolvers accept any
+   * finite value the fixed spans cannot cover (the picker's ladder is
+   * scale-relative, so no fixed span ever will) and whose loaded documents
+   * already widen exactly this way (the `widenSpanToAuthored` rule). The
+   * bounds check is the one gate typed entry has, so without this flag the
+   * app's own picker could author values the app's own field refuses to
+   * type. Rows whose span IS the resolver's domain (the region-scoped
+   * moduli) must not set it: refusal at entry is honest there. The write
+   * lands the value in the document and the document-derived span takes
+   * over at the caller's next sync; the resolver itself still refuses a
+   * degenerate construction and the row's note discloses it. */
+  widenToDraft?: boolean;
   /** Maximum fractional precision accepted and used for synchronized display.
    * Defaults to the decimal precision of `step`. */
   precision?: number;
@@ -268,9 +283,28 @@ export function enhanceRangeWithNumber(
     const parsed = Number(draft);
     if (!Number.isFinite(parsed)) return { error: "Enter a finite number." };
     if (parsed < bounds.min || parsed > bounds.max) {
-      return {
-        error: `Enter a value from ${String(bounds.min)} to ${String(bounds.max)}.`,
-      };
+      if (options.widenToDraft === true) {
+        // The widening rule's typed-entry edition: the span reaches the
+        // draft instead of refusing it. Both elements move NOW — the
+        // number input's attributes through syncAttributes, the retained
+        // range's directly — so applyNumberValue's range assignment below
+        // is not sanitized back inside the old span by the browser. The
+        // caller's next sync re-derives the span from the document the
+        // write is about to land, so this local widening only bridges the
+        // gap between commit and sync.
+        bounds = {
+          ...bounds,
+          min: Math.min(bounds.min, parsed),
+          max: Math.max(bounds.max, parsed),
+        };
+        syncAttributes();
+        range.min = String(bounds.min);
+        range.max = String(bounds.max);
+      } else {
+        return {
+          error: `Enter a value from ${String(bounds.min)} to ${String(bounds.max)}.`,
+        };
+      }
     }
     let value = parsed;
     if (allowedValues !== undefined) {

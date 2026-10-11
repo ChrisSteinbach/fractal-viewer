@@ -2,6 +2,7 @@
 import { Ui, type UiHandlers } from "./ui";
 import { initialState, setSphairahedron } from "./state";
 import type { AppState } from "./state";
+import { applyScalarControl } from "./control-spec";
 import { defaultSphairahedronBlock } from "./sphairahedron-controls";
 import indexHtml from "./index.html?raw";
 
@@ -92,6 +93,47 @@ describe("Sphairahedron section", () => {
     expect(hidden("sphairahedronZ2Row")).toBe(false);
     // Infinite: no sphere rows.
     expect(hidden("sphairahedronInversionRows")).toBe(true);
+  });
+
+  it("types a sphere value past the fixed span: the span widens and the document keeps it", () => {
+    // The exact restriction a shared link exposed: the picker authors J
+    // spheres past the ±2 convenience span routinely (its ladder is
+    // scale-relative), the resolver accepts any finite centre, and the
+    // document path already widens the span to such a value on load — so
+    // typed entry widens the same way instead of refusing.
+    const ui = new Ui(document);
+    let state = withBlock({
+      family: "prism2",
+      z2: 0.5,
+      inversion: { cx: 0.7, cy: 0.5, cz: 0.3, r: 0.6 },
+    });
+    ui.bind({
+      ...noopHandlers(),
+      onScalarControl: (spec, raw, _phase, source) => {
+        if (spec.kind === "range" && source === "number") {
+          state = applyScalarControl(state, spec, raw, source);
+        }
+      },
+    });
+    ui.updateLabels(state);
+
+    const cy = el<HTMLInputElement>("sphairahedronCySliderNumber");
+    expect(cy.min).toBe("-2");
+    expect(cy.max).toBe("2");
+    cy.value = "2.051";
+    cy.dispatchEvent(new Event("change"));
+
+    const block = state.sphairahedron as {
+      inversion?: { cy?: number };
+    };
+    expect(block.inversion?.cy).toBe(2.051);
+
+    ui.updateLabels(state);
+    expect(el<HTMLInputElement>("sphairahedronCySlider").max).toBe("2.051");
+    expect(cy.value).toBe("2.051");
+    expect(el("sphairahedronCyNote").textContent).toBe(
+      "Slider range widened to reach the authored value.",
+    );
   });
 
   it("disables the section beside the mode reason in Flame and Solid", () => {
