@@ -181,6 +181,7 @@ import {
 } from "./surface-eligibility";
 import {
   sphairahedronControlNotes,
+  sphairahedronFaceLabels,
   sphairahedronIsFinite,
   sphairahedronVisibleRows,
   SPHAIRAHEDRON_AUTHORED_OPTION,
@@ -190,7 +191,8 @@ import {
 } from "./sphairahedron-controls";
 
 /** The Sphairahedron section's slider ids (the menger list's shape; the
- * enable checkbox is driven by its spec, the Pick button by its handler). */
+ * enable checkbox is driven by its spec, the Pick button and the per-face
+ * finish selects by their handlers). */
 const SPHAIRAHEDRON_ROW_CONTROL_IDS: readonly string[] = [
   "sphairahedronFamily",
   "sphairahedronZaSlider",
@@ -203,6 +205,25 @@ const SPHAIRAHEDRON_ROW_CONTROL_IDS: readonly string[] = [
   "sphairahedronCwSlider",
   "sphairahedronRSlider",
   "sphairahedronPickButton",
+  "sphairahedronFaceFinish0",
+  "sphairahedronFaceFinish1",
+  "sphairahedronFaceFinish2",
+  "sphairahedronFaceFinish3",
+  "sphairahedronFaceFinish4",
+  "sphairahedronFaceFinish5",
+];
+
+/** The row-control ids with NO control-spec entry (the scalar disable pass
+ * throws on them): the handler-driven Pick button and the six hand-built
+ * finish selects, disabled directly beside it. */
+const SPHAIRAHEDRON_DIRECT_CONTROL_IDS: readonly string[] = [
+  "sphairahedronPickButton",
+  "sphairahedronFaceFinish0",
+  "sphairahedronFaceFinish1",
+  "sphairahedronFaceFinish2",
+  "sphairahedronFaceFinish3",
+  "sphairahedronFaceFinish4",
+  "sphairahedronFaceFinish5",
 ];
 
 /** The Menger-carve section's shared wordings — the Flame/Solid mode
@@ -361,6 +382,16 @@ export interface UiHandlers {
    * undoable document edit. main.ts reports a picker refusal as a toast.
    */
   onSphairahedronPick?: () => void;
+  /**
+   * The Sphairahedron section's per-face finish select changed: `face` is
+   * the construction's scan position, `finish` the picked bundle's values
+   * (null = Classic). main.ts applies the write rule
+   * (`withSphairahedronFaceFinish`) as an ordinary undoable document edit.
+   */
+  onSphairahedronFaceFinish?: (
+    face: number,
+    finish: SurfaceFinish | null,
+  ) => void;
   /** Complete authored rig edit; absence restores the legacy light path.
    * Input is live; commit closes the undo burst and restarts convergence. */
   onSurfaceLighting?: (
@@ -3037,6 +3068,12 @@ export class Ui {
     HTMLElement
   >;
   private readonly sphairahedronPickButton: HTMLButtonElement;
+  /** The per-face finish rows: the selects, their row divs and the label
+   * spans, indexed by scan position (six static rows in index.html; the
+   * sync shows as many as the construction folds). */
+  private readonly sphairahedronFaceFinishSelects: HTMLSelectElement[] = [];
+  private readonly sphairahedronFaceFinishRows: HTMLElement[] = [];
+  private readonly sphairahedronFaceFinishLabels: HTMLElement[] = [];
   /** Whether the DOCUMENT carries a sphairahedron block — keys the
    * transform sections' dormancy (the sphereInversionPresent twin). */
   private sphairahedronPresent = false;
@@ -3828,6 +3865,33 @@ export class Ui {
     this.sphairahedronPickButton = this.byId<HTMLButtonElement>(
       "sphairahedronPickButton",
     );
+    for (let face = 0; face < 6; face++) {
+      const select = this.byId<HTMLSelectElement>(
+        `sphairahedronFaceFinish${face}`,
+      );
+      // The options: Classic plus the FINISH-ONLY bundles — Glass excluded,
+      // it carries the optics the family refuses. The disabled Custom
+      // option names a non-bundle authored value; it can be shown, never
+      // chosen (the transform group's pattern).
+      for (const entry of FINISH_BUNDLES.filter((bundle) => !bundle.optics)) {
+        const option = select.ownerDocument.createElement("option");
+        option.value = entry.id;
+        option.textContent = entry.label;
+        select.appendChild(option);
+      }
+      const custom = select.ownerDocument.createElement("option");
+      custom.value = FINISH_CUSTOM_ID;
+      custom.textContent = "Custom";
+      custom.disabled = true;
+      select.appendChild(custom);
+      this.sphairahedronFaceFinishSelects.push(select);
+      this.sphairahedronFaceFinishRows.push(
+        this.byId(`sphairahedronFaceFinishRow${face}`),
+      );
+      this.sphairahedronFaceFinishLabels.push(
+        this.byId(`sphairahedronFaceFinishLabel${face}`),
+      );
+    }
     this.sphairahedronRows = {
       za: this.byId("sphairahedronZaRow"),
       zb: this.byId("sphairahedronZbRow"),
@@ -3842,6 +3906,7 @@ export class Ui {
       z2: this.byId("sphairahedronZ2Note"),
       finite: this.byId("sphairahedronFiniteNote"),
       pick: this.byId("sphairahedronPickNote"),
+      finishes: this.byId("sphairahedronFaceFinishNote"),
       "inversion.cx": this.byId("sphairahedronCxNote"),
       "inversion.cy": this.byId("sphairahedronCyNote"),
       "inversion.cz": this.byId("sphairahedronCzNote"),
@@ -4706,6 +4771,22 @@ export class Ui {
     this.sphairahedronPickButton.addEventListener("click", () =>
       handlers.onSphairahedronPick?.(),
     );
+    for (
+      let face = 0;
+      face < this.sphairahedronFaceFinishSelects.length;
+      face++
+    ) {
+      const select = this.sphairahedronFaceFinishSelects[face];
+      select.addEventListener("change", () => {
+        const bundle = FINISH_BUNDLES.find(
+          (entry) => entry.id === select.value && !entry.optics,
+        );
+        handlers.onSphairahedronFaceFinish?.(
+          face,
+          bundle ? bundle.finish : null,
+        );
+      });
+    }
     for (const mode of RENDER_MODES) {
       this.modeButtons[mode].addEventListener("click", () =>
         handlers.onRenderMode(mode),
@@ -5511,10 +5592,13 @@ export class Ui {
     this.setReasonNote(this.sphairahedronNote, sectionNote);
     if (!block || !notes) {
       for (const id of SPHAIRAHEDRON_ROW_CONTROL_IDS) {
-        if (id === "sphairahedronPickButton") continue;
+        if (SPHAIRAHEDRON_DIRECT_CONTROL_IDS.includes(id)) continue;
         this.setScalarDisabled(id, true);
       }
       this.sphairahedronPickButton.disabled = true;
+      for (const select of this.sphairahedronFaceFinishSelects) {
+        select.disabled = true;
+      }
       for (const note of Object.values(this.sphairahedronNotes)) {
         this.setReasonNote(note, "");
       }
@@ -5530,10 +5614,13 @@ export class Ui {
     const finite = sphairahedronIsFinite(block);
     this.sphairahedronRows.inversion.classList.toggle("hidden", !finite);
     for (const id of SPHAIRAHEDRON_ROW_CONTROL_IDS) {
-      // The Pick button is a handler-driven button, not a scalar control —
-      // its availability is set directly.
-      if (id === "sphairahedronPickButton") continue;
+      // The handler-driven controls (the Pick button, the finish selects)
+      // are not scalar controls — their availability is set directly.
+      if (SPHAIRAHEDRON_DIRECT_CONTROL_IDS.includes(id)) continue;
       this.setScalarDisabled(id, refusedMode);
+    }
+    for (const select of this.sphairahedronFaceFinishSelects) {
+      select.disabled = refusedMode;
     }
     this.sphairahedronPickButton.disabled = refusedMode || !finite;
     // The family select's authored-value option names the raw block (the
@@ -5545,6 +5632,22 @@ export class Ui {
       familyOption.textContent = `Authored: ${JSON.stringify(
         (block as Record<string, unknown>).family ?? null,
       )}`;
+    }
+    // The per-face finish rows: labels from the resolved construction's
+    // scan order (the face colors' attribution), one select per face, rows
+    // past the construction's face count hidden. The select reflects the
+    // block's authored entry — a bundle match names it, a non-bundle
+    // authored value shows the disabled Custom option.
+    const faceLabels = sphairahedronFaceLabels(block);
+    for (let face = 0; face < this.sphairahedronFaceFinishRows.length; face++) {
+      const known = faceLabels !== null && face < faceLabels.length;
+      this.sphairahedronFaceFinishRows[face].classList.toggle("hidden", !known);
+      if (!known) continue;
+      this.sphairahedronFaceFinishLabels[face].textContent = faceLabels[face];
+      const entry = block.finishes?.[face];
+      const bundle = finishBundleOf(entry ?? undefined);
+      this.sphairahedronFaceFinishSelects[face].value =
+        bundle && !bundle.optics ? bundle.id : FINISH_CUSTOM_ID;
     }
     for (const [row, note] of Object.entries(this.sphairahedronNotes) as [
       Exclude<SphairahedronNoteRow, "block">,
@@ -5559,8 +5662,11 @@ export class Ui {
     // In Flame/Solid the whole section is inert beside its reason — the
     // panel-ia disable-with-adjacent-reason contract.
     for (const id of SPHAIRAHEDRON_ROW_CONTROL_IDS) {
-      if (id === "sphairahedronPickButton") continue;
+      if (SPHAIRAHEDRON_DIRECT_CONTROL_IDS.includes(id)) continue;
       this.setScalarDisabled(id, true);
+    }
+    for (const select of this.sphairahedronFaceFinishSelects) {
+      select.disabled = true;
     }
     this.sphairahedronPickButton.disabled = true;
   }

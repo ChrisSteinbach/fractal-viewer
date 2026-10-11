@@ -41,11 +41,17 @@
  */
 import {
   SPHAIRAHEDRON_FAMILIES,
+  SPHAIRAHEDRON_MAX_FACE_SLOTS,
   resolveSphairahedron,
   type SphairahedronAuthored,
   type SphairahedronFamilyId,
 } from "../fractal/sphairahedron";
 import { SPHAIRAHEDRON_WALK_EMPTY_FAMILIES } from "../fractal/sphairahedron-sample";
+import {
+  CLASSIC_SURFACE_FINISH,
+  type ResolvedSurfaceFinish,
+} from "../fractal/surface-finish";
+import type { SurfaceFinish } from "../fractal/types";
 import { authoredPickerInversion } from "./sphairahedron-authoring";
 
 /** The numeric fields the panel exposes. */
@@ -61,7 +67,12 @@ export type SphairahedronNumericField =
 
 /** Every row that can carry a disclosure. */
 export type SphairahedronNoteRow =
-  SphairahedronNumericField | "family" | "finite" | "pick" | "block";
+  | SphairahedronNumericField
+  | "family"
+  | "finite"
+  | "pick"
+  | "finishes"
+  | "block";
 
 export interface SphairahedronFieldRange {
   min: number;
@@ -489,6 +500,79 @@ export function withSphairahedronFinite(
   return { ...block, inversion };
 }
 
+/**
+ * The per-face finish rows' labels, in the construction's scan order:
+ * resolve the block and name each fold face by its kind — `Ball k` for a
+ * sphere, `Wall k` for a plane, `k` counting within the kind (the cube
+ * families' balls-then-walls scan and the finite construction's
+ * interleaved one both read naturally). A refused block names nothing
+ * (`null` — the resolver's reasons are the notes' job, the rows hide).
+ */
+export function sphairahedronFaceLabels(
+  block: SphairahedronAuthored,
+): readonly string[] | null {
+  const resolution = resolveSphairahedron(block);
+  if (!resolution.ok) return null;
+  let ball = 0;
+  let wall = 0;
+  return resolution.construction.foldFaces.map((fold) =>
+    fold.face.kind === "sphere" ? `Ball ${++ball}` : `Wall ${++wall}`,
+  );
+}
+
+/**
+ * Write one face's finish — the bundle select's write rule, the transform
+ * finish group's two rules one level up:
+ *
+ * `null` (the Classic pick) clears the entry — trailing nulls trimmed, the
+ * whole field dropped when every entry is null — so exploring a face and
+ * returning it to Classic leaves the document exactly as it found it. A
+ * finish writes the bundle's fields with classic-valued fields STRIPPED
+ * (exact equality against {@link CLASSIC_SURFACE_FINISH}: the bundle
+ * constants are exact, so a non-classic bundle field never matches), which
+ * keeps "absent means classic byte-identically" true through an editing
+ * session — and an entry whose every field is classic stores `null`, never
+ * an empty object. Never mutates. `face` outside the face-slot cap returns
+ * the block unchanged (the panel offers no such row).
+ */
+export function withSphairahedronFaceFinish(
+  block: SphairahedronAuthored,
+  face: number,
+  finish: SurfaceFinish | null,
+): SphairahedronAuthored {
+  if (
+    !Number.isInteger(face) ||
+    face < 0 ||
+    face >= SPHAIRAHEDRON_MAX_FACE_SLOTS
+  ) {
+    return block;
+  }
+  const entries: (SurfaceFinish | null)[] = [...(block.finishes ?? [])];
+  if (finish === null) {
+    entries[face] = null;
+  } else {
+    const entry: SurfaceFinish = {};
+    for (const key of Object.keys(
+      CLASSIC_SURFACE_FINISH,
+    ) as (keyof ResolvedSurfaceFinish)[]) {
+      const value = finish[key];
+      if (value !== undefined && value !== CLASSIC_SURFACE_FINISH[key]) {
+        entry[key] = value;
+      }
+    }
+    entries[face] = Object.keys(entry).length > 0 ? entry : null;
+  }
+  while (entries.length > 0 && entries[entries.length - 1] === null) {
+    entries.pop();
+  }
+  if (entries.length === 0) {
+    const { finishes: _dropped, ...rest } = block;
+    void _dropped;
+    return rest;
+  }
+  return { ...block, finishes: entries };
+}
+
 // ---------------------------------------------------------- select + notes
 
 /** The select value for the family: a shipped id, or
@@ -537,6 +621,10 @@ const REASON_ROWS: readonly [RegExp, SphairahedronNoteRow][] = [
   [/^modulus (za|zb) /, "za"],
   [/^modulus z2 /, "z2"],
   [/^ball /, "za"],
+  [/^finishes /, "finishes"],
+  [/^finish \d+ /, "finishes"],
+  [/^unknown finish field /, "finishes"],
+  [/^sphairahedron faces do not render optics/, "finishes"],
 ];
 
 function formatNumber(value: number, precision: number): string {
@@ -574,6 +662,7 @@ export function sphairahedronControlNotes(
     family: "",
     finite: "",
     pick: "",
+    finishes: "",
     block: "",
   };
   const repair: Record<SphairahedronNoteRow, string> = {
@@ -588,6 +677,8 @@ export function sphairahedronControlNotes(
     family: "Choose a family to replace it.",
     finite: "Pick an inversion sphere to repair it.",
     pick: "Pick an inversion sphere to repair it.",
+    finishes:
+      "This version cannot read it; turn Sphairahedron off and on to start from a valid scene.",
     block:
       "This version cannot read it; turn Sphairahedron off and on to start from a valid scene.",
   };
@@ -656,6 +747,20 @@ export function sphairahedronControlNotes(
     notes[field] =
       `${formatNumber(raw, range.precision)} is outside this slider's range ` +
       `${String(range.min)} to ${String(range.max)}; kept as authored.`;
+  }
+  if (
+    notes.finishes === "" &&
+    (block.finishes ?? []).some(
+      (entry) => entry !== null && entry !== undefined,
+    )
+  ) {
+    // The accepted re-mapping quirk, disclosed where it bites: the finite
+    // checkbox REORDERS the scan order (infinite = balls-then-walls,
+    // finite = interleaved), so an authored per-face finish follows the
+    // faces — exactly as the per-face colors already do. No stable key is
+    // invented around it.
+    notes.finishes =
+      "Flipping Finite reorders the faces, so per-face finishes re-map with it.";
   }
   return notes;
 }

@@ -174,6 +174,7 @@ import {
   type TransformEditSnapshot,
 } from "./transform-edit-effects";
 import { authoredPickerInversion } from "./sphairahedron-authoring";
+import { withSphairahedronFaceFinish } from "./sphairahedron-controls";
 import {
   DEFAULT_FLAME_BALLOON_ECHO_WEIGHT,
   DEFAULT_GAMMA_THRESHOLD,
@@ -11892,6 +11893,22 @@ async function main(): Promise<void> {
           inversion,
         });
       }, "always");
+    },
+    // The per-face finish select's authoring action: the write rule strips
+    // classic-valued fields (Classic clears the entry outright, trailing
+    // nulls trimmed, the field dropped when every entry is null) — an
+    // ordinary undoable document edit. The Surface restart rides the
+    // block-JSON comparison; the construction itself never moves, so the
+    // deterministic regen "auto" asks for is harmless and keeps the panel
+    // path identical to every other block edit.
+    onSphairahedronFaceFinish: (face, finish) => {
+      if (!state.sphairahedron) return;
+      applyEdit(() => {
+        state = setSphairahedron(
+          state,
+          withSphairahedronFaceFinish(state.sphairahedron!, face, finish),
+        );
+      }, "auto");
     },
     onScheduleDepth: (depth, phase) => {
       if (phase === "commit") {
