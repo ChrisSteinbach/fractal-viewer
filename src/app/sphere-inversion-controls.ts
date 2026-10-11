@@ -20,7 +20,10 @@
  * fraction to 1, any positive length), a document may carry any of it, and
  * nothing here clamps. A value outside a slider's span widens that slider to
  * itself and is disclosed beside it; a value the resolver refuses is kept
- * verbatim and disclosed with the resolver's own reason.
+ * verbatim and disclosed with the resolver's own reason. The widening
+ * reaches TYPED ENTRY too (`widenToDraft` in `range-number-control.ts`):
+ * a value typed past a span widens it rather than refusing, since every
+ * span here is an affordance over a wider resolver domain.
  *
  * ABSENT MEANS DEFAULT, byte-identically — the fold-length rows' rule: a
  * field is written only once its control moves, and moving it onto the

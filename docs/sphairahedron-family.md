@@ -626,7 +626,15 @@ reach an authored value past the fixed base (`widenSpanToAuthored`, the
 numeric companion never reads red for a value the document carries), the
 widening disclosed against `SPHAIRAHEDRON_INVERSION_BASE_RANGES`; the
 out-of-span note survives only as the defensive branch (a resolving block's
-moduli are inside their region-scoped spans by construction). A discrete
+moduli are inside their region-scoped spans by construction). Typed entry
+widens the same way (`widenToDraft` in `range-number-control.ts`): a value
+typed past the ±2 base span extends it to the value instead of refusing —
+the sphere is a free parameter of the family and the picker's ladder is
+scale-relative, so values past the base spans are ordinary authored output,
+and the resolver's own gate (finite centre, positive radius; a degenerate
+seed image refuses, disclosed on the row) is the only real domain. The
+moduli rows do not widen: their spans ARE the valid region, and refusal at
+entry is honest there. A discrete
 subject edit (enable, family, finite stance) arms the landing camera fit
 through the regen coalescer — the preset-load rule one edit class over;
 slider ticks keep the plain form (the fit would fight the authoring hand)

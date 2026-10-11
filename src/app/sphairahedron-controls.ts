@@ -31,7 +31,11 @@
  * modulus and the resolver's refusal discloses beside the row. An authored
  * value outside a span widens that slider to itself and is disclosed
  * beside it (the sphere-inversion discipline: the control narrows, the
- * document never clamps).
+ * document never clamps); the widening reaches TYPED ENTRY too — the J
+ * rows' spans are affordances (the sphere is a free parameter and the
+ * picker's ladder is scale-relative), so a value typed past a span widens
+ * it rather than refusing (`widenToDraft` in `range-number-control.ts`).
+ * The moduli rows refuse instead: their spans ARE the valid region.
  *
  * THE INVERSION SPHERE IS AUTHORED EXPLICITLY (the vocabulary's own rule —
  * no silent default): the finite checkbox and the Pick button both author

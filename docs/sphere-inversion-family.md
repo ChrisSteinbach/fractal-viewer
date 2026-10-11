@@ -1524,7 +1524,11 @@ stays document-only.
   resolver widens the slider and its numeric field to itself; nothing is
   clamped. The row says `N is outside this slider's range A to B; kept as
 authored.` While a slider is focused its span only widens, so the track
-  never rescales under a drag.
+  never rescales under a drag. Typed entry widens the same way
+  (`widenToDraft` in `range-number-control.ts`): a value typed past a span
+  extends it instead of the field refusing — every span here is an
+  affordance over the resolver's wider domain (radius fraction to 1, depth
+  to 32, any positive length), so typing is never the one gate that says no.
 - **Refused values.** A value the resolver refuses is kept verbatim. The
   resolver's reason lands beside the row it names, with a repair action:
   - `depth …`, `seed size …` and the other single-field reasons go to their

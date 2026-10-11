@@ -4100,6 +4100,7 @@ export class Ui {
               step: spec.numeric.step,
               allowedValues: spec.numeric.allowedValues,
               enforceStep: spec.numeric.enforceStep,
+              widenToDraft: spec.numeric.widenToDraft === true,
               precision: spec.numeric.precision,
               adapter: {
                 rangeToNumber: spec.numeric.rangeToNumber ?? ((value) => value),

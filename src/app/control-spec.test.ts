@@ -2343,6 +2343,33 @@ describe("commit", () => {
 });
 
 describe("table policy", () => {
+  it("the sphere-inversion seed rows and the sphairahedron J rows are the only entries marked widenToDraft", () => {
+    // The widening rule's typed-entry edition: these rows' spans are
+    // convenience affordances narrower than their resolvers' domains (the
+    // sphairahedron sphere is a free parameter; the sphere-inversion seed
+    // lengths' domains are size-relative), and a loaded document or the
+    // picker already widens them on load — typing must reach the same
+    // values. The moduli rows and depth refuse instead: their spans ARE
+    // the resolver's domain.
+    const widening = SCALAR_CONTROLS.filter(
+      (s) => s.kind === "range" && s.numeric.widenToDraft === true,
+    ).map((s) => s.id);
+
+    expect(widening).toEqual([
+      "sphereInversionRadiusSlider",
+      "sphereInversionSizeSlider",
+      "sphereInversionThicknessSlider",
+      "sphereInversionCutRadiusSlider",
+      "sphereInversionCutOffsetSlider",
+      "sphereInversionDepthSlider",
+      "sphairahedronCxSlider",
+      "sphairahedronCySlider",
+      "sphairahedronCzSlider",
+      "sphairahedronCwSlider",
+      "sphairahedronRSlider",
+    ]);
+  });
+
   it("morphDetail, autoUpdate, adaptiveResolutionCheckbox, and exportScale are the only entries marked persisted: false", () => {
     // Balloon's shared checkbox/radius pair left this list when the feature
     // graduated from session-only view state to persisted scene content.
