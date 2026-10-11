@@ -8583,6 +8583,8 @@ export function setSurfaceSystem(
     material.defines.SURFACE_BULB !== 0 ||
     material.defines.SURFACE_GROUND_PLANE !== plane ||
     material.defines.SURFACE_SPHERE_INVERSION === 1 ||
+    material.defines.SURFACE_MENGER !== 0 ||
+    material.defines.SURFACE_SPHAIRA !== 0 ||
     (material.defines.SURFACE_SCHEDULE === 1 ? 1 : 0) !== wantSchedule ||
     (material.defines.SURFACE_CHAOS === 1 ? 1 : 0) !== wantChaos ||
     (material.defines.SURFACE_POST === 1 ? 1 : 0) !== wantPost ||
@@ -8599,6 +8601,12 @@ export function setSurfaceSystem(
     // one, so the ESCAPE/BULB flip above always accompanies this).
     material.defines.SURFACE_ESCAPE = 0;
     material.defines.SURFACE_BULB = 0;
+    // A previous subject-family session (menger carve, sphairahedron fold)
+    // hands its arm back too — these defines must read 0 for every
+    // non-subject re-resolve, or a finish/pattern/optics flip here would
+    // either drop the subject arm it claims or resolve a clash.
+    material.defines.SURFACE_MENGER = 0;
+    material.defines.SURFACE_SPHAIRA = 0;
     // A previous sphere-inversion session hands the bodies back too.
     delete material.defines.SURFACE_SPHERE_INVERSION;
     installSphereInversionBlock(material, false);
@@ -10561,6 +10569,8 @@ export function setEscapeSystem(
     material.defines.SURFACE_BULB !== 0 ||
     material.defines.SURFACE_FOLDS !== 0 ||
     material.defines.SURFACE_SPHERE_INVERSION === 1 ||
+    material.defines.SURFACE_MENGER !== 0 ||
+    material.defines.SURFACE_SPHAIRA !== 0 ||
     material.defines.SURFACE_FOLD_LENS !== 0 ||
     material.defines.SURFACE_SCHEDULE === 1 ||
     material.defines.SURFACE_CHAOS === 1 ||
@@ -10579,6 +10589,9 @@ export function setEscapeSystem(
     // The two forward-orbit variants are exclusive: a previous Mandelbulb
     // session must hand the bodies back here too.
     material.defines.SURFACE_BULB = 0;
+    // A previous subject-family session hands its arm back with the rest.
+    material.defines.SURFACE_MENGER = 0;
+    material.defines.SURFACE_SPHAIRA = 0;
     // A previous sphere-inversion session hands the bodies back too.
     delete material.defines.SURFACE_SPHERE_INVERSION;
     installSphereInversionBlock(material, false);
@@ -10734,6 +10747,8 @@ export function setBulbSystem(
     material.defines.SURFACE_ESCAPE !== 0 ||
     material.defines.SURFACE_FOLDS !== 0 ||
     material.defines.SURFACE_SPHERE_INVERSION === 1 ||
+    material.defines.SURFACE_MENGER !== 0 ||
+    material.defines.SURFACE_SPHAIRA !== 0 ||
     material.defines.SURFACE_FOLD_LENS !== 0 ||
     material.defines.SURFACE_SCHEDULE === 1 ||
     material.defines.SURFACE_CHAOS === 1 ||
@@ -10748,6 +10763,9 @@ export function setBulbSystem(
   ) {
     material.defines.SURFACE_BULB = 1;
     material.defines.SURFACE_ESCAPE = 0;
+    // A previous subject-family session hands its arm back with the rest.
+    material.defines.SURFACE_MENGER = 0;
+    material.defines.SURFACE_SPHAIRA = 0;
     // A previous sphere-inversion session hands the bodies back too.
     delete material.defines.SURFACE_SPHERE_INVERSION;
     installSphereInversionBlock(material, false);
@@ -10904,6 +10922,10 @@ export function setMengerSystem(
     material.defines.SURFACE_MENGER = 1;
     material.defines.SURFACE_ESCAPE = 0;
     material.defines.SURFACE_BULB = 0;
+    // A previous sphairahedron session hands its arm back — the sibling
+    // subject define this setter's condition cannot see (MENGER is already
+    // 1 there, so the condition must not depend on it).
+    material.defines.SURFACE_SPHAIRA = 0;
     // A previous sphere-inversion session hands the bodies back too.
     delete material.defines.SURFACE_SPHERE_INVERSION;
     installSphereInversionBlock(material, false);
@@ -11294,6 +11316,8 @@ export function setSphereInversionSystem(
     material.defines.SURFACE_ESCAPE !== 0 ||
     material.defines.SURFACE_BULB !== 0 ||
     material.defines.SURFACE_FOLDS !== 0 ||
+    material.defines.SURFACE_MENGER !== 0 ||
+    material.defines.SURFACE_SPHAIRA !== 0 ||
     material.defines.SURFACE_FOLD_LENS !== 0 ||
     material.defines.SURFACE_SCHEDULE === 1 ||
     material.defines.SURFACE_CHAOS === 1 ||
@@ -11310,6 +11334,10 @@ export function setSphereInversionSystem(
     material.defines.SURFACE_SPHERE_INVERSION = 1;
     material.defines.SURFACE_ESCAPE = 0;
     material.defines.SURFACE_BULB = 0;
+    // A previous subject-family session hands its arm back — the same
+    // rule the sphere-inversion define itself enjoys in every setter.
+    material.defines.SURFACE_MENGER = 0;
+    material.defines.SURFACE_SPHAIRA = 0;
     delete material.defines.SURFACE_POST;
     delete material.defines.SURFACE_PATTERN;
     material.defines.SURFACE_FOLDS = 0;
@@ -11427,6 +11455,11 @@ export function setSurfaceBalloon(
       material.defines.SURFACE_SPHERE_INVERSION === 1 ? 1 : 0,
       material.defines.SURFACE_OPTICS === 1 ? 1 : 0,
       materialOpticsBackend(material),
+      // The subject arms, read like every other define — see
+      // setSurfaceMaterials's note (a balloon flip drops them otherwise).
+      false,
+      material.defines.SURFACE_MENGER === 1 ? 1 : 0,
+      material.defines.SURFACE_SPHAIRA === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -11564,6 +11597,11 @@ export function setSurfaceGroundPlane(
       material.defines.SURFACE_SPHERE_INVERSION === 1 ? 1 : 0,
       material.defines.SURFACE_OPTICS === 1 ? 1 : 0,
       materialOpticsBackend(material),
+      // The subject arms, read like every other define — see
+      // setSurfaceMaterials's note (a plane flip drops them otherwise).
+      false,
+      material.defines.SURFACE_MENGER === 1 ? 1 : 0,
+      material.defines.SURFACE_SPHAIRA === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -11706,6 +11744,16 @@ export function setSurfaceMaterials(
       material.defines.SURFACE_SPHERE_INVERSION === 1 ? 1 : 0,
       wantOptics,
       materialOpticsBackend(material),
+      // The subject-family arms ride the defines like every other flag:
+      // a finish-gate flip inside a menger or sphairahedron GLSL session
+      // must re-resolve WITH that arm, or the program loses the core the
+      // tables on the material still describe. Every non-subject setter
+      // hands these defines back on rebuild (the SPHERE_INVERSION
+      // precedent), so what the defines carry here is the session's own
+      // arm, nothing stale.
+      false,
+      material.defines.SURFACE_MENGER === 1 ? 1 : 0,
+      material.defines.SURFACE_SPHAIRA === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -11742,6 +11790,11 @@ export function setSurfaceLighting(
     material.defines.SURFACE_SPHERE_INVERSION === 1 ? 1 : 0,
     material.defines.SURFACE_OPTICS === 1 ? 1 : 0,
     materialOpticsBackend(material),
+    // The subject arms, read like every other define — see
+    // setSurfaceMaterials's note (a lighting flip drops them otherwise).
+    false,
+    material.defines.SURFACE_MENGER === 1 ? 1 : 0,
+    material.defines.SURFACE_SPHAIRA === 1 ? 1 : 0,
   );
   material.needsUpdate = true;
 }
