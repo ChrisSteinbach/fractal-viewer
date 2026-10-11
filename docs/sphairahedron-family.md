@@ -416,11 +416,10 @@ algebra, none inherited):
 - **4D slab REFUSED at any thickness** (packer throw + gate disclosure): a
   segment through an inversion bends — no segment certificate, the
   escape4/menger4 reason one construction over.
-- **Per-transform finishes DORMANT** (disclosed): the replaced transform
-  system's state, unread. Per-FACE finishes keyed on the last-move-face
-  attribution are a plausible future design (the wire already indexes one
-  material slot per face) — proposed, not shipped; the accept-or-refuse
-  decision is a standing follow-up.
+- **Per-FACE finishes COMPOSE** (accepted 2026-10-11, shipped): the wire
+  already indexes one material slot per face, so the block carries its own
+  `finishes` list — see "Per-face finishes" under The wiring. The replaced
+  transform system's per-TRANSFORM finishes stay dormant, disclosed.
 - **Optics/transport REFUSED**: the estimator is not a certified lower
   bound, the transport doc's forward-family reason.
 
@@ -496,6 +495,74 @@ session to the GLSL arm — which is what made defect 2 visible only now:
 every prior surfacegl measurement on this machine measured the empty arm.
 
 ## The wiring (panel, persistence, Points, and the mode doors)
+
+**Per-face finishes** (the fr-l0ma.6 accept, 2026-10-11). The block's own
+`finishes?: readonly (SurfaceFinish | null)[]` — a DENSE per-face list
+keyed on the construction's SCAN ORDER, entry `f` shading face `f`, the
+SAME attribution as the face colors (the surface hit-info's last-move
+face; the walk's last-applied face). No last-covers clamp on purpose: a
+row the panel shows as Classic must render classic, so `null`, a short
+list and the absent field are all classic BYTE-IDENTICALLY for every
+document predating the field. Optics is NOT part of the field: an
+`optics` key inside an entry is REFUSED with
+`SPHAIRAHEDRON_FINISH_OPTICS_REFUSAL` (the family's routing stance — no
+sphaira transport backend exists, so refuse, never silently shade
+opaque); ranges are NOT refused at the block level (the material resolver
+owns the domain — the si materials rule). Validation lives in
+`resolveSphairahedron`: an array of at most
+`SPHAIRAHEDRON_MAX_FACE_SLOTS` (6 = the cube families' 3 balls + 3
+walls; the tetras fold 4, the prism 5), entries `null` or plain objects
+keyed on the finish vocabulary, unknown keys refuse, every numeric leaf
+finite; the block persists verbatim (refused included), the passthrough
+already carrying it.
+
+The slots wire is `sphairahedronShadeSlots(faceCount, authored?)` in
+`surface-slots.ts`: colors `transformColors(faceCount)`, traps
+`i/(faceCount−1)` (the kernel trap ramp's own normalization — exactly the
+inline code it replaced in `main.ts`'s compute gate), and materials
+`null` unless some face resolves non-classic
+(`surfaceMaterialUsesFinish` OR-accumulates the slots, so a face authored
+at the classic values — or a list of them — keeps today's shader bytes).
+Each slot resolves through `resolveSurfaceMaterial(finish, undefined)` —
+pattern and optics are NEVER passed; the wire cannot smuggle the
+family's refused arms in.
+
+Edit timing is RESTART (the block-JSON latch →
+`syncSphairahedronSurfaceSession` → session re-enter), the same
+create-time contract as every compute material edit, disclosed on the
+group's note. The panel rows are hand-built (`onSphairahedronPick`
+pattern, not control-spec entries — the bundle payload `FINISH_BUNDLES`
+lives in `ui.ts`): six static rows in `index.html`, labels
+`sphairahedronFaceLabels(block)` ("Ball k" / "Wall k" in scan order, k
+counting within the kind), options Classic + the FINISH-ONLY bundles
+(Glass EXCLUDED — it carries optics) + a disabled Custom for non-bundle
+authored values. The write rule `withSphairahedronFaceFinish` strips
+classic-valued fields on write (exact equality — bundle constants are
+exact), trims trailing nulls, and drops the field when every entry is
+null. THE ACCEPTED QUIRK: the finite checkbox REORDERS the scan order
+(infinite = balls-then-walls; finite = interleaved — `makeFinite`), so
+authored per-face finishes RE-MAP when Finite flips, exactly like the
+existing face colors do — disclosed in the group's note, no stable key
+invented.
+
+MEASURED: the WGSL sphaira cores compile and shade `finish: true` (the
+family gate's finish leg — the first verified finish program on those
+cores, both engines on the AMD RX 7900 XTX: engine=compute census covered
+186598/655360, engine=webgl 186604/655360, 14.2% of pixels differing from
+the classic render either way); the GLSL sphaira+finish combination
+resolves to 43,836 B — 21,700 B under `SURFACE_GLSL_STRIP_BYTES`
+(pinned in `surface-material.test.ts`). The finish gate's flip sites
+(`setSurfaceMaterials`/`setSurfaceLighting`/`setSurfaceBalloon`/
+`setSurfaceGroundPlane`) read the subject defines
+(`SURFACE_MENGER`/`SURFACE_SPHAIRA`) like every other flag — without
+that, the first finish flip under a sphaira GLSL session re-resolved the
+fragment WITHOUT the sphaira arm while its tables stayed packed — and
+every non-subject system setter hands the two subject defines back on
+rebuild (the `SURFACE_SPHERE_INVERSION` hand-back's shape, which the
+base/escape/bulb/si setters already had; the menger setter now clears
+SPHAIRA too, and the base setter's rebuild condition can no longer pass
+entirely after a subject session — the stale-subject-fragment state that
+kept a sphaira program installed under IFS uniforms).
 
 **Persistence.** `state.sphairahedron?: SphairahedronAuthored` — stored AS
 AUTHORED, encoded only when present, decoded verbatim; refused blocks
