@@ -607,20 +607,34 @@ async function main() {
     // nothing), the document must carry the finishes verbatim, and the
     // finished picture must differ from the classic one — a finish that
     // shades nothing is the vacuous pass the coverage leg exists to
-    // catch. Keyed on the quasisphere like the other cube-document legs.
-    if (wanted.some((p) => p.key === "sphairaQuasisphere")) {
+    // catch. DIMENSIONAL PARITY: the leg runs on the 3D quasisphere AND
+    // the 4D orb — the `sphaira4` core compiles the same shared shade
+    // entry, and a reading that stops at the 3D core is exactly the gap
+    // the parity rule exists to close. The 4D face-3 pick lands on
+    // tetra4's four-face scan the same way.
+    for (const finishPreset of ["sphairaQuasisphere", "sphairaOrb4"].filter(
+      (key) => wanted.some((p) => p.key === key),
+    )) {
+      const tag = finishPreset;
       const { context, page, consoleLines } = await openApp(browser, args);
       try {
-        await loadPreset(page, "sphairaQuasisphere");
+        await loadPreset(page, finishPreset);
         const entry = await enterSurface(page);
         if (!entry.entered) {
-          failures.push(`finish check: Surface disabled — ${entry.reason}`);
+          failures.push(
+            `${tag} finish check: Surface disabled — ${entry.reason}`,
+          );
         } else {
           const plain = await waitSettled(page, args);
           if (!plain.ok) {
-            failures.push("finish check: the classic session never settled");
+            failures.push(
+              `finish check (${tag}): the classic session never settled`,
+            );
           } else {
-            const plainShot = path.join(args.outdir, "finish-classic.png");
+            const plainShot = path.join(
+              args.outdir,
+              `finish-classic-${tag}.png`,
+            );
             await page
               .locator("canvas")
               .first()
@@ -661,16 +675,16 @@ async function main() {
             });
             if (authored.errors.length > 0) {
               failures.push(
-                `finish check: the panel rows are broken — ${authored.errors.join("; ")}`,
+                `${tag} finish check: the panel rows are broken — ${authored.errors.join("; ")}`,
               );
             } else {
               console.error(
-                `[sphaira-family] finish check: rows labeled ${JSON.stringify(authored.labels)}`,
+                `[sphaira-family] ${tag} finish check: rows labeled ${JSON.stringify(authored.labels)}`,
               );
               const finished = await waitSettled(page, args);
               if (!finished.ok) {
                 failures.push(
-                  "finish check: the restarted session never settled after the finish edit",
+                  `finish check (${tag}): the restarted session never settled after the finish edit`,
                 );
                 for (const line of diagnosticConsoleLines(consoleLines)) {
                   console.error(
@@ -702,16 +716,16 @@ async function main() {
                     })
                 ) {
                   failures.push(
-                    `finish check: the document does not carry the authored finishes verbatim (${JSON.stringify(finishes)})`,
+                    `${tag} finish check: the document does not carry the authored finishes verbatim (${JSON.stringify(finishes)})`,
                   );
                 }
                 const census = finished.state.census;
                 if (!census || !(census.covered > 0)) {
                   failures.push(
-                    `finish check: the finished render covers nothing (census=${JSON.stringify(census)}) — the finish arm did not compile into the session`,
+                    `${tag} finish check: the finished render covers nothing (census=${JSON.stringify(census)}) — the finish arm did not compile into the session`,
                   );
                   console.error(
-                    `[sphaira-family] finish check: NO COVERAGE (engine=${finished.state.engine})`,
+                    `[sphaira-family] ${tag} finish check: NO COVERAGE (engine=${finished.state.engine})`,
                   );
                   for (const line of diagnosticConsoleLines(consoleLines)) {
                     console.error(
@@ -721,7 +735,7 @@ async function main() {
                 } else {
                   const finishedShot = path.join(
                     args.outdir,
-                    "finish-auth.png",
+                    `finish-auth-${tag}.png`,
                   );
                   await page
                     .locator("canvas")
@@ -740,13 +754,13 @@ async function main() {
                   await diffContext3.close();
                   const ok = frac >= DIFFER_FRACTION;
                   console.error(
-                    `[sphaira-family] finish check: engine=${finished.state.engine} ` +
+                    `[sphaira-family] ${tag} finish check: engine=${finished.state.engine} ` +
                       `census covered ${census.covered}/${census.rays}, ` +
                       `${(100 * frac).toFixed(2)}% of pixels differ ${ok ? "OK" : "TOO SIMILAR"}`,
                   );
                   if (!ok) {
                     failures.push(
-                      `finish check: the authored finishes render the same picture ` +
+                      `${tag} finish check: the authored finishes render the same picture ` +
                         `(${(100 * frac).toFixed(2)}% differing, need ${100 * DIFFER_FRACTION}%) — the materials are not reaching the shade entry`,
                     );
                   }
