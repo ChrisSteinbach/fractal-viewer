@@ -123,6 +123,7 @@ import {
 } from "./swirl-radius-control";
 import {
   sphereInversionShadeSlots,
+  sphairahedronShadeSlots,
   surfaceSlotColors,
   surfaceForwardSlot,
   surfaceSlotMaterials,
@@ -5503,11 +5504,12 @@ async function main(): Promise<void> {
       // per generation (the same transformColors spread, no authored
       // colorIndex to honour — the block has no transforms). Each slot's
       // trap coordinate is its face index over faceCount − 1, the kernel
-      // trap ramp's own normalization shape.
-      const faceCount = target.de.faceCount;
-      slotColors = transformColors(faceCount);
-      const denom = Math.max(1, faceCount - 1);
-      slotTraps = Array.from({ length: faceCount }, (_, i) => i / denom);
+      // trap ramp's own normalization shape. Colors and traps do not
+      // depend on the authored finishes, so the derivation runs without
+      // the block — the session arm passes it where materials matter.
+      const shade = sphairahedronShadeSlots(target.de.faceCount);
+      slotColors = shade.colors;
+      slotTraps = shade.trapIndices;
     } else {
       slotColors = surfaceSlotColors(
         state.transforms,
@@ -6996,10 +6998,16 @@ async function main(): Promise<void> {
           const de = (de3 ?? de4)!;
           surfaceSessionSphairahedron = construction;
           surfaceSessionIs4D = fourD;
-          // The transforms are dormant (the gate's note), so the session is
-          // classic: null — no finish/pattern/optics slot is derived from a
-          // system the render does not draw.
-          sessionMaterials = null;
+          // The transforms are dormant (the gate's note), so nothing is
+          // derived from them — the session's materials ride the block's OWN
+          // per-face finishes (sphairahedronShadeSlots), null when the field
+          // is absent or every face is classic: the classic kernels,
+          // byte-identically.
+          const shade = sphairahedronShadeSlots(
+            de.faceCount,
+            state.sphairahedron,
+          );
+          sessionMaterials = shade.materials;
           ui.setSurfaceSessionKind("sphairahedron");
           if (fourD) {
             // Thickness is held at zero (SPHAIRAHEDRON_SLAB_REFUSAL,
@@ -7008,7 +7016,7 @@ async function main(): Promise<void> {
             ui.setFourDSlabAvailable(false, "sphairahedron");
           }
           const R = de.boundingRadius;
-          const faceColors = transformColors(de.faceCount);
+          const faceColors = shade.colors;
           if (surfaceComputeAvailable()) {
             computeTarget =
               de3 !== null
