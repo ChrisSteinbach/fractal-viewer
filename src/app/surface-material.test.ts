@@ -16,6 +16,7 @@ import {
   packSurfaceBalloonTint,
   setBulbSystem,
   setSphereInversionSystem,
+  setMengerSystem,
   sphereInversionFitsFragmentArm,
   sphereInversionHitFloor,
   SURFACE_SPHERE_INVERSION_COLOR_SLOTS,
@@ -41,6 +42,7 @@ import {
   SURFACE_SHADE_DE_WIDTH,
 } from "./surface-material";
 import { surface4FragmentResolvedFor } from "./surface-material-4d";
+import type { MengerDE } from "../fractal/menger-de";
 import { resolveSurfaceFinish } from "../fractal/surface-finish";
 import {
   DIELECTRIC_ANCHOR_ENVELOPE_REL,
@@ -1936,6 +1938,111 @@ describe("SURFACE_SPHAIRA GLSL arm", () => {
         pieceCount: 1,
       }),
     ).toBe("terms");
+  });
+
+  it("a finish-gate flip inside the arm re-resolves WITH the sphaira core", () => {
+    // The latent defect the per-face finishes surface: setSurfaceMaterials'
+    // re-resolve passed no menger/sphaira args, so the flip compiled a
+    // program with no sphaira core under tables the material still packs.
+    const material = createSurfaceMaterial();
+    const r = resolveSphairahedron({ family: "tetra333" });
+    if (!r.ok) throw new Error(r.reasons.join("; "));
+    const de = buildSphairahedronDE(r.construction);
+    setSphairahedronSystem(material, de, [
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+      [1, 1, 0],
+    ]);
+    const finishSlots: SurfaceMaterialSlots = {
+      slots: [
+        {
+          finish: resolveSurfaceFinish({ metalness: 1 }),
+          pattern: CLASSIC_SURFACE_MATERIAL.pattern,
+        },
+        {
+          finish: resolveSurfaceFinish({ metalness: 1 }),
+          pattern: CLASSIC_SURFACE_MATERIAL.pattern,
+        },
+        {
+          finish: resolveSurfaceFinish({ metalness: 1 }),
+          pattern: CLASSIC_SURFACE_MATERIAL.pattern,
+        },
+        {
+          finish: resolveSurfaceFinish({ metalness: 1 }),
+          pattern: CLASSIC_SURFACE_MATERIAL.pattern,
+        },
+      ],
+      finish: true,
+      pattern: false,
+      optics: false,
+    };
+    setSurfaceMaterials(material, finishSlots);
+    expect(material.defines.SURFACE_SPHAIRA).toBe(1);
+    expect(material.defines.SURFACE_FINISH).toBe(1);
+    expect(material.fragmentShader).toContain("void sphairaFold(");
+    expect(material.fragmentShader).toContain("finishShade");
+    // The reverse flip (classic-from-finished) keeps the core too.
+    setSurfaceMaterials(material, null);
+    expect(material.defines.SURFACE_SPHAIRA).toBe(1);
+    expect(material.defines.SURFACE_FINISH).toBe(0);
+    expect(material.fragmentShader).toContain("void sphairaFold(");
+    expect(material.fragmentShader).not.toContain("finishShade");
+    material.dispose();
+  });
+});
+
+describe("the subject-family defines are handed back by every other system setter", () => {
+  const mengerDE = (): MengerDE => ({
+    twistM: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+    twistB: [0, 0, 0],
+    levels: 4,
+    boundingRadius: Math.sqrt(3),
+    visibleBoundingRadius: Math.sqrt(3),
+    maxDepth: 4,
+    stepScale: 1,
+  });
+
+  it("setMengerSystem after a sphaira session zeroes SURFACE_SPHAIRA", () => {
+    const material = createSurfaceMaterial();
+    const r = resolveSphairahedron({ family: "tetra333" });
+    if (!r.ok) throw new Error(r.reasons.join("; "));
+    const de = buildSphairahedronDE(r.construction);
+    setSphairahedronSystem(material, de, [
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+      [1, 1, 0],
+    ]);
+    setMengerSystem(material, mengerDE(), black);
+    expect(material.defines.SURFACE_MENGER).toBe(1);
+    expect(material.defines.SURFACE_SPHAIRA).toBe(0);
+    expect(material.fragmentShader).toContain("mengerBoxDistance");
+    expect(material.fragmentShader).not.toContain("void sphairaFold(");
+    material.dispose();
+  });
+
+  it("setSurfaceSystem after a subject session rebuilds the descent arm and zeroes both defines", () => {
+    const material = createSurfaceMaterial();
+    const r = resolveSphairahedron({ family: "tetra333" });
+    if (!r.ok) throw new Error(r.reasons.join("; "));
+    const de = buildSphairahedronDE(r.construction);
+    setSphairahedronSystem(material, de, [
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+      [1, 1, 0],
+    ]);
+    // A plain affine IFS with folds off wants the exact define set the
+    // sphaira arm left behind — the stale-fragment state the old condition
+    // could not see. The subject defines in the condition force the
+    // rebuild.
+    setSurfaceSystem(material, de3([map3()]), [black]);
+    expect(material.defines.SURFACE_SPHAIRA).toBe(0);
+    expect(material.defines.SURFACE_MENGER).toBe(0);
+    expect(material.fragmentShader).not.toContain("void sphairaFold(");
+    expect(material.fragmentShader).toContain("surfaceDE");
+    material.dispose();
   });
 });
 

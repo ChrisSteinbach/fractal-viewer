@@ -13,6 +13,7 @@ import {
   finiteSolidGeneralMediaCodes,
   finiteSolidGeneralSlots,
   sphereInversionShadeSlots,
+  sphairahedronShadeSlots,
   surfaceSlotColors,
   surfaceForwardSlot,
   surfaceSlotMaterials,
@@ -504,6 +505,66 @@ describe("finiteSolidGeneralSlots", () => {
       { baseIndex: 0 },
       { baseIndex: 2 },
     ]);
+  });
+});
+
+describe("sphairahedronShadeSlots", () => {
+  it("packs one slot per face with the By-Transform hue spread and the ramp's trap normalization", () => {
+    const slots = sphairahedronShadeSlots(6);
+    expect(slots.colors).toEqual(transformColors(6));
+    expect(slots.trapIndices).toEqual([0, 0.2, 0.4, 0.6, 0.8, 1]);
+    // A single-face construction still normalizes (the denominator guard).
+    expect(sphairahedronShadeSlots(1).trapIndices).toEqual([0]);
+  });
+
+  it("stays on the classic kernels when no finish is authored", () => {
+    expect(sphairahedronShadeSlots(6).materials).toBeNull();
+    expect(
+      sphairahedronShadeSlots(6, { family: "cube1" }).materials,
+    ).toBeNull();
+  });
+
+  it("resolves one material per face, dense: absent and null entries classic", () => {
+    const slots = sphairahedronShadeSlots(6, {
+      family: "cube1",
+      finishes: [{ metalness: 1 }, null, { specular: 1 }],
+    });
+    expect(slots.materials).toMatchObject({
+      finish: true,
+      pattern: false,
+      optics: false,
+    });
+    expect(slots.materials!.slots).toHaveLength(6);
+    expect(slots.materials!.slots[0].finish.metalness).toBe(1);
+    expect(slots.materials!.slots[1].finish).toEqual(CLASSIC_SURFACE_FINISH);
+    expect(slots.materials!.slots[2].finish.specular).toBe(1);
+    expect(slots.materials!.slots[3].finish).toEqual(CLASSIC_SURFACE_FINISH);
+    expect(slots.materials!.slots[5].finish).toEqual(CLASSIC_SURFACE_FINISH);
+  });
+
+  it("keeps the classic kernels when every authored face resolves classic", () => {
+    // A face authored at the classic values (or a list of them) resolves to
+    // the classic material — the finish-only gate ORs the slots, so an
+    // all-classic list returns null and today's shader bytes survive.
+    const slots = sphairahedronShadeSlots(6, {
+      family: "cube1",
+      finishes: [{}, null, { specular: CLASSIC_SURFACE_FINISH.specular }],
+    });
+    expect(slots.materials).toBeNull();
+  });
+
+  it("never passes pattern or optics into the resolver, the family's refusal", () => {
+    // The wire cannot smuggle the family's refused arms in: a slot derived
+    // from a finish-only entry carries neither a pattern calibration nor
+    // optics lanes.
+    const slots = sphairahedronShadeSlots(4, {
+      family: "tetra333",
+      finishes: [{ metalness: 0.5 }],
+    });
+    for (const slot of slots.materials!.slots) {
+      expect(slot.optics).toBeUndefined();
+    }
+    expect(slots.materials!.pattern).toBe(false);
   });
 });
 
