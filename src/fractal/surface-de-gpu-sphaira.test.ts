@@ -185,11 +185,15 @@ describe("packSphaira4GpuParams (4D, core sphaira4)", () => {
     expect(dv.getFloat32(220, true)).toBe(Math.fround(s));
     expect(dv.getFloat32(416, true)).toBe(Math.fround(XW_ROTOR_VIEW.w0));
     expect(dv.getFloat32(420, true)).toBe(0);
-    // The slice-ADJUSTED march ball at 24, the FULL radius at 428.
+    // The slice-ADJUSTED march ball at 24 — over the ORIGIN-CENTERED
+    // covering radius the shared gate assumes — and the covering radius
+    // at 428 (the radius ramp's normalizer).
     expect(dv.getFloat32(24, true)).toBe(
-      Math.fround(Math.sqrt(de.boundingRadius ** 2 - XW_ROTOR_VIEW.w0 ** 2)),
+      Math.fround(
+        Math.sqrt(de.visibleBoundingRadius ** 2 - XW_ROTOR_VIEW.w0 ** 2),
+      ),
     );
-    expect(dv.getFloat32(428, true)).toBe(de.boundingRadius);
+    expect(dv.getFloat32(428, true)).toBe(de.visibleBoundingRadius);
   });
 
   it("refuses a slab and a footprint cap", () => {

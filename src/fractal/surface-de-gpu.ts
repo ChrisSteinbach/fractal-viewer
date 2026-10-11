@@ -3790,10 +3790,12 @@ export function packSphaira4GpuParams(
   view.setFloat32(12, R, true);
   view.setFloat32(16, R * 2, true);
   view.setFloat32(20, SPHAIRAHEDRON_STEP_SCALE, true);
-  // The slice-adjusted marching ball: |(p, w0)| <= R implies |p| <= this,
-  // the affine4 packer's own line at sliceHalfW 0.
+  // The slice-adjusted marching ball, over the ORIGIN-CENTERED covering
+  // radius the shared march gate assumes (the DE's own contract; the
+  // affine4 packer's line): |(p, w0)| <= visR implies |p| <= this.
+  const visR = de.visibleBoundingRadius;
   const minW = Math.abs(view4.w0);
-  const sliceR = Math.sqrt(Math.max(R * R - minW * minW, 0));
+  const sliceR = Math.sqrt(Math.max(visR * visR - minW * minW, 0));
   view.setFloat32(24, sliceR, true);
   view.setFloat32(28, 1, true);
   view.setFloat32(32, 1, true);
@@ -3839,8 +3841,11 @@ export function packSphaira4GpuParams(
   }
   view.setFloat32(416, view4.w0, true);
   view.setFloat32(424, 1, true);
-  view.setFloat32(428, R, true);
-  view.setFloat32(452, 1 / R, true);
+  // The radius ramp's normalizer: the ORIGIN-CENTERED covering radius,
+  // so |q4| over the set spans the ramp instead of clamping past the
+  // ball's own radius (the height source's visRadius4 the same way).
+  view.setFloat32(428, visR, true);
+  view.setFloat32(452, 1 / visR, true);
   // The VARIANT block: the counts vec4u at 464; 480..575 stays pad.
   view.setUint32(464, de.faceCount, true);
   view.setUint32(468, de.termData.length / 6, true);

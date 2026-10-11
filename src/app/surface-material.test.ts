@@ -23,6 +23,7 @@ import {
   setEscapeSystem,
   setSphairahedronSystem,
   sphairahedronFragmentArmLimit,
+  SURFACE_SPHAIRA_MAX_FACES,
   SURFACE_SPHAIRA_MAX_PIECES,
   SURFACE_SPHAIRA_MAX_TERMS,
   setSurfaceBalloon,
@@ -1771,8 +1772,8 @@ describe("SURFACE_SPHAIRA GLSL arm", () => {
   );
 
   it("replaces the descent bodies wholesale with the scan fold's own three surfaceDE overloads", () => {
-    expect(resolved).toContain("uniform vec4 uSphFaces[6];");
-    expect(resolved).toContain("uniform vec4 uSphTerms[8];");
+    expect(resolved).toContain("uniform vec4 uSphFaces[12];");
+    expect(resolved).toContain("uniform vec4 uSphTerms[16];");
     expect(resolved).toContain("uniform vec4 uSphPieces[2];");
     expect(resolved).toContain("uniform vec4 uSphParams;");
     expect(resolved).toContain("void sphairaFold(");
@@ -7507,5 +7508,52 @@ describe("the optical distortion's terminal splice (the GLSL twins)", () => {
     expect(src).not.toContain("transportSmoothedNormal");
     expect(src).not.toContain("exitPresent");
     expect(src).not.toContain("opticsLane1.y");
+  });
+});
+
+describe("the sphaira arm's table-uniform sizing", () => {
+  it("declares and allocates the WIRE's two vec4s per face/term, not the caps", () => {
+    // The arm's fold indexes uSphFaces[fi * 2 + 1] over faceCount faces:
+    // at the caps that is 2*6 and 2*8 vec4s. Declared 6/8 — sized by the
+    // caps, not the wire — every construction over three faces read
+    // out-of-bounds uniforms (inert zeros), the scan folded nothing, and
+    // the arm rendered empty for every shipped subject while the gate's
+    // surfacegl leg settled vacuously. Pin both halves of the contract:
+    // the emitted declaration and the allocated value arrays.
+    const src = surfaceFragmentResolvedFor(
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      undefined,
+      null,
+      null,
+      false,
+      0,
+      0,
+      0,
+      null,
+      0,
+      0,
+      0,
+      0,
+      0,
+      false,
+      0,
+      1,
+    );
+    expect(src).toContain("uniform vec4 uSphFaces[12]");
+    expect(src).toContain("uniform vec4 uSphTerms[16]");
+    expect(src).toContain("uniform vec4 uSphPieces[2]");
+    const material = createSurfaceMaterial();
+    expect((material.uniforms.uSphFaces.value as unknown[]).length).toBe(
+      SURFACE_SPHAIRA_MAX_FACES * 2,
+    );
+    expect((material.uniforms.uSphTerms.value as unknown[]).length).toBe(
+      SURFACE_SPHAIRA_MAX_TERMS * 2,
+    );
   });
 });

@@ -113,7 +113,19 @@ function flatten4(construction: SphairahedronConstruction): SphairahedronDE4 {
   });
   return {
     boundingRadius: construction.bound.radius,
-    visibleBoundingRadius: construction.bound.radius,
+    // The ORIGIN-CENTERED covering radius, the 3D twin's rule one
+    // dimension up (sphairahedron-de.ts): the shared march entry's
+    // visible-sphere gate is origin-centered in the 3D QUERY space, and
+    // the rotor's isometry makes |(p, w0)| ≤ this imply |p| ≤ the
+    // packer's slice of it — the affine4 packer's own derivation. The
+    // framing ball's own radius culled the posed set's far side.
+    visibleBoundingRadius:
+      Math.hypot(
+        construction.bound.center[0],
+        construction.bound.center[1],
+        construction.bound.center[2],
+        construction.bound.center[3],
+      ) + construction.bound.radius,
     boundCenter: construction.bound.center,
     foldCap: construction.foldCap,
     faceCount,
