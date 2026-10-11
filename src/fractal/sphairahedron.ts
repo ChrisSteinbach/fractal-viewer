@@ -28,7 +28,8 @@
  *
  *   - AUTHORED ({@link SphairahedronAuthored}): family id × the moduli the
  *     family reads × an optional inversion sphere (absent = the infinite
- *     construction, byte-identically for every document predating it).
+ *     construction, byte-identically for every document predating it) × the
+ *     faces' finishes (absent = every face classic, byte-identically).
  *   - RESOLVED ({@link SphairahedronConstruction}): the explicit fold faces
  *     in scan order, tile pieces, probe, divide, framing ball, seed balls
  *     and verification report the estimators and the analyzer read.
@@ -128,6 +129,8 @@
  * the disjoint family do NOT transfer here — there is no echo to project; a
  * 4D sphairahedron is its own construction.
  */
+import type { SurfaceFinish } from "./types";
+
 // ------------------------------------------------------------- constants
 
 /** The shipped families. The ids name the wall system's corner angles and,
@@ -228,6 +231,31 @@ export interface SphairahedronAuthored {
     cw?: number;
     r?: number;
   };
+  /**
+   * The faces' finishes, KEYED ON THE HIT ATTRIBUTION: entry `f` shades the
+   * fold face at scan position `f` — the same attribution the per-face
+   * colors use (the surface hit-info's last-move face, the walk's
+   * last-applied face) — and an entry ABSENT from the list (a short list,
+   * or `null`) shades that face with the classic material, byte-identically
+   * for every document predating the field. DENSE on purpose, never
+   * last-covers: a row the panel shows as Classic must render classic, and
+   * a trailing-covers clamp would make it lie. The entries are the transform
+   * system's own finish vocabulary (`SurfaceFinish`) with the same
+   * absent-field meanings and the same resolve-time domain
+   * (`surface-finish.ts`) — one meaning per field across every subject.
+   *
+   * Optics is NOT part of this field: the family refuses the optical
+   * transport (`docs/sphairahedron-family.md`'s routing matrix), so an
+   * `optics` key inside an entry is refused with the family's own reason,
+   * never dropped. Ranges are NOT refused here: they belong to the material
+   * resolver, exactly as for a transform's finish, so a value means the same
+   * thing on either subject.
+   *
+   * Validated by {@link resolveSphairahedron}: an array of at most
+   * {@link SPHAIRAHEDRON_MAX_FACE_SLOTS} entries; unknown keys REFUSE at
+   * every level (the family's key rule); every numeric leaf a finite number.
+   */
+  finishes?: readonly (SurfaceFinish | null)[];
 }
 
 /** Every field the authored form defines. Any other key is REFUSED as
@@ -240,6 +268,7 @@ export const SPHAIRAHEDRON_AUTHORED_FIELDS: readonly string[] = Object.freeze([
   "zb",
   "z2",
   "inversion",
+  "finishes",
 ]);
 export const SPHAIRAHEDRON_INVERSION_FIELDS: readonly string[] = Object.freeze([
   "cx",
@@ -248,6 +277,29 @@ export const SPHAIRAHEDRON_INVERSION_FIELDS: readonly string[] = Object.freeze([
   "cw",
   "r",
 ]);
+
+/** The keys a finishes entry may carry — typed against the vocabulary, so a
+ * field added there fails to compile here until the resolver reads it. */
+const SPHAIRAHEDRON_FINISH_ENTRY_FIELDS: Record<keyof SurfaceFinish, true> = {
+  specular: true,
+  shininess: true,
+  metalness: true,
+  reflect: true,
+  transmit: true,
+  reflectionTint: true,
+};
+
+/** The most faces one shipped construction folds (three balls + three walls
+ * for the cube families; the tetras fold four, the prism five) — the
+ * finishes list's length cap. A future family with more faces grows the
+ * constant, never a document. */
+export const SPHAIRAHEDRON_MAX_FACE_SLOTS = 6;
+
+/** The optics key's own refusal, named for the family's routing stance (the
+ * family doc's matrix): the transport has no sphairahedron backend, so a
+ * document asking for one is refused rather than silently shaded opaque. */
+export const SPHAIRAHEDRON_FINISH_OPTICS_REFUSAL =
+  'sphairahedron faces do not render optics ("optics" is not a finish field here)';
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -1733,6 +1785,52 @@ export function resolveSphairahedron(
       );
     }
   }
+  // The faces' finishes: an array of at most the face-slot cap, each entry
+  // null (classic) or a finish object keyed on the shared vocabulary.
+  // Ranges are NOT refused here — the material resolver owns the domain,
+  // exactly as for a transform's finish. A FINISHED face the family renders
+  // is the field's whole point, so validation only rejects what this
+  // version cannot read.
+  const rawFinishes: unknown = block.finishes;
+  if (rawFinishes !== undefined) {
+    if (!Array.isArray(rawFinishes)) {
+      reasons.push("finishes is not a list");
+    } else if (rawFinishes.length > SPHAIRAHEDRON_MAX_FACE_SLOTS) {
+      reasons.push(
+        `finishes must have at most ${SPHAIRAHEDRON_MAX_FACE_SLOTS} entries`,
+      );
+    } else {
+      rawFinishes.forEach((entry: unknown, f) => {
+        if (entry === null) return;
+        if (!isPlainObject(entry)) {
+          reasons.push(`finish ${f} is not an object`);
+          return;
+        }
+        for (const key of Object.keys(entry)) {
+          if (key === "optics") {
+            reasons.push(SPHAIRAHEDRON_FINISH_OPTICS_REFUSAL);
+            continue;
+          }
+          if (
+            !Object.prototype.hasOwnProperty.call(
+              SPHAIRAHEDRON_FINISH_ENTRY_FIELDS,
+              key,
+            )
+          ) {
+            reasons.push(
+              `unknown finish field "${key}" (not readable by this version)`,
+            );
+          }
+        }
+        for (const key of Object.keys(SPHAIRAHEDRON_FINISH_ENTRY_FIELDS)) {
+          const v = entry[key];
+          if (v !== undefined && !isFiniteNumber(v)) {
+            reasons.push(`finish ${f} ${key} is not a finite number`);
+          }
+        }
+      });
+    }
+  }
   const id = block.family;
   if (id === undefined) {
     reasons.push("no family");
@@ -1845,6 +1943,22 @@ export function resolveSphairahedron(
 
   if (reasons.length > 0) return { ok: false, reasons };
   return { ok: true, construction };
+}
+
+/**
+ * The finish that shades face `face` — the authored list's entry at that
+ * scan position, `undefined` (the classic material) when the list is absent,
+ * shorter than the face index, or carries `null` there. DENSE semantics
+ * (the field's own contract): no clamp, no last-entry carry-over, so a face
+ * the panel shows as Classic renders classic. Reads a block
+ * {@link resolveSphairahedron} accepted; it does not re-validate.
+ */
+export function sphairahedronFinishFor(
+  authored: SphairahedronAuthored,
+  face: number,
+): SurfaceFinish | undefined {
+  const entry = authored.finishes?.[face];
+  return entry === null || entry === undefined ? undefined : entry;
 }
 
 // -------------------------------------------------------------- analyzer

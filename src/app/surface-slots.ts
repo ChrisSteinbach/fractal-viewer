@@ -9,6 +9,10 @@ import {
 } from "../fractal/surface-material-wire";
 import { sphereInversionMaterialFor } from "../fractal/sphere-inversion";
 import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
+import {
+  sphairahedronFinishFor,
+  type SphairahedronAuthored,
+} from "../fractal/sphairahedron";
 import type { SurfaceNativeCalibration } from "../fractal/surface-pattern";
 import type { Transform, Vec3 } from "../fractal/types";
 
@@ -216,6 +220,59 @@ export function sphereInversionShadeSlots(
       ? { slots, finish: false, pattern: false, optics: true }
       : null;
   return { colors, trapIndices, materials };
+}
+
+/** A sphairahedron session's whole per-slot shading wire. */
+export interface SphairahedronShadeSlots {
+  colors: Vec3[];
+  trapIndices: number[];
+  materials: SurfaceMaterialSlots | null;
+}
+
+/**
+ * The sphairahedron kernels' slot wire: one slot per FACE in the
+ * construction's scan order — the hit-info's `firstChoice` is the fold's
+ * last-move face, so "By Transform" wears one hue per face exactly as the
+ * sphere-inversion route wears one per generation (the same
+ * `transformColors` spread, no authored `colorIndex` to honour — the block
+ * has no transforms). Each slot's trap coordinate is its face index over
+ * faceCount − 1, the kernel trap ramp's own normalization shape.
+ *
+ * MATERIALS RIDE THE SAME ATTRIBUTION: slot `f` wears the block's finish
+ * for face `f` (`sphairahedronFinishFor` — dense, no clamp, an absent entry
+ * shades classic), resolved by the transform system's one material
+ * resolver with pattern and optics never passed: the family refuses both
+ * (the routing matrix), so the wire cannot smuggle them in. No authored
+ * finish returns `null`: the classic kernels, byte-identical shade source.
+ * The finish-only gate means a face authored at the classic values — or a
+ * list of them — still resolves `null` and keeps today's shader bytes.
+ */
+export function sphairahedronShadeSlots(
+  faceCount: number,
+  authored?: SphairahedronAuthored,
+): SphairahedronShadeSlots {
+  const colors = transformColors(faceCount);
+  const denom = Math.max(1, faceCount - 1);
+  const trapIndices = Array.from(
+    { length: faceCount },
+    (_, face) => face / denom,
+  );
+  let finish = false;
+  const slots = Array.from({ length: faceCount }, (_, face) => {
+    const material = resolveSurfaceMaterial(
+      authored ? sphairahedronFinishFor(authored, face) : undefined,
+      undefined,
+    );
+    finish ||= surfaceMaterialUsesFinish(material);
+    return material;
+  });
+  return {
+    colors,
+    trapIndices,
+    materials: finish
+      ? { slots, finish: true, pattern: false, optics: false }
+      : null,
+  };
 }
 
 /**
