@@ -557,8 +557,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     out-of-region or unknown values REFUSE, never clamp, but a field the
     family does not read is IGNORED (a tetra keeps cube moduli harmlessly),
     and regions are OPEN — a threshold pair resolves, disclosed degraded.
-    The region is NOT convex (the type-1 cusp and its moduli swap are both
-    in-region, their midpoint is not): morph midpoints resolve through
+    The region is NOT convex: morph midpoints resolve through
     `buildSphairahedron`, out-of-region intermediates render coherently.
     The estimator twins are the reference's pass-restart face scan,
     `tileSDF(folded)/|λ| · 0.2` with the fudge applied INSIDE the estimate
@@ -573,10 +572,12 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     trap, slab and optics REFUSE; ground plane composes (the infinite
     families' limit set is their own parabolic fixed plane); NO camera
     refit (the Points cloud is an exact boundary sample). Presets on the
-    `PRESET_SPHAIRAHEDRONS` side table carry the picker's PASTED J
-    (factories stay pure — the census is authoring-time work); the panel's
-    moduli sliders scope DYNAMICALLY to the region interval given the other
-    modulus. Record: docs/sphairahedron-family.md.
+    `PRESET_SPHAIRAHEDRONS` side table carry the picker's PASTED J; the
+    panel's moduli sliders scope DYNAMICALLY to the region interval given
+    the other modulus. Per-face finishes author a DENSE list on the scan
+    order (absent/null classic byte-identically; optics REFUSED; an edit
+    RESTARTS; the finite flip re-orders the scan, so finishes re-map like
+    the face colors). Record: docs/sphairahedron-family.md.
   - `morph.ts` — pure interpolation (`lerpSystem`): endpoint-exact at t=0/1,
     rotation lerped nearest-turn, transform-count mismatches fade surplus by
     weight, flat↔4D continuous via derived w-scale, kaleidoscope crossfade
