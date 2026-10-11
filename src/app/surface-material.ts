@@ -4233,12 +4233,18 @@ ${sphereInversionArmGlsl()}
    * (binding 1 on the kernel side): per face/term one vec4 pair — coords
    * in A (xyz, w zero-padded; the walls lift with n = (a0, 0, a1, 0),
    * exactly the CPU twin's wall lift) and [r_or_h, kind, sense] in B —
-   * then one [start, length] vec4 per tile piece. Caps 6 faces / 8
-   * terms / 2 pieces cover every shipped construction; a construction
-   * past them is compute-only (sphairahedronFragmentArmLimit, the
-   * sphere-inversion family's per-construction limit discipline). */
-  uniform vec4 uSphFaces[6];
-  uniform vec4 uSphTerms[8];
+   * then one [start, length] vec4 per tile piece. The array lengths are
+   * the WIRE's (TWO vec4s per face/term at the arm caps), not the caps
+   * themselves: sized 6/8, the fold's uSphFaces[fi * 2 + 1] indexed past
+   * the array for every construction over three faces, the out-of-bounds
+   * uniforms read as inert zeros, the scan folded nothing, and the arm
+   * rendered empty for EVERY shipped construction while its gate leg
+   * settled vacuously. Caps 6 faces / 8 terms / 2 pieces cover every
+   * shipped construction; a construction past them is compute-only
+   * (sphairahedronFragmentArmLimit, the sphere-inversion family's
+   * per-construction limit discipline). */
+  uniform vec4 uSphFaces[12];
+  uniform vec4 uSphTerms[16];
   uniform vec4 uSphPieces[2];
   /** (faceCount, termCount, pieceCount, 0) — the counts word, the WGSL
    * params variant block's single member. */
@@ -8166,12 +8172,22 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uMenParams: { value: new THREE.Vector4(1, 0, 0, 0) },
       // Sphairahedron fold render: inert defaults; alive only under the
       // SURFACE_SPHAIRA define (counts 0 so a stray enabled scan reads no
-      // faces; the tables zero — the setter fills them from the DE).
+      // faces; the tables zero — the setter fills them from the DE). The
+      // lengths are the WIRE's — two vec4s per face/term at the arm caps
+      // (the shader declaration's own comment) — never the caps: sized
+      // 6/8 the setter's per-face pairs silently clipped and the fold
+      // read out-of-bounds uniforms past three faces.
       uSphFaces: {
-        value: Array.from({ length: 6 }, () => new THREE.Vector4()),
+        value: Array.from(
+          { length: SURFACE_SPHAIRA_MAX_FACES * 2 },
+          () => new THREE.Vector4(),
+        ),
       },
       uSphTerms: {
-        value: Array.from({ length: 8 }, () => new THREE.Vector4()),
+        value: Array.from(
+          { length: SURFACE_SPHAIRA_MAX_TERMS * 2 },
+          () => new THREE.Vector4(),
+        ),
       },
       uSphPieces: {
         value: Array.from({ length: 2 }, () => new THREE.Vector4()),

@@ -430,16 +430,29 @@ describe("sphairahedron DE hit info", () => {
     }
   });
 
-  it("carries the framing ball the GPU packers transfer (the march sphere)", () => {
+  it("carries the framing ball the GPU packers transfer, and the ORIGIN-CENTERED covering visible radius", () => {
     const { construction } = resolved({ family: "tetra333" });
     const de = buildSphairahedronDE(construction);
     expect(de.boundingRadius).toBe(construction.bound.radius);
-    expect(de.visibleBoundingRadius).toBe(construction.bound.radius);
+    // The march entries' visible-sphere gates are origin-centered (the
+    // GLSL marcher's own comment; the WGSL shared gate), so the visible
+    // radius must bound the set from the ORIGIN — the IFS families'
+    // |boundCenter| + boundingRadius convention. The framing ball's own
+    // radius here culled an off-origin construction's far side (the
+    // reported half-truncation).
+    expect(de.visibleBoundingRadius).toBe(
+      Math.hypot(...construction.bound.center) + construction.bound.radius,
+    );
+    expect(de.visibleBoundingRadius).toBeGreaterThanOrEqual(de.boundingRadius);
     const de4 = buildSphairahedronDE4(
       resolved({ family: "tetra4" }).construction,
     );
     expect(de4.boundingRadius).toBe(
       resolved({ family: "tetra4" }).construction.bound.radius,
+    );
+    expect(de4.visibleBoundingRadius).toBe(
+      Math.hypot(...resolved({ family: "tetra4" }).construction.bound.center) +
+        resolved({ family: "tetra4" }).construction.bound.radius,
     );
   });
 });

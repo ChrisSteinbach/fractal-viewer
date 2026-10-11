@@ -146,7 +146,22 @@ function flatten(construction: SphairahedronConstruction): SphairahedronDE {
   });
   return {
     boundingRadius: construction.bound.radius,
-    visibleBoundingRadius: construction.bound.radius,
+    // The ORIGIN-CENTERED covering radius — every surface march entry
+    // (the WGSL shared gate and the GLSL marcher alike) intersects rays
+    // against a sphere of `visibleRadius × 1.02` centered at the ORIGIN,
+    // so the visible radius must bound the set from the origin: the IFS
+    // families' own `|boundCenter| + boundingRadius` convention
+    // (surface-de.ts). The framing ball's OWN radius here culled an
+    // off-origin construction's far side at the gate — the reported
+    // half-truncation, and every shipped preset carried a smaller cut of
+    // the same defect (measured: |center|/radius 0.03–0.60 across the six
+    // PRESET_SPHAIRAHEDRONS, the reference quasi-sphere worst).
+    visibleBoundingRadius:
+      Math.hypot(
+        construction.bound.center[0],
+        construction.bound.center[1],
+        construction.bound.center[2],
+      ) + construction.bound.radius,
     boundCenter: construction.bound.center,
     foldCap: construction.foldCap,
     faceCount,

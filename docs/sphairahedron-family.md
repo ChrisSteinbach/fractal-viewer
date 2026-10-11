@@ -450,6 +450,51 @@ with floor+finish+lighting; emitted 14.0 KB with the floor, far under the
 Mesa cliff). Session-level settle costs are the family gate's to measure
 (both engines' figures below); the kernels' own agreement is this run's.
 
+**The two defects an off-center owner document surfaced** (reported as
+"Points renders the shape full, Surface truncates it roughly in half";
+reproduced and fixed on the record):
+
+1. **The march entries' visible-sphere gates are ORIGIN-CENTERED** (the
+   GLSL marcher's own comment; the WGSL shared gate, `visibleRadius ×
+1.02` against `dot(ro, ro)`), and every other family's
+   `visibleBoundingRadius` is the ORIGIN-CENTERED covering radius
+   `|boundCenter| + boundingRadius` (`surface-de.ts`). The sphaira DE
+   twins packed the framing ball's OWN radius — so every construction
+   whose bound sits off the origin was culled at the gate, the far side
+   of the set classified background. MEASURED gate deficits
+   `|center|/radius` across `PRESET_SPHAIRAHEDRONS`: 0.60
+   (sphairaQuasisphere), 0.18, 0.135, 0.046, 0.048, 0.034 — every preset
+   carried a rim cut (the reference quasi-sphere losing everything past
+   2.84 of its 4.46 reach), and the reported document's hand-moved J
+   (bound center |c| = 0.96, radius 1.02) put the gate sphere's surface
+   through the object's middle — the reported half. Fixed in both DE
+   twins (the covering radius) and in `packSphaira4GpuParams` (the gate
+   radius slices the COVERING radius, and the radius band's normalizer
+   carries it, so the ramp spans the set instead of clamping at the
+   ball's own radius). The marcher's far-field behavior itself is sound:
+   a rim ray's estimate profile bottoms at the true closest approach and
+   the hit/miss split across an object-centered ray fan follows the set's
+   own extent (hits 100% inside perp 0.61·R, zero past 0.92·R — no set
+   out there to draw).
+2. **The GLSL fallback arm's table uniforms were sized by the CAPS, not
+   the wire** — `uSphFaces[6]` / `uSphTerms[8]` against a wire of TWO
+   vec4s per face/term (12/16 at the caps). Every construction over three
+   faces read out-of-bounds uniforms past the third face's pair (inert
+   zeros on this driver), the scan folded nothing, and the arm rendered
+   EMPTY for every shipped subject — `sphairaOrb` included — while the
+   family gate's `--query=surfacegl` leg settled vacuously (settle + engine,
+   no coverage assertion) and shipped the emptiness through every
+   verdict=pass since the child landed. Fixed at 12/16 (both the emitted
+   declaration and the allocated value arrays, pinned in
+   `surface-material.test.ts`), and the gate leg now fails a settled
+   render whose census covers nothing.
+
+The WebGPU adapter probe failing in a driven launch ("No available
+adapters" on a real-driver X11 display without
+`--enable-unsafe-webgpu --enable-features=Vulkan`) silently routes the
+session to the GLSL arm — which is what made defect 2 visible only now:
+every prior surfacegl measurement on this machine measured the empty arm.
+
 ## The wiring (panel, persistence, Points, and the mode doors)
 
 **Persistence.** `state.sphairahedron?: SphairahedronAuthored` — stored AS

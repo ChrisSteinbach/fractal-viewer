@@ -455,6 +455,25 @@ async function main() {
           `[sphaira-family] ${preset.key}: settled in ${secs}s ` +
             `engine=${result.state.engine ?? "?"} -> ${path.basename(shot)}`,
         );
+        // The settle's ray census must show COVERAGE: a preset whose whole
+        // settle pass classified every ray a miss drew nothing, and an
+        // empty render settles exactly like a drawn one (the GLSL arm's
+        // out-of-bounds uniform tables shipped through this leg's older,
+        // coverage-blind verdict). Exhausted rays are the renderer's own
+        // honesty channel, not emptiness — only covered==0 fails.
+        const census = result.state.census;
+        if (!census || !(census.covered > 0)) {
+          failures.push(
+            `${preset.key}: the settled render covers nothing (census=${JSON.stringify(census)})`,
+          );
+          console.error(
+            `[sphaira-family] ${preset.key}: NO COVERAGE (census=${JSON.stringify(census)})`,
+          );
+        } else {
+          console.error(
+            `[sphaira-family] ${preset.key}: census covered ${census.covered} / ${census.rays}`,
+          );
+        }
         for (const line of consoleLines) {
           if (line.startsWith("Surface compute settle")) {
             console.error(`[sphaira-family]   ${line}`);
