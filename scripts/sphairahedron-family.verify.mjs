@@ -65,9 +65,9 @@ const DEFAULT_OUT_DIR = path.join(HERE, "out", "sphairahedron-family");
 
 /**
  * The Sphairahedron menu group, in menu order. Every entry is a FINITE
- * construction (the walk draws empty for the infinite families — the
- * disclosed fr-l0ma.7 gap — so an infinite preset would fail the Points
- * leg by design, not by defect).
+ * construction (the walk's own arm); the INFINITE constructions draw by
+ * the sampler's sweep arm — the guides leg below drives one (the
+ * sphere-less tetra) through the panel instead.
  */
 const PRESETS = [
   { key: "sphairaQuasisphere", family: "cube1", faces: 6 },
@@ -908,9 +908,10 @@ async function main() {
     // whose Show-guides checkbox these legs toggle — is a Points-only
     // section): (a) the finite construction's guides appear and hide with
     // the checkbox; (b) the owner's exact scenario — the sphere-less
-    // infinite tetra, whose Points cloud is empty BY DESIGN (the walk
-    // keeps nothing) — must show the machinery instead of empty space,
-    // framed by the construction's own bound.
+    // infinite tetra, whose limit set is the divide plane itself, drawn
+    // by the sampler's SWEEP arm (the walk kept nothing there) — shows
+    // the machinery AND the plane cloud, both toggling with the
+    // checkbox, framed by the construction's own bound.
     {
       const frameSum = async (page) => {
         return await page.evaluate(() => {
@@ -1003,25 +1004,26 @@ async function main() {
           await page.selectOption("#sphairahedronFamily", "tetra333");
           await page.waitForTimeout(2_500);
           await page.uncheck("#sphairahedronFiniteCheckbox");
-          // The empty walk's cloud: poll the count to zero.
+          // The sweep's cloud: the plane draws where the walk kept
+          // nothing, and the old walk-keeps-nothing disclosure is gone.
           await page.waitForFunction(
             () =>
               Number(
                 (
                   document.getElementById("pointCount")?.textContent ?? ""
                 ).replace(/[^\d]/g, ""),
-              ) === 0,
+              ) > 0,
             undefined,
-            { timeout: 20_000 },
+            { timeout: 30_000 },
           );
           const note = await page.evaluate(
             () =>
               document.getElementById("sphairahedronFiniteNote")?.textContent ??
               "",
           );
-          if (!/walk keeps nothing/.test(note)) {
+          if (/walk keeps nothing/.test(note)) {
             failures.push(
-              `the empty-cloud disclosure is missing beside the finite row (${JSON.stringify(note)})`,
+              `the obsolete empty-cloud disclosure is still beside the finite row (${JSON.stringify(note)})`,
             );
           }
           await openGuidesCheckbox(page);
@@ -1031,11 +1033,11 @@ async function main() {
           const off = await frameSum(page);
           if (on === off) {
             failures.push(
-              "the sphere-less infinite tetra's guides did not hide with Show-guides — the empty viewport is not the guides' doing",
+              "the sphere-less infinite tetra's guides did not hide with Show-guides — the plane cloud is not the guides' doing",
             );
           } else {
             console.error(
-              "[sphaira-family] subject guides (infinite tetra, empty cloud): the machinery draws, toggles, and the disclosure names the check",
+              "[sphaira-family] subject guides (infinite tetra, sweep cloud): the machinery and the plane cloud draw, toggling with the checkbox",
             );
           }
         } catch (error) {

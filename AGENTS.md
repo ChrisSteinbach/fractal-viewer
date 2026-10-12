@@ -562,10 +562,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     The estimator twins are the reference's pass-restart face scan,
     `tileSDF(folded)/|λ| · 0.2` with the fudge applied INSIDE the estimate
     and NO cutoff (λ is not monotone); the pass cap and fudge are BAKED
-    numerics, never object parameters. Points draws the finite families via
-    `sphairahedron-sample.ts`'s deterministic walk (the walk's last-applied
-    FACE is the color slot; the INFINITE families keep NOTHING — the walk
-    cannot reach an unbounded limit set, disclosed); Flame/Solid refuse at
+    numerics, never object parameters. Points draws by the sampler's TWO
+    ARMS — the walk on finite constructions, the estimate's sign sweep on
+    infinite ones (the family doc's Points section); the fold's last-move
+    FACE is the color slot either way; Flame/Solid refuse at
     the mode doors; Surface routes to the bench-pinned WGSL
     `sphaira`/`sphaira4` with the `SURFACE_SPHAIRA` GLSL fallback (3D only;
     per-construction caps 6 faces / 8 terms / 2 pieces); Balloon, tiling,

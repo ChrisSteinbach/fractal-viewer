@@ -823,6 +823,7 @@ export const GATE_MAP: GateMapEntry[] = [
       "slab-adaptive",
       "slab-ball-slack",
       "slice-cost",
+      "sphaira-infinite-points",
       "solid-balloon",
       "solid-hierarchy-verify-helpers",
       "solid-tiling-4d",
