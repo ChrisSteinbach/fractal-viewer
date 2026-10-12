@@ -24,6 +24,19 @@ describe("resolveMotionExportFps", () => {
     expect(resolveMotionExportFps("2")).toBe(2);
     expect(resolveMotionExportFps("60")).toBe(60);
   });
+
+  it("an explicit fallback defers to the caller's session rate on absence or garbage", () => {
+    // main.ts passes the rate slider's value: an absent or out-of-band
+    // override records at the user's chosen rate, not the shipped 30.
+    expect(resolveMotionExportFps(null, 24)).toBe(24);
+    expect(resolveMotionExportFps("", 24)).toBe(24);
+    expect(resolveMotionExportFps("abc", 24)).toBe(24);
+    expect(resolveMotionExportFps("0", 24)).toBe(24);
+    expect(resolveMotionExportFps("61", 24)).toBe(24);
+    // A valid override still wins over the slider — a gate must not depend
+    // on session state it cannot see.
+    expect(resolveMotionExportFps("2", 24)).toBe(2);
+  });
 });
 
 describe("resolveMotionClip", () => {

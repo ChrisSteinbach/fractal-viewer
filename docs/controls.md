@@ -1740,6 +1740,19 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   showing. **Cancel** abandons the export and saves nothing; the
   accumulation itself carries on, so pressing **Save PNG** again later
   picks up where the render has got to.
+- **🎞 Record motion** — a frame-exact clip of the active Flame or Surface
+  render's own automatic motion: the 4D tumble in a 4D session, the
+  auto-orbit turntable in a flat one. Unlike **● Record video**, whose
+  timing is whatever the machine delivers, every frame here is fully
+  converged at its own pose before it is encoded — slower machines just
+  take longer, never choppier. **Clip length** (2–60 s) and **Clip rate**
+  (1–60 fps) are session-only knobs; **Capture size** sizes every frame,
+  so a 2× or 4× clip renders at that multiple — and costs that many more
+  pixels per frame. While rolling the button shows the progress and a
+  second click ends the run early; the partial clip still saves. A hand on
+  the scene, a mode switch, or a window resize stops it the same way.
+  Points mode has no render session to record and refuses; Solid is not
+  supported yet.
 - **● Record video** — records the canvas as you drive it: orbit, drag sliders,
   run a Drift or a timeline, and press the button again to finish. While
   rolling it becomes **■ Stop** with the elapsed time, and it stops itself at

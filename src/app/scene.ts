@@ -4109,6 +4109,48 @@ export class FractalScene {
   }
 
   /**
+   * A multi-frame export's held ratio (the motion clip), or null while the
+   * buffer runs at the live ratio. Only one holder exists at a time — a
+   * motion clip and the synchronous captures cannot overlap (the clip
+   * refuses while another export runs) — so one nullable scalar is the whole
+   * state.
+   */
+  private exportFramesRatio: number | null = null;
+
+  /**
+   * Raise the drawing buffer to a still export's pixel ratio and HOLD it
+   * there across a multi-frame capture (the motion-clip export), so every
+   * frame the encoder reads is rendered at the chosen Capture size —
+   * {@link withPixelRatio}'s export discipline stretched over a run instead
+   * of one synchronous readback. The encoder is created from the canvas
+   * AFTER this returns, so its dimensions are the elevated buffer's; the
+   * ratio is the same one {@link exportSize} names, clamped to the device
+   * ceilings. A run whose live ratio already matches is a no-op held at
+   * null. End with {@link endExportFrames}; the live buffer must not stay
+   * elevated past the run.
+   */
+  beginExportFrames(exportScale: number): void {
+    if (this.exportFramesRatio !== null) return;
+    const ratio = this.exportPixelRatio(exportScale);
+    const live = this.basePixelRatio() * this.resolutionScale;
+    if (ratio === live) return;
+    this.exportFramesRatio = ratio;
+    this.applyPixelRatio(ratio);
+  }
+
+  /**
+   * Restore the live pixel ratio after {@link beginExportFrames}. Reads the
+   * CURRENT resolution scale, so a run that ended through any exit path
+   * (stop, error, the run's own finally) lands the buffer back where the
+   * adaptive governor left it.
+   */
+  endExportFrames(): void {
+    if (this.exportFramesRatio === null) return;
+    this.exportFramesRatio = null;
+    this.applyPixelRatio(this.basePixelRatio() * this.resolutionScale);
+  }
+
+  /**
    * Run a synchronous render-and-read at an explicit pixel ratio: exports
    * are keepsakes, and they shouldn't inherit whatever transient downscale
    * the adaptive governor happens to be at — and a hi-res export
