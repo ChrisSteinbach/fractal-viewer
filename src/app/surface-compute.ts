@@ -3482,29 +3482,32 @@ export class SurfaceComputeRenderer {
     return typeof navigator !== "undefined" && !!navigator.gpu;
   }
 
-  private static adapterProbe: Promise<boolean> | null = null;
-
-  /** Cached one-shot adapter probe: whether `requestAdapter()` actually
-   * yields an adapter in this context. {@link supported} alone admits
+  /** One UNCACHED adapter probe: whether a fresh `requestAdapter()` yields
+   * an adapter in this context RIGHT NOW. {@link supported} alone admits
    * contexts that EXPOSE `navigator.gpu` with no working adapter behind
    * it — modern Firefox ships the object ahead of per-platform support —
-   * and fold-4D routing has no fallback arm to absorb that late surprise:
-   * entry was admitted, create() failed, and the mode exited on a toast
-   * the user can miss ("no preview ever appears"). Boot fires this probe
-   * and latches the same one-way routing block a failed create() would
-   * have set, so the eligibility gate refuses fold-4D up front with the
-   * honest note instead. The probed adapter is discarded — {@link create}
-   * requests its own; same
-   * powerPreference so the two answers cannot diverge. */
-  static probeAdapter(): Promise<boolean> {
+   * and fold-4D routing has no fallback arm to absorb that late surprise.
+   * The probed adapter is discarded — {@link create} requests its own;
+   * same powerPreference so the answers cannot diverge.
+   *
+   * The verdict is a RETRYABLE class, not a one-way one: an adapter's
+   * absence is usually Chrome's GPU process still initializing, not a
+   * missing GPU. The retry and re-probe policy that exploits that —
+   * `surface-compute-reprobe.ts`'s boot ladder (retry a fresh probe on a
+   * short backoff before latching "unavailable") and session-door
+   * re-probe (a stale "unavailable" verdict is re-asked at the next
+   * Surface entry, so a page that lost the race recovers on its first
+   * click) — drives THIS method; every attempt is uncached by design, so
+   * a losing race's answer never outlives its moment. The one-way class
+   * is a failed create() or a lost device, which is a different block
+   * value ("failed") and never re-probed. */
+  static probeAdapterFresh(): Promise<boolean> {
     if (!SurfaceComputeRenderer.supported()) return Promise.resolve(false);
-    return (SurfaceComputeRenderer.adapterProbe ??= navigator.gpu
+    return navigator.gpu
       .requestAdapter({ powerPreference: "high-performance" })
       .then((adapter) => adapter !== null)
-      .catch(() => false));
-  }
-
-  /**
+      .catch(() => false);
+  } /**
    * Acquire a device and build the session pipeline for `target` (frozen
    * — a system edit re-enters the session, never retargets a live
    * renderer; an ifs4 target's rotor/slice view is per-frame SPEC state,

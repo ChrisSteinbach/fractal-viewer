@@ -110,6 +110,10 @@ import {
   type SurfaceComputeBlock,
 } from "./render-backend";
 import {
+  probeAdapterWithRetries,
+  surfaceComputeReprobeDue,
+} from "./surface-compute-reprobe";
+import {
   analyzeSurfaceSystem4,
   buildSurfaceDE4,
   deHasFolds4,
@@ -5054,17 +5058,21 @@ async function main(): Promise<void> {
   // watchdog by construction — so fold sessions PREFER compute when a WebGPU
   // adapter exists, and the WebGL fragment tracer stays THE fallback
   // (affine/escape/lens/4D sessions never route here at all). `?surfacegl`
-  // forces the WebGL path (the ?flameperf-style escape hatch); any create
-  // failure or a device loss sets the one-way session memo and re-enters,
-  // which routes the same system through the WebGL branch — grid build
-  // included, since the compute path skips the grid request on purpose
-  // (49µs/ray was measured gridless; the multi-second fold grid build buys
-  // nothing this path needs — measure before wiring). The block carries its
-  // REASON so the WebGL session's detail token can say why compute passed —
-  // "flag" is the user's own ?surfacegl escape hatch (a deliberate choice
-  // needs no caveat), "unavailable" is a missing adapter, "failed" a create
-  // failure or device loss. One-way for the page's life, like the boolean it
-  // replaced.
+  // forces the WebGL path (the ?flameperf-style escape hatch); a device
+  // loss sets the one-way "failed" memo and re-enters, which routes the
+  // same system through the WebGL branch — grid build included, since the
+  // compute path skips the grid request on purpose (49µs/ray was measured
+  // gridless; the multi-second fold grid build buys nothing this path
+  // needs — measure before wiring). The block carries its REASON so the
+  // WebGL session's detail token can say why compute passed — "flag" is
+  // the user's own ?surfacegl escape hatch (a deliberate choice needs no
+  // caveat), "unavailable" is a missing adapter, "failed" a create failure
+  // or device loss. Only "failed" is one-way for the page's life (a dead
+  // device never returns — the onLost/settle latches); "unavailable" is
+  // the recoverable class — the GPU process comes up — so the boot ladder
+  // retries before latching it and the session door re-probes a stale
+  // verdict (surface-compute-reprobe.ts, wired below); "flag" is one-way
+  // by choice.
   const surfaceQuery = new URLSearchParams(window.location.search);
   // Renderer-only lattice presentation diagnostics. The executable edge
   // gate sweeps candidate fade/window pairs through these query values; they
@@ -5090,6 +5098,10 @@ async function main(): Promise<void> {
   )
     ? "flag"
     : null;
+  // When the "unavailable" class was last latched or re-failed (nowMs()),
+  // the session door's re-probe stale gate reads it. 0 never reads as
+  // fresh: a page that never latched has no door probe to make.
+  let surfaceComputeUnavailableAt = 0;
   // `?surfacecompute` is `?surfacegl`'s mirror: it makes a session PREFER the
   // compute tracer on the shapes whose routing rule sends them to WebGL. That
   // is plain affine 3D alone — 4D above symmetry order 1 used to be the other
@@ -5103,8 +5115,9 @@ async function main(): Promise<void> {
   // maintained. Without it the two arms are comparable only on the shapes
   // where they already overlap, so a rule that was right when it was written
   // can only be confirmed, never overturned. `?surfacegl` WINS if both are
-  // given: a block is one-way, so `surfaceComputeAvailable()` refuses first
-  // and this flag never sees the branch.
+  // given: a block refuses `surfaceComputeAvailable()` first and this flag
+  // never sees the branch (and the "flag" verdict, unlike "unavailable", is
+  // one-way by choice — the re-probe never overrules the user's own hatch).
   const surfaceComputeForced = new URLSearchParams(window.location.search).has(
     "surfacecompute",
   );
@@ -5141,20 +5154,54 @@ async function main(): Promise<void> {
   })();
   // Modern Firefox EXPOSES navigator.gpu while requestAdapter() can still
   // return null (WebGPU ships progressively per platform), so the sync
-  // supported() gate admits fold-4D entry on the OBJECT alone and the failure
-  // then surfaces as a mid-entry toast + mode exit — a user who misses the
-  // toast just sees no preview ever appear. Probe a real adapter once at boot
-  // and latch the same one-way block a failed create() would have set: the
-  // eligibility gate then refuses fold-4D up front with the honest note, and
-  // every compute-preferring shape routes its WebGL fallback directly instead
-  // of through a doomed create(). A session already mid-entry when the probe
-  // lands keeps its own create() verdict — same end state, narrower window.
+  // supported() gate admits fold-4D entry on the OBJECT alone and the
+  // failure then surfaces as a mid-entry toast + mode exit — a user who
+  // misses the toast just sees no preview ever appear. Probe a real
+  // adapter at boot and latch the same block a failed create() would have
+  // set: the eligibility gate then refuses fold-4D up front with the
+  // honest note, and every compute-preferring shape routes its WebGL
+  // fallback directly instead of through a doomed create(). A session
+  // already mid-entry when the probe lands keeps its own create() verdict
+  // — same end state, narrower window.
+  //
+  // The verdict is the RECOVERABLE class, so the boot probe is a LADDER
+  // (surface-compute-reprobe.ts), not a one-shot: it re-asks a fresh
+  // requestAdapter() on a short doubling backoff before the latch, because
+  // the probe races Chrome's GPU-process initialization and losing the
+  // race was the DEFAULT outcome of a fresh page (measured 6/6 on the AMD
+  // RX 7900 XTX, 2026-10-10 — a silently-WebGL page on a compute-capable
+  // machine). A mid-latch from a create() failure recovers here too: a
+  // ladder success clears an "unavailable" block whatever set it. The
+  // session door's re-probe below covers the stragglers a ladder this
+  // short cannot.
+  //
+  // A probe verdict lands through one of two noters — recovery clears and
+  // re-derives the panel gate, a fresh failure stamps the verdict time the
+  // door's stale gate reads — so the ladder and the door share one answer
+  // instead of duplicating the latch.
+  function noteSurfaceComputeRecovery(): void {
+    if (surfaceComputeBlock === "unavailable") {
+      surfaceComputeBlock = null;
+      refreshSurfaceEligibility();
+    }
+  }
+
+  function noteSurfaceComputeUnavailable(): void {
+    if (surfaceComputeBlock === null) {
+      surfaceComputeBlock = "unavailable";
+      refreshSurfaceEligibility();
+    }
+    if (surfaceComputeBlock === "unavailable") {
+      surfaceComputeUnavailableAt = nowMs();
+    }
+  }
+
   if (surfaceComputeBlock === null && SurfaceComputeRenderer.supported()) {
-    void SurfaceComputeRenderer.probeAdapter().then((ok) => {
-      if (!ok && surfaceComputeBlock === null) {
-        surfaceComputeBlock = "unavailable";
-        refreshSurfaceEligibility();
-      }
+    void probeAdapterWithRetries({
+      probe: () => SurfaceComputeRenderer.probeAdapterFresh(),
+    }).then((ok) => {
+      if (ok) noteSurfaceComputeRecovery();
+      else noteSurfaceComputeUnavailable();
     });
   }
   let surfaceComputeRenderer: SurfaceComputeRenderer | null = null;
@@ -5615,7 +5662,7 @@ async function main(): Promise<void> {
             "Surface compute device lost; re-entering via the WebGL tracer.",
           );
           surfaceComputeBlock = "failed";
-          surfaceSession.enter();
+          enterSurfaceSession();
         };
         refreshGuides();
         refreshUi();
@@ -5647,12 +5694,19 @@ async function main(): Promise<void> {
         );
         // "unavailable" (no adapter for this context) vs "failed" (device/
         // pipeline creation died) — the progress row's detail token tells
-        // them apart.
+        // them apart. An "unavailable" verdict is the recoverable class:
+        // stamp the verdict time the session door's re-probe stale gate
+        // reads (a fresh stamp means the NEXT entry enters directly — the
+        // page just answered this question — and one older than the gate
+        // re-asks before routing). "failed" stays one-way by measurement.
         surfaceComputeBlock =
           error instanceof SurfaceComputeUnavailableError
             ? "unavailable"
             : "failed";
-        surfaceSession.enter();
+        if (surfaceComputeBlock === "unavailable") {
+          surfaceComputeUnavailableAt = nowMs();
+        }
+        enterSurfaceSession();
       });
   }
 
@@ -6022,7 +6076,7 @@ async function main(): Promise<void> {
         error,
       );
       surfaceComputeBlock = "failed";
-      surfaceSession.enter();
+      enterSurfaceSession();
     } finally {
       surfaceComputeSettleFlight = false;
       surfaceComputeSettleProgress = null;
@@ -8401,6 +8455,52 @@ async function main(): Promise<void> {
     onFirstFrame: () => applyPendingThumbnailPatches("surface"),
   });
 
+  // The one path into a Surface session, and the "unavailable" class's
+  // second recovery lever: when the block still reads "unavailable" and
+  // the verdict is stale (surfaceComputeReprobeDue), the entry awaits ONE
+  // fresh probe before the routing decision — a page that lost the boot
+  // probe's race against Chrome's GPU-process init recovers on its first
+  // Surface click instead of needing a reload. A failed re-probe re-stamps
+  // the verdict time (throttling the next door), a success clears the
+  // block through the boot ladder's noter. The verdict-gate exclusions are
+  // the policy's own: "flag" is the user's explicit ?surfacegl, "failed"
+  // is a dead device that never returns, and a verdict stamped moments ago
+  // is fresh evidence (the create-failure and settle/device-loss re-enters
+  // below ride this and enter directly, exactly as they did).
+  //
+  // A pending re-probe is SUPERSEDED, not queued: any newer
+  // enterSurfaceSession call or any switchRenderMode bumps the token, and
+  // the continuation also re-checks the render mode it was kicked from —
+  // so a user who clicks Flame mid-probe never gets yanked into Surface
+  // when the probe lands, and an exit back to Points (renderMode changed)
+  // cancels the pending entry the same way. The probe itself is one fast
+  // requestAdapter round-trip: imperceptible when the GPU process is up,
+  // and fast-failing when the adapter genuinely does not exist.
+  let surfaceReprobeToken = 0;
+
+  function enterSurfaceSession(): void {
+    const token = ++surfaceReprobeToken;
+    if (
+      surfaceComputeReprobeDue({
+        block: surfaceComputeBlock,
+        supported: SurfaceComputeRenderer.supported(),
+        unavailableAt: surfaceComputeUnavailableAt,
+        now: nowMs(),
+      })
+    ) {
+      const kickMode = state.renderMode;
+      void SurfaceComputeRenderer.probeAdapterFresh().then((ok) => {
+        if (token !== surfaceReprobeToken) return;
+        if (state.renderMode !== kickMode) return;
+        if (ok) noteSurfaceComputeRecovery();
+        else surfaceComputeUnavailableAt = nowMs();
+        surfaceSession.enter();
+      });
+      return;
+    }
+    surfaceSession.enter();
+  }
+
   // The one path between the render modes: exit whichever converging render
   // is active, then enter the target's session. Driving both steps through
   // the sessions' own enter/exit keeps their choreography (worker teardown,
@@ -8410,6 +8510,17 @@ async function main(): Promise<void> {
   // (clicking the lit segment must not restart a converging render).
   function switchRenderMode(target: RenderMode): void {
     if (target === state.renderMode) return;
+    // A real mode switch supersedes a pending session-door re-probe: its
+    // continuation must not enter Surface behind a mode the user just
+    // chose instead. The early return above deliberately does NOT bump —
+    // a no-op click on the lit Surface segment during a pending MID-SESSION
+    // re-enter (the kick mode is "surface") would orphan that re-enter and
+    // strand a stale document in the live session; leaving the pending
+    // probe alive lets it complete the re-enter it was kicked for. A
+    // pending points-door kick is self-guarding: its continuation only
+    // enters while the render mode still reads the kick mode, so a real
+    // switch away cancels it either way (token here, mode check there).
+    surfaceReprobeToken++;
     // A mode change ends the motion clip: its renderer session is the
     // clip's subject (every chokepoint finalizes the partial clip).
     stopMotionExportIfRunning();
@@ -8491,7 +8602,7 @@ async function main(): Promise<void> {
       flameGpuFallbackHeldReason = null;
       flameSession.enter();
     } else if (target === "solid") solidSession.enter();
-    else if (target === "surface") surfaceSession.enter();
+    else if (target === "surface") enterSurfaceSession();
   }
 
   /**
@@ -8986,7 +9097,7 @@ async function main(): Promise<void> {
       case "reenter-surface":
         if (state.renderMode !== "surface") return;
         preserveSurfaceCameraOnNextEntry = plan.preserveSurfaceView;
-        surfaceSession.enter();
+        enterSurfaceSession();
         return;
       case "none":
       case "next-entry":
@@ -11458,7 +11569,7 @@ async function main(): Promise<void> {
     restartSurfaceRender: () => {
       if (state.renderMode === "surface") {
         syncSurfaceSettleSamples();
-        surfaceSession.enter();
+        enterSurfaceSession();
       }
     },
     // The refreshUi chokepoint owns every consequence of a block edit: the
@@ -13238,7 +13349,7 @@ async function main(): Promise<void> {
         (state.surface.lighting !== undefined) !== (lighting !== undefined);
       state = setSurfaceLighting(state, lighting);
       if (state.renderMode === "surface") {
-        if (changedVariant) surfaceSession.enter();
+        if (changedVariant) enterSurfaceSession();
         else {
           surfaceComputeRenderer?.cancel();
           surfaceComputeForceKey = null;
