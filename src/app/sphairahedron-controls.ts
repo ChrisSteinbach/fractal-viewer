@@ -7,7 +7,8 @@
  * PLACEMENT (docs/panel-ia.md's four-property record). Home: **Scene /
  * Look** — the block is the scene's authored SUBJECT (the third, after
  * Sphere inversion and the Menger carve), replacing the transform system.
- * Consumers: Points (the inverse-iteration walk of the limit set) and
+ * Consumers: Points (the sampler's walk for finite constructions, the
+ * column sweep of the limit set for infinite ones) and
  * Surface (the `sphairahedron` / `sphairahedron4` session kinds), in 3D
  * and native 4D (tetra4); Flame and Solid refuse the family. Lifetime:
  * document. Edit behavior: Points follows Auto-update; a live Surface
@@ -50,7 +51,6 @@ import {
   type SphairahedronAuthored,
   type SphairahedronFamilyId,
 } from "../fractal/sphairahedron";
-import { SPHAIRAHEDRON_WALK_EMPTY_FAMILIES } from "../fractal/sphairahedron-sample";
 import {
   CLASSIC_SURFACE_FINISH,
   type ResolvedSurfaceFinish,
@@ -701,21 +701,6 @@ export function sphairahedronControlNotes(
   ];
   const family = sphairahedronFamily(block);
   const finite = sphairahedronIsFinite(block);
-  if (
-    !finite &&
-    family !== null &&
-    SPHAIRAHEDRON_WALK_EMPTY_FAMILIES.includes(family) &&
-    notes.finite === ""
-  ) {
-    // The empty-cloud disclosure the walk's own scope note promises: these
-    // families' sphere-less limit set is unbounded (the tetra's is the
-    // plane y = 0), the bounded walk keeps nothing, and Points draws empty
-    // with no error. Say why, and name the affordance that fixes it. The
-    // sphere-less CUBE constructions still draw, so the predicate is the
-    // family AND the sphere's absence — never the sphere alone.
-    notes.finite =
-      "The walk keeps nothing here: an infinite family's limit set is unbounded. Check Finite to draw it.";
-  }
   for (const field of numericFields) {
     if (notes[field] !== "") continue;
     // A field the family does not read (za/zb on the tetra/prism, z2 on

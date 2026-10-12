@@ -167,15 +167,17 @@ export interface CloudRequest {
   /** The raw authored sphairahedron block, or `null`/absent. When present
    * (and neither earlier subject block took it first) it REPLACES the
    * transform system as the cloud's subject: the worker resolves it in
-   * its own realm and draws `sphairahedron-sample.ts`'s inverse-iteration
-   * walk of the limit set instead of running the chaos game, and `fourD`
-   * is the block's dimension (`scene-dimension.ts`). READ FROM THE MORPH
-   * SAMPLE when one is in flight — the family's own stance lerps the
-   * moduli through `buildSphairahedron` (`morph.ts`'s
-   * `lerpSphairahedron`), so unlike the two earlier blocks this one DOES
-   * interpolate, and the request carries the sampled block; a replace-load
-   * pair (cross-family, infinite↔finite, one-sided) pops the target's
-   * block from the first intermediate exactly as the others'. */
+   * its own realm and draws `sphairahedron-sample.ts`'s limit-set sampler
+   * (the inverse-iteration walk for finite constructions, the column sweep
+   * of the estimate's sign for infinite ones) instead of running the
+   * chaos game, and `fourD` is the block's dimension
+   * (`scene-dimension.ts`). READ FROM THE MORPH SAMPLE when one is in
+   * flight — the family's own stance lerps the moduli through
+   * `buildSphairahedron` (`morph.ts`'s `lerpSphairahedron`), so unlike the
+   * two earlier blocks this one DOES interpolate, and the request carries
+   * the sampled block; a replace-load pair (cross-family, infinite↔finite,
+   * one-sided) pops the target's block from the first intermediate exactly
+   * as the others'. */
   sphairahedron?: SphairahedronAuthored | null;
   /** 3D color bake inputs (`buildColors`); unused on the 4D path, where color
    * is shader-owned or rebaked main-side per mode (see main.ts's
@@ -966,11 +968,12 @@ function sphairahedronRegionOnly(reasons: readonly string[]): boolean {
 
 /**
  * A sphairahedron document's cloud: `sphairahedron-sample.ts`'s
- * inverse-iteration walk of the construction's limit set, at most
+ * limit-set sampler (the walk for finite constructions, the column sweep
+ * for infinite ones), at most
  * {@link SPHAIRAHEDRON_POINTS_MAX} points from the request's own seed,
  * shaped exactly like a chaos-game result so every downstream consumer
  * (upload, framing, 4D projection) is unchanged. Each point's
- * last-inversion FACE rides `transformIndices` — the color slot — and
+ * last-move FACE rides `transformIndices` — the color slot — and
  * `generationCount` says so (one slot per fold face, the sphere-inversion
  * sample's exact convention; the count is the surface route's own face
  * count, so "By Transform" wears the same hue-per-face both modes). A

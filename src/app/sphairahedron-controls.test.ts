@@ -207,17 +207,15 @@ describe("sphairahedron-controls: rows and notes", () => {
     expect(notes["inversion.cx"]).toBe("");
   });
 
-  it("discloses the walk's empty cloud on the sphere-less infinite families, and only there", () => {
-    const empty = sphairahedronControlNotes({ family: "tetra333" });
-    expect(empty.finite).toMatch(/walk keeps nothing/);
-    expect(empty.finite).toMatch(/Check Finite/);
-    const lifted = sphairahedronControlNotes({ family: "tetra4" });
-    expect(lifted.finite).toMatch(/walk keeps nothing/);
-    const terrain = sphairahedronControlNotes({ family: "prism2" });
-    expect(terrain.finite).toMatch(/walk keeps nothing/);
-    // A sphere-less cube construction still draws (measured: the walk
-    // keeps 5000/5000), so no empty-cloud note — and a refused finite
-    // intent keeps its own refusal, not this one.
+  it("carries no empty-cloud note anywhere — the sweep draws the infinite families too", () => {
+    // The sampler's sweep arm draws every resolving construction: the
+    // sphere-less infinite families' limit sets are sampled by column
+    // bisection (the walk's replacement), so the old walk-keeps-nothing
+    // disclosure beside the finite row is gone — a refused finite intent
+    // keeps its own refusal.
+    expect(sphairahedronControlNotes({ family: "tetra333" }).finite).toBe("");
+    expect(sphairahedronControlNotes({ family: "tetra4" }).finite).toBe("");
+    expect(sphairahedronControlNotes({ family: "prism2" }).finite).toBe("");
     expect(sphairahedronControlNotes({ family: "cube1" }).finite).toBe("");
     expect(
       sphairahedronControlNotes({ family: "cube1", inversion: {} }).finite,

@@ -600,28 +600,54 @@ sweep REFUSES. Type 9's collapsed reflected reference is rescued by the
 radius variants exactly as measured in the study (pinned in
 `sphairahedron-controls.test.ts`).
 
-**Points.** `sphairahedron-sample.ts` is the walk: all-face involutions
-with a 24-move deep-fold acceptance, warmup 100, a bounded deterministic
-budget; the color slot is the walk's LAST-APPLIED FACE (one slot per fold
-face = the resolved face count, the By-Transform channel; no parallel
-color mode). FINITE ONLY, measured: the walk lands on the zero set at
-mean |de| 1.2e-17 (f64, the study's points-sheet subject), and the
-INFINITE families keep NOTHING — the greedy fold depth stays 0–4 moves on
-either RNG stream, the sampler draws empty, and the panel discloses. That
-gap is a filed follow-up (the walk's greedy acceptance cannot reach an
-unbounded limit set). The By-Transform legend keys the same face slots —
+**Points.** `sphairahedron-sample.ts` is the sampler, TWO ARMS dispatched
+on the construction itself:
+
+- **FINITE constructions — the walk.** All-face involutions with a 24-move
+  deep-fold acceptance, warmup 100, a bounded deterministic budget; the
+  color slot is the walk's LAST-APPLIED FACE (one slot per fold face = the
+  resolved face count, the By-Transform channel; no parallel color mode).
+  Measured: the walk lands on the zero set at mean |de| 1.2e-17 (f64, the
+  study's points-sheet subject).
+- **INFINITE constructions — the column sweep** (the fr-l0ma.7 fix). The
+  walk keeps NOTHING on the sphere-less tetra/tetra4/prism constructions
+  (greedy fold depths 0–4 on either RNG stream) and on the sphere-less
+  cube1 draws a DEGENERATE SPECK — 97% of a 40k-step budget kept with
+  every point inside a ~0.1 box, an absorbing deep-fold region, a single
+  limit-set point where a sample of the set was meant. The sweep: sample
+  (x,z[,w]) uniform in the bound ball's equatorial cross-section, clip a
+  vertical column to the ball, and bisect the FIRST + → − sign flip of
+  the estimate walking down — the union of tiles' INTERNAL face images
+  are 0-touches (union on both sides, no sign flip), so only the union's
+  outer boundary — the limit set itself — flips sign, and the two-sided
+  DE-shell rejection alternative is refuted by that skeleton (86–93% fog
+  measured; one-sided still carries the pole fog at wide shells). The
+  tetra families' divide plane is the limit set exactly (invariance 0
+  drift; below it the union) and is ITSELF a capped band — the 2D
+  wall/disk fold cycles exactly on it — so the sweep advances past capped
+  folds and brackets between the clean neighbours. Measured on the sweep:
+  flips 99.5–100% of columns, kept |de| mean 1e-11–2e-6 (max 6.5e-3 on
+  the capped-break columns), 20–43 estimate evals per kept point (~1–2 s
+  per 100k-point draw in the worker), face slots spread across every
+  face; the full tables and the refuted arms' rows are
+  `scripts/sphaira-infinite-points.harness.ts`. The color slot is the
+  fold's LAST-MOVE FACE clamped (−1 → 0) — the surface hit-info's own
+  attribution — so Points and Surface wear the same hue per face region.
+
+The By-Transform legend keys the same face slots —
 the legend's transform key resolves the block and keys face swatches (no
 captions; faces are not generations), hidden for a refused block, falling
 through when an earlier subject block is co-present, exactly the
 derivation's and the cloud dispatcher's own subject order.
 
 **The owner-feedback round's panel corrections** (2026-10-09, measured
-where noted). The empty-cloud disclosure is FAMILY-keyed AND
-sphere-absent, never the sphere alone: `SPHAIRAHEDRON_WALK_EMPTY_FAMILIES`
-(tetra333, tetra4, prism2) is pinned against the walk itself — each named
-family's sphere-less construction keeps 0 of 5000 asked (mulberry32(1)),
-each cube family keeps 5000/5000, so a sphere-less CUBE construction still
-draws and must not inherit the note. The J rows widen their slider span to
+where noted). The empty-cloud disclosure that round shipped (family-keyed
+and sphere-absent — `SPHAIRAHEDRON_WALK_EMPTY_FAMILIES`) is RETIRED by the
+sweep arm above: every resolving construction draws now, so nothing
+discloses an empty walk, and the sphere-less cube's own walk draw turned
+out to be the degenerate speck the sweep replaced (the "5000/5000 kept"
+figure counted; the cloud it produced was a single limit-set point).
+The J rows widen their slider span to
 reach an authored value past the fixed base (`widenSpanToAuthored`, the
 numeric companion never reads red for a value the document carries), the
 widening disclosed against `SPHAIRAHEDRON_INVERSION_BASE_RANGES`; the

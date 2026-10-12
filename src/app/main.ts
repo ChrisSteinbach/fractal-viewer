@@ -3703,11 +3703,12 @@ async function main(): Promise<void> {
 
   /**
    * The empty-cloud landing's frame: the subject construction's own
-   * enclosing ball — the geometry the guides draw IS the object there (the
-   * infinite families' limit set is unbounded, so Points keeps nothing and
-   * the guides show the machinery instead). The same fit the attractor's
-   * frame gets, aimed at the construction's bound; the 4D bound's
-   * projection sits inside its xyz sphere, so a 3D fit is sound there too.
+   * enclosing ball — the geometry the guides draw IS the object there
+   * (a REFUSED block still draws nothing, and the guides show the
+   * machinery instead; resolving infinite constructions now draw their
+   * limit sets by the sweep). The same fit the attractor's frame gets,
+   * aimed at the construction's bound; the 4D bound's projection sits
+   * inside its xyz sphere, so a 3D fit is sound there too.
    */
   function fitCameraToGuideFrame(spec: SubjectGuideSpec): void {
     const { center, radius } = spec.frame;
