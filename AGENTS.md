@@ -1999,14 +1999,16 @@ bench:surface` (`--display=:0` for real-driver rows;
     TWO-PHASE signal wait (`restarted` zeroes `renderComplete.flame`,
     then the new budget met) — a stale budget-met chunk can still be in
     flight when the pose commits. Flame 3D rides a new `setProjection`
-    worker command (the flat camera restart beside `setFourDView`);
-    `FourDView.step` is the tumble's UNconditional
-    composition (an explicitly requested clip animates); pose
-    edits/mode switches/gestures/exports/resize stop the run. Length and
-    rate are session sliders; Capture size sizes the clip via
-    `scene.beginExportFrames` (the held export ratio); `?motionfps=N` is
-    the gate-only override that WINS over the rate slider. Gate:
-    `scripts/motion-export.verify.mjs` (surface leg → `--mode=x11::0`).
+    worker command; `FourDView.step` is the tumble's UNconditional
+    composition; pose edits/mode switches/gestures/exports/resize stop
+    the run. Length and rate are session sliders; Capture size sizes the
+    clip via `scene.beginExportFrames` (the held export ratio);
+    `?motionfps=N` is the gate-only override that WINS over the rate
+    slider. The WebGL arm's clip frames are synchronous drains the tier
+    clock never sees, so the unwind re-invalidates — otherwise the
+    settled latch sticks false to the next gesture. Gate:
+    `scripts/motion-export.verify.mjs` (surface legs → `--mode=x11::0`;
+    `--surfacegl` = the fallback arm's leg alone).
   - `isolation-handoff.ts` — the session-only sessionStorage bridge
     carrying `renderMode` across the cross-origin-isolation reload
     (`register-sw.ts`'s `onBeforeIsolationReload`).

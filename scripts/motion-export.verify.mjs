@@ -16,6 +16,42 @@
  *          commit is the per-frame spec `view4`, the force frame re-traces
  *          at the new pose, and the tracer claim holds the live tier loop
  *          off the driver's frames.
+ *   leg 5  (--surfacegl or --mode=x11::0) the SAME 4D surface session
+ *          forced onto the WEBGL FALLBACK tracer (`?surfacegl` wins even
+ *          where compute is available): per frame the driver holds the
+ *          tracer claim, abandons the settle, and drains the full-tier
+ *          strip pump synchronously at the committed pose — the record
+ *          path the compute leg cannot see. Same assertions — 4 frames,
+ *          valid MP4, visible tumble motion — with ONE instrument
+ *          difference the arm forces: a synchronous whole-frame strip
+ *          drain blocks the main thread for every frame, leaving the
+ *          between-frame event-loop gaps too short for a CDP canvas
+ *          screenshot to land in (measured: 1 readable mid-run sample
+ *          across the whole 4-frame clip), so the motion evidence comes
+ *          from the settled pane BEFORE the run versus the re-settled
+ *          pane AFTER it — the post-run pane is the clip's final pose,
+ *          re-settled by the live tier loop the driver's unwind restored.
+ *          That re-settle wait is also the regression pin for the wedge
+ *          leg 5's first run caught: the clip's forced renders at
+ *          advancing poses never pass through the tier branches (the
+ *          tracer claim suppresses them), so an unwind that left the view
+ *          un-invalidated left the tier clock nothing to quiet from —
+ *          needsRender consumed by the last forced render,
+ *          lastInvalidatedMs null since the pre-clip settle — and the
+ *          settled latch stuck false until the next user gesture. The
+ *          driver's unwind now re-invalidates (the same recovery a
+ *          gesture gets); without it this leg's post-run wait times out.
+ *          MEASURED, one occurrence: a clip stalled at 75% for ~80s on
+ *          this driver and later ran 4 frames in under 200ms — the sync
+ *          drain's documented mid-join stall (a single strip's GPU work
+ *          can outrun the per-frame spend ceiling while the join blocks;
+ *          spentMs cannot grow until the join returns), not a new
+ *          mechanism. A strip drain that prices past the capture ceilings
+ *          throws SurfaceCaptureCostError and finalizes the PARTIAL
+ *          clip — the stsz count then reads low and this leg fails on it
+ *          honestly, because a fallback arm that cannot drain a 4-frame
+ *          clip is exactly the regression this certification exists to
+ *          catch.
  *
  * `?motionfps=2` is the page-load frame-rate override the feature ships for
  * exactly this purpose: a 2s clip is 4 frames instead of the 30fps 60. At
@@ -48,7 +84,12 @@
  * USAGE (build + `npm run preview` first — this measures a real build):
  *   node scripts/motion-export.verify.mjs [url]            # default :4173
  *   node scripts/motion-export.verify.mjs --mode=x11::0    # real driver
+ *   node scripts/motion-export.verify.mjs --surfacegl      # leg 5 only
  *   node scripts/motion-export.verify.mjs --keep-open
+ *
+ * `--surfacegl` runs ONLY leg 5 (the WebGL fallback arm; the other legs'
+ * verdicts are not re-litigated by a fallback-arm run and a full leg 1-5
+ * sweep doubles the sitting). Default (no flag): all legs.
  *
  * Default --mode=sw: legs 1-3 run on SwiftShader (the CPU flame backend is
  * the slow-but-working path there). Leg 4 needs SURFACE COMPUTE, which this
@@ -65,14 +106,27 @@
 import { chromium } from "playwright-core";
 import { guardFreshDist } from "./lib/dist-freshness.mjs";
 
-const args = { url: "https://localhost:4173", keepOpen: false, mode: "sw" };
+const args = {
+  url: "https://localhost:4173",
+  keepOpen: false,
+  mode: "sw",
+  surfacegl: false,
+};
 for (const arg of process.argv.slice(2)) {
   if (arg === "--keep-open") args.keepOpen = true;
+  else if (arg === "--surfacegl") args.surfacegl = true;
   else if (arg.startsWith("--url=")) args.url = arg.slice(6);
   else if (arg.startsWith("--mode=")) args.mode = arg.slice(7);
   else if (!arg.startsWith("--")) args.url = arg;
 }
 args.url = args.url.replace(/\/+$/, "");
+if (args.surfacegl && args.mode === "sw") {
+  console.error(
+    "[motion-export] --surfacegl needs a real driver: the WebGL fallback's " +
+      "software strip settle is unbounded in a gate. Run with --mode=x11::0.",
+  );
+  process.exit(2);
+}
 await guardFreshDist({ url: args.url });
 
 /** escape-family.verify.mjs's launch idiom: a headed window on a live X
@@ -489,6 +543,7 @@ try {
     mp4sBefore,
     labelsStart,
     wantFrames,
+    motionPair = null,
   ) => {
     const landed =
       samples.length > 0 && samples[samples.length - 1].mp4s > mp4sBefore;
@@ -539,7 +594,21 @@ try {
       bad(`${leg}: the button never returned to its idle label`);
     }
     const frames = preBlob.filter((s) => s.frame !== null);
-    if (frames.length < 2) {
+    if (motionPair !== null) {
+      // Leg 5's instrument: the settled pane before the run vs the
+      // re-settled pane after it (the WebGL arm's synchronous drains
+      // starve mid-run sampling — see the module doc). Same 2.0/255 bar.
+      const d = grayDistance(motionPair[0], motionPair[1]);
+      if (d > 2.0) {
+        ok(
+          `${leg}: the picture visibly advanced (settled pre→post gray distance ${d.toFixed(1)}/255)`,
+        );
+      } else {
+        bad(
+          `${leg}: pre- and post-run settled frames are nearly identical (gray distance ${d.toFixed(1)}/255 ≤ 2.0) — the motion did not reach the picture`,
+        );
+      }
+    } else if (frames.length < 2) {
       bad(
         `${leg}: fewer than 2 pre-download frame samples (${frames.length}) — no readable canvas during the run`,
       );
@@ -593,8 +662,12 @@ try {
   // ── boot ──────────────────────────────────────────────────────────────
   // `?motionfps=2` — the override the feature ships for gates: a 2s clip is
   // exactly 4 frames, not 60 full re-renders. `?surfacestate` publishes the
-  // settle latch leg 4 reads its engine and settle readiness from.
-  await page.goto(`${args.url}/?motionfps=2&surfacestate`);
+  // settle latch the surface legs read their engine and settle readiness
+  // from. `--surfacegl` adds the fallback-arm forcing flag and runs ONLY
+  // leg 5 (see the module doc).
+  await page.goto(
+    `${args.url}/?motionfps=2&surfacestate${args.surfacegl ? "&surfacegl" : ""}`,
+  );
   const booted = await waitFor(
     () =>
       page.evaluate(
@@ -604,203 +677,328 @@ try {
     "the app to boot (mode buttons enabled)",
   );
   if (!booted) throw new Error("app never booted");
-  ok("app booted, render modes enabled (?motionfps=2 in the URL)");
-
-  // ── leg 1: a click in Points refuses, records nothing ─────────────────
-  await openCaptureSection();
-  await page.click("#recordMotionBtn");
-  const refusal = await waitFor(
-    async () => {
-      const t = await toastText();
-      return /Flame or Surface/.test(t) ? t : null;
-    },
-    10_000,
-    "the points-mode refusal toast",
+  ok(
+    args.surfacegl
+      ? "app booted, render modes enabled (?motionfps=2&surfacegl in the URL)"
+      : "app booted, render modes enabled (?motionfps=2 in the URL)",
   );
-  if (refusal) {
-    ok(`leg 1: points-mode click refused with a toast ("${refusal}")`);
+
+  if (args.surfacegl) {
+    await runSurfaceglLeg();
   } else {
-    bad("leg 1: no /Flame or Surface/ refusal toast appeared in Points mode");
-  }
-  const leg1Mp4s = await page.evaluate(() => window.__mp4s.length);
-  if (leg1Mp4s === 0) {
-    ok("leg 1: no mp4 was produced by the refused click");
-  } else {
-    bad(`leg 1: a refused click produced ${leg1Mp4s} mp4(s)`);
-  }
-  if (await buttonIdle()) {
-    ok('leg 1: the button still reads "🎞 Record motion"');
-  } else {
-    bad("leg 1: the button left its idle label after a refused click");
+    await runDefaultLegs();
   }
 
-  // ── leg 2: the flat boot flame records the 3D auto-orbit clip ─────────
-  // The gate's own documented floor (flame-export's): detent 0 = 1M
-  // iterations, so each of the clip's 4 frames still converges in tens of
-  // seconds on SwiftShader CPU.
-  await setControl("flameIterationsSlider", "0"); // detent 0 = 1M iterations
-  await page.evaluate(() => {
-    document.getElementById("modeFlameBtn").click();
-  });
-  const converged2 = await waitFor(
-    async () => (await flamePct()) === 100,
-    120_000,
-    "the flat flame accumulation to reach 100%",
-  );
-  if (!converged2) throw new Error("flame never converged at 1M before leg 2");
-  ok("flame converged at 1M (flat boot system)");
-  // 2 seconds → exactly 4 frames at ?motionfps=2.
-  await setControl("motionClipDurationSlider", "2");
-  await openCaptureSection();
-  const before2 = await page.evaluate(() => window.__mp4s.length);
-  const labelsBefore2 = await page.evaluate(() => window.__recLabels.length);
-  await page.click("#recordMotionBtn");
-  const samples2 = await sampleClip(
-    "the flat-orbit motion clip mp4",
-    before2,
-    240_000,
-  );
-  await verifyClip("leg 2", samples2, before2, labelsBefore2, 4);
-
-  // ── leg 3: hopfBloom records the 4D rotor tumble clip ─────────────────
-  // Back to Points first (the way flame-export leaves a mode), then the
-  // preset from the menu — the path that runs its render hint, which enters
-  // Flame on its own for this non-flat (4D) system.
-  await page.evaluate(() => {
-    document.getElementById("modePointsBtn").click();
-  });
-  await page.waitForTimeout(1200);
-  await loadPreset(page, "hopfBloom");
-  const inFlame = await waitFor(
-    () =>
-      page.evaluate(
-        () =>
-          document
-            .getElementById("modeFlameBtn")
-            ?.getAttribute("aria-pressed") === "true",
-      ),
-    30_000,
-    "the preset's render hint to enter Flame",
-  );
-  if (!inFlame) {
-    bad("leg 3: hopfBloom did not enter Flame automatically");
-    throw new Error("hopfBloom never entered Flame mode");
-  }
-  ok("leg 3: hopfBloom's render hint entered Flame on its own");
-  const iters = await page.evaluate(
-    () => document.getElementById("flameIterationsSlider")?.value ?? null,
-  );
-  if (iters === "0") {
-    ok("leg 3: the flame budget is still at its 1M floor (slider 0)");
-  } else {
-    log(
-      `     note: leg 3 pinned the flame budget back to the floor (slider read ${String(iters)})`,
+  // Legs 1-4, the default sweep. Declared as a function so `--surfacegl`
+  // can route around them (leg 5 only — see the module doc); hoisted, so
+  // the boot block's call below lands fine.
+  async function runDefaultLegs() {
+    // ── leg 1: a click in Points refuses, records nothing ─────────────────
+    await openCaptureSection();
+    await page.click("#recordMotionBtn");
+    const refusal = await waitFor(
+      async () => {
+        const t = await toastText();
+        return /Flame or Surface/.test(t) ? t : null;
+      },
+      10_000,
+      "the points-mode refusal toast",
     );
-    await setControl("flameIterationsSlider", "0");
-  }
-  const converged3 = await waitFor(
-    async () => (await flamePct()) === 100,
-    120_000,
-    "hopfBloom's first flame convergence",
-  );
-  if (!converged3) throw new Error("hopfBloom's flame never converged at 1M");
-  ok("leg 3: hopfBloom's 4D flame converged at 1M");
-  await setControl("motionClipDurationSlider", "2");
-  await openCaptureSection();
-  const before3 = await page.evaluate(() => window.__mp4s.length);
-  const labelsBefore3 = await page.evaluate(() => window.__recLabels.length);
-  await page.click("#recordMotionBtn");
-  const samples3 = await sampleClip(
-    "the 4D tumble motion clip mp4",
-    before3,
-    240_000,
-  );
-  await verifyClip("leg 3", samples3, before3, labelsBefore3, 4);
+    if (refusal) {
+      ok(`leg 1: points-mode click refused with a toast ("${refusal}")`);
+    } else {
+      bad("leg 1: no /Flame or Surface/ refusal toast appeared in Points mode");
+    }
+    const leg1Mp4s = await page.evaluate(() => window.__mp4s.length);
+    if (leg1Mp4s === 0) {
+      ok("leg 1: no mp4 was produced by the refused click");
+    } else {
+      bad(`leg 1: a refused click produced ${leg1Mp4s} mp4(s)`);
+    }
+    if (await buttonIdle()) {
+      ok('leg 1: the button still reads "🎞 Record motion"');
+    } else {
+      bad("leg 1: the button left its idle label after a refused click");
+    }
 
-  // ── leg 4: swirlPentatope records the 4D tumble through Surface compute ─
-  // The surface arm's per-frame convergence is the force-frame trace, not a
-  // flame budget: the record path's own ensureSurfaceComputeForceFrame
-  // supersedes any settle in flight and traces single-sampled frames at the
-  // committed pose. No settle wait before recording — the clip's frames
-  // ARE the readiness. 480s: SwiftShader compute is the slow path, and 4
-  // full traces ride inside this timeout.
-  await page.evaluate(() => {
-    document.getElementById("modePointsBtn").click();
-  });
-  await page.waitForTimeout(1200);
-  await loadPreset(page, "swirlPentatope");
-  const inSurface = await waitFor(
-    () =>
-      page.evaluate(
-        () =>
-          document
-            .getElementById("modeSurfaceBtn")
-            ?.getAttribute("aria-pressed") === "true",
-      ),
-    30_000,
-    "the preset's render hint to enter Surface",
-  );
-  if (!inSurface) {
-    bad("leg 4: swirlPentatope did not enter Surface automatically");
-    throw new Error("swirlPentatope never entered Surface mode");
-  }
-  ok("leg 4: swirlPentatope's render hint entered Surface on its own");
-  // The engine token off the ?surfacestate settle latch (the URL carries it
-  // at boot) — a 4D surface session is compute-preferred, and the probe's
-  // own `engine` field is the app's answer, not a DOM guess. The read must
-  // WAIT OUT the async create (an early read says "webgl" while
-  // surfaceComputeRenderer is still being assigned), so it polls for
-  // "compute" specifically.
-  const computeEngine = await waitFor(
-    async () => {
-      const s = await page.evaluate(() =>
-        window.__surfaceState ? window.__surfaceState() : null,
+    // ── leg 2: the flat boot flame records the 3D auto-orbit clip ─────────
+    // The gate's own documented floor (flame-export's): detent 0 = 1M
+    // iterations, so each of the clip's 4 frames still converges in tens of
+    // seconds on SwiftShader CPU.
+    await setControl("flameIterationsSlider", "0"); // detent 0 = 1M iterations
+    await page.evaluate(() => {
+      document.getElementById("modeFlameBtn").click();
+    });
+    const converged2 = await waitFor(
+      async () => (await flamePct()) === 100,
+      120_000,
+      "the flat flame accumulation to reach 100%",
+    );
+    if (!converged2)
+      throw new Error("flame never converged at 1M before leg 2");
+    ok("flame converged at 1M (flat boot system)");
+    // 2 seconds → exactly 4 frames at ?motionfps=2.
+    await setControl("motionClipDurationSlider", "2");
+    await openCaptureSection();
+    const before2 = await page.evaluate(() => window.__mp4s.length);
+    const labelsBefore2 = await page.evaluate(() => window.__recLabels.length);
+    await page.click("#recordMotionBtn");
+    const samples2 = await sampleClip(
+      "the flat-orbit motion clip mp4",
+      before2,
+      240_000,
+    );
+    await verifyClip("leg 2", samples2, before2, labelsBefore2, 4);
+
+    // ── leg 3: hopfBloom records the 4D rotor tumble clip ─────────────────
+    // Back to Points first (the way flame-export leaves a mode), then the
+    // preset from the menu — the path that runs its render hint, which enters
+    // Flame on its own for this non-flat (4D) system.
+    await page.evaluate(() => {
+      document.getElementById("modePointsBtn").click();
+    });
+    await page.waitForTimeout(1200);
+    await loadPreset(page, "hopfBloom");
+    const inFlame = await waitFor(
+      () =>
+        page.evaluate(
+          () =>
+            document
+              .getElementById("modeFlameBtn")
+              ?.getAttribute("aria-pressed") === "true",
+        ),
+      30_000,
+      "the preset's render hint to enter Flame",
+    );
+    if (!inFlame) {
+      bad("leg 3: hopfBloom did not enter Flame automatically");
+      throw new Error("hopfBloom never entered Flame mode");
+    }
+    ok("leg 3: hopfBloom's render hint entered Flame on its own");
+    const iters = await page.evaluate(
+      () => document.getElementById("flameIterationsSlider")?.value ?? null,
+    );
+    if (iters === "0") {
+      ok("leg 3: the flame budget is still at its 1M floor (slider 0)");
+    } else {
+      log(
+        `     note: leg 3 pinned the flame budget back to the floor (slider read ${String(iters)})`,
       );
-      return s && s.engine === "compute" ? s : null;
-    },
-    120_000,
-    "the surface session to take compute",
-  );
-  if (!computeEngine) {
-    skip(
-      "leg 4: surface compute never took this adapter (the WebGL fallback's " +
-        "software strip settle is unbounded in a gate) — run with " +
-        "--mode=x11::0 on a real driver to certify the surface leg",
+      await setControl("flameIterationsSlider", "0");
+    }
+    const converged3 = await waitFor(
+      async () => (await flamePct()) === 100,
+      120_000,
+      "hopfBloom's first flame convergence",
     );
-  } else {
-    ok("leg 4: the surface session is on compute");
-    // The SETTLE must complete before the record click: compute blocks the
-    // main thread in multi-second bursts (measured — the record click's
-    // input dispatch timed out behind a running settle), and a settled
-    // pane is a quiet main thread. The latch's own `completed` is the
-    // readiness signal.
-    const settled4 = await waitFor(
+    if (!converged3) throw new Error("hopfBloom's flame never converged at 1M");
+    ok("leg 3: hopfBloom's 4D flame converged at 1M");
+    await setControl("motionClipDurationSlider", "2");
+    await openCaptureSection();
+    const before3 = await page.evaluate(() => window.__mp4s.length);
+    const labelsBefore3 = await page.evaluate(() => window.__recLabels.length);
+    await page.click("#recordMotionBtn");
+    const samples3 = await sampleClip(
+      "the 4D tumble motion clip mp4",
+      before3,
+      240_000,
+    );
+    await verifyClip("leg 3", samples3, before3, labelsBefore3, 4);
+
+    // ── leg 4: swirlPentatope records the 4D tumble through Surface compute ─
+    // The surface arm's per-frame convergence is the force-frame trace, not a
+    // flame budget: the record path's own ensureSurfaceComputeForceFrame
+    // supersedes any settle in flight and traces single-sampled frames at the
+    // committed pose. No settle wait before recording — the clip's frames
+    // ARE the readiness. 480s: SwiftShader compute is the slow path, and 4
+    // full traces ride inside this timeout.
+    await page.evaluate(() => {
+      document.getElementById("modePointsBtn").click();
+    });
+    await page.waitForTimeout(1200);
+    await loadPreset(page, "swirlPentatope");
+    const inSurface = await waitFor(
+      () =>
+        page.evaluate(
+          () =>
+            document
+              .getElementById("modeSurfaceBtn")
+              ?.getAttribute("aria-pressed") === "true",
+        ),
+      30_000,
+      "the preset's render hint to enter Surface",
+    );
+    if (!inSurface) {
+      bad("leg 4: swirlPentatope did not enter Surface automatically");
+      throw new Error("swirlPentatope never entered Surface mode");
+    }
+    ok("leg 4: swirlPentatope's render hint entered Surface on its own");
+    // The engine token off the ?surfacestate settle latch (the URL carries it
+    // at boot) — a 4D surface session is compute-preferred, and the probe's
+    // own `engine` field is the app's answer, not a DOM guess. The read must
+    // WAIT OUT the async create (an early read says "webgl" while
+    // surfaceComputeRenderer is still being assigned), so it polls for
+    // "compute" specifically.
+    const computeEngine = await waitFor(
       async () => {
         const s = await page.evaluate(() =>
           window.__surfaceState ? window.__surfaceState() : null,
         );
-        // The latch's field is `settled` (its `completed` local renamed at
-        // publish) — the first settle done AND the pane not re-dirtied.
+        return s && s.engine === "compute" ? s : null;
+      },
+      120_000,
+      "the surface session to take compute",
+    );
+    if (!computeEngine) {
+      skip(
+        "leg 4: surface compute never took this adapter (the WebGL fallback's " +
+          "software strip settle is unbounded in a gate) — run with " +
+          "--mode=x11::0 on a real driver to certify the surface leg",
+      );
+    } else {
+      ok("leg 4: the surface session is on compute");
+      // The SETTLE must complete before the record click: compute blocks the
+      // main thread in multi-second bursts (measured — the record click's
+      // input dispatch timed out behind a running settle), and a settled
+      // pane is a quiet main thread. The latch's own `completed` is the
+      // readiness signal.
+      const settled4 = await waitFor(
+        async () => {
+          const s = await page.evaluate(() =>
+            window.__surfaceState ? window.__surfaceState() : null,
+          );
+          // The latch's field is `settled` (its `completed` local renamed at
+          // publish) — the first settle done AND the pane not re-dirtied.
+          return s && s.settled ? true : null;
+        },
+        480_000,
+        "the first surface settle to complete",
+      );
+      if (!settled4) throw new Error("swirlPentatope's settle never completed");
+      ok(
+        "leg 4: the first surface settle completed (pane quiet, ready to record)",
+      );
+      await setControl("motionClipDurationSlider", "2");
+      await openCaptureSection();
+      const before4 = await page.evaluate(() => window.__mp4s.length);
+      const labelsBefore4 = await page.evaluate(
+        () => window.__recLabels.length,
+      );
+      await page.click("#recordMotionBtn");
+      const samples4 = await sampleClip(
+        "the 4D surface tumble motion clip mp4",
+        before4,
+        480_000,
+      );
+      await verifyClip("leg 4", samples4, before4, labelsBefore4, 4);
+    }
+  } // runDefaultLegs
+
+  // ── leg 5 (--surfacegl): the WebGL fallback tracer records the tumble ──
+  // The compute leg's sibling on the FALLBACK arm: `?surfacegl` forces the
+  // session onto the WebGL strip tracer even where compute is available.
+  // Per frame the driver holds the tracer claim, abandons the settle, and
+  // drains the full-tier strip pump synchronously at the committed pose —
+  // the record path the compute leg cannot see. A drain that prices past
+  // the capture ceilings throws SurfaceCaptureCostError and finalizes the
+  // PARTIAL clip, which the stsz assertion fails on honestly (module doc).
+  async function runSurfaceglLeg() {
+    await page.evaluate(() => {
+      document.getElementById("modePointsBtn").click();
+    });
+    await page.waitForTimeout(1200);
+    await loadPreset(page, "swirlPentatope");
+    const inSurface = await waitFor(
+      () =>
+        page.evaluate(
+          () =>
+            document
+              .getElementById("modeSurfaceBtn")
+              ?.getAttribute("aria-pressed") === "true",
+        ),
+      30_000,
+      "the preset's render hint to enter Surface",
+    );
+    if (!inSurface) {
+      bad("leg 5: swirlPentatope did not enter Surface automatically");
+      throw new Error("swirlPentatope never entered Surface mode");
+    }
+    ok("leg 5: swirlPentatope's render hint entered Surface on its own");
+    // The engine token off the ?surfacestate settle latch: ?surfacegl wins
+    // over the compute preference, so the probe must report "webgl" —
+    // polling for it specifically also waits out the async session create
+    // (an early read says "webgl" while the tracer is still being built,
+    // leg 4's note mirrored).
+    const webglEngine = await waitFor(
+      async () => {
+        const s = await page.evaluate(() =>
+          window.__surfaceState ? window.__surfaceState() : null,
+        );
+        return s && s.engine === "webgl" ? s : null;
+      },
+      120_000,
+      "the surface session to take the WebGL fallback tracer",
+    );
+    if (!webglEngine) {
+      bad("leg 5: the ?surfacegl-forced session never reported engine=webgl");
+      return;
+    }
+    ok("leg 5: the surface session is on the WebGL fallback tracer");
+    // Same quiet-main-thread rule as leg 4: wait out the first settle
+    // before the record click. The WebGL arm's settle is the full-tier
+    // strip drain itself, so `settled` here means the pump finished.
+    const settled5 = await waitFor(
+      async () => {
+        const s = await page.evaluate(() =>
+          window.__surfaceState ? window.__surfaceState() : null,
+        );
         return s && s.settled ? true : null;
       },
       480_000,
-      "the first surface settle to complete",
+      "the first WebGL-arm surface settle to complete",
     );
-    if (!settled4) throw new Error("swirlPentatope's settle never completed");
+    if (!settled5)
+      throw new Error("the WebGL session's settle never completed");
     ok(
-      "leg 4: the first surface settle completed (pane quiet, ready to record)",
+      "leg 5: the first surface settle completed (strip pump drained, ready to record)",
     );
     await setControl("motionClipDurationSlider", "2");
     await openCaptureSection();
-    const before4 = await page.evaluate(() => window.__mp4s.length);
-    const labelsBefore4 = await page.evaluate(() => window.__recLabels.length);
+    // The motion instrument (see the module doc): the settled pane now —
+    // the clip's first pose — and the re-settled pane after the run.
+    const shotGray64 = async () => {
+      const png = await page.locator("canvas").first().screenshot({
+        type: "png",
+      });
+      return decodeGray64(png.toString("base64"));
+    };
+    const preGray5 = await shotGray64();
+    const before5 = await page.evaluate(() => window.__mp4s.length);
+    const labelsBefore5 = await page.evaluate(() => window.__recLabels.length);
     await page.click("#recordMotionBtn");
-    const samples4 = await sampleClip(
-      "the 4D surface tumble motion clip mp4",
-      before4,
+    const samples5 = await sampleClip(
+      "the WebGL-fallback 4D tumble motion clip mp4",
+      before5,
       480_000,
     );
-    await verifyClip("leg 4", samples4, before4, labelsBefore4, 4);
+    // The unwind restored the live tier loop; wait for it to re-settle the
+    // pane at the clip's final pose, then take the post-run shot.
+    const reSettled = await waitFor(
+      async () => {
+        const s = await page.evaluate(() =>
+          window.__surfaceState ? window.__surfaceState() : null,
+        );
+        return s && s.settled ? true : null;
+      },
+      480_000,
+      "the pane to re-settle at the clip's final pose",
+    );
+    if (!reSettled) throw new Error("the pane never re-settled after the clip");
+    const postGray5 = await shotGray64();
+    await verifyClip("leg 5", samples5, before5, labelsBefore5, 4, [
+      preGray5,
+      postGray5,
+    ]);
   }
 
   // ── page errors ───────────────────────────────────────────────────────
