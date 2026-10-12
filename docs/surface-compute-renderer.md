@@ -939,8 +939,17 @@ the same tier clock and preview governor, latest-wins preview coalescing,
 plus the unbudgeted completion pass — the preview frame is the one an
 invalidation must CANCEL rather than wait out, since it is the only one with
 no wall budget to expire. Offline force frames are memoized. Fallback is
-one-way: a create failure or device loss re-enters through the untouched
-WebGL path; `?surfacegl` forces WebGL.
+one-way for the "failed" class: a device loss re-enters through the untouched
+WebGL path and stays there (a dead device never returns). The
+"unavailable" class — an adapter that is not there YET, usually Chrome's
+GPU process still initializing — is the recoverable one
+(`surface-compute-reprobe.ts`): the boot probe retries a fresh
+`requestAdapter()` on a short doubling backoff before latching, and a
+session door re-probes a stale "unavailable" verdict before its routing
+decision, so a page that lost the boot race recovers on its first Surface
+click (measured 2026-10-10 on the AMD RX 7900 XTX: six of six fresh
+contexts routed WebGL with the old one-shot probe). `?surfacegl` forces
+WebGL one-way by choice.
 
 The frame spec also carries `camForward` and `focusDepth`. The former is the
 normalized camera world direction; the latter is

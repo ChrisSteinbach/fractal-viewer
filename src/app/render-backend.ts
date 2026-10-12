@@ -136,9 +136,13 @@ export function unmaskedWebglRenderer(gl: WebglContextLike): string | null {
  * - `"flag"` — the user's own `?surfacegl` escape hatch forced WebGL. A
  *   deliberate choice, so {@link surfaceWebglDetail} adds no caveat.
  * - `"unavailable"` — WebGPU isn't available at all (no `navigator.gpu`, or
- *   `requestAdapter()` returned `null`).
+ *   `requestAdapter()` returned `null`). The RECOVERABLE class: the usual
+ *   cause is Chrome's GPU process still initializing, so the boot probe
+ *   retries before latching it and a stale verdict is re-probed at the
+ *   next Surface entry (`surface-compute-reprobe.ts`).
  * - `"failed"` — device creation threw, or the device was lost, and the
- *   session fell back to WebGL mid-run.
+ *   session fell back to WebGL mid-run. One-way by measurement: a dead
+ *   device never returns.
  */
 export type SurfaceComputeBlock = "flag" | "unavailable" | "failed";
 
