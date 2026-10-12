@@ -1504,7 +1504,15 @@ stays document-only.
 
 ### Edit behavior
 
-- **Points** follows Auto-update, one regenerate per edit (latest wins).
+- **Points** follows Auto-update, one regenerate per edit (latest wins) — and
+  a DISCRETE edit (the enable checkbox, the arrangement, the seed kind)
+  arms the landing fit: the block replaces the cloud's subject wholesale,
+  so the object the camera should frame is somewhere else (the
+  sphairahedron discrete edits' rule, one family over; the family's own
+  seeds sit near the origin where the placeholder framing already pointed,
+  so the visible defect there is mild, but the fit is owed for correctness
+  with an off-centre seed). A slider tick deforms the construction in
+  place and keeps the plain form — the fit would fight the authoring hand.
 - **Surface** restarts through the existing construction-change rule, which
   compares the block's authored JSON. It restarts without refitting the camera.
   The enable checkbox and both selects restart at once. A slider restarts on

@@ -369,7 +369,11 @@ carve level (the surface trap's own channel, one slot per level via
 and rides the standard 4D projection path (no slice of its own — the
 projection IS the display, and Points never balloons the carve). The
 sampler is capped at `MENGER_POINTS_MAX` (500k), the sphere-inversion
-family's own two-seconds class.
+family's own two-seconds class. The enable checkbox's edit arms the
+landing fit (the `regenerateSubjectFitIfAutoUpdate` effect — the subject
+is replaced wholesale, the sphaira/sphere-inversion discrete edits' rule)
+while the eleven slider ticks deform the carve in place and keep the
+plain form.
 
 ## The shared twist vocabulary
 
