@@ -396,6 +396,9 @@ import {
 import { OFFLINE_EXPORT_FPS, runOfflineExport } from "./offline-export";
 import {
   MOTION_CLIP_DEFAULT_SECONDS,
+  MOTION_CLIP_MAX_FPS,
+  MOTION_CLIP_MIN_FPS,
+  MOTION_EXPORT_FPS,
   motionClipFrameCount,
   resolveMotionClip,
   resolveMotionExportFps,
@@ -2233,6 +2236,10 @@ async function main(): Promise<void> {
    * element value can't author an out-of-domain clip. Session-only state,
    * like tumbleSpeed — never in the document. */
   let motionClipDurationS = MOTION_CLIP_DEFAULT_SECONDS;
+  /** The motion clip's session frame rate — the rate slider's value, the
+   * same session-only pattern. A `?motionfps` override wins over it at
+   * clip time; the knob is what a user without the override records at. */
+  let motionClipFps = MOTION_EXPORT_FPS;
   // The camera projection the running orbit clip last posted — the
   // setProjection commit's unchanged-pose guard (the tumble branch's
   // commitKey guard, one family over). Plain number[] so
@@ -2276,17 +2283,26 @@ async function main(): Promise<void> {
       return;
     }
     motionExportPending = true;
+    // The clip's rate is fixed for the whole run — the override wins over
+    // the session slider, and a drag mid-run cannot retune a running
+    // clip's clock (the encoder, the frame clock and the budget all read
+    // this one snapshot).
+    const fps = motionFpsOverride ?? motionClipFps;
     try {
       // Pin the render resolution BEFORE reading the canvas size — the
       // encoder's dimensions are fixed for the whole clip (the timeline
       // export's own discipline; the adaptive governor must not resize the
-      // buffer under it).
+      // buffer under it). The Capture-size select raises the buffer to a
+      // still export's ratio for the whole run (scene.beginExportFrames),
+      // so the clip records at the same size Save PNG would capture — the
+      // canvas dims the encoder pins to are read AFTER that raise.
       resolutionGovernor.reset();
       scene.setResolutionScale(1);
+      scene.beginExportFrames(state.exportScale);
       const session = await createOfflineEncoder({
         width: scene.canvas.width,
         height: scene.canvas.height,
-        fps: motionExportFps,
+        fps,
       });
       if (motionExportStop !== null) {
         // A stop raced the probe (a chokepoint or a second click) — don't
@@ -2302,13 +2318,16 @@ async function main(): Promise<void> {
         ui.flashToast("No frame-exact encoder for this canvas size");
         return;
       }
-      await driveMotionExport(session, plan.kind);
+      await driveMotionExport(session, plan.kind, fps);
     } catch (err) {
       // The setup catch and the run catch both speak through the shared
       // wording (driveOfflineExport's pattern).
       exportFailedToast(err);
     } finally {
       motionExportPending = false;
+      // Restore the live buffer whether the clip ran, refused, or its
+      // encoder probe failed — the elevated ratio must not outlive the run.
+      scene.endExportFrames();
     }
   }
 
@@ -2329,9 +2348,10 @@ async function main(): Promise<void> {
   async function driveMotionExport(
     session: OfflineEncoderSession,
     kind: MotionKind,
+    fps: number,
   ): Promise<void> {
-    const frameMs = 1000 / motionExportFps;
-    const capFrames = MAX_RECORDING_SECONDS * motionExportFps;
+    const frameMs = 1000 / fps;
+    const capFrames = MAX_RECORDING_SECONDS * fps;
     // The authored clip IS the loop's end: unlike the timeline export (whose
     // natural finish comes from the player going inactive, so its maxFrames
     // stays the recorder-parity cap), a motion clip's running() never goes
@@ -2341,7 +2361,7 @@ async function main(): Promise<void> {
     // progress percentage.
     const totalFrames = motionClipFrameCount(
       motionClipDurationS,
-      motionExportFps,
+      fps,
       capFrames,
     );
     const maxFrames = Math.max(1, totalFrames);
@@ -5078,10 +5098,20 @@ async function main(): Promise<void> {
   // `?motionfps=N` — the motion-clip rate override the verification gate
   // uses to record a 2-3 frame clip (see resolveMotionExportFps). The
   // encoder probe and the driver's frame clock read the SAME value, so a
-  // gated clip's timing stays authored.
-  const motionExportFps = resolveMotionExportFps(
-    new URLSearchParams(window.location.search).get("motionfps"),
+  // gated clip's timing stays authored. GATE-ONLY and invisible: a clip's
+  // rate is otherwise the user's own session slider (motionClipFps below),
+  // and the override WINS over it — a gate must not depend on session
+  // state it cannot see. A garbage value behaves as absent (the knob):
+  // the NaN fallback marks the invalid branch, which Number.isFinite
+  // folds to null.
+  const motionFpsParam = new URLSearchParams(window.location.search).get(
+    "motionfps",
   );
+  const motionFpsOverride = ((): number | null => {
+    if (motionFpsParam === null) return null;
+    const fps = resolveMotionExportFps(motionFpsParam, Number.NaN);
+    return Number.isFinite(fps) ? fps : null;
+  })();
   // `?surfacemaxrays=N` stands in for the device's own per-frame ray ceiling
   // — the ?surfshadewidth-style escape hatch for the sizing that ceiling
   // drives. A real device only bands an export at 2-4x (~8-32M rays), which
@@ -12542,6 +12572,16 @@ async function main(): Promise<void> {
       motionClipDurationS = seconds;
       ui.setMotionClipDuration(seconds);
     },
+    onMotionClipFpsInput: (rawFps) => {
+      // Clamp to the resolver's band: the slider's own domain is [1, 60],
+      // this re-resolves against it so a stale element value can't author
+      // an out-of-band clip (motionClipDurationS's pattern).
+      motionClipFps = Math.min(
+        MOTION_CLIP_MAX_FPS,
+        Math.max(MOTION_CLIP_MIN_FPS, Math.round(rawFps)),
+      );
+      ui.setMotionClipFps(motionClipFps);
+    },
     // Saved-scene collection. Save/copy act on the CURRENT document (the same
     // encodeScene(currentDocument()) the autosave uses — camera and non-flat
     // FourDPose included, so a loaded entry restores its framing); the thumbnail is a
@@ -13455,9 +13495,10 @@ async function main(): Promise<void> {
   refreshGuides();
   refreshUi();
   editSession.syncUi();
-  // The motion-clip controls' boot state: the length readout from the
-  // (constant) session default, and the button's idle title.
+  // The motion-clip controls' boot state: the length and rate readouts from
+  // the (constant) session defaults, and the button's idle title.
   ui.setMotionClipDuration(motionClipDurationS);
+  ui.setMotionClipFps(motionClipFps);
   ui.setRecordMotionState(null);
   ui.setCollectionCount(collection.size);
   refreshScheduleSavedScenes();

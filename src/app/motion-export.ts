@@ -17,22 +17,34 @@
  */
 
 /** Frame rate of the motion clip — the offline export's own constant, so
- * "30 fps" has one meaning on every machine. */
+ * "30 fps" has one meaning on every machine. Also the rate slider's
+ * session default (below). */
 export const MOTION_EXPORT_FPS = 30;
+
+/** The rate slider's domain — `resolveMotionExportFps`'s validation band,
+ * so a slider-driven clip and a `?motionfps` override obey ONE bound. */
+export const MOTION_CLIP_MIN_FPS = 1;
+export const MOTION_CLIP_MAX_FPS = 60;
 
 /**
  * `?motionfps=N` — a page-load override on the clip's frame rate, the
  * `?surfacemaxrays`-style escape hatch a VERIFICATION GATE uses to record a
  * 2-3 frame clip (a 2s authored duration at 1-2 fps) instead of paying
- * sixty-plus full re-renders. Users never see it: anything outside 1..60
- * silently falls back to the shipped rate, and the encoder, the driver's
+ * sixty-plus full re-renders. Anything outside 1..60 silently falls back —
+ * to `fallback` (main.ts passes the session rate slider's value there, so
+ * an absent or garbage override defers to the user's choice; the gate's
+ * no-arg call keeps the shipped rate) — and the encoder, the driver's
  * frame clock and the frame budget all read the SAME resolved value, so a
  * gated clip's timing stays exactly authored (2s at 2fps = 4 frames of
- * 500ms each).
+ * 500ms each). The override WINS over the slider: a gate must not depend
+ * on session state it cannot see.
  */
-export function resolveMotionExportFps(raw: string | null): number {
+export function resolveMotionExportFps(
+  raw: string | null,
+  fallback: number = MOTION_EXPORT_FPS,
+): number {
   const n = raw === null ? NaN : Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n >= 1 && n <= 60 ? n : MOTION_EXPORT_FPS;
+  return Number.isFinite(n) && n >= 1 && n <= 60 ? n : fallback;
 }
 
 /** Authored clip length bounds, in seconds. The default is long enough for

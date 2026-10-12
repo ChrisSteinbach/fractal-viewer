@@ -284,6 +284,7 @@ import {
 import type { SolidTilingSessionResolution } from "../fractal/solid-tiling-session";
 import { videoCaptureSupported } from "./recorder";
 import { offlineExportSupported } from "./video-encode";
+import { MOTION_CLIP_MAX_FPS, MOTION_CLIP_MIN_FPS } from "./motion-export";
 import { installSliderScrollGuard } from "./slider-scroll-guard";
 import {
   enhanceRangeWithNumber,
@@ -533,6 +534,9 @@ export interface UiHandlers {
   /** The motion-clip length slider moved: session-only seconds, never in
    * the document (the tumbleSpeed pattern). */
   onMotionClipDurationInput: (seconds: number) => void;
+  /** The motion-clip rate slider moved: session-only frames/second, the
+   * same session-only pattern. */
+  onMotionClipFpsInput: (fps: number) => void;
   /** "⤓ Save scene file" was clicked: download the current scene document as
    * a JSON file — the file counterpart of "🔗 Copy link". */
   onSaveSceneFile: () => void;
@@ -2583,6 +2587,9 @@ export class Ui {
   private readonly motionClipDurationSlider: HTMLInputElement;
   private readonly motionClipDurationNumeric: RangeNumberControl;
   private readonly motionClipDurationLabel: HTMLElement;
+  private readonly motionClipFpsSlider: HTMLInputElement;
+  private readonly motionClipFpsNumeric: RangeNumberControl;
+  private readonly motionClipFpsLabel: HTMLElement;
   private readonly saveSceneFileBtn: HTMLButtonElement;
   private readonly saveSceneFileTitle: string;
   private readonly saveFlameFileBtn: HTMLButtonElement;
@@ -3541,6 +3548,8 @@ export class Ui {
     this.recordMotionBtn = this.byId("recordMotionBtn");
     this.motionClipDurationSlider = this.byId("motionClipDurationSlider");
     this.motionClipDurationLabel = this.byId("motionClipDurationLabel");
+    this.motionClipFpsSlider = this.byId("motionClipFpsSlider");
+    this.motionClipFpsLabel = this.byId("motionClipFpsLabel");
     this.saveSceneFileBtn = this.byId("saveSceneFileBtn");
     this.saveSceneFileTitle = this.saveSceneFileBtn.title;
     this.saveFlameFileBtn = this.byId("saveFlameFileBtn");
@@ -4070,6 +4079,23 @@ export class Ui {
         },
       },
     );
+    this.motionClipFpsNumeric = enhanceRangeWithNumber(
+      this.motionClipFpsSlider,
+      {
+        min: MOTION_CLIP_MIN_FPS,
+        max: MOTION_CLIP_MAX_FPS,
+        step: 1,
+        ariaLabel: "Clip rate exact value",
+        // The FIELD reads the bare number; the "fps" unit is the label's.
+        formatValue: (value) => String(Math.round(value)),
+        onInput: (value, source) => {
+          if (source !== "number") return;
+          const fps = Math.round(value);
+          this.motionClipFpsLabel.textContent = `${String(fps)}fps`;
+          this.handlers?.onMotionClipFpsInput(fps);
+        },
+      },
+    );
     this.fourDSliceThicknessNumeric = enhanceRangeWithNumber(
       this.fourDSliceThicknessSlider,
       {
@@ -4550,6 +4576,12 @@ export class Ui {
       const value = Number(this.motionClipDurationSlider.value);
       if (Number.isFinite(value)) {
         handlers.onMotionClipDurationInput(value);
+      }
+    });
+    this.motionClipFpsSlider.addEventListener("input", () => {
+      const value = Number(this.motionClipFpsSlider.value);
+      if (Number.isFinite(value)) {
+        handlers.onMotionClipFpsInput(value);
       }
     });
     this.saveSceneFileBtn.addEventListener("click", () =>
@@ -5915,8 +5947,9 @@ export class Ui {
       }`;
       this.captureSizeTimingHint.textContent =
         mode === "flame"
-          ? "Changing size restarts Flame at the new dimensions."
-          : "Used by the next capture.";
+          ? "Changing size restarts Flame at the new dimensions; motion clips use it too."
+          : // Solid refuses motion clips; only a capture reads the size.
+            "Used by the next capture.";
     } else {
       this.transformTimingHint.textContent =
         "Geometry changes restart Surface; unsupported changes return to Points.";
@@ -5927,7 +5960,8 @@ export class Ui {
         "Changes apply next time you enter Surface.";
       this.scheduleEditHint.textContent =
         "Choosing a source copies it. Changes restart Surface when supported.";
-      this.captureSizeTimingHint.textContent = "Used by the next capture.";
+      this.captureSizeTimingHint.textContent =
+        "Used by the next capture or motion clip.";
     }
 
     if (mode === "points") {
@@ -7189,6 +7223,12 @@ export class Ui {
     this.motionClipDurationNumeric.setValue(Math.round(seconds), {
       force: true,
     });
+  }
+
+  /** Sync the motion-clip rate readout (session-only, same pattern). */
+  setMotionClipFps(fps: number): void {
+    this.motionClipFpsLabel.textContent = `${String(Math.round(fps))}fps`;
+    this.motionClipFpsNumeric.setValue(Math.round(fps), { force: true });
   }
 
   /**

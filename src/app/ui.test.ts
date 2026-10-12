@@ -125,6 +125,7 @@ function noopHandlers(): UiHandlers {
     onRecordVideoToggle: vi.fn(),
     onRecordMotionToggle: vi.fn(),
     onMotionClipDurationInput: vi.fn(),
+    onMotionClipFpsInput: vi.fn(),
     onSaveSceneFile: vi.fn(),
     onSaveFlameFile: vi.fn(),
     onSaveToCollection: vi.fn(),
@@ -1534,6 +1535,50 @@ describe("Ui Points Quality budget", () => {
     slider.dispatchEvent(new Event("input"));
 
     expect(current().numPoints).toBe(POINT_COUNT_DETENTS[8]);
+  });
+});
+
+describe("Ui motion-clip rate slider", () => {
+  it("reports the slider's rate through onMotionClipFpsInput", () => {
+    const onMotionClipFpsInput = vi.fn();
+    const ui = new Ui(document);
+    ui.bind({ ...noopHandlers(), onMotionClipFpsInput });
+    const slider = document.getElementById(
+      "motionClipFpsSlider",
+    ) as HTMLInputElement;
+
+    slider.value = "12";
+    slider.dispatchEvent(new Event("input"));
+
+    // The label is main.ts's echo (setMotionClipFps), not the raw input's.
+    expect(onMotionClipFpsInput).toHaveBeenCalledWith(12);
+    expect(document.getElementById("motionClipFpsLabel")?.textContent).toBe(
+      "30fps",
+    );
+  });
+
+  it("setMotionClipFps syncs the readout and the exact-value companion", () => {
+    const ui = new Ui(document);
+    ui.setMotionClipFps(24);
+
+    expect(document.getElementById("motionClipFpsLabel")?.textContent).toBe(
+      "24fps",
+    );
+    expect(exactInput("motionClipFpsSlider").value).toBe("24");
+    expect(
+      (document.getElementById("motionClipFpsSlider") as HTMLInputElement)
+        .value,
+    ).toBe("24");
+  });
+
+  it("pairs the slider with an exact-value companion sharing its domain", () => {
+    new Ui(document);
+    const field = exactInput("motionClipFpsSlider");
+    expect(field.min).toBe("1");
+    expect(field.max).toBe("60");
+    // PRECISION IS THE DOMAIN, not the number field's step attribute.
+    expect(field.step).toBe("any");
+    expect(field.getAttribute("aria-label")).toBe("Clip rate exact value");
   });
 });
 
@@ -7683,7 +7728,7 @@ describe("Ui render mode switch", () => {
       "Changes restart Flame.",
     );
     expect(byId("captureSizeTimingHint").textContent).toBe(
-      "Changing size restarts Flame at the new dimensions.",
+      "Changing size restarts Flame at the new dimensions; motion clips use it too.",
     );
 
     ui.updateLabels({
@@ -12370,6 +12415,28 @@ describe("visible control lifetimes", () => {
     );
     expect(normalizedText(hint)).toBe(
       "Used by the next capture. Changing it during Flame restarts the render.",
+    );
+  });
+
+  it("discloses Capture size's motion-clip role in the modes that record one", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+
+    // Flame: the size change's own restart consequence leads.
+    ui.updateLabels({ ...initialState(true), renderMode: "flame" });
+    expect(document.getElementById("captureSizeTimingHint")?.textContent).toBe(
+      "Changing size restarts Flame at the new dimensions; motion clips use it too.",
+    );
+
+    // Surface records a clip; Solid and Points refuse one, so the hint
+    // stays about captures only.
+    ui.updateLabels({ ...initialState(true), renderMode: "surface" });
+    expect(document.getElementById("captureSizeTimingHint")?.textContent).toBe(
+      "Used by the next capture or motion clip.",
+    );
+    ui.updateLabels({ ...initialState(true), renderMode: "solid" });
+    expect(document.getElementById("captureSizeTimingHint")?.textContent).toBe(
+      "Used by the next capture.",
     );
   });
 

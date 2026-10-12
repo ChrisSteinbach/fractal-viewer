@@ -2002,8 +2002,10 @@ bench:surface` (`--display=:0` for real-driver rows;
     worker command (the flat camera restart beside `setFourDView`);
     `FourDView.step` is the tumble's UNconditional
     composition (an explicitly requested clip animates); pose
-    edits/mode switches/gestures/exports/resize stop the run.
-    `?motionfps=N` is a gate-only rate override. Gate:
+    edits/mode switches/gestures/exports/resize stop the run. Length and
+    rate are session sliders; Capture size sizes the clip via
+    `scene.beginExportFrames` (the held export ratio); `?motionfps=N` is
+    the gate-only override that WINS over the rate slider. Gate:
     `scripts/motion-export.verify.mjs` (surface leg → `--mode=x11::0`).
   - `isolation-handoff.ts` — the session-only sessionStorage bridge
     carrying `renderMode` across the cross-origin-isolation reload
