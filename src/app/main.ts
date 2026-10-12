@@ -2591,7 +2591,20 @@ async function main(): Promise<void> {
       window.removeEventListener("resize", onResize);
       motionExportStop = null;
       running = false;
-      if (holdsSurfaceTracer) surfaceCaptureFlight = false;
+      if (holdsSurfaceTracer) {
+        surfaceCaptureFlight = false;
+        // The clip's frames were forced renders at advancing poses, and
+        // the tracer claim suppressed the tier branches that would have
+        // recorded each invalidation — so after the unwind the tier clock
+        // has nothing to quiet from (the last forced render consumed
+        // needsRender; lastInvalidatedMs has been null since the
+        // pre-clip settle fired "full") and the pane never re-settles:
+        // measured on the real driver, the settled latch stuck false
+        // until the next user gesture. Mark the view dirty; the next
+        // tick re-arms preview/settle at the clip's final pose — the
+        // same recovery a gesture gets.
+        scene.invalidate();
+      }
       lastProjectionSnapshot = null;
       virtualNowMs = null;
       // Unwind the virtual clock (driveOfflineExport's own discipline):
