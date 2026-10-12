@@ -802,6 +802,7 @@ export const GATE_MAP: GateMapEntry[] = [
       "finish-transmission",
       "finite-solid",
       "finite-transport-f5-replay",
+      "floor-examples",
       "sphairahedron",
       "flame-balloon",
       "flame-density-estimate",
