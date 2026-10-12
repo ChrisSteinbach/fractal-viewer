@@ -692,12 +692,17 @@ const tilingEffect: ControlEffect = (state, fx) => {
 };
 
 /** A discrete sphere-inversion edit (the enable gesture, the arrangement,
- * the seed kind): Points follows Auto-update, the Surface gate re-derives,
- * and syncSphereInversion settles the rest — including the live Surface
- * session's restart. docs/panel-ia.md's record is in
+ * the seed kind): the block replaces the cloud's subject wholesale, so
+ * Points follows Auto-update AND arms the landing fit — the object is
+ * somewhere else (the sphairahedron discrete edits' rule, one family over;
+ * the family's own seeds sit near the origin where the placeholder framing
+ * already pointed, so the visible defect there is mild, but the fit is
+ * owed for correctness with an off-centre seed). The Surface gate
+ * re-derives, and syncSphereInversion settles the rest — including the
+ * live Surface session's restart. docs/panel-ia.md's record is in
  * sphere-inversion-controls.ts's module doc. */
 const sphereInversionEffect: ControlEffect = (_state, fx) => {
-  fx.regenerateIfAutoUpdate();
+  fx.regenerateSubjectFitIfAutoUpdate();
   fx.refreshSurfaceEligibility();
   fx.syncSphereInversion();
 };
@@ -1168,16 +1173,28 @@ function chainTwistEffect(_s: AppState, fx: ControlEffects): void {
 }
 
 /**
- * The Menger-carve block's edit behavior: document state read at every
- * render's entry. Points regenerates (following Auto-update — the block
- * replaces the cloud's subject and decides the scene's dimension); Surface
- * restarts, its construction fixed at create; Flame/Solid refuse outright,
- * so only their refusal note moves — that is refreshUi's job through
- * syncMengerTwist, which this effect calls for the block-authoring edits
- * (the checkbox, one slider per field).
+ * A Menger-carve slider tick's edit behavior: document state read at every
+ * render's entry. Points regenerates (following Auto-update — the tick
+ * deforms the carve in place, so the plain form: the subject fit would
+ * fight the authoring hand); Surface restarts, its construction fixed at
+ * create; Flame/Solid refuse outright, so only their refusal note moves —
+ * that is refreshUi's job through syncMengerTwist, which this effect calls
+ * for the block-authoring edits (one slider per field).
  */
 function mengerTwistEffect(_s: AppState, fx: ControlEffects): void {
   fx.regenerateIfAutoUpdate();
+  fx.refreshSurfaceEligibility();
+  fx.restartSurfaceRender();
+  fx.syncMengerTwist();
+}
+
+/** The enable gesture: the checkbox replaces the cloud's subject wholesale
+ * (from no subject to the reference carve, or back) — the object is
+ * somewhere else, so the landing fit frames it. The sphairahedron discrete
+ * edits' rule, one family over; {@link mengerTwistEffect}'s other arms are
+ * unchanged. */
+function mengerTwistEnabledEffect(_s: AppState, fx: ControlEffects): void {
+  fx.regenerateSubjectFitIfAutoUpdate();
   fx.refreshSurfaceEligibility();
   fx.restartSurfaceRender();
   fx.syncMengerTwist();
@@ -3421,7 +3438,7 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
         : s.mengerTwist
           ? setMengerTwist(s, null)
           : s,
-    effect: mengerTwistEffect,
+    effect: mengerTwistEnabledEffect,
   },
   {
     kind: "range",

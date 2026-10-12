@@ -259,8 +259,11 @@ morphs into place instead of snapping (see **Presets** below).
   name no single row; a shell sphere through a generator centre, for one, is
   flagged below the seed lengths.
 
-  Edits regenerate Points, following Auto-update. A live Surface restarts
-  without resetting the view: selects restart it at once, sliders on release.
+  Edits regenerate Points, following Auto-update — and a discrete edit (the
+  checkbox, the Arrangement or Seed select) also frames the camera on the new
+  object, since the subject is replaced wholesale (the preset-load rule). A
+  live Surface restarts without resetting the view: selects restart it at
+  once, sliders on release.
 
   While Sphere inversion is present, the replaced system's settings are kept
   in the document but nothing draws them, so they are disabled, each with a

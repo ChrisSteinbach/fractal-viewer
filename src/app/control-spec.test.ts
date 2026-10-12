@@ -38,7 +38,12 @@ import {
 } from "./constants";
 import { pentatope } from "../fractal/presets";
 import { BUNDLED_SHAPES, BUNDLED_TRAP_SHAPES } from "./bundled-shapes";
-import { setFiniteSolid, setSphairahedron, setSphereInversion } from "./state";
+import {
+  setFiniteSolid,
+  setMengerTwist,
+  setSphairahedron,
+  setSphereInversion,
+} from "./state";
 import { PRESET_SPHERE_INVERSIONS } from "../fractal/presets";
 
 /** Look up a table entry by its index.html element id. */
@@ -2547,8 +2552,12 @@ describe("sphere-inversion controls", () => {
     ]) {
       const fx = mockEffects();
       specById(id).effect?.(state, fx, state);
-      expect(fx.regenerateIfAutoUpdate, id).toHaveBeenCalledTimes(1);
+      // The discrete edits replace the cloud's subject wholesale — the
+      // subject-fit form (the sphairahedron rule, one family over).
+      expect(fx.regenerateSubjectFitIfAutoUpdate, id).toHaveBeenCalledTimes(1);
+      expect(fx.regenerateIfAutoUpdate, id).not.toHaveBeenCalled();
       expect(fx.syncSphereInversion, id).toHaveBeenCalledTimes(1);
+      expect(fx.refreshSurfaceEligibility, id).toHaveBeenCalledTimes(1);
       expect(fx.restartSurfaceRender, id).not.toHaveBeenCalled();
     }
 
@@ -2557,10 +2566,32 @@ describe("sphere-inversion controls", () => {
     const live = mockEffects();
     slider.effect?.(state, live, state);
     expect(live.regenerateIfAutoUpdate).toHaveBeenCalledTimes(1);
+    expect(live.regenerateSubjectFitIfAutoUpdate).not.toHaveBeenCalled();
     expect(live.syncSphereInversion).not.toHaveBeenCalled();
     const release = mockEffects();
     slider.commit?.(state, release, state);
     expect(release.syncSphereInversion).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("menger carve controls: the enable gesture arms the subject fit", () => {
+  it("the enable checkbox asks for the subject-fit regeneration", () => {
+    const withBlock = setMengerTwist(initialState(true), {});
+    const fx = mockEffects();
+    specById("mengerTwistEnabledCheckbox").effect?.(withBlock, fx, withBlock);
+    expect(fx.regenerateSubjectFitIfAutoUpdate).toHaveBeenCalledTimes(1);
+    expect(fx.regenerateIfAutoUpdate).not.toHaveBeenCalled();
+    expect(fx.refreshSurfaceEligibility).toHaveBeenCalledTimes(1);
+    expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(1);
+    expect(fx.syncMengerTwist).toHaveBeenCalledTimes(1);
+  });
+
+  it("a slider tick keeps the plain regeneration — no subject fit", () => {
+    const withBlock = setMengerTwist(initialState(true), {});
+    const fx = mockEffects();
+    specById("mengerLevelsSlider").effect?.(withBlock, fx, withBlock);
+    expect(fx.regenerateIfAutoUpdate).toHaveBeenCalledTimes(1);
+    expect(fx.regenerateSubjectFitIfAutoUpdate).not.toHaveBeenCalled();
   });
 });
 
