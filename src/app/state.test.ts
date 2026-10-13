@@ -162,6 +162,7 @@ import {
   setSolidFloorEmission,
   setSolidFloorEnabled,
   setSolidFloorPattern,
+  setSolidFloorPentagrid,
   setSolidFloorTileScale,
   setSolidIterations,
   setSolidLightAzimuth,
@@ -175,6 +176,7 @@ import {
   setSurfaceColorSpeed,
   setSurfaceDepthOfField,
   setSurfaceEnvLight,
+  setSurfaceFloorPentagrid,
   setSurfaceLightAzimuth,
   setSurfaceLightElevation,
   setSurfacePaletteId,
@@ -1422,6 +1424,56 @@ describe("Solid presentation setters", () => {
     expect(
       setSolidFloorEmission(initialState(true), 99).solid.floorEmission,
     ).toBe(PARAM.surfaceFloorEmission.max);
+  });
+});
+
+describe("pentagrid floor authoring setters (the sparse-block discipline)", () => {
+  it("writes a field only when the control moves, and removes the block outright when it empties", () => {
+    const state = initialState(true);
+    const one = setSolidFloorPentagrid(state, { rotationDeg: 18 });
+    expect(one.solid.floorPentagrid).toEqual({ rotationDeg: 18 });
+    const two = setSolidFloorPentagrid(one, {
+      ...one.solid.floorPentagrid,
+      grout: 1.4,
+    });
+    expect(two.solid.floorPentagrid).toEqual({ rotationDeg: 18, grout: 1.4 });
+    // Null removes the block outright — absence = the defaults.
+    const cleared = setSolidFloorPentagrid(two, null);
+    expect(cleared.solid.floorPentagrid).toBeUndefined();
+    // An empty block is the same as null: no field to render.
+    const emptied = setSolidFloorPentagrid(
+      setSolidFloorPentagrid(state, { grout: 2 }),
+      {},
+    );
+    expect(emptied.solid.floorPentagrid).toBeUndefined();
+  });
+
+  it("keeps the Solid and Surface blocks separate", () => {
+    const state = initialState(true);
+    const next = setSurfaceFloorPentagrid(
+      setSolidFloorPentagrid(state, { palette: "moss" }),
+      { palette: "marine" },
+    );
+    expect(next.solid.floorPentagrid).toEqual({ palette: "moss" });
+    expect(next.surface.floorPentagrid).toEqual({ palette: "marine" });
+    expect(state.solid.floorPentagrid).toBeUndefined();
+    expect(state.surface.floorPentagrid).toBeUndefined();
+  });
+
+  it("does not alias the caller's block or its shifts tuple", () => {
+    const state = initialState(true);
+    const shifts = [0.1, 0.2, 0.3, 0.4, 0.5] as [
+      number,
+      number,
+      number,
+      number,
+      number,
+    ];
+    const next = setSurfaceFloorPentagrid(state, { shifts });
+    const block = next.surface.floorPentagrid;
+    expect(block?.shifts).toEqual(shifts);
+    shifts[0] = 9;
+    expect(block?.shifts?.[0]).toBe(0.1);
   });
 });
 

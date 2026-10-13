@@ -26,7 +26,10 @@ import type {
 import type { Rng } from "../fractal/rng";
 import { mulberry32 } from "../fractal/rng";
 import type { TilingSpec } from "../fractal/tiling";
-import type { FloorPentagrid } from "../fractal/pentagrid-floor";
+import {
+  cloneFloorPentagridBlock,
+  type FloorPentagrid,
+} from "../fractal/pentagrid-floor";
 import { scenePartsAreNonFlat } from "../fractal/scene-dimension";
 import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
 import type { FiniteSolidAuthored } from "../fractal/finite-solid";
@@ -3110,6 +3113,35 @@ export function setSolidFloorEmission(
 }
 
 /**
+ * Author the solid render's pentagrid floor block — the sparse form: a
+ * field is written only once its own control moves, and an empty block
+ * removes it outright (absence = the defaults, the resolver's total
+ * resolution). Not clamped here — the resolver (fractal/pentagrid-floor.ts's
+ * `resolveFloorPentagrid`) owns the domains, wrapping shifts and rotation,
+ * clamping grout, and falling back on unknown ids; persistence validates
+ * untrusted input in `decodeScene`. Live-reactive (uniform rewrites, no
+ * restart).
+ */
+export function setSolidFloorPentagrid(
+  state: AppState,
+  floorPentagrid: Partial<FloorPentagrid> | null,
+): AppState {
+  const { floorPentagrid: _dropped, ...solid } = state.solid;
+  return {
+    ...state,
+    solid: {
+      ...solid,
+      // A structural copy: the caller may keep authoring from the block it
+      // passed (the shifts tuple is a mutable array), and state must own its
+      // own — the aliasing hazard the sparse form's tuple carries.
+      ...(floorPentagrid && Object.keys(floorPentagrid).length > 0
+        ? { floorPentagrid: cloneFloorPentagridBlock(floorPentagrid) }
+        : {}),
+    },
+  };
+}
+
+/**
  * Set the solid render's structural-coloring palette. Not clamped — it is an
  * enum (see `palette.ts`), and the UI only offers valid ids (persistence
  * validates untrusted input in `decodeScene`). Restarts accumulation in the
@@ -3153,9 +3185,14 @@ export function setSurfaceLightAzimuth(
 
 /** Own the nested rig when crossing a document, history or render boundary. */
 export function cloneSurfaceParams(surface: SurfaceParams): SurfaceParams {
-  const { lighting, ...rest } = surface;
+  const { lighting, floorPentagrid, ...rest } = surface;
   return {
     ...rest,
+    // The sparse pentagrid block is a plain data tree — own a fresh copy so
+    // two params objects never alias one shifts array.
+    ...(floorPentagrid === undefined
+      ? {}
+      : { floorPentagrid: cloneFloorPentagridBlock(floorPentagrid) }),
     ...(lighting === undefined
       ? {}
       : { lighting: cloneSurfaceLighting(lighting) }),
@@ -3287,6 +3324,29 @@ export function setSurfaceFloorEmission(
     surface: {
       ...state.surface,
       floorEmission: clampToSpec(PARAM.surfaceFloorEmission, floorEmission),
+    },
+  };
+}
+
+/**
+ * Author the surface render's pentagrid floor block — the Surface twin of
+ * {@link setSolidFloorPentagrid}, its own field by the same rule that keeps
+ * the two floor owners separate. Sparse form: a field is written only once
+ * its own control moves, an empty block removes it outright, the resolver
+ * owns the domains. Live-reactive (uniform rewrites, no restart).
+ */
+export function setSurfaceFloorPentagrid(
+  state: AppState,
+  floorPentagrid: Partial<FloorPentagrid> | null,
+): AppState {
+  const { floorPentagrid: _dropped, ...surface } = state.surface;
+  return {
+    ...state,
+    surface: {
+      ...surface,
+      ...(floorPentagrid && Object.keys(floorPentagrid).length > 0
+        ? { floorPentagrid: cloneFloorPentagridBlock(floorPentagrid) }
+        : {}),
     },
   };
 }
