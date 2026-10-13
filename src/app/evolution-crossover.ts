@@ -914,9 +914,16 @@ function buildSnapshot(
     renderStyle: primary.renderStyle,
     showGuides: primary.showGuides,
     flame: clone(primary.flame),
-    solid: clone(primary.solid),
     // structuredClone owns the nested rig and restores mutability just as it
-    // does for the background's readonly tuples below.
+    // does for the background's readonly tuples below; the DeepReadonly
+    // view of the params blocks loosens their tuples (the pentagrid's
+    // 5-shift row among them), so the casts are the same bridge the
+    // surface clone one line down documents.
+    solid: clone(primary.solid) as SceneSnapshot["solid"],
+    // structuredClone owns the nested rig and restores mutability just as it
+    // does for the background's readonly tuples below — the DeepReadonly
+    // view of the params blocks loosens their tuples (the pentagrid's
+    // 5-shift row among them), so the casts are that bridge.
     surface: clone(primary.surface) as SceneSnapshot["surface"],
     symmetry,
     glowBrightness: primary.glowBrightness,

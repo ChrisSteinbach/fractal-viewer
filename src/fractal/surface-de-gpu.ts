@@ -2975,7 +2975,10 @@ export interface SurfaceGpuGroundPlane {
   ballCenter: Vec3;
   ballRadius: number;
   albedo: Vec3;
-  pattern?: 0 | 1;
+  /** 0 solid, 1 checker, 2 pentagrid — thePresentationFloorSpec's numeric
+   * dispatch riding the shade struct's pattern lane. The WGSL shade entry's
+   * pattern dispatch widens with the floor-pattern kernel gate. */
+  pattern?: 0 | 1 | 2;
   tileScale?: number;
   emission?: number;
 }

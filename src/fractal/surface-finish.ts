@@ -1,5 +1,10 @@
 import type { SurfaceFinish, Vec3 } from "./types";
 import { clamp } from "./vec";
+import {
+  pentagridDerived,
+  pentagridFloorTone,
+  type FloorPentagrid,
+} from "./pentagrid-floor";
 
 /**
  * The MEANING of {@link SurfaceFinish} — `variations.ts`'s
@@ -278,6 +283,7 @@ export const SURFACE_FINISH_WGSL: SurfaceFinishDialect = {
 function surfaceFinishBody(
   dialect: SurfaceFinishDialect,
   room: boolean,
+  pentagrid: boolean,
 ): string {
   const isWgsl = dialect.language === "wgsl";
   const v3 = dialect.vec3;
@@ -317,7 +323,20 @@ ${isWgsl ? "" : "#if SURFACE_GROUND_PLANE"}
     ${df} tileSum = floor((floorP.x - ${dialect.groundBallC}.x) / cell) + floor((floorP.z - ${dialect.groundBallC}.z) / cell);
     ${df} checker = tileSum - 2.0 * floor(tileSum * 0.5);
     ${df} tileTone = mix(1.0, mix(0.035, 1.0, checker), step(0.5, ${dialect.groundPattern}));
-    ${dv3} floorBase = ${dialect.groundAlbedo} * tileTone;
+    ${pentagrid && isWgsl ? "var" : dv3} floorBase = ${dialect.groundAlbedo} * tileTone;${
+      pentagrid
+        ? `
+    // The pentagrid floor's own sample — the direct path's tone, at the
+    // REFLECTED ray's own footprint, so the mirror and the floor agree.
+    // Pattern ids ride the same accessor the checker reads; >= 1.5 is
+    // pentagrid (2). The grout is the one pixel-space quantity — an AA
+    // width, not a cell size — and it rides the caller's acceptance
+    // epsilon (tier-independent), passed as the acceptEps parameter.
+    if (${dialect.groundPattern} >= 1.5) {
+      floorBase = floorPentagridAlbedo(floorP.xz - ${dialect.groundBallC}.xz, acceptEps * floorT);
+    }`
+        : ""
+    }
     ${df} floorLit = ${dialect.ambient} + (1.0 - ${dialect.ambient}) * max(${dialect.lightDir}.y, 0.0) + ${dialect.groundEmission};
     envR = mix(envR, pow(floorBase, ${v3}(2.2)) * floorLit, floorFade);
   }
@@ -333,10 +352,23 @@ ${isWgsl ? "" : "#endif"}`
 function surfaceFinishSignature(
   dialect: SurfaceFinishDialect,
   room: boolean,
+  pentagrid: boolean,
 ): string {
+  // The pentagrid reflection branch reads the tier-independent acceptance
+  // epsilon as a PARAMETER, not a uniform: the GLSL tracers declare
+  // uAcceptPixelEps below the finish block, so a direct read would be a
+  // forward reference, and a dialect accessor would re-name it per site.
+  // The parameter keeps the body dialect-neutral (the "world units, never
+  // pixels" property the emission test pins holds — the body never names
+  // the eps uniform).
+  const eps = pentagrid
+    ? dialect.language === "glsl"
+      ? ", float acceptEps"
+      : ", acceptEps: f32"
+    : "";
   return dialect.language === "glsl"
-    ? `${dialect.vec3} finishShade(${dialect.vec3} base${room ? `, ${dialect.vec3} pos` : ""}, ${dialect.vec3} n, ${dialect.vec3} rd, float shadow, float ao, ${dialect.vec3} bg, vec4 fa, vec4 fb)`
-    : `fn finishShade(base: ${dialect.vec3}${room ? `, pos: ${dialect.vec3}` : ""}, n: ${dialect.vec3}, rd: ${dialect.vec3}, shadow: f32, ao: f32, bg: ${dialect.vec3}, fa: vec4f, fb: vec4f) -> ${dialect.vec3}`;
+    ? `${dialect.vec3} finishShade(${dialect.vec3} base${room ? `, ${dialect.vec3} pos` : ""}, ${dialect.vec3} n, ${dialect.vec3} rd, float shadow, float ao, ${dialect.vec3} bg, vec4 fa, vec4 fb${eps})`
+    : `fn finishShade(base: ${dialect.vec3}${room ? `, pos: ${dialect.vec3}` : ""}, n: ${dialect.vec3}, rd: ${dialect.vec3}, shadow: f32, ao: f32, bg: ${dialect.vec3}, fa: vec4f, fb: vec4f${eps}) -> ${dialect.vec3}`;
 }
 
 /**
@@ -350,12 +382,22 @@ function surfaceFinishSignature(
  * the fixed formula (`pow(x, 32.0)` literal vs uniform); an unauthored
  * document compiles literally the fixed program text and this function's
  * output never reaches it.
+ *
+ * `pentagrid` adds the pentagrid floor's reflection branch
+ * (`fractal/pentagrid-floor.ts`'s `floorPentagridAlbedo`, spliced beside
+ * the checker) plus the `acceptEps` parameter it reads. The GLSL tracers
+ * pass true unconditionally — the branch sits inside the room section's
+ * `#if SURFACE_GROUND_PLANE` guard, so the resolver drops it with the
+ * plane — and the WGSL shade entry passes `groundPlane && floorPattern`,
+ * the only combination where the pentagrid body is spliced. Absent (the
+ * default) keeps every existing emission byte-identical.
  */
 export function surfaceFinishShadeSource(
   dialect: SurfaceFinishDialect,
   room = false,
+  pentagrid = false,
 ): string {
-  return `${surfaceFinishSignature(dialect, room)} {${surfaceFinishBody(dialect, room)}}\n`;
+  return `${surfaceFinishSignature(dialect, room, pentagrid)} {${surfaceFinishBody(dialect, room, pentagrid)}}\n`;
 }
 
 /** The lighting-environment quantities {@link finishShadeTs} reads — the
@@ -373,9 +415,18 @@ export interface SurfaceFinishShadeEnv {
     ballCenter: Vec3;
     ballRadius: number;
     albedo: Vec3;
-    pattern: 0 | 1;
+    /** 0 solid, 1 checker, 2 pentagrid — the uGroundPattern dispatch. */
+    pattern: 0 | 1 | 2;
     tileScale: number;
     emission: number;
+    /** The pentagrid's RESOLVED block, present only when this mirror must
+     * model the pattern-2 branch (the shader reads the 32-float uniform
+     * wire instead; the mirror derives the same quantities CPU-side). */
+    pentagrid?: FloorPentagrid;
+    /** The tier-independent acceptance epsilon (angular, uAcceptPixelEps
+     * semantics) — the pentagrid grout's AA width is the one pixel-space
+     * quantity the branch reads. Unused by the checker path. */
+    acceptEps?: number;
   };
 }
 
@@ -401,6 +452,7 @@ export function finishShadeTs(
   finish: ResolvedSurfaceFinish,
   env: SurfaceFinishShadeEnv,
   pos?: Vec3,
+  acceptEps?: number,
 ): Vec3 {
   const mix = (x: number, y: number, t: number): number => x * (1 - t) + y * t;
   const dot3 = (a: Vec3, b: Vec3): number =>
@@ -463,10 +515,39 @@ export function finishShadeTs(
     Math.pow(sunDot, Number(SUN_GLOW_TIGHTNESS)) * Number(SUN_GLOW_INTENSITY);
   const reflW = finish.reflect * fresnel;
   const out: Vec3 = [0, 0, 0];
+  // The pentagrid branch's floor tone, hoisted out of the channel loop —
+  // the emitted body's floorBase assignment, mirrored: the pattern-2
+  // branch REPLACES the checker-toned albedo with the pentagrid sample at
+  // the reflected ray's own footprint (the mirror derives the same
+  // quantities the shader's 32-float wire carries, CPU-side in f64).
+  let pentagridTone: Vec3 | null = null;
+  const floor = env.floor;
+  if (
+    floor &&
+    floor.pattern === 2 &&
+    floor.pentagrid &&
+    pos &&
+    pos[1] > floor.y &&
+    reflDir[1] < -1e-5
+  ) {
+    const floorT = (floor.y - pos[1]) / reflDir[1];
+    const derived = pentagridDerived(
+      floor.pentagrid,
+      floor.ballRadius,
+      floor.tileScale,
+    );
+    pentagridTone = pentagridFloorTone(
+      derived,
+      floor.pentagrid.colorRule,
+      floor.pentagrid.grout,
+      pos[0] + reflDir[0] * floorT - floor.ballCenter[0],
+      pos[2] + reflDir[2] * floorT - floor.ballCenter[2],
+      (acceptEps ?? 0) * floorT,
+    );
+  }
   for (let i = 0 as 0 | 1 | 2; i < 3; i++) {
     const envBase = mix(env.bgBottom[i], env.bgTop[i], horizonT);
     let envR = Math.pow(envBase, 2.2) + sunAmt;
-    const floor = env.floor;
     if (floor && pos && pos[1] > floor.y && reflDir[1] < -1e-5) {
       const floorT = (floor.y - pos[1]) / reflDir[1];
       const floorP: Vec3 = [
@@ -485,11 +566,13 @@ export function finishShadeTs(
       const tileSum = Math.floor(dx / cell) + Math.floor(dz / cell);
       const checker = tileSum - 2 * Math.floor(tileSum * 0.5);
       const tileTone = floor.pattern === 1 ? mix(0.035, 1, checker) : 1;
+      const baseCh =
+        pentagridTone !== null ? pentagridTone[i] : floor.albedo[i] * tileTone;
       const floorLit =
         env.ambient +
         (1 - env.ambient) * Math.max(env.lightDir[1], 0) +
         floor.emission;
-      const floorR = Math.pow(floor.albedo[i] * tileTone, 2.2) * floorLit;
+      const floorR = Math.pow(baseCh, 2.2) * floorLit;
       envR = mix(envR, floorR, floorFade);
     }
     const refl = reflW * metalTint[i] * envR;

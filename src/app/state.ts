@@ -26,6 +26,7 @@ import type {
 import type { Rng } from "../fractal/rng";
 import { mulberry32 } from "../fractal/rng";
 import type { TilingSpec } from "../fractal/tiling";
+import type { FloorPentagrid } from "../fractal/pentagrid-floor";
 import { scenePartsAreNonFlat } from "../fractal/scene-dimension";
 import type { SphereInversionAuthored } from "../fractal/sphere-inversion";
 import type { FiniteSolidAuthored } from "../fractal/finite-solid";
@@ -290,12 +291,18 @@ export interface SolidParams {
   envLight: number;
   /** Whether Solid requests the shared world-space presentation floor. */
   floorEnabled: boolean;
-  /** Solid or world-space checker floor. */
+  /** Solid, checker, or pentagrid floor. */
   floorPattern: SurfaceFloorPattern;
-  /** Checker cell width as a fraction of the retained cloud sphere radius. */
+  /** Checker cell width as a fraction of the retained cloud sphere radius;
+   * the pentagrid reads the same knob as its rhombus edge metric. */
   floorTileScale: number;
   /** Emitted floor radiance in linear light. Zero preserves the neutral floor. */
   floorEmission: number;
+  /** The pentagrid floor's sparse authored block (the look's own form —
+   * absent fields resolve to the defaults, a field is authored only once
+   * its control moves). Absent until authored; presentation-floor.ts's
+   * `presentationFloorSpec` is the ONE resolution site. */
+  floorPentagrid?: Partial<FloorPentagrid>;
   /**
    * Structural-coloring palette (shares the flame render's
    * `PaletteSelection` union — see `palette.ts`). A cosine-gradient id
@@ -358,8 +365,15 @@ export type SurfaceColorSource = (typeof SURFACE_COLOR_SOURCES)[number];
 
 /** Authorable floor appearance. The pattern is evaluated in world space,
  * scaled from the surface session's certified visible ball, so resizing the
- * panel never changes the material. */
-export const SURFACE_FLOOR_PATTERNS = ["solid", "checker"] as const;
+ * panel never changes the material. `"pentagrid"` — the de Bruijn
+ * pentagrid's Penrose-rhombus floor (`fractal/pentagrid-floor.ts`) —
+ * dispatches as pattern id 2; the GLSL `uGroundPattern` uniform and the
+ * WGSL floor pattern lane both read the id, so the order is append-only. */
+export const SURFACE_FLOOR_PATTERNS = [
+  "solid",
+  "checker",
+  "pentagrid",
+] as const;
 export type SurfaceFloorPattern = (typeof SURFACE_FLOOR_PATTERNS)[number];
 
 /**
@@ -450,12 +464,17 @@ export interface SurfaceParams {
    * here.
    */
   envLight: number;
-  /** Solid or world-space checker floor. */
+  /** Solid, checker, or pentagrid floor. */
   floorPattern: SurfaceFloorPattern;
-  /** Checker cell width as a fraction of the session ball radius. */
+  /** Checker cell width as a fraction of the session ball radius; the
+   * pentagrid reads the same knob as its rhombus edge metric. */
   floorTileScale: number;
   /** Emitted floor radiance in linear light. Zero is the legacy floor. */
   floorEmission: number;
+  /** The pentagrid floor's sparse authored block — the Solid side's own
+   * field, separate from the Surface one by the same rule that keeps the
+   * two floor owners separate. Absent until authored. */
+  floorPentagrid?: Partial<FloorPentagrid>;
 }
 
 /** Snapshot of everything the UI and renderer need to draw a frame. */

@@ -47,6 +47,11 @@ import { SHAPE_TRAP_GEOMETRY_LEVEL_MAX } from "../fractal/shape-trap";
 import { TILING_GROUPS } from "../fractal/tiling";
 import type { FiniteTilingSpec, LatticeTilingSpec } from "../fractal/tiling";
 import {
+  PENTAGRID_COLOR_RULES,
+  PENTAGRID_PALETTES,
+  type FloorPentagrid,
+} from "../fractal/pentagrid-floor";
+import {
   CUSTOM_PALETTE_ID,
   FLAME_PALETTE_IDS,
   MAX_CUSTOM_PALETTE_STOPS,
@@ -298,6 +303,7 @@ const SOLID_FIELDS = {
   floorPattern: true,
   floorTileScale: true,
   floorEmission: true,
+  floorPentagrid: true,
   paletteId: true,
 } satisfies Fields<SolidParams>;
 const SURFACE_FIELDS = {
@@ -314,7 +320,17 @@ const SURFACE_FIELDS = {
   floorPattern: true,
   floorTileScale: true,
   floorEmission: true,
+  floorPentagrid: true,
 } satisfies Fields<SurfaceParams>;
+/** The pentagrid floor's sparse authored block — every field optional (the
+ * defaults own absence), each validated only when present. */
+const FLOOR_PENTAGRID_FIELDS = {
+  shifts: true,
+  rotationDeg: true,
+  colorRule: true,
+  palette: true,
+  grout: true,
+} satisfies Fields<FloorPentagrid>;
 const SURFACE_LIGHTING_FIELDS = {
   lights: true,
   ambient: true,
@@ -1199,11 +1215,43 @@ function solid(value: unknown, path: string, hasCustomPalette: boolean): void {
     PARAM.solidFloorEmission,
     `${path}.floorEmission`,
   );
+  if (entry.floorPentagrid !== undefined) {
+    floorPentagrid(entry.floorPentagrid, `${path}.floorPentagrid`);
+  }
   palette(
     required(entry, "paletteId", path),
     `${path}.paletteId`,
     hasCustomPalette,
   );
+}
+
+/** The pentagrid floor's sparse authored block: every field optional (the
+ * defaults own absence), each validated for SHAPE only when present — the
+ * resolver (resolveFloorPentagrid) owns the domains, wrapping shifts and
+ * rotation, clamping grout, and falling back on unknown rule/palette ids. */
+function floorPentagrid(value: unknown, path: string): void {
+  const entry = object(value, path, FLOOR_PENTAGRID_FIELDS);
+  if (entry.shifts !== undefined) {
+    const shifts = array(entry.shifts, `${path}.shifts`);
+    if (shifts.length !== 5) {
+      throw new TypeError(`${path}.shifts must have exactly 5 entries`);
+    }
+    for (let index = 0; index < shifts.length; index += 1) {
+      finite(shifts[index], `${path}.shifts[${index}]`);
+    }
+  }
+  if (entry.rotationDeg !== undefined) {
+    finite(entry.rotationDeg, `${path}.rotationDeg`);
+  }
+  if (entry.colorRule !== undefined) {
+    enumeration(entry.colorRule, PENTAGRID_COLOR_RULES, `${path}.colorRule`);
+  }
+  if (entry.palette !== undefined) {
+    enumeration(entry.palette, PENTAGRID_PALETTES, `${path}.palette`);
+  }
+  if (entry.grout !== undefined) {
+    finite(entry.grout, `${path}.grout`);
+  }
 }
 
 function surfaceLighting(value: unknown, path: string): void {
@@ -1294,6 +1342,9 @@ function surface(
     PARAM.surfaceFloorEmission,
     `${path}.floorEmission`,
   );
+  if (entry.floorPentagrid !== undefined) {
+    floorPentagrid(entry.floorPentagrid, `${path}.floorPentagrid`);
+  }
 }
 
 function camera(value: unknown, path: string): void {

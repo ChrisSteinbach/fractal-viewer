@@ -40,6 +40,7 @@ import {
 import type { Vec3 } from "../fractal/types";
 import {
   configureSurfaceLUTTexture,
+  packSurfacePentagridUniforms,
   SURFACE_CONDENSATION_GLSL_DEPTH_MAX,
   SURFACE_FULL_AO_TAPS,
   SURFACE_FULL_HIT_FLOOR,
@@ -55,6 +56,10 @@ import {
   surfaceSolidShadowSource,
   surfaceTransportSource,
 } from "./surface-material";
+import {
+  PENTAGRID_FLOOR_GLSL,
+  pentagridFloorAlbedoSource,
+} from "../fractal/pentagrid-floor";
 import type {
   SurfaceBalloonSpec,
   SurfaceGroundPlaneSpec,
@@ -582,12 +587,17 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   uniform int uGroundPattern;
   uniform float uGroundTileScale;
   uniform float uGroundEmission;
+  /** The pentagrid floor's 32-float wire — the 3D twin's declaration line
+   * for line; the body is dimension-free (world xz after the slice) and
+   * taken verbatim. */
+  uniform float uPentagridData[32];
+${pentagridFloorAlbedoSource(PENTAGRID_FLOOR_GLSL)}
 #endif
 #if SURFACE_FINISH
   /** surface-finish.ts's ONE lighting body, GLSL dialect — the 3D twin's
    * splice line for line; define-gated because it is value- not
    * byte-identical to the fixed formula at the classic lanes. */
-  ${surfaceFinishShadeSource(SURFACE_FINISH_GLSL, true)}
+  ${surfaceFinishShadeSource(SURFACE_FINISH_GLSL, true, true)}
 #endif
 #if SURFACE_PATTERN
   /** One compact native-carrier calibration per built DE/session; deliberately
@@ -2577,6 +2587,11 @@ ${surfaceSolidShadowSource(true)}
       vec2 tile = floor((hp.xz - uGroundBallC.xz) / cell);
       float checker = mod(tile.x + tile.y, 2.0);
       floorAlbedo *= mix(0.035, 1.0, checker);
+    } else if (uGroundPattern == 2) {
+      // The pentagrid floor, the 3D twin's branch line for line: rel is
+      // already this point relative to the ball center, and the footprint
+      // is the tier-independent acceptance epsilon at the plane distance.
+      floorAlbedo = floorPentagridAlbedo(rel, uAcceptPixelEps * tp);
     }
     vec3 floorLinear = pow(floorAlbedo, vec3(2.2));
     vec3 col = pow(
@@ -3113,7 +3128,7 @@ ${surfaceTransportSource(true)}
 #else
     int fSlot = clamp(firstChoice, 0, uMapCount - 1);
 #endif
-    vec3 col = finishShade(base, pos, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot]);
+    vec3 col = finishShade(base, pos, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot], uAcceptPixelEps);
 #else
     float diffuse = max(dot(n, uLightDir), 0.0);
     vec3 halfVec = normalize(uLightDir - rd);
@@ -3693,6 +3708,10 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uGroundPattern: { value: 0 },
       uGroundTileScale: { value: 0.64 },
       uGroundEmission: { value: 0 },
+      // The pentagrid floor's 32-float wire — the 3D twin's inert default
+      // (zeroed until packSurfacePentagridUniforms writes it, mutated in
+      // place; the reading branch dispatches on uGroundPattern).
+      uPentagridData: { value: new Float32Array(32) },
       // Same live selector/half-cell wire as the 3D material. Finite roots
       // and either arm's optional clip remain source-baked; the
       // presentation radius default is the frozen window multiplier.
@@ -4370,6 +4389,7 @@ export function setSurface4GroundPlane(
     u.uGroundPattern.value = spec.pattern ?? 0;
     u.uGroundTileScale.value = spec.tileScale ?? 0.64;
     u.uGroundEmission.value = spec.emission ?? 0;
+    packSurfacePentagridUniforms(material, spec);
   } else {
     // Zeros are fine while the arm is off — except the ball radius, whose
     // 1 keeps even a stray enabled read divide-by-zero-free, matching
@@ -4383,6 +4403,7 @@ export function setSurface4GroundPlane(
     u.uGroundPattern.value = 0;
     u.uGroundTileScale.value = 0.64;
     u.uGroundEmission.value = 0;
+    packSurfacePentagridUniforms(material, null);
   }
   if (fragment !== null) {
     material.defines.SURFACE4_GROUND_PLANE = want;
