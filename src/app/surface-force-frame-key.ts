@@ -1,4 +1,5 @@
 import { DEFAULT_BACKGROUND_SHAPE_CENTER } from "../fractal/background-shape";
+import { resolveFloorPentagrid } from "../fractal/pentagrid-floor";
 import { resolveShapeTrap } from "../fractal/shape-trap";
 import type { SphereInversionConstruction } from "../fractal/sphere-inversion";
 import type { SphairahedronConstruction } from "../fractal/sphairahedron";
@@ -258,7 +259,14 @@ export function surfaceComputeForceFrameKey(
     // re-present a stale frame. The "groundPlane" literal is the
     // on-flag; the block exists exactly when the session's kernels
     // carry the plane arm (never alongside "balloon" above — the two
-    // are mutually exclusive by construction).
+    // are mutually exclusive by construction). The pentagrid fields are
+    // INSIDE it, not a sibling — without the plane arm the kernel emits
+    // no floor at all, so a pentagrid edit means nothing outside a floor
+    // session — keyed on the RESOLVED block (the wire's own form: the
+    // production spec always packs the wire from this resolution, so an
+    // absent-default field and its explicit default key identically,
+    // exactly as the packer sees them). Keying it while the pattern is
+    // checker forces a re-trace, the safe direction.
     ...(spec.groundPlane
       ? [
           "groundPlane",
@@ -271,6 +279,17 @@ export function surfaceComputeForceFrameKey(
           spec.groundPlane.pattern ?? 0,
           spec.groundPlane.tileScale ?? 0.64,
           spec.groundPlane.emission ?? 0,
+          "pentagrid",
+          ...(() => {
+            const pg = resolveFloorPentagrid(spec.groundPlane?.pentagrid);
+            return [
+              pg.rotationDeg,
+              ...pg.shifts,
+              pg.colorRule,
+              pg.palette,
+              pg.grout,
+            ];
+          })(),
         ]
       : []),
     // The shape-trap block: a timeline leg that authors a different trap

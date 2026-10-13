@@ -54,6 +54,21 @@ describe("pentagrid floor", () => {
       expect(r.rotationDeg).toBe(8);
     });
 
+    it("resolves a resolved block to itself — the resolution chain re-resolves", () => {
+      // An in-domain value returns UNCHANGED: the wrap's add-and-subtract
+      // is not a floating-point identity, and the spec/key chain re-resolves
+      // resolved blocks, so idempotence is what keeps "resolved" a fixed
+      // point.
+      const once = resolveFloorPentagrid(undefined);
+      expect(resolveFloorPentagrid(once)).toEqual(once);
+      const authored = resolveFloorPentagrid({
+        shifts: [0.13, 0.62, 0.35, 0.81, 0.47],
+        rotationDeg: 36.5,
+        grout: 2,
+      });
+      expect(resolveFloorPentagrid(authored)).toEqual(authored);
+    });
+
     it("falls back on unknown rule or palette ids and clamps grout", () => {
       const r = resolveFloorPentagrid({
         colorRule: "plaid" as never,
@@ -316,29 +331,39 @@ describe("pentagrid floor", () => {
    * per-dialect signature line is dropped. */
   function canon(src: string): string {
     const body = src.slice(src.indexOf("floorPentagridAlbedo("));
-    return body
-      .split("\n")
-      .slice(1) // the signature line
-      .join("\n")
-      .replace(/float (\w+) = /g, "let $1: f32 = ")
-      .replace(/vec2 (\w+) = /g, "let $1: vec2f = ")
-      .replace(/vec3 (\w+) = /g, "let $1: vec3f = ")
-      .replace(/float (\w+)\[(\d+)\];/g, "var $1: ARR[$2];")
-      .replace(/var (\w+): array<f32, (\d+)>;/g, "var $1: ARR[$2];")
-      .replace(/for \(int (\w+) = 0/g, "for (var $1: IDX = 0")
-      .replace(/for \(var (\w+): i32 = 0/g, "for (var $1: IDX = 0")
-      .replace(/float\(/g, "F(")
-      .replace(/f32\(/g, "F(")
-      .replace(/vec2\(/g, "V2(")
-      .replace(/vec2f\(/g, "V2(")
-      .replace(/vec3\(/g, "V3(")
-      .replace(/vec3f\(/g, "V3(")
-      .replace(/uPentagridData\[/g, "PF[")
-      .replace(/params\.floorPentagrid\[/g, "PF[")
-      .replace(/uGroundAlbedo/g, "GA")
-      .replace(/params\.groundAlbedo/g, "GA")
-      .replace(/\s+/g, " ")
-      .trim();
+    return (
+      body
+        .split("\n")
+        .slice(1) // the signature line
+        .join("\n")
+        .replace(/float (\w+) = /g, "let $1: f32 = ")
+        .replace(/vec2 (\w+) = /g, "let $1: vec2f = ")
+        .replace(/vec3 (\w+) = /g, "let $1: vec3f = ")
+        // The WGSL dialect's MUTABLE scalar spellings normalize to `let` too.
+        .replace(/var (\w+): f32 = /g, "let $1: f32 = ")
+        .replace(/float (\w+)\[(\d+)\];/g, "var $1: ARR[$2];")
+        .replace(/var (\w+): array<f32, (\d+)>;/g, "var $1: ARR[$2];")
+        .replace(/for \(int (\w+) = 0/g, "for (var $1: IDX = 0")
+        .replace(/for \(var (\w+): i32 = 0/g, "for (var $1: IDX = 0")
+        .replace(/float\(/g, "F(")
+        .replace(/f32\(/g, "F(")
+        .replace(/vec2\(/g, "V2(")
+        .replace(/vec2f\(/g, "V2(")
+        .replace(/vec3\(/g, "V3(")
+        .replace(/vec3f\(/g, "V3(")
+        .replace(/uPentagridData\[/g, "PF[")
+        // The WGSL tail's vec4-row form (word k = member[k/4][k%4], the
+        // uniform address space's 16-byte stride rule) normalizes to the
+        // scalar read.
+        .replace(
+          /shade\.floorPentagrid\[\((.*?)\) \/ 4\]\[\(\1\) % 4\]/g,
+          "PF[$1]",
+        )
+        .replace(/uGroundAlbedo/g, "GA")
+        .replace(/params\.groundAlbedo/g, "GA")
+        .replace(/\s+/g, " ")
+        .trim()
+    );
   }
 
   describe("pentagridFloorAlbedoSource", () => {

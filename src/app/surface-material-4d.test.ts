@@ -94,8 +94,8 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
   // resolved) splices beside the checker under the same define; the
   // finish rows carry the acceptEps parameter's bytes.
   "4D plane finish0": {
-    resolved: "29927ffa1ea79658",
-    emitted: "75e77ae8d9a341e2",
+    resolved: "ddf18b287fef2947",
+    emitted: "7812688dc5cfb06d",
   },
   "4D base finish1": {
     resolved: "2c7026f0c3b235a7",
@@ -106,8 +106,8 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
     emitted: "8ef73e9ea21de7d4",
   },
   "4D plane finish1": {
-    resolved: "f75fcf017877867d",
-    emitted: "51639c0fe8878cd9",
+    resolved: "6a7b656d6e81e33d",
+    emitted: "11907b8f14408afb",
   },
 };
 

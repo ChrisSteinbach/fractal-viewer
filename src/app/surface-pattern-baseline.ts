@@ -56,12 +56,12 @@ export const PRE_PATTERN_SOURCE_HASHES: Record<
     emitted: "42cb004286b5631f",
   },
   "3D plane finish0": {
-    resolved: "a79edb5bd50a43b5",
-    emitted: "dd7b99e604850665",
+    resolved: "03a0199b9d273363",
+    emitted: "2a11802c26c88f88",
   },
   "3D plane finish1": {
-    resolved: "dad928535041232a",
-    emitted: "0a448c164c388b38",
+    resolved: "c1335096aa03bbf6",
+    emitted: "ec489c54da48f3c5",
   },
   "3D lens+balloon finish0": {
     resolved: "55641a810d77d4cb",
@@ -72,12 +72,12 @@ export const PRE_PATTERN_SOURCE_HASHES: Record<
     emitted: "238e58d13f0b7045",
   },
   "3D lens+plane finish0": {
-    resolved: "bc84e06559721077",
-    emitted: "87a5d4ce889e5288",
+    resolved: "603258830f65d186",
+    emitted: "1d800fd704bf8b22",
   },
   "3D lens+plane finish1": {
-    resolved: "15d74c1d5abf68f0",
-    emitted: "f81149db09e0c875",
+    resolved: "5b81ef9c414bee8c",
+    emitted: "043cba2ce5f38daa",
   },
   "3D escape finish0": {
     resolved: "86f0c307bb5e92ad",
@@ -96,12 +96,12 @@ export const PRE_PATTERN_SOURCE_HASHES: Record<
     emitted: "92a9414f41dbbccd",
   },
   "3D escape+plane finish0": {
-    resolved: "a6741fe3247427a4",
-    emitted: "de586eb8dfb68b1b",
+    resolved: "441f4b02c35daa0c",
+    emitted: "6309d7e5c8b2ecc6",
   },
   "3D escape+plane finish1": {
-    resolved: "eccc10224527055e",
-    emitted: "7c2eaccb717367c5",
+    resolved: "22d526a8068501d9",
+    emitted: "b3dd2680b40f523d",
   },
   "3D bulb finish0": {
     resolved: "934401b39b9527d3",
@@ -120,12 +120,12 @@ export const PRE_PATTERN_SOURCE_HASHES: Record<
     emitted: "909cd1e086a6613f",
   },
   "3D bulb+plane finish0": {
-    resolved: "9f1db7307b9a8ddd",
-    emitted: "b33d689812c5aa6f",
+    resolved: "af2c211091e4bb9b",
+    emitted: "fa7af5d1b727b460",
   },
   "3D bulb+plane finish1": {
-    resolved: "0ce3a9e73e7450e8",
-    emitted: "17827355c17203ce",
+    resolved: "a52f251f39fb8585",
+    emitted: "7de6f32668250747",
   },
   "4D base finish0": {
     resolved: "03f1ff298d0b36c7",
@@ -144,11 +144,11 @@ export const PRE_PATTERN_SOURCE_HASHES: Record<
     emitted: "8ef73e9ea21de7d4",
   },
   "4D plane finish0": {
-    resolved: "29927ffa1ea79658",
-    emitted: "75e77ae8d9a341e2",
+    resolved: "ddf18b287fef2947",
+    emitted: "7812688dc5cfb06d",
   },
   "4D plane finish1": {
-    resolved: "f75fcf017877867d",
-    emitted: "51639c0fe8878cd9",
+    resolved: "6a7b656d6e81e33d",
+    emitted: "11907b8f14408afb",
   },
 };

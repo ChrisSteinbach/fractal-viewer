@@ -87,6 +87,7 @@ import {
 } from "../fractal/condensation-solid-gpu";
 import type { EscapeDE } from "../fractal/escape-de";
 import { resolveShapeTrap } from "../fractal/shape-trap";
+import { PENTAGRID_UNIFORM_FLOATS } from "../fractal/pentagrid-floor";
 import type { ResolvedShapeTrap } from "../fractal/shape-trap";
 import type { EscapeDE4 } from "../fractal/escape-de-4d";
 import {
@@ -210,6 +211,7 @@ import {
   SURFACE_GPU_SEED_PARAMS_BYTES,
   SURFACE_GPU_SEED_WORKGROUP_SIZE,
   SURFACE_GPU_SHADE_BYTES,
+  SURFACE_GPU_SHADE_FLOOR_TAIL_BYTES,
   SURFACE_GPU_SHADE_LIGHTING_BYTES,
   SURFACE_GPU_SHADE_OPTICS_BYTES,
   SURFACE_GPU_SHADE_PATTERN_BYTES,
@@ -3851,6 +3853,13 @@ export class SurfaceComputeRenderer {
           // and a balloon+plane target is a caller bug the codegen
           // rejects loudly.
           groundPlane: target.groundPlane === true,
+          // The floor pattern's look field rides the plane arm's gate —
+          // the kernel compiles the 32-float tail + the WGSL body exactly
+          // when the plane arm is on, so a LIVE pattern edit (a look
+          // change, shading only) never regenerates kernels. The codegen
+          // scopes the flag to shade mode itself; the march stays
+          // byte-identical.
+          floorPattern: target.groundPlane === true,
           // Tiling KIND and CLIP are frozen with the session like the
           // estimator core. A lattice scale may change live afterward: it
           // alters only h in the params tail, while this generated source
@@ -4398,13 +4407,20 @@ export class SurfaceComputeRenderer {
       // uniform un-staged, silently invalidating EVERY dispatch that
       // binds it (all rays stay ACTIVE, the budget exhausts them, the
       // frame renders its seed backdrop).
-      size: lighting
-        ? SURFACE_GPU_SHADE_LIGHTING_BYTES
-        : materials?.optics
-          ? SURFACE_GPU_SHADE_OPTICS_BYTES
-          : materials?.pattern
-            ? SURFACE_GPU_SHADE_PATTERN_BYTES
-            : SURFACE_GPU_SHADE_BYTES,
+      // The pentagrid floor's tail: a floor session's shade struct declares
+      // the gated floor tail AFTER every other conditional member, so the
+      // shade buffer allocates it past the lighting/optics top either way —
+      // the optics top's own measured failure (the missing growth left the
+      // uniform un-staged) is the reason the term is here.
+      size:
+        (lighting
+          ? SURFACE_GPU_SHADE_LIGHTING_BYTES
+          : materials?.optics
+            ? SURFACE_GPU_SHADE_OPTICS_BYTES
+            : materials?.pattern
+              ? SURFACE_GPU_SHADE_PATTERN_BYTES
+              : SURFACE_GPU_SHADE_BYTES) +
+        (target.groundPlane === true ? SURFACE_GPU_SHADE_FLOOR_TAIL_BYTES : 0),
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     // Re-wrapped copies: the kernel packers' bare Float32Array types
@@ -4856,6 +4872,12 @@ export class SurfaceComputeRenderer {
   private lightingBackgroundSize: [number, number] = [1, 1];
   private uploadedLightingBackground: TraceBackgroundImage | null = null;
   private readonly lighting: boolean;
+  /** The pentagrid floor's session gate (init target's groundPlane): true
+   * compiles the shade struct's gated floor tail + the WGSL floor body
+   * (the look field's own gate — the pattern VALUE is live per frame, so
+   * the flag keys the text, never the pattern), and the shade spec packs
+   * the 32-float wire. The march kernel's text stays byte-identical. */
+  private readonly floorPattern: boolean;
   private readonly lutSamp: GPUSampler;
   /** See {@link SurfaceComputeRendererInit.adapterLabel}. */
   readonly adapterLabel: string | undefined;
@@ -4929,6 +4951,7 @@ export class SurfaceComputeRenderer {
     this.meshSdfTex = init.meshSdfTex ?? null;
     this.lightingBackgroundTex = init.lightingBackgroundTex ?? null;
     this.lighting = init.lighting ?? false;
+    this.floorPattern = init.target.groundPlane === true;
     this.lutSamp = init.lutSamp;
     this.timestamps = init.timestamps ?? null;
     this.adapterLabel = init.adapterLabel;
@@ -6136,6 +6159,15 @@ export class SurfaceComputeRenderer {
               spec.materials.patternCalibration.sheetsLow,
               spec.materials.patternCalibration.sheetsInvSpan,
             ]
+          : undefined,
+      // The pentagrid floor's wire, present exactly when the session
+      // compiled the floor tail (the target's groundPlane gate): the
+      // spec's once-per-build packed wire packs verbatim into the tail,
+      // so a live pattern/rule/palette/grout edit is a uniform rewrite.
+      floorPentagrid:
+        this.floorPattern && spec.groundPlane !== undefined
+          ? (spec.groundPlane.pentagridWire ??
+            new Float32Array(PENTAGRID_UNIFORM_FLOATS))
           : undefined,
       pixelJitter,
       envStrength: spec.envLight,
