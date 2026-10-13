@@ -175,6 +175,24 @@ export function resolveFloorPentagrid(
   return { shifts, rotationDeg, colorRule, palette, grout };
 }
 
+/**
+ * Structural copy of a sparse authored block: the block itself and its
+ * shifts tuple are fresh, so a setter or spec owner never aliases the
+ * caller's still-mutable data (the shifts tuple is the hazard — the other
+ * fields are primitives). Like {@link resolveFloorPentagrid}, the input is
+ * never retained.
+ */
+export function cloneFloorPentagridBlock(
+  block: Partial<FloorPentagrid>,
+): Partial<FloorPentagrid> {
+  return {
+    ...block,
+    ...(block.shifts !== undefined
+      ? { shifts: [...block.shifts] as FloorPentagrid["shifts"] }
+      : {}),
+  };
+}
+
 /** Stable rule ids the wire packs (`uniform` int / params word). */
 export const PENTAGRID_RULE_WIRE_ID: Readonly<
   Record<PentagridColorRule, 0 | 1 | 2 | 3>

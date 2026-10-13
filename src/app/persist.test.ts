@@ -8650,3 +8650,143 @@ describe("sphairahedron codec (the sphairahedron family's block)", () => {
     expect(encodeScene(toSnapshot(cleared))).toBe(encodeScene(baseSnapshot()));
   });
 });
+
+describe("pentagrid-floor codec (the floor's pentagrid block)", () => {
+  it("encodes a scene without the block byte-identically to one predating the field", () => {
+    const s = baseSnapshot();
+    const jsonBody = JSON.parse(
+      atob(
+        encodeScene(s).slice(3).replace(/-/g, "+").replace(/_/g, "/") +
+          "=".repeat((4 - (encodeScene(s).slice(3).length % 4)) % 4),
+      ),
+    ) as Record<string, unknown>;
+    const solidJson = jsonBody.solid as Record<string, unknown>;
+    const surfaceJson = jsonBody.surface as Record<string, unknown>;
+    expect(solidJson.floorPentagrid).toBeUndefined();
+    expect(surfaceJson.floorPentagrid).toBeUndefined();
+    expect(decodeScene(encodeScene(s))!.solid.floorPentagrid).toBeUndefined();
+    expect(decodeScene(encodeScene(s))!.surface.floorPentagrid).toBeUndefined();
+    // And re-encoding the decoded scene keeps the same string.
+    expect(encodeScene(decodeScene(encodeScene(s))!)).toBe(encodeScene(s));
+  });
+
+  it("round-trips a live authored block verbatim through the sparse form", () => {
+    const block = {
+      shifts: [0.11, 0.22, 0.33, 0.44, 0.55],
+      rotationDeg: 18,
+      colorRule: "orientation",
+      palette: "marine",
+      grout: 1.4,
+    } as const;
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      solid: { ...baseSnapshot().solid, floorPentagrid: block },
+      surface: { ...baseSnapshot().surface, floorPentagrid: block },
+    };
+    const hash = encodeScene(s);
+    const decoded = decodeScene(hash)!;
+    expect(decoded.solid.floorPentagrid).toEqual(block);
+    expect(decoded.surface.floorPentagrid).toEqual(block);
+    // The decoded scene re-encodes to the same string (a fixed point).
+    expect(encodeScene(decoded)).toBe(hash);
+  });
+
+  it("writes only authored leaves, rounding numeric ones like every other float", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      surface: {
+        ...baseSnapshot().surface,
+        floorPentagrid: { grout: 1 / 3 },
+      },
+    };
+    const jsonBody = JSON.parse(
+      atob(
+        encodeScene(s).slice(3).replace(/-/g, "+").replace(/_/g, "/") +
+          "=".repeat((4 - (encodeScene(s).slice(3).length % 4)) % 4),
+      ),
+    ) as Record<string, unknown>;
+    const surfaceJson = jsonBody.surface as Record<string, unknown>;
+    expect(surfaceJson.floorPentagrid).toEqual({ grout: 0.3333 });
+    // Decoding then re-encoding stays a fixed point.
+    const hash = encodeScene(s);
+    expect(encodeScene(decodeScene(hash)!)).toBe(hash);
+  });
+
+  it("drops malformed leaves and unknown ids to absent without rejecting the scene", () => {
+    const raw = {
+      ...JSON.parse(
+        atob(
+          encodeScene(baseSnapshot())
+            .slice(3)
+            .replace(/-/g, "+")
+            .replace(/_/g, "/") +
+            "=".repeat(
+              (4 - (encodeScene(baseSnapshot()).slice(3).length % 4)) % 4,
+            ),
+        ),
+      ),
+      surface: {
+        ...baseSnapshot().surface,
+        floorPentagrid: {
+          shifts: [0.1, 0.2],
+          rotationDeg: "x",
+          colorRule: "stripes",
+          palette: "neon",
+          grout: null,
+        },
+      },
+    };
+    const hash =
+      "v1=" +
+      btoa(JSON.stringify(raw))
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
+    const decoded = decodeScene(hash);
+    expect(decoded).not.toBeNull();
+    expect(decoded!.surface.floorPentagrid).toBeUndefined();
+  });
+
+  it("drops a value that cannot be a block (array, scalar) to absent without rejecting the scene", () => {
+    for (const raw of [[1, 2], "grid", 7]) {
+      const jsonBody = JSON.parse(
+        atob(
+          encodeScene(baseSnapshot())
+            .slice(3)
+            .replace(/-/g, "+")
+            .replace(/_/g, "/") +
+            "=".repeat(
+              (4 - (encodeScene(baseSnapshot()).slice(3).length % 4)) % 4,
+            ),
+        ),
+      );
+      (jsonBody.surface as Record<string, unknown>).floorPentagrid = raw;
+      const hash =
+        "v1=" +
+        btoa(JSON.stringify(jsonBody))
+          .replace(/\+/g, "-")
+          .replace(/\//g, "_")
+          .replace(/=+$/, "");
+      const decoded = decodeScene(hash);
+      expect(decoded, JSON.stringify(raw)).not.toBeNull();
+      expect(decoded!.surface.floorPentagrid).toBeUndefined();
+    }
+  });
+
+  it("round-trips through fromSnapshot and clears when the snapshot lacks the block", () => {
+    const base = initialState(true);
+    const block = { rotationDeg: 36, palette: "moss" } as const;
+    const withBlock = fromSnapshot(
+      {
+        ...baseSnapshot(),
+        surface: { ...baseSnapshot().surface, floorPentagrid: block },
+      },
+      base,
+    );
+    expect(withBlock.surface.floorPentagrid).toEqual(block);
+    const cleared = fromSnapshot(baseSnapshot(), base);
+    expect(cleared.surface.floorPentagrid).toBeUndefined();
+    // And the cleared state re-encodes to the pristine string.
+    expect(encodeScene(toSnapshot(cleared))).toBe(encodeScene(baseSnapshot()));
+  });
+});

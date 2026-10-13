@@ -113,6 +113,13 @@ import type {
   SurfaceParams,
 } from "./state";
 import {
+  PENTAGRID_COLOR_RULES,
+  PENTAGRID_PALETTES,
+  type FloorPentagrid,
+  type PentagridColorRule,
+  type PentagridPalette,
+} from "../fractal/pentagrid-floor";
+import {
   DEFAULT_CAMERA_FOV,
   clampCameraFov,
   clampPhi,
@@ -744,6 +751,52 @@ export const CAMERA_TARGET_LIMIT = 1000;
 function round4(n: number): number {
   return Math.round(n * 10000) / 10000;
 }
+
+/**
+ * Encode the pentagrid floor's sparse authored block, or nothing at all: a
+ * field is written only once its own control moves (the fold-radii rule —
+ * absence = the defaults), so a document that never touched the pentagrid
+ * keeps its short link byte-identical. Numeric leaves round4 like every
+ * other float in this payload.
+ */
+function encodeFloorPentagrid(
+  floorPentagrid: Partial<FloorPentagrid> | undefined,
+): { floorPentagrid?: FloorPentagridWire } {
+  if (!floorPentagrid || Object.keys(floorPentagrid).length === 0) return {};
+  const out: FloorPentagridWire = {};
+  if (floorPentagrid.shifts !== undefined) {
+    const s = floorPentagrid.shifts;
+    out.shifts = [
+      round4(s[0]),
+      round4(s[1]),
+      round4(s[2]),
+      round4(s[3]),
+      round4(s[4]),
+    ];
+  }
+  if (floorPentagrid.rotationDeg !== undefined) {
+    out.rotationDeg = round4(floorPentagrid.rotationDeg);
+  }
+  if (floorPentagrid.colorRule !== undefined) {
+    out.colorRule = floorPentagrid.colorRule;
+  }
+  if (floorPentagrid.palette !== undefined) {
+    out.palette = floorPentagrid.palette;
+  }
+  if (floorPentagrid.grout !== undefined) {
+    out.grout = round4(floorPentagrid.grout);
+  }
+  return { floorPentagrid: out };
+}
+
+/** The encoded pentagrid floor block's wire shape (sparse authored form). */
+type FloorPentagridWire = {
+  shifts?: [number, number, number, number, number];
+  rotationDeg?: number;
+  colorRule?: PentagridColorRule;
+  palette?: PentagridPalette;
+  grout?: number;
+};
 
 /** Encode exactly three coordinates with the caller's geometry precision. */
 function encodeGeometryVec3(
@@ -1642,6 +1695,59 @@ function decodeSurfacePattern(raw: unknown): SurfacePattern | undefined {
 }
 
 /**
+ * Decode the pentagrid floor's sparse authored block without coercion.
+ * Every field is optional (the defaults own absence); a malformed leaf is
+ * omitted, never a rejection — the block is cosmetic geometry a link is
+ * still valid without — and an unknown rule/palette id is omitted the same
+ * way (the resolver would fall back to the default anyway; omitting keeps
+ * the encoded round-trip byte-stable). A block that decodes empty is
+ * absent: the encode side never writes an empty block, so this can only
+ * come from a hand-built document. Runtime domains belong to
+ * `resolveFloorPentagrid`, not persistence.
+ */
+function decodeFloorPentagrid(
+  raw: unknown,
+): Partial<FloorPentagrid> | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  const p = raw as Record<string, unknown>;
+  const out: Partial<FloorPentagrid> = {};
+  if (
+    Array.isArray(p.shifts) &&
+    p.shifts.length === 5 &&
+    p.shifts.every((v) => typeof v === "number" && Number.isFinite(v))
+  ) {
+    out.shifts = [
+      p.shifts[0],
+      p.shifts[1],
+      p.shifts[2],
+      p.shifts[3],
+      p.shifts[4],
+    ];
+  }
+  if (typeof p.rotationDeg === "number" && Number.isFinite(p.rotationDeg)) {
+    out.rotationDeg = p.rotationDeg;
+  }
+  if (
+    typeof p.colorRule === "string" &&
+    (PENTAGRID_COLOR_RULES as readonly string[]).includes(p.colorRule)
+  ) {
+    out.colorRule = p.colorRule as PentagridColorRule;
+  }
+  if (
+    typeof p.palette === "string" &&
+    (PENTAGRID_PALETTES as readonly string[]).includes(p.palette)
+  ) {
+    out.palette = p.palette as PentagridPalette;
+  }
+  if (typeof p.grout === "number" && Number.isFinite(p.grout)) {
+    out.grout = p.grout;
+  }
+  return Object.keys(out).length === 0 ? undefined : out;
+}
+
+/**
  * Decode one optional numeric leaf inside an untrusted `w` block — a
  * position, a scale, or a single rotation/shear w-plane angle. All four kinds
  * share the identical "coerce, reject non-finite, clamp into `[min, max]`"
@@ -2254,7 +2360,7 @@ function decodeSolidParams(
   const out = { ...defaults };
   const numeric: Exclude<
     keyof SolidParams,
-    "paletteId" | "floorEnabled" | "floorPattern"
+    "paletteId" | "floorEnabled" | "floorPattern" | "floorPentagrid"
   >[] = [
     "resolution",
     "iterations",
@@ -2289,6 +2395,10 @@ function decodeSolidParams(
       ? (s.floorPattern as SurfaceFloorPattern)
       : DEFAULT_SOLID_FLOOR_PATTERN;
 
+  // The pentagrid floor's sparse authored block: written only when a field
+  // decodes, absent = the defaults (the resolver's total resolution).
+  const floorPentagrid = decodeFloorPentagrid(s.floorPentagrid);
+
   return {
     resolution: clampToSpec(PARAM.solidResolution, out.resolution),
     iterations: clampToSpec(PARAM.solidIterations, out.iterations),
@@ -2304,6 +2414,7 @@ function decodeSolidParams(
     floorPattern,
     floorTileScale: clampToSpec(PARAM.solidFloorTileScale, out.floorTileScale),
     floorEmission: clampToSpec(PARAM.solidFloorEmission, out.floorEmission),
+    ...(floorPentagrid ? { floorPentagrid } : {}),
     paletteId,
   };
 }
@@ -2423,6 +2534,7 @@ function decodeSurfaceParams(
     | "colorSource"
     | "paletteId"
     | "floorPattern"
+    | "floorPentagrid"
     | "lighting"
   >[] = [
     "lightAzimuth",
@@ -2474,6 +2586,10 @@ function decodeSurfaceParams(
     s.lighting === undefined ? undefined : decodeSurfaceLighting(s.lighting);
   if (lighting === null) return null;
 
+  // The pentagrid floor's sparse authored block: written only when a field
+  // decodes, absent = the defaults (the Solid side's discipline).
+  const floorPentagrid = decodeFloorPentagrid(s.floorPentagrid);
+
   return {
     antialiasSamples: out.antialiasSamples,
     depthOfField:
@@ -2496,6 +2612,7 @@ function decodeSurfaceParams(
       out.floorTileScale,
     ),
     floorEmission: clampToSpec(PARAM.surfaceFloorEmission, out.floorEmission),
+    ...(floorPentagrid ? { floorPentagrid } : {}),
     ...(lighting === undefined ? {} : { lighting }),
   };
 }
@@ -3508,6 +3625,11 @@ export function encodeScene(s: SceneSnapshot): string {
       floorPattern: s.solid.floorPattern,
       floorTileScale: round4(s.solid.floorTileScale),
       floorEmission: round4(s.solid.floorEmission),
+      // The pentagrid floor's sparse authored block, written only once a
+      // field is authored (the fold-radii rule: absence = the defaults), so
+      // a document that never touched the controls keeps its short link
+      // byte-identical. Numeric leaves round4 like every other float.
+      ...encodeFloorPentagrid(s.solid.floorPentagrid),
       paletteId: s.solid.paletteId,
     },
     surface: {
@@ -3529,6 +3651,7 @@ export function encodeScene(s: SceneSnapshot): string {
       floorPattern: s.surface.floorPattern,
       floorTileScale: round4(s.surface.floorTileScale),
       floorEmission: round4(s.surface.floorEmission),
+      ...encodeFloorPentagrid(s.surface.floorPentagrid),
       ...(s.surface.lighting === undefined
         ? {}
         : { lighting: cloneSurfaceLighting(s.surface.lighting) }),
