@@ -4662,10 +4662,11 @@ describe("SURFACE_SPHERE_INVERSION variant", () => {
     expect(resolved(0, 0, 0).length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
     // Plane + finish + lighting crosses the threshold and strips. The
     // plane leg re-recorded for the pentagrid floor: its body (~6KB
-    // resolved) splices beside the checker under the same define, and the
-    // finish leg's acceptEps parameter rides every finish-on program.
-    expect(resolved(1, 1, 1).length).toBe(66920);
-    expect(emitted(1, 1, 1).length).toBe(27922);
+    // resolved) splices beside the checker under the same define, the
+    // finish leg's acceptEps parameter rides every finish-on program, and
+    // the cinematic floor's own pentagrid dispatch rides the lighting leg.
+    expect(resolved(1, 1, 1).length).toBe(67275);
+    expect(emitted(1, 1, 1).length).toBe(28063);
     expect(emitted(1, 1, 1).length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
   });
 

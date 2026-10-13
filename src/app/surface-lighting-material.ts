@@ -114,7 +114,7 @@ bool cinematicPlaneBlocked(vec3 from, vec3 to) {
   }
 }
 vec3 cinematicEnvironment(vec3 pos, vec3 n, vec3 rd, vec3 baseEncoded, vec4 fa, vec4 fb) {
-  ${variant.finish ? "return pow(max(finishShade(baseEncoded, pos, n, rd, 0.0, 0.0, vec3(0.0), fa, vec4(0.0, fb.y, 0.0, 0.0)), vec3(0.0)), vec3(2.2));" : "return vec3(0.0);"}
+  ${variant.finish ? `return pow(max(finishShade(baseEncoded, pos, n, rd, 0.0, 0.0, vec3(0.0), fa, vec4(0.0, fb.y, 0.0, 0.0), uAcceptPixelEps), vec3(0.0)), vec3(2.2));` : "return vec3(0.0);"}
 }
 ${surfaceLightingShaderSource({ language: "glsl", field: (lane) => `uCinematic[${lane}]` })}
 `;
@@ -185,6 +185,11 @@ ${surfaceLightingShaderSource({ language: "glsl", field: (lane) => `uCinematic[$
       float cell = max(uGroundBallR * uGroundTileScale, 1.0e-4);
       vec2 tile = floor((hp.xz - uGroundBallC.xz) / cell);
       cinematicFloorBase *= mix(0.035, 1.0, mod(tile.x + tile.y, 2.0));
+    } else if (uGroundPattern == 2) {
+      // The pentagrid floor, the direct path's branch — hp is the plane
+      // crossing and tp the ray parameter, so the footprint is the
+      // tier-independent acceptance epsilon at that distance.
+      cinematicFloorBase = floorPentagridAlbedo(hp.xz - uGroundBallC.xz, uAcceptPixelEps * tp);
     }
     vec2 cinematicPixel = floor(gl_FragCoord.xy);
     vec3 cinematicBackgroundLinear = pow(max(background, vec3(0.0)), vec3(2.2));

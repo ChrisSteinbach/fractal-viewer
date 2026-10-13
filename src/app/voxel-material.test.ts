@@ -21,6 +21,7 @@ import {
   voxelFragmentFor,
 } from "./voxel-material";
 import { presentationFloorSpec } from "../fractal/presentation-floor";
+import { resolveFloorPentagrid } from "../fractal/pentagrid-floor";
 import { resolveTiling } from "../fractal/tiling";
 import { buildVoxelMaxHierarchy } from "../fractal/voxel-max-hierarchy";
 import { VOXEL_MAX_HIERARCHY_TRAVERSAL_CELL_SPAN } from "../fractal/voxel-max-hierarchy";
@@ -135,6 +136,45 @@ describe("Solid environment and floor presentation programs", () => {
     expect(source).toContain("maxHierarchyNode");
   });
 
+  it("splices the pentagrid floor beside the checker in every floor program", () => {
+    // Balloon suppresses the floor program (no horizon inside the echo),
+    // so only the non-balloon arms carry the floor text.
+    for (const accelerated of [false, true]) {
+      for (const tiling of [null, A3] as const) {
+        // voxelFragmentFor's third arg is the environment, the FOURTH the
+        // floor; the tiling arm picks which shadeVoxelFloor variant the
+        // program carries (one definition per program, two call sites).
+        // Tiling suspends the acceleration hierarchy, so the pair runs
+        // without it there.
+        const source = voxelFragmentFor(
+          false,
+          accelerated && tiling === null,
+          false,
+          true,
+          tiling,
+        );
+        // The checker text stays inline; the pentagrid dispatch sits
+        // beside it on the same uniform.
+        expect(source).toContain("if (uGroundPattern == 1) {");
+        expect(source).toContain("} else if (uGroundPattern == 2) {");
+        expect(
+          source.match(/floorPentagridAlbedo\(rel, uPixelEps \* tp\)/g),
+        ).toHaveLength(1);
+        // The ONE body definition — the program's own floor helper
+        // calls it.
+        expect(
+          source.match(/vec3 floorPentagridAlbedo\(vec2 rel, float px\) \{/g),
+        ).toHaveLength(1);
+        expect(source).toContain("uniform float uPentagridData[32];");
+        expect(source).toContain("uniform float uPixelEps;");
+      }
+    }
+    // Floor-off programs carry none of it.
+    const off = voxelFragmentFor(false, false, true, false);
+    expect(off).not.toContain("uPentagridData");
+    expect(off).not.toContain("floorPentagridAlbedo");
+  });
+
   it("packs every scalar and recompiles only across effective axes", () => {
     const material = createVoxelMaterial(emptyVoxelTexture());
     const original = material.fragmentShader;
@@ -143,6 +183,10 @@ describe("Solid environment and floor presentation programs", () => {
     packVoxelPresentation(material, { envLight: 0, floor: null });
     expect(material.fragmentShader).toBe(original);
     expect(material.version).toBe(originalVersion);
+    // Floor-off zeroes the wire.
+    expect(
+      Array.from(material.uniforms.uPentagridData.value as Float32Array),
+    ).toEqual(Array.from(new Float32Array(32)));
 
     packVoxelPresentation(material, { envLight: 0.25, floor });
     expect(material.fragmentShader).toBe(
@@ -161,6 +205,22 @@ describe("Solid environment and floor presentation programs", () => {
     expect(material.uniforms.uGroundPattern.value).toBe(1);
     expect(material.uniforms.uGroundTileScale.value).toBe(0.8);
     expect(material.uniforms.uGroundEmission.value).toBe(1.5);
+    // A checker-pattern spec zeroes the wire — the branch never reads it.
+    expect(
+      Array.from(material.uniforms.uPentagridData.value as Float32Array),
+    ).toEqual(Array.from(new Float32Array(32)));
+
+    // A pattern-2 spec packs the spec's own wire, in place.
+    const block = resolveFloorPentagrid({ colorRule: "pair" });
+    const pentagridFloor = presentationFloorSpec(
+      { center: [1, 2, 3], radius: 4 },
+      { pattern: "pentagrid", tileScale: 0.8, emission: 1.5, pentagrid: block },
+    )!;
+    packVoxelPresentation(material, { envLight: 0.25, floor: pentagridFloor });
+    expect(material.uniforms.uGroundPattern.value).toBe(2);
+    expect(
+      Array.from(material.uniforms.uPentagridData.value as Float32Array),
+    ).toEqual(Array.from(pentagridFloor.pentagridWire));
 
     packVoxelPresentation(material, {
       envLight: 0.75,
