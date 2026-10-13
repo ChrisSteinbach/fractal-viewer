@@ -3144,9 +3144,15 @@ export class Ui {
   private readonly surfaceGroundPlaneCheckbox: HTMLInputElement;
   private readonly surfaceGroundPlaneNote: HTMLElement;
   private readonly surfaceGroundPlaneDependentRows: readonly HTMLElement[];
+  /** The pentagrid pattern's authored details, visible only while the
+   * section's pattern select reads "pentagrid" on top of the row's own
+   * floor-visibility conditions. */
+  private readonly surfaceFloorPentagridRows: readonly HTMLElement[];
   /** Solid's authored floor stays available while its effective Balloon
    * suppresses the horizon; detail rows depend only on authored intent. */
   private readonly solidFloorDependentRows: readonly HTMLElement[];
+  /** Solid's twin of the pentagrid detail rows. */
+  private readonly solidFloorPentagridRows: readonly HTMLElement[];
 
   // One stable VIEW section owns the browser's single automatic-motion
   // choice. Its contextual rows explain what that choice drives here: the
@@ -3958,11 +3964,33 @@ export class Ui {
       this.byId("surfaceFloorTileScaleRow"),
       this.byId("surfaceFloorEmissionRow"),
     ];
+    this.surfaceFloorPentagridRows = [
+      "surfaceFloorPentagridShift0Row",
+      "surfaceFloorPentagridShift1Row",
+      "surfaceFloorPentagridShift2Row",
+      "surfaceFloorPentagridShift3Row",
+      "surfaceFloorPentagridShift4Row",
+      "surfaceFloorPentagridRotationRow",
+      "surfaceFloorPentagridRuleRow",
+      "surfaceFloorPentagridPaletteRow",
+      "surfaceFloorPentagridGroutRow",
+    ].map((id) => this.byId(id));
     this.solidFloorDependentRows = [
       this.byId("solidFloorPatternRow"),
       this.byId("solidFloorTileScaleRow"),
       this.byId("solidFloorEmissionRow"),
     ];
+    this.solidFloorPentagridRows = [
+      "solidFloorPentagridShift0Row",
+      "solidFloorPentagridShift1Row",
+      "solidFloorPentagridShift2Row",
+      "solidFloorPentagridShift3Row",
+      "solidFloorPentagridShift4Row",
+      "solidFloorPentagridRotationRow",
+      "solidFloorPentagridRuleRow",
+      "solidFloorPentagridPaletteRow",
+      "solidFloorPentagridGroutRow",
+    ].map((id) => this.byId(id));
     this.viewControls = this.byId("viewControls");
     this.pointsLayoutRow = this.byId("pointsLayoutRow");
     this.pointsParallelViewsControls = this.byId("pointsParallelViewsControls");
@@ -5356,14 +5384,33 @@ export class Ui {
     for (const row of this.surfaceGroundPlaneDependentRows) {
       row.classList.toggle("hidden", !showDependent);
     }
+    // The pentagrid details additionally wait on the pattern itself, read
+    // off the select like the Balloon checkbox above — updateLabels syncs
+    // the scalars from state before reaching this call, and the other
+    // entry (the session-kind setter) runs between state changes where the
+    // synced value still is the state's.
+    const showPentagrid =
+      showDependent &&
+      this.scalarSelect("surfaceFloorPatternSelect").value === "pentagrid";
+    for (const row of this.surfaceFloorPentagridRows) {
+      row.classList.toggle("hidden", !showPentagrid);
+    }
   }
 
-  /** Collapse Solid's floor details while the authored toggle is off. The
-   * Balloon precedence is renderer-side, so it never disables or clears the
+  /** Collapse Solid's floor details while the authored toggle is off, and
+   * the pentagrid details until the pattern itself is selected. The Balloon
+   * precedence is renderer-side, so it never disables or clears the
    * independently persisted editor. */
   private syncSolidFloorRows(state: AppState): void {
     for (const row of this.solidFloorDependentRows) {
       row.classList.toggle("hidden", !state.solid.floorEnabled);
+    }
+    // The pattern is read from state — updateLabels syncs the select from
+    // the same value before reaching this call.
+    const pentagrid =
+      state.solid.floorEnabled && state.solid.floorPattern === "pentagrid";
+    for (const row of this.solidFloorPentagridRows) {
+      row.classList.toggle("hidden", !pentagrid);
     }
   }
 

@@ -42,7 +42,15 @@ import type { AppState, ParamSpec } from "./state";
 import { BACKGROUND_MODES } from "./background";
 import { BACKGROUND_SHAPES } from "../fractal/background-shape";
 import { applyScalarControl, SCALAR_CONTROLS } from "./control-spec";
-import type { ControlEffects, ScalarControlSpec } from "./control-spec";
+import type {
+  ControlEffects,
+  RangeControlSpec,
+  ScalarControlSpec,
+} from "./control-spec";
+import {
+  PENTAGRID_COLOR_RULES,
+  PENTAGRID_PALETTES,
+} from "../fractal/pentagrid-floor";
 import { deriveSurfaceEligibility } from "./surface-eligibility";
 import {
   defaultTransforms,
@@ -1375,10 +1383,11 @@ describe("Ui table-driven exact numeric controls", () => {
     // half-thickness, cut radius, cut offset, depth), the ten chain-twist
     // sliders (rotation XYZ, offset XYZ, the three w-plane turns, the w
     // offset), the eleven Menger-carve sliders (levels, rotation XYZ,
-    // offset XYZ, the three w-plane turns, the w offset), and the eight
+    // offset XYZ, the three w-plane turns, the w offset), the eight
     // sphairahedron sliders (za, zb, z2, the inversion sphere's cx/cy/cz/
-    // cw/r).
-    expect(ranges).toHaveLength(82);
+    // cw/r), and the fourteen pentagrid floor sliders (five phason shifts,
+    // rotation and grout in BOTH Floor sections).
+    expect(ranges).toHaveLength(96);
     for (const spec of ranges) {
       const slider = document.getElementById(spec.id);
       const number = exactInput(spec.id);
@@ -2605,6 +2614,268 @@ describe("Ui surface ground plane row", () => {
     );
     expect(surfaceGroundPlaneNote().getAttribute("role")).toBe("status");
     expect(surfaceGroundPlaneNote().getAttribute("aria-live")).toBe("polite");
+  });
+});
+
+describe("Ui pentagrid floor details", () => {
+  const byId = (id: string): HTMLElement =>
+    document.getElementById(id) as HTMLElement;
+  const inputOf = (id: string): HTMLInputElement =>
+    byId(id) as HTMLInputElement;
+  const selectOf = (id: string): HTMLSelectElement =>
+    byId(id) as HTMLSelectElement;
+
+  const PENTAGRID_TAILS = [
+    "Shift0",
+    "Shift1",
+    "Shift2",
+    "Shift3",
+    "Shift4",
+    "Rotation",
+    "Rule",
+    "Palette",
+    "Grout",
+  ] as const;
+  const solidRows = (): string[] =>
+    PENTAGRID_TAILS.map((tail) => `solidFloorPentagrid${tail}Row`);
+  const surfaceRows = (): string[] =>
+    PENTAGRID_TAILS.map((tail) => `surfaceFloorPentagrid${tail}Row`);
+
+  const hidden = (ids: string[]): boolean[] =>
+    ids.map((id) => byId(id).classList.contains("hidden"));
+
+  it("reveals Solid's pentagrid details only while the floor is on and the pattern is pentagrid", () => {
+    const ui = new Ui(document);
+    const base = { ...initialState(true), renderMode: "solid" as const };
+
+    // Floor off (the default): every detail row collapsed.
+    ui.updateLabels(base);
+    expect(hidden(solidRows())).toEqual(solidRows().map(() => true));
+
+    // Floor on, pattern pentagrid: all nine revealed together.
+    ui.updateLabels({
+      ...base,
+      solid: { ...base.solid, floorEnabled: true, floorPattern: "pentagrid" },
+    });
+    expect(hidden(solidRows())).toEqual(solidRows().map(() => false));
+
+    // Floor on, another pattern: collapsed again — the details belong to
+    // the pattern, not to the floor toggle.
+    ui.updateLabels({
+      ...base,
+      solid: { ...base.solid, floorEnabled: true, floorPattern: "checker" },
+    });
+    expect(hidden(solidRows())).toEqual(solidRows().map(() => true));
+  });
+
+  it("reveals Surface's pentagrid details under the same plane and pattern conditions", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceSessionKind("ifs");
+    const base = {
+      ...initialState(true),
+      renderMode: "surface" as const,
+      groundPlane: true,
+    };
+
+    // Plane on, pattern still its default: collapsed.
+    ui.updateLabels(base);
+    expect(hidden(surfaceRows())).toEqual(surfaceRows().map(() => true));
+
+    // Pattern pentagrid: revealed.
+    ui.updateLabels({
+      ...base,
+      surface: { ...base.surface, floorPattern: "pentagrid" },
+    });
+    expect(hidden(surfaceRows())).toEqual(surfaceRows().map(() => false));
+
+    // An applicable, enabled Balloon owns the enclosure — every dependent
+    // row collapses with it, pentagrid details included.
+    ui.updateLabels({ ...base, balloonEcho: true });
+    expect(hidden(surfaceRows())).toEqual(surfaceRows().map(() => true));
+  });
+
+  it("displays the resolved block while the pattern is pentagrid", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "solid",
+      solid: {
+        ...initialState(true).solid,
+        floorEnabled: true,
+        floorPattern: "pentagrid",
+        floorPentagrid: {
+          shifts: [0.1, 0.2, 0.3, 0.4, 0.5],
+          rotationDeg: 30,
+          grout: 2.5,
+        },
+      },
+    });
+
+    // Authored fields read their values; absent fields read the resolver's
+    // defaults, so the sliders always display the effective pattern.
+    expect(inputOf("solidFloorPentagridShift0Slider").value).toBe("0.1");
+    expect(inputOf("solidFloorPentagridShift4Slider").value).toBe("0.5");
+    expect(inputOf("solidFloorPentagridRotationSlider").value).toBe("30");
+    expect(byId("solidFloorPentagridRotationLabel").textContent).toBe("30°");
+    expect(inputOf("solidFloorPentagridGroutSlider").value).toBe("2.5");
+    expect(byId("solidFloorPentagridGroutLabel").textContent).toBe("2.50");
+    expect(selectOf("solidFloorPentagridRuleSelect").value).toBe("grey");
+    expect(selectOf("solidFloorPentagridPaletteSelect").value).toBe("sunset");
+  });
+
+  it("authors a sparse shifts tuple from one phason slider", () => {
+    const { handlers, current } = scalarHandlers();
+    new Ui(document).bind(handlers);
+
+    inputOf("solidFloorPentagridShift2Slider").value = "0.5";
+    byId("solidFloorPentagridShift2Slider").dispatchEvent(new Event("input"));
+
+    // Untouched slots ride their resolved defaults; no other field appears.
+    expect(current().solid.floorPentagrid).toEqual({
+      shifts: [0.13, 0.62, 0.5, 0.81, 0.47],
+    });
+  });
+
+  it("keeps authored siblings when another phason returns to its default", () => {
+    const { handlers, current } = scalarHandlers();
+    new Ui(document).bind(handlers);
+
+    inputOf("solidFloorPentagridShift0Slider").value = "0.5";
+    byId("solidFloorPentagridShift0Slider").dispatchEvent(new Event("input"));
+    inputOf("solidFloorPentagridShift2Slider").value = "0.35";
+    byId("solidFloorPentagridShift2Slider").dispatchEvent(new Event("input"));
+
+    expect(current().solid.floorPentagrid).toEqual({
+      shifts: [0.5, 0.62, 0.35, 0.81, 0.47],
+    });
+  });
+
+  it("drops the shifts tuple once every phason sits at its default", () => {
+    const { handlers, current } = scalarHandlers();
+    new Ui(document).bind(handlers);
+
+    inputOf("solidFloorPentagridShift0Slider").value = "0.5";
+    byId("solidFloorPentagridShift0Slider").dispatchEvent(new Event("input"));
+    expect(current().solid.floorPentagrid).toBeDefined();
+
+    inputOf("solidFloorPentagridShift0Slider").value = "0.13";
+    byId("solidFloorPentagridShift0Slider").dispatchEvent(new Event("input"));
+    expect(current().solid.floorPentagrid).toBeUndefined();
+  });
+
+  it.each([
+    ["solidFloorPentagridRotationSlider", "30", { rotationDeg: 30 }],
+    ["solidFloorPentagridGroutSlider", "2.5", { grout: 2.5 }],
+  ] as const)("authors %s's field sparsely", (id, raw, expected) => {
+    const { handlers, current } = scalarHandlers();
+    new Ui(document).bind(handlers);
+
+    inputOf(id).value = raw;
+    byId(id).dispatchEvent(new Event("input"));
+    expect(current().solid.floorPentagrid).toEqual(expected);
+
+    // Back at the default the field drops, the block going with it.
+    const dflt = id === "solidFloorPentagridRotationSlider" ? "0" : "1";
+    inputOf(id).value = dflt;
+    byId(id).dispatchEvent(new Event("input"));
+    expect(current().solid.floorPentagrid).toBeUndefined();
+  });
+
+  it.each([
+    ["solidFloorPentagridRuleSelect", "pair", { colorRule: "pair" }, "grey"],
+    [
+      "solidFloorPentagridPaletteSelect",
+      "marine",
+      { palette: "marine" },
+      "sunset",
+    ],
+  ] as const)("authors and clears %s", (id, raw, expected, dflt) => {
+    const { handlers, current } = scalarHandlers();
+    new Ui(document).bind(handlers);
+
+    selectOf(id).value = raw;
+    byId(id).dispatchEvent(new Event("change"));
+    expect(current().solid.floorPentagrid).toEqual(expected);
+
+    selectOf(id).value = dflt;
+    byId(id).dispatchEvent(new Event("change"));
+    expect(current().solid.floorPentagrid).toBeUndefined();
+  });
+
+  it("authors Surface's block through its own field", () => {
+    const { handlers, current } = scalarHandlers();
+    new Ui(document).bind(handlers);
+
+    inputOf("surfaceFloorPentagridRotationSlider").value = "12";
+    byId("surfaceFloorPentagridRotationSlider").dispatchEvent(
+      new Event("input"),
+    );
+    expect(current().surface.floorPentagrid).toEqual({ rotationDeg: 12 });
+    expect(current().solid.floorPentagrid).toBeUndefined();
+  });
+
+  it("keeps one section's authored block while the other edits", () => {
+    const { handlers, current } = scalarHandlers();
+    new Ui(document).bind(handlers);
+
+    inputOf("solidFloorPentagridGroutSlider").value = "2.5";
+    byId("solidFloorPentagridGroutSlider").dispatchEvent(new Event("input"));
+    inputOf("surfaceFloorPentagridGroutSlider").value = "4";
+    byId("surfaceFloorPentagridGroutSlider").dispatchEvent(new Event("input"));
+
+    expect(current().solid.floorPentagrid).toEqual({ grout: 2.5 });
+    expect(current().surface.floorPentagrid).toEqual({ grout: 4 });
+  });
+});
+
+// The pentagrid sliders' HTML ranges present the resolver's own domains (the
+// spec entries read them from fractal/pentagrid-floor.ts), so this pin is
+// spec-vs-markup: editing one side without the other fails here. Deliberately
+// NOT the PARAM pin above — the pentagrid setters do not clamp through PARAM;
+// the resolver owns the domains.
+describe("pentagrid floor markup pins", () => {
+  const doc = new DOMParser().parseFromString(indexHtml, "text/html");
+  const pentagridRanges = SCALAR_CONTROLS.filter(
+    (spec): spec is RangeControlSpec =>
+      spec.kind === "range" && spec.id.includes("FloorPentagrid"),
+  );
+
+  it("has one markup slider per pentagrid range spec, both sections", () => {
+    expect(pentagridRanges).toHaveLength(14);
+  });
+
+  it.each(pentagridRanges.map((spec) => [spec.id, spec] as const))(
+    "%s min/max/step match its spec",
+    (id, spec) => {
+      const el = doc.getElementById(id);
+      if (!el) throw new Error(`No #${id} in index.html`);
+      expect(el.getAttribute("min")).toBe(String(spec.numeric.min));
+      expect(el.getAttribute("max")).toBe(String(spec.numeric.max));
+      expect(el.getAttribute("step")).toBe(String(spec.numeric.step));
+    },
+  );
+
+  it("offers the pentagrid pattern in both floor pattern selects", () => {
+    for (const id of ["solidFloorPatternSelect", "surfaceFloorPatternSelect"]) {
+      const values = Array.from(
+        (doc.getElementById(id) as HTMLSelectElement).options,
+      ).map((o) => o.value);
+      expect(values).toContain("pentagrid");
+    }
+  });
+
+  it("offers exactly the resolver's color rules and palettes", () => {
+    for (const [id, vocabulary] of [
+      ["solidFloorPentagridRuleSelect", PENTAGRID_COLOR_RULES],
+      ["surfaceFloorPentagridRuleSelect", PENTAGRID_COLOR_RULES],
+      ["solidFloorPentagridPaletteSelect", PENTAGRID_PALETTES],
+      ["surfaceFloorPentagridPaletteSelect", PENTAGRID_PALETTES],
+    ] as const) {
+      const values = Array.from(
+        (doc.getElementById(id) as HTMLSelectElement).options,
+      ).map((o) => o.value);
+      expect(values).toEqual([...vocabulary]);
+    }
   });
 });
 

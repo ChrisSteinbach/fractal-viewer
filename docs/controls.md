@@ -400,14 +400,23 @@ morphs into place instead of snapping (see **Presets** below).
     live, without changing Surface's Lighting state or
     re-accumulating the grid.
   - **Floor** — adds a neutral-gray world-space floor below the sampled
-    volume, with **Solid** or **Checkerboard** pattern, **Tile size**
+    volume, with **Solid**, **Checkerboard**, or **Penrose** pattern, **Tile size**
     (0.10×–2.00× the cloud radius, default 0.64×), and emitted **Floor light**
     (0–4, default 0). The floor uses the cloud's stable enclosing sphere: in
     4D it remains at the origin with the full 4D radius while the rotor and W
     slice move. Changes are live presentation work and never rebuild the voxel
     grid. Balloon has no horizon, so an effective Balloon temporarily hides
     the floor while preserving the authored checkbox and appearance settings;
-    turning Balloon off restores it.
+    turning Balloon off restores it. The **Penrose** pattern (a de Bruijn
+    pentagrid's Penrose-rhombus dual) reveals its own detail rows: five
+    **Phason** shifts — the unforeseeable knob, a nudge re-tiles the whole
+    floor — **Rotation** in whole degrees across the grid's own 72° period,
+    a **Color rule** (grey two-tone, orientation, height, pair), one of four
+    cosine **Palettes** (sunset, marine, dusk, moss), and **Grout** edge
+    width. Each field lands in the document only once its own control moves
+    and drops again when dragged back to its default, so a pattern that was
+    never authored keeps its short link byte-identical; every edit is a live
+    uniform rewrite, never a restart.
   - **Quality** — **Iterations** steps a 1-2-5 ladder from 1M–100M
     (default 20M) and behaves like the flame's: raise it and accumulation continues past what already looked
     done, lower it and the render finishes where it stands. **Resolution
@@ -875,7 +884,12 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   **W slice**, where it is an ordinary 3D plane like any other. (An
   off-centre slice shows a smaller shape floating above it, which is
   honest — it _is_ a smaller slice.) It is likewise a recompile-class
-  toggle. The two independently persisted flags compose one way only: while
+  toggle. The pattern select offers **Penrose** — the same de Bruijn
+  pentagrid floor Solid's Floor section offers — with the same detail rows
+  (five **Phason** shifts, **Rotation**, **Color rule**, **Palette**,
+  **Grout**), authored sparsely and rewritten live: the details wait on the
+  pattern itself, while the plane toggle above stays the recompile-class
+  change. The two independently persisted flags compose one way only: while
   Balloon is applicable and on in Surface, the **Floor** checkbox stays
   visible but disables beside “Floor unavailable while Balloon encloses this
   Surface.” Its saved check and settings are retained, and return when Balloon

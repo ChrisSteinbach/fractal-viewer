@@ -46,6 +46,16 @@ import {
 } from "../fractal/menger-twist";
 import { SPHERE_INVERSION_SEED_KINDS } from "../fractal/sphere-inversion";
 import {
+  DEFAULT_FLOOR_PENTAGRID,
+  PENTAGRID_GROUT_MAX,
+  PENTAGRID_GROUT_MIN,
+  PENTAGRID_ROTATION_PERIOD_DEG,
+  resolveFloorPentagrid,
+  type FloorPentagrid,
+  type PentagridColorRule,
+  type PentagridPalette,
+} from "../fractal/pentagrid-floor";
+import {
   defaultSphairahedronBlock,
   sphairahedronFamilyValue,
   sphairahedronFieldRange,
@@ -120,6 +130,7 @@ import {
   setSolidEnvLight,
   setSolidFloorEmission,
   setSolidFloorEnabled,
+  setSolidFloorPentagrid,
   setSolidFloorPattern,
   setSolidFloorTileScale,
   setSolidIterations,
@@ -135,6 +146,7 @@ import {
   setSurfaceDepthOfField,
   setSurfaceEnvLight,
   setSurfaceFloorEmission,
+  setSurfaceFloorPentagrid,
   setSurfaceFloorPattern,
   setSurfaceFloorTileScale,
   setSurfaceLightAzimuth,
@@ -1293,6 +1305,259 @@ function sphairahedronRange(
  * carries the exact value; the label is a glance). */
 function twistAngleLabel(value: number): string {
   return `${value.toFixed(2)}`;
+}
+
+// ——— The pentagrid floor's authored details ———
+//
+// Eight controls in EACH Floor section (Solid's and Surface's ground plane),
+// revealed only while the section's pattern select reads "pentagrid" (ui.ts's
+// sync functions). Every write goes through
+// {@link authoredFloorPentagridField}: the sparse-block rule — a field lands
+// in the document only once its own control moves, and it drops again when
+// dragged back to its default, so absence stays byte-identically the
+// resolver's defaults. Domains are never re-clamped here: the resolver
+// (fractal/pentagrid-floor.ts's `resolveFloorPentagrid`) owns them, and the
+// sliders present exactly those spans so a readout is never a value the
+// resolver would silently move. All edits are live-reactive uniform
+// rewrites through the section's own params effect — never a restart.
+
+/** The phason sliders' presented domain: the resolver wraps the shift to
+ * [0, 1), and the slider offers its two-decimal interior — 0.99 is the last
+ * value it can author, so stepping to the top never authors a 1 the resolver
+ * would wrap to 0 under the displayed readout. */
+const PENTAGRID_SHIFT_SLIDER_MAX = 0.99;
+
+/**
+ * Overlay one authored field onto the document's sparse pentagrid block and
+ * drop it again when its new value sits at the resolver's default (the
+ * fold-length rule). An empty result hands back null — the reducers remove
+ * the block outright, keeping absence the resting state.
+ */
+function authoredFloorPentagridField<F extends keyof FloorPentagrid>(
+  current: Partial<FloorPentagrid> | undefined,
+  field: F,
+  value: FloorPentagrid[F],
+  atDefault: (value: FloorPentagrid[F]) => boolean,
+): Partial<FloorPentagrid> | null {
+  const next: Partial<FloorPentagrid> = { ...current, [field]: value };
+  if (atDefault(value)) delete next[field];
+  return Object.keys(next).length > 0 ? next : null;
+}
+
+/** The shifts tuple drops only when ALL five slots sit at the defaults —
+ * half a slider step of slack, since a value round-trips through the
+ * slider's string and persist's rounding. */
+function shiftsAtDefaults(shifts: FloorPentagrid["shifts"]): boolean {
+  return shifts.every(
+    (v, i) => Math.abs(v - DEFAULT_FLOOR_PENTAGRID.shifts[i]) <= 0.005,
+  );
+}
+
+/** One floor section's pentagrid wiring: which block it authors, through
+ * which reducer, and which params effect pushes the uniforms. */
+interface PentagridSectionWire {
+  readonly prefix: "solid" | "surface";
+  readonly resolved: (s: AppState) => FloorPentagrid;
+  readonly current: (s: AppState) => Partial<FloorPentagrid> | undefined;
+  readonly apply: (
+    s: AppState,
+    block: Partial<FloorPentagrid> | null,
+  ) => AppState;
+  readonly effect: ControlEffect;
+}
+
+const SOLID_PENTAGRID_WIRE: PentagridSectionWire = {
+  prefix: "solid",
+  resolved: (s) => resolveFloorPentagrid(s.solid.floorPentagrid),
+  current: (s) => s.solid.floorPentagrid,
+  apply: setSolidFloorPentagrid,
+  effect: solidParamsEffect,
+};
+
+const SURFACE_PENTAGRID_WIRE: PentagridSectionWire = {
+  prefix: "surface",
+  resolved: (s) => resolveFloorPentagrid(s.surface.floorPentagrid),
+  current: (s) => s.surface.floorPentagrid,
+  apply: setSurfaceFloorPentagrid,
+  effect: surfaceParamsEffect,
+};
+
+/** One phason-shift slider: reads its slot's RESOLVED value (absent =
+ * default, so the slider always displays the effective phason), writes the
+ * whole shifts tuple — the block's one array field, untouched slots at their
+ * resolved values — and the tuple drops once all five slots sit at the
+ * defaults. */
+function pentagridShiftSlider(
+  wire: PentagridSectionWire,
+  index: number,
+): RangeControlSpec {
+  const cap = wire.prefix === "solid" ? "Solid" : "Surface";
+  const read = (s: AppState): number => wire.resolved(s).shifts[index];
+  const write = (s: AppState, value: number): AppState => {
+    // A fresh mutable tuple from the resolved shifts (resolveFloorPentagrid
+    // never retains its result), the moved slot overlaid, whole tuple written.
+    const shifts: [number, number, number, number, number] = [
+      ...wire.resolved(s).shifts,
+    ];
+    shifts[index] = value;
+    return wire.apply(
+      s,
+      authoredFloorPentagridField(
+        wire.current(s),
+        "shifts",
+        shifts,
+        shiftsAtDefaults,
+      ),
+    );
+  };
+  return {
+    kind: "range",
+    id: `${wire.prefix}FloorPentagridShift${index}Slider`,
+    label: {
+      id: `${wire.prefix}FloorPentagridShift${index}Label`,
+      text: (s) => read(s).toFixed(2),
+    },
+    numeric: numericControl(
+      `${cap} floor phason ${index + 1}`,
+      0,
+      PENTAGRID_SHIFT_SLIDER_MAX,
+      0.01,
+      read,
+      write,
+    ),
+    read: (s) => String(read(s)),
+    apply: (s, raw) => write(s, Number(raw)),
+    effect: wire.effect,
+  };
+}
+
+/** The grid rotation slider: whole degrees across the grid's own 72°
+ * symmetry period (71 is the last distinct angle), dropping back out of the
+ * block at the 0° default. */
+function pentagridRotationSlider(wire: PentagridSectionWire): RangeControlSpec {
+  const cap = wire.prefix === "solid" ? "Solid" : "Surface";
+  const read = (s: AppState): number => wire.resolved(s).rotationDeg;
+  const write = (s: AppState, value: number): AppState =>
+    wire.apply(
+      s,
+      authoredFloorPentagridField(
+        wire.current(s),
+        "rotationDeg",
+        value,
+        (v) => Math.abs(v) < 0.5,
+      ),
+    );
+  return {
+    kind: "range",
+    id: `${wire.prefix}FloorPentagridRotationSlider`,
+    label: {
+      id: `${wire.prefix}FloorPentagridRotationLabel`,
+      text: (s) => `${read(s)}°`,
+    },
+    numeric: numericControl(
+      `${cap} floor rotation`,
+      0,
+      PENTAGRID_ROTATION_PERIOD_DEG - 1,
+      1,
+      read,
+      write,
+    ),
+    read: (s) => String(read(s)),
+    apply: (s, raw) => write(s, Number(raw)),
+    effect: wire.effect,
+  };
+}
+
+/** The coloring-rule select: writes the rule id verbatim (the resolver
+ * falls back on unknown ids), drops it at "grey". */
+function pentagridRuleSelect(wire: PentagridSectionWire): SelectControlSpec {
+  return {
+    kind: "select",
+    id: `${wire.prefix}FloorPentagridRuleSelect`,
+    read: (s) => wire.resolved(s).colorRule,
+    apply: (s, raw) =>
+      wire.apply(
+        s,
+        authoredFloorPentagridField(
+          wire.current(s),
+          "colorRule",
+          raw as PentagridColorRule,
+          (v) => v === DEFAULT_FLOOR_PENTAGRID.colorRule,
+        ),
+      ),
+    effect: wire.effect,
+  };
+}
+
+/** The palette select: one of the four authored cosine palettes, dropped at
+ * "sunset". */
+function pentagridPaletteSelect(wire: PentagridSectionWire): SelectControlSpec {
+  return {
+    kind: "select",
+    id: `${wire.prefix}FloorPentagridPaletteSelect`,
+    read: (s) => wire.resolved(s).palette,
+    apply: (s, raw) =>
+      wire.apply(
+        s,
+        authoredFloorPentagridField(
+          wire.current(s),
+          "palette",
+          raw as PentagridPalette,
+          (v) => v === DEFAULT_FLOOR_PENTAGRID.palette,
+        ),
+      ),
+    effect: wire.effect,
+  };
+}
+
+/** The grout slider: the resolver's own clamp range
+ * ([PENTAGRID_GROUT_MIN, MAX]) presented exactly, dropped at the 1×
+ * default. */
+function pentagridGroutSlider(wire: PentagridSectionWire): RangeControlSpec {
+  const cap = wire.prefix === "solid" ? "Solid" : "Surface";
+  const read = (s: AppState): number => wire.resolved(s).grout;
+  const write = (s: AppState, value: number): AppState =>
+    wire.apply(
+      s,
+      authoredFloorPentagridField(
+        wire.current(s),
+        "grout",
+        value,
+        (v) => Math.abs(v - DEFAULT_FLOOR_PENTAGRID.grout) <= 0.025,
+      ),
+    );
+  return {
+    kind: "range",
+    id: `${wire.prefix}FloorPentagridGroutSlider`,
+    label: {
+      id: `${wire.prefix}FloorPentagridGroutLabel`,
+      text: (s) => read(s).toFixed(2),
+    },
+    numeric: numericControl(
+      `${cap} floor grout`,
+      PENTAGRID_GROUT_MIN,
+      PENTAGRID_GROUT_MAX,
+      0.05,
+      read,
+      write,
+    ),
+    read: (s) => String(read(s)),
+    apply: (s, raw) => write(s, Number(raw)),
+    effect: wire.effect,
+  };
+}
+
+/** One section's eight pentagrid rows in panel order. */
+function pentagridSectionControls(
+  wire: PentagridSectionWire,
+): ScalarControlSpec[] {
+  return [
+    ...[0, 1, 2, 3, 4].map((index) => pentagridShiftSlider(wire, index)),
+    pentagridRotationSlider(wire),
+    pentagridRuleSelect(wire),
+    pentagridPaletteSelect(wire),
+    pentagridGroutSlider(wire),
+  ];
 }
 
 export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
@@ -2467,6 +2732,9 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     apply: (s, raw) => setSolidFloorPattern(s, raw as SurfaceFloorPattern),
     effect: solidParamsEffect,
   },
+  // The pentagrid floor's authored details (revealed by ui.ts's
+  // syncSolidFloorRows while the pattern itself is selected).
+  ...pentagridSectionControls(SOLID_PENTAGRID_WIRE),
   {
     kind: "range",
     id: "solidFloorTileScaleSlider",
@@ -2726,6 +2994,8 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     apply: (s, raw) => setSurfaceFloorPattern(s, raw as SurfaceFloorPattern),
     effect: surfaceParamsEffect,
   },
+  // The Surface twin of Solid's pentagrid details above.
+  ...pentagridSectionControls(SURFACE_PENTAGRID_WIRE),
   {
     kind: "range",
     id: "surfaceFloorTileScaleSlider",
