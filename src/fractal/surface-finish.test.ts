@@ -9,6 +9,11 @@ import {
   surfaceFinishShadeSource,
   type SurfaceFinishShadeEnv,
 } from "./surface-finish";
+import {
+  pentagridDerived,
+  pentagridFloorTone,
+  resolveFloorPentagrid,
+} from "./pentagrid-floor";
 import type { Vec3 } from "./types";
 
 describe("resolveSurfaceFinish absent input", () => {
@@ -191,6 +196,81 @@ describe("surfaceFinishShadeSource dialects", () => {
     );
     expect(wgsl).toContain("params.groundBallR * shade.balloonTint.x");
     expect(wgsl).not.toContain("pixelEps");
+  });
+
+  it("keeps the pentagrid reflection off the room body unless the flag asks for it", () => {
+    // The default emission is byte-identical to the pre-pentagrid room
+    // body: no branch, no acceptEps parameter.
+    for (const dialect of [SURFACE_FINISH_GLSL, SURFACE_FINISH_WGSL]) {
+      const plain = surfaceFinishShadeSource(dialect, true);
+      expect(plain).not.toContain("floorPentagridAlbedo");
+      expect(plain).not.toContain("acceptEps");
+    }
+  });
+
+  it("emits the pentagrid reflection branch and the acceptEps parameter with the flag on, identically in both dialects", () => {
+    const body = (src: string): string =>
+      src.slice(src.indexOf("{") + 1, src.lastIndexOf("}"));
+    const canon = (s: string): string =>
+      s
+        .replace(/\bshade\.lightDir\b/g, "LIGHTDIR")
+        .replace(/\buLightDir\b/g, "LIGHTDIR")
+        .replace(/\bshade\.ambient\b/g, "AMBIENT")
+        .replace(/\buAmbient\b/g, "AMBIENT")
+        .replace(/\bshade\.envStrength\b/g, "ENV")
+        .replace(/\buEnvLight\b/g, "ENV")
+        .replace(/\bshade\.bgTop\b/g, "BGTOP")
+        .replace(/\buBgTop\b/g, "BGTOP")
+        .replace(/\bshade\.bgBottom\b/g, "BGBOT")
+        .replace(/\buBgBottom\b/g, "BGBOT")
+        .replace(/\bfloat\(uGroundPattern\)/g, "PATTERN")
+        .replace(/\bshade\.balloonTint\.z\b/g, "PATTERN")
+        .replace(/\buGroundBallC\b/g, "BALLC")
+        .replace(/\bparams\.groundBallC\b/g, "BALLC")
+        .replace(/\buGroundY\b/g, "GY")
+        .replace(/\bparams\.groundY\b/g, "GY")
+        .replace(/\buGroundBallR\b/g, "GBR")
+        .replace(/\bparams\.groundBallR\b/g, "GBR")
+        .replace(/\buGroundTileScale\b/g, "GTS")
+        .replace(/\bshade\.balloonTint\.x\b/g, "GTS")
+        .replace(/\buGroundEmission\b/g, "GE")
+        .replace(/\bshade\.balloonTint\.y\b/g, "GE")
+        .replace(/\buGroundAlbedo\b/g, "GA")
+        .replace(/\bparams\.groundAlbedo\b/g, "GA")
+        .replace(/\bvec3f\b/g, "vec3")
+        .replace(/^(\s*)(?:let|var|vec3|float)\s+/gm, "$1DECL ")
+        // The GLSL room section carries its own plane guard; the WGSL one is
+        // JS-gated by the shade entry. Normalize the pair — and the blank
+        // line WGSL's un-guarded splice leaves behind — away for the
+        // comparison.
+        .replace(/^#if SURFACE_GROUND_PLANE\n/m, "")
+        .replace(/^#endif\n/m, "")
+        .split("\n")
+        .filter((line) => line.trim() !== "")
+        .join("\n");
+    const glsl = surfaceFinishShadeSource(SURFACE_FINISH_GLSL, true, true);
+    const wgsl = surfaceFinishShadeSource(SURFACE_FINISH_WGSL, true, true);
+    // The branch replaces the checker-toned floor base at pattern >= 1.5,
+    // sampling at the REFLECTED ray's own footprint.
+    expect(glsl).toContain("if (float(uGroundPattern) >= 1.5) {");
+    expect(glsl).toContain(
+      "floorBase = floorPentagridAlbedo(floorP.xz - uGroundBallC.xz, acceptEps * floorT);",
+    );
+    // WGSL's floorBase must be reassignable — the flag flips `let` to `var`.
+    expect(wgsl).toContain("var floorBase = params.groundAlbedo * tileTone;");
+    expect(wgsl).toContain("if (shade.balloonTint.z >= 1.5) {");
+    expect(canon(body(glsl))).toBe(canon(body(wgsl)));
+    // The parameter rides the room signature only.
+    expect(glsl).toContain(
+      "vec3 finishShade(vec3 base, vec3 pos, vec3 n, vec3 rd, float shadow, float ao, vec3 bg, vec4 fa, vec4 fb, float acceptEps)",
+    );
+    expect(wgsl).toContain(
+      "fn finishShade(base: vec3f, pos: vec3f, n: vec3f, rd: vec3f, shadow: f32, ao: f32, bg: vec3f, fa: vec4f, fb: vec4f, acceptEps: f32) -> vec3f",
+    );
+    // The non-room emission never gains the parameter.
+    expect(surfaceFinishShadeSource(SURFACE_FINISH_GLSL)).not.toContain(
+      "acceptEps",
+    );
   });
 });
 
@@ -525,5 +605,109 @@ describe("finishShadeTs parametric behavior", () => {
     );
     expect(got[0]).toBeCloseTo(got[1], 12);
     expect(got[1]).toBeCloseTo(got[2], 12);
+  });
+
+  it("the pentagrid floor branch replaces the mirrored floor's albedo with the direct path's tone", () => {
+    // A down-facing mirror above the floor: its reflection hits the floor
+    // inside the fade band (floorFade exactly 1), so the reflected
+    // environment IS the floor tone — the emitted body's
+    // floorBase = floorPentagridAlbedo(...) line, mirrored end to end.
+    const block = resolveFloorPentagrid({ colorRule: "pair" });
+    const floor: SurfaceFinishShadeEnv["floor"] = {
+      y: -1,
+      ballCenter: [0, 0, 0],
+      ballRadius: 1,
+      albedo: [0.62, 0.62, 0.62],
+      pattern: 2,
+      tileScale: 0.64,
+      emission: 0,
+      pentagrid: block,
+      acceptEps: 0.002,
+    };
+    const floorEnv: SurfaceFinishShadeEnv = {
+      lightDir: [0, 1, 0],
+      ambient: 0.25,
+      envStrength: 0,
+      bgTop: [0, 0, 0],
+      bgBottom: [0, 0, 0],
+      floor,
+    };
+    const n: Vec3 = [0, -1, 0];
+    const pos: Vec3 = [0.2, 1, 0];
+    const rdLen = Math.hypot(0.3, 1);
+    const rd: Vec3 = [0.3 / rdLen, 1 / rdLen, 0];
+    const got = finishShadeTs(
+      [0, 0, 0],
+      n,
+      rd,
+      1,
+      1,
+      [0, 0, 0],
+      { ...CLASSIC_SURFACE_FINISH, specular: 0, reflect: 1 },
+      floorEnv,
+      pos,
+      0.002,
+    );
+    // The mirror's own expected composition: the reflected ray, the floor
+    // crossing, and the tone at that point at the REFLECTED ray's own
+    // footprint.
+    const reflDir: Vec3 = [rd[0], -rd[1], 0];
+    const floorT = (floor.y - pos[1]) / reflDir[1];
+    const dx = pos[0] + reflDir[0] * floorT - floor.ballCenter[0];
+    const dz = pos[2] + reflDir[2] * floorT - floor.ballCenter[2];
+    const edge = Math.hypot(dx, dz);
+    const u = Math.min(1, Math.max(0, (edge - 4) / 6));
+    const floorFade = 1 - u * u * (3 - 2 * u);
+    expect(floorFade).toBe(1);
+    const derived = pentagridDerived(block, floor.ballRadius, floor.tileScale);
+    const tone = pentagridFloorTone(
+      derived,
+      block.colorRule,
+      block.grout,
+      dx,
+      dz,
+      0.002 * floorT,
+    );
+    const f0 = 0.04;
+    const fresnel =
+      f0 +
+      (1 - f0) *
+        Math.pow(
+          1 -
+            Math.min(
+              1,
+              Math.max(0, -(n[0] * rd[0] + n[1] * rd[1] + n[2] * rd[2])),
+            ),
+          5,
+        );
+    const floorLit =
+      floorEnv.ambient +
+      (1 - floorEnv.ambient) * Math.max(floorEnv.lightDir[1], 0) +
+      floor.emission;
+    for (let i = 0; i < 3; i++) {
+      const envR = Math.pow(tone[i], 2.2) * floorLit;
+      expect(got[i]).toBeCloseTo(Math.pow(fresnel * envR, 1 / 2.2), 10);
+    }
+    // The branch is load-bearing: the same pose with the checker pattern
+    // reflects the neutral albedo instead.
+    const checkerGot = finishShadeTs(
+      [0, 0, 0],
+      n,
+      rd,
+      1,
+      1,
+      [0, 0, 0],
+      { ...CLASSIC_SURFACE_FINISH, specular: 0, reflect: 1 },
+      { ...floorEnv, floor: { ...floor, pattern: 0 } },
+      pos,
+      0.002,
+    );
+    expect(
+      Math.max(
+        Math.abs(got[0] - checkerGot[0]),
+        Math.abs(got[1] - checkerGot[1]),
+        Math.abs(got[2] - checkerGot[2]),
+      ),
+    ).toBeGreaterThan(1e-3);
   });
 });

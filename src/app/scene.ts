@@ -4769,6 +4769,7 @@ export class FractalScene {
         pattern: params.floorPattern,
         tileScale: params.floorTileScale,
         emission: params.floorEmission,
+        pentagrid: params.floorPentagrid,
       }),
     });
   }
@@ -5493,6 +5494,7 @@ export class FractalScene {
       pattern: room?.floorPattern ?? "solid",
       tileScale: room?.floorTileScale ?? 0.64,
       emission: room?.floorEmission ?? 0,
+      pentagrid: room?.floorPentagrid,
     });
   }
 

@@ -5,6 +5,11 @@ import {
   PRESENTATION_FLOOR_FADE_START,
   presentationFloorSpec,
 } from "./presentation-floor";
+import {
+  packFloorPentagridUniforms,
+  pentagridDerived,
+  resolveFloorPentagrid,
+} from "./pentagrid-floor";
 
 describe("presentationFloorSpec", () => {
   it("pins the shared drop, radial fade, albedo, and authored look", () => {
@@ -28,6 +33,13 @@ describe("presentationFloorSpec", () => {
       pattern: 1,
       tileScale: 0.8,
       emission: 1.5,
+      // The pentagrid payload is present for EVERY pattern (defaults filled,
+      // the wire packed once) — read only by the pattern-2 branch.
+      pentagrid: resolveFloorPentagrid(undefined),
+      pentagridWire: packFloorPentagridUniforms(
+        pentagridDerived(resolveFloorPentagrid(undefined), 2, 0.8),
+        resolveFloorPentagrid(undefined),
+      ),
     });
   });
 
@@ -45,6 +57,43 @@ describe("presentationFloorSpec", () => {
         emission: 3,
       }),
     ).toBeNull();
+  });
+
+  it("maps pentagrid to the pattern-2 wire code and resolves the look's sparse block", () => {
+    const spec = presentationFloorSpec(
+      { center: [0, 0, 0], radius: 1 },
+      {
+        pattern: "pentagrid",
+        tileScale: 0.5,
+        emission: 0,
+        pentagrid: { colorRule: "pair", grout: 2 },
+      },
+    )!;
+    expect(spec.pattern).toBe(2);
+    // Absent fields resolve to the defaults; authored ones survive.
+    expect(spec.pentagrid.colorRule).toBe("pair");
+    expect(spec.pentagrid.grout).toBe(2);
+    expect(spec.pentagrid.shifts).toEqual(
+      resolveFloorPentagrid(undefined).shifts,
+    );
+    // The wire is the resolved block packed at this ball's scale.
+    expect(spec.pentagridWire).toEqual(
+      packFloorPentagridUniforms(
+        pentagridDerived(spec.pentagrid, 1, 0.5),
+        spec.pentagrid,
+      ),
+    );
+    // An unauthored pentagrid look resolves to the default block.
+    expect(
+      presentationFloorSpec(
+        { center: [0, 0, 0], radius: 1 },
+        {
+          pattern: "pentagrid",
+          tileScale: 0.5,
+          emission: 0,
+        },
+      )!.pentagrid,
+    ).toEqual(resolveFloorPentagrid(undefined));
   });
 
   it("returns fresh vectors and never aliases or mutates its inputs", () => {

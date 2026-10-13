@@ -33,6 +33,13 @@ import type { SurfaceDE4, SurfaceDE4Map } from "../fractal/surface-de-4d";
 import { buildSurfaceDE4, radiusBandInvRange } from "../fractal/surface-de-4d";
 import { CLASSIC_SURFACE_FOLD_RADII } from "../fractal/surface-de";
 import {
+  PENTAGRID_FLOOR_GLSL,
+  packFloorPentagridUniforms,
+  pentagridDerived,
+  pentagridFloorAlbedoSource,
+  resolveFloorPentagrid,
+} from "../fractal/pentagrid-floor";
+import {
   resolveTiling,
   TILING_GROUP_INFO,
   TILING_GROUPS,
@@ -61,9 +68,12 @@ const BALLOON_PALETTE_SOURCE_HASHES: Record<
     resolved: "1064b1c7f55dac1b",
     emitted: "ed60e94146157569",
   },
+  // Re-recorded for the pentagrid floor's arrival: the finish arm's
+  // acceptEps parameter (and its call-site argument) rides every
+  // finish-on program in both dimensions — bytes moved, no value did.
   "4D balloon finish1": {
-    resolved: "d370a9703f339864",
-    emitted: "e446b3b56a95da29",
+    resolved: "3a575d6a15c9879a",
+    emitted: "8ef73e9ea21de7d4",
   },
 };
 
@@ -80,21 +90,24 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
     resolved: "1064b1c7f55dac1b",
     emitted: "ed60e94146157569",
   },
+  // Plane rows re-recorded for the pentagrid floor: its body (~6KB
+  // resolved) splices beside the checker under the same define; the
+  // finish rows carry the acceptEps parameter's bytes.
   "4D plane finish0": {
-    resolved: "261c1512a4311fe6",
-    emitted: "125f86560b255b40",
+    resolved: "29927ffa1ea79658",
+    emitted: "75e77ae8d9a341e2",
   },
   "4D base finish1": {
-    resolved: "3c55e558cb76e2c7",
-    emitted: "188ce6c2fb90e8c5",
+    resolved: "2c7026f0c3b235a7",
+    emitted: "91b5c0da97b03f2f",
   },
   "4D balloon finish1": {
-    resolved: "d370a9703f339864",
-    emitted: "e446b3b56a95da29",
+    resolved: "3a575d6a15c9879a",
+    emitted: "8ef73e9ea21de7d4",
   },
   "4D plane finish1": {
-    resolved: "0433888b6a16ac6f",
-    emitted: "5199542cb5996735",
+    resolved: "f75fcf017877867d",
+    emitted: "51639c0fe8878cd9",
   },
 };
 
@@ -1954,6 +1967,56 @@ describe("setSurface4GroundPlane", () => {
     expect(material.fragmentShader).toContain("shadeGroundPlane");
   });
 
+  it("splices the pentagrid floor beside the checker — the dimension-free body taken verbatim", () => {
+    const resolved = surface4FragmentResolvedFor(0, 1);
+    // The checker text stays inline; the pentagrid branch dispatches beside
+    // it on the same uniform.
+    expect(resolved).toContain("if (uGroundPattern == 1) {");
+    expect(resolved).toContain("} else if (uGroundPattern == 2) {");
+    expect(resolved).toContain(
+      "floorAlbedo = floorPentagridAlbedo(rel, uAcceptPixelEps * tp);",
+    );
+    expect(
+      countOccurrences(resolved, "uniform float uPentagridData[32];"),
+    ).toBe(1);
+    expect(
+      countOccurrences(
+        resolved,
+        "vec3 floorPentagridAlbedo(vec2 rel, float px) {",
+      ),
+    ).toBe(1);
+    // And the body is the module's own GLSL emission, verbatim.
+    expect(resolved).toContain(
+      pentagridFloorAlbedoSource(PENTAGRID_FLOOR_GLSL),
+    );
+    // Plane-off resolves away every pentagrid token with the plane.
+    const off = surface4FragmentResolvedFor();
+    expect(off).not.toContain("uPentagridData");
+    expect(off).not.toContain("floorPentagridAlbedo");
+  });
+
+  it("packs the pentagrid wire from a pattern-2 spec, and zeroes it otherwise", () => {
+    const material = createSurfaceMaterial4();
+    const block = resolveFloorPentagrid({ colorRule: "height" });
+    setSurface4GroundPlane(material, {
+      ...groundSpec(),
+      pattern: 2,
+      pentagrid: block,
+    });
+    expect(material.uniforms.uGroundPattern.value).toBe(2);
+    expect(
+      Array.from(material.uniforms.uPentagridData.value as Float32Array),
+    ).toEqual(
+      Array.from(
+        packFloorPentagridUniforms(pentagridDerived(block, 1.25, 0.64), block),
+      ),
+    );
+    setSurface4GroundPlane(material, { ...groundSpec(), pattern: 1 });
+    expect(
+      Array.from(material.uniforms.uPentagridData.value as Float32Array),
+    ).toEqual(Array.from(new Float32Array(32)));
+  });
+
   it("resets to the inert off state on null, ball radius and albedo included", () => {
     const material = createSurfaceMaterial4();
     setSurface4GroundPlane(material, groundSpec());
@@ -2075,7 +2138,7 @@ describe("the 4D trace alpha statuses", () => {
 
 describe("the 4D tracer's finish arm", () => {
   const fetchLine =
-    "vec3 col = finishShade(base, pos, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot]);";
+    "vec3 col = finishShade(base, pos, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot], uAcceptPixelEps);";
 
   /** Every field away from classic and every field a different number, so
    * a lane landing one float off in the std140 block is visible. */
@@ -2180,7 +2243,7 @@ describe("the 4D tracer's finish arm", () => {
       expect(
         countOccurrences(
           resolved,
-          "vec3 finishShade(vec3 base, vec3 pos, vec3 n, vec3 rd, float shadow, float ao, vec3 bg, vec4 fa, vec4 fb) {",
+          "vec3 finishShade(vec3 base, vec3 pos, vec3 n, vec3 rd, float shadow, float ao, vec3 bg, vec4 fa, vec4 fb, float acceptEps) {",
         ),
       ).toBe(1);
       expect(resolved).toContain(

@@ -328,7 +328,7 @@ function renderPentagrid(
   let overlap = 0;
   const edgeW = WORLD_PER_PX * 1.2 * (style?.edgeWidthMult ?? 1);
   const edgeTone = style?.edgeTone ?? GRID_EDGE;
-  const edgeSrgb = [0, 1, 2].map((ch) =>
+  const edgeSrgb = [0, 1, 2].map((_ch) =>
     Math.round(Math.pow(BASE_ALBEDO * edgeTone, 1 / 2.2) * 255),
   ) as [number, number, number];
   const segDist = (

@@ -42,6 +42,13 @@ import {
   SURFACE_SHADE_DE_WIDTH,
 } from "./surface-material";
 import { surface4FragmentResolvedFor } from "./surface-material-4d";
+import {
+  PENTAGRID_FLOOR_GLSL,
+  packFloorPentagridUniforms,
+  pentagridDerived,
+  pentagridFloorAlbedoSource,
+  resolveFloorPentagrid,
+} from "../fractal/pentagrid-floor";
 import type { MengerDE } from "../fractal/menger-de";
 import { resolveSurfaceFinish } from "../fractal/surface-finish";
 import {
@@ -149,32 +156,32 @@ const BALLOON_PALETTE_SOURCE_HASHES: Record<
     emitted: "8a3ca649ed45d7c2",
   },
   "3D balloon finish1": {
-    resolved: "648c411b18d4067f",
-    emitted: "9fe2b3cadb57aa32",
+    resolved: "2f4f9b3d0505f8be",
+    emitted: "42cb004286b5631f",
   },
   "3D lens+balloon finish0": {
     resolved: "55641a810d77d4cb",
     emitted: "e6302065ea497beb",
   },
   "3D lens+balloon finish1": {
-    resolved: "fe0a25add8190f88",
-    emitted: "fd44f5a17c42aeb3",
+    resolved: "488f710242f47469",
+    emitted: "238e58d13f0b7045",
   },
   "3D escape+balloon finish0": {
     resolved: "a90b36c91af7e94f",
     emitted: "22a13206008bddc5",
   },
   "3D escape+balloon finish1": {
-    resolved: "0fac34b766de662d",
-    emitted: "dcdc93e811623797",
+    resolved: "5fda6672df87d33a",
+    emitted: "92a9414f41dbbccd",
   },
   "3D bulb+balloon finish0": {
     resolved: "f154b9993153245f",
     emitted: "f154b9993153245f",
   },
   "3D bulb+balloon finish1": {
-    resolved: "0bcd0910c9a9bea6",
-    emitted: "0bcd0910c9a9bea6",
+    resolved: "909cd1e086a6613f",
+    emitted: "909cd1e086a6613f",
   },
 };
 
@@ -194,20 +201,20 @@ const SWIRL_LENS_SOURCE_HASHES: Record<
     emitted: "e6302065ea497beb",
   },
   "3D lens+plane finish0": {
-    resolved: "209a99c7df543dec",
-    emitted: "1c65d10713495ab7",
+    resolved: "bc84e06559721077",
+    emitted: "87a5d4ce889e5288",
   },
   "3D lens finish1": {
-    resolved: "aef25bc005bfa492",
-    emitted: "d754e88870d23a6f",
+    resolved: "cbdb20952c331989",
+    emitted: "5fb19947acab728d",
   },
   "3D lens+balloon finish1": {
-    resolved: "fe0a25add8190f88",
-    emitted: "fd44f5a17c42aeb3",
+    resolved: "488f710242f47469",
+    emitted: "238e58d13f0b7045",
   },
   "3D lens+plane finish1": {
-    resolved: "2f19b020bb063824",
-    emitted: "9dfff5fed89b0f1d",
+    resolved: "15d74c1d5abf68f0",
+    emitted: "f81149db09e0c875",
   },
 };
 
@@ -232,16 +239,16 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
     emitted: "8a3ca649ed45d7c2",
   },
   "3D plane finish0": {
-    resolved: "0d606850ba40cb84",
-    emitted: "4ede30dc81198664",
+    resolved: "a79edb5bd50a43b5",
+    emitted: "dd7b99e604850665",
   },
   "3D lens+balloon finish0": {
     resolved: "55641a810d77d4cb",
     emitted: "e6302065ea497beb",
   },
   "3D lens+plane finish0": {
-    resolved: "209a99c7df543dec",
-    emitted: "1c65d10713495ab7",
+    resolved: "bc84e06559721077",
+    emitted: "87a5d4ce889e5288",
   },
   "3D escape finish0": {
     resolved: "86f0c307bb5e92ad",
@@ -252,8 +259,8 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
     emitted: "22a13206008bddc5",
   },
   "3D escape+plane finish0": {
-    resolved: "d99cd01801d1ceb7",
-    emitted: "2fd606033f825428",
+    resolved: "a6741fe3247427a4",
+    emitted: "de586eb8dfb68b1b",
   },
   "3D bulb finish0": {
     resolved: "934401b39b9527d3",
@@ -264,56 +271,56 @@ const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
     emitted: "f154b9993153245f",
   },
   "3D bulb+plane finish0": {
-    resolved: "b1f566e878e0006a",
-    emitted: "c66d896d94e7df3c",
+    resolved: "9f1db7307b9a8ddd",
+    emitted: "b33d689812c5aa6f",
   },
   "3D affine finish1": {
-    resolved: "d96be25b54bf2d98",
-    emitted: "0678ded3a8ff419b",
+    resolved: "0a7caa7f3494c958",
+    emitted: "1b1db9eb3b2085cb",
   },
   "3D lens finish1": {
-    resolved: "aef25bc005bfa492",
-    emitted: "d754e88870d23a6f",
+    resolved: "cbdb20952c331989",
+    emitted: "5fb19947acab728d",
   },
   "3D balloon finish1": {
-    resolved: "648c411b18d4067f",
-    emitted: "9fe2b3cadb57aa32",
+    resolved: "2f4f9b3d0505f8be",
+    emitted: "42cb004286b5631f",
   },
   "3D plane finish1": {
-    resolved: "f4278ce2a0d55b3a",
-    emitted: "71aa043bc0cf3f17",
+    resolved: "dad928535041232a",
+    emitted: "0a448c164c388b38",
   },
   "3D lens+balloon finish1": {
-    resolved: "fe0a25add8190f88",
-    emitted: "fd44f5a17c42aeb3",
+    resolved: "488f710242f47469",
+    emitted: "238e58d13f0b7045",
   },
   "3D lens+plane finish1": {
-    resolved: "2f19b020bb063824",
-    emitted: "9dfff5fed89b0f1d",
+    resolved: "15d74c1d5abf68f0",
+    emitted: "f81149db09e0c875",
   },
   "3D escape finish1": {
-    resolved: "71e9259a1de8a672",
-    emitted: "71e9259a1de8a672",
+    resolved: "72322288f75e62e8",
+    emitted: "72322288f75e62e8",
   },
   "3D escape+balloon finish1": {
-    resolved: "0fac34b766de662d",
-    emitted: "dcdc93e811623797",
+    resolved: "5fda6672df87d33a",
+    emitted: "92a9414f41dbbccd",
   },
   "3D escape+plane finish1": {
-    resolved: "582215cc94ca5726",
-    emitted: "ecb2c1f99e7c0b1b",
+    resolved: "eccc10224527055e",
+    emitted: "7c2eaccb717367c5",
   },
   "3D bulb finish1": {
-    resolved: "9981ffc5aba156b6",
-    emitted: "9981ffc5aba156b6",
+    resolved: "1f3ae76aed3c0ae9",
+    emitted: "1f3ae76aed3c0ae9",
   },
   "3D bulb+balloon finish1": {
-    resolved: "0bcd0910c9a9bea6",
-    emitted: "0bcd0910c9a9bea6",
+    resolved: "909cd1e086a6613f",
+    emitted: "909cd1e086a6613f",
   },
   "3D bulb+plane finish1": {
-    resolved: "8a5bffac9313765f",
-    emitted: "26e0f64606c50865",
+    resolved: "0ce3a9e73e7450e8",
+    emitted: "17827355c17203ce",
   },
 };
 
@@ -3482,9 +3489,56 @@ describe("SURFACE_GROUND_PLANE variant", () => {
       expect(withPlaneOff).not.toContain("uGround");
       expect(withPlaneOff).not.toContain("shadeGroundPlane");
       expect(withPlaneOff).not.toContain("SURFACE_GROUND_PLANE");
+      // The pentagrid floor is plane-arm text: its body, uniform and
+      // dispatch branch resolve away with the plane.
+      expect(withPlaneOff).not.toContain("uPentagridData");
+      expect(withPlaneOff).not.toContain("floorPentagridAlbedo");
       // The plane arg omitted must resolve to the same explicit-0 source.
       expect(surfaceFragmentFor(escape, lens, balloon)).toBe(withPlaneOff);
     }
+  });
+
+  it("splices the pentagrid floor beside the checker under the same define — one body, one uniform, one dispatch", () => {
+    const resolved = surfaceFragmentFor(0, 0, 0, 1);
+    // The checker text stays inline, untouched; the pentagrid branch sits
+    // BESIDE it, dispatching on the same uGroundPattern uniform.
+    expect(resolved).toContain("if (uGroundPattern == 1) {");
+    expect(resolved).toContain("floorAlbedo *= mix(0.035, 1.0, checker);");
+    expect(resolved).toContain("} else if (uGroundPattern == 2) {");
+    expect(resolved).toContain(
+      "floorAlbedo = floorPentagridAlbedo(rel, uAcceptPixelEps * tp);",
+    );
+    // The 32-float wire declared exactly once.
+    expect(
+      countOccurrences(resolved, "uniform float uPentagridData[32];"),
+    ).toBe(1);
+    // The body's ONE definition — the finish room body may call it, never
+    // re-define it.
+    expect(
+      countOccurrences(
+        resolved,
+        "vec3 floorPentagridAlbedo(vec2 rel, float px) {",
+      ),
+    ).toBe(1);
+    // The emitted body is the module's own GLSL dialect emission, verbatim
+    // in the RESOLVED source (the emitted program is comment-stripped —
+    // the plane arm's size rule).
+    expect(surfaceFragmentResolvedFor(0, 0, 0, 1)).toContain(
+      pentagridFloorAlbedoSource(PENTAGRID_FLOOR_GLSL),
+    );
+  });
+
+  it("composes the pentagrid reflection with the finish arm — the room body reads the same uniforms", () => {
+    const resolved = surfaceFragmentResolvedFor(0, 0, 0, 1, 0, 1);
+    // The room body's branch: the reflected floor samples the pentagrid
+    // through the acceptance-epsilon parameter, only at pattern >= 1.5.
+    expect(resolved).toContain(
+      "floorBase = floorPentagridAlbedo(floorP.xz - uGroundBallC.xz, acceptEps * floorT);",
+    );
+    // Plane-off finish-on stays free of the branch: it resolves away with
+    // the plane guard it sits inside.
+    const noPlane = surfaceFragmentResolvedFor(0, 0, 0, 0, 0, 1);
+    expect(noPlane).not.toContain("floorPentagridAlbedo");
   });
 
   it("compiles the floor arm with the flag on — comment-stripped whole-source, and far under the fold source's Mesa-cliff budget", () => {
@@ -3519,6 +3573,7 @@ describe("SURFACE_GROUND_PLANE variant", () => {
 
   it("setSurfaceGroundPlane packs the spec into uniforms and flips the define; null resets both to the inert byte-identical off state", () => {
     const material = createSurfaceMaterial();
+    const block = resolveFloorPentagrid({ colorRule: "pair", grout: 2 });
     const spec: SurfaceGroundPlaneSpec = {
       y: -1.2,
       fadeStart: 4,
@@ -3526,9 +3581,10 @@ describe("SURFACE_GROUND_PLANE variant", () => {
       ballCenter: [0, 0, 0],
       ballRadius: 1,
       albedo: [0.62, 0.62, 0.62],
-      pattern: 1,
+      pattern: 2,
       tileScale: 0.64,
       emission: 1.4,
+      pentagrid: block,
     };
     setSurfaceGroundPlane(material, spec);
     expect(material.defines.SURFACE_GROUND_PLANE).toBe(1);
@@ -3541,10 +3597,26 @@ describe("SURFACE_GROUND_PLANE variant", () => {
     expect([ballC.x, ballC.y, ballC.z]).toEqual([0, 0, 0]);
     const albedo = u.uGroundAlbedo.value as THREE.Vector3;
     expect([albedo.x, albedo.y, albedo.z]).toEqual([0.62, 0.62, 0.62]);
-    expect(u.uGroundPattern.value).toBe(1);
+    expect(u.uGroundPattern.value).toBe(2);
     expect(u.uGroundTileScale.value).toBe(0.64);
     expect(u.uGroundEmission.value).toBe(1.4);
+    // The pentagrid wire lands f32-packed from the resolved block at this
+    // ball's scale, and the uniform's backing array is mutated IN PLACE
+    // (Three binds uniform values by object identity).
+    const data = u.uPentagridData.value as Float32Array;
+    expect(data).toHaveLength(32);
+    expect(Array.from(data)).toEqual(
+      Array.from(
+        packFloorPentagridUniforms(pentagridDerived(block, 1, 0.64), block),
+      ),
+    );
     expect(material.fragmentShader).toContain("shadeGroundPlane");
+    // A pattern-1 spec zeroes the wire — the branch never reads it.
+    setSurfaceGroundPlane(material, { ...spec, pattern: 1 });
+    expect(u.uGroundPattern.value).toBe(1);
+    expect(Array.from(u.uPentagridData.value as Float32Array)).toEqual(
+      Array.from(new Float32Array(32)),
+    );
 
     setSurfaceGroundPlane(material, null);
     expect(material.defines.SURFACE_GROUND_PLANE).toBe(0);
@@ -4588,9 +4660,12 @@ describe("SURFACE_SPHERE_INVERSION variant", () => {
     expect(resolved(0, 0, 0).length).toBe(42561);
     expect(emitted(0, 0, 0).length).toBe(42561);
     expect(resolved(0, 0, 0).length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
-    // Plane + finish + lighting crosses the threshold and strips.
-    expect(resolved(1, 1, 1).length).toBe(60872);
-    expect(emitted(1, 1, 1).length).toBe(24080);
+    // Plane + finish + lighting crosses the threshold and strips. The
+    // plane leg re-recorded for the pentagrid floor: its body (~6KB
+    // resolved) splices beside the checker under the same define, and the
+    // finish leg's acceptEps parameter rides every finish-on program.
+    expect(resolved(1, 1, 1).length).toBe(66921);
+    expect(emitted(1, 1, 1).length).toBe(27923);
     expect(emitted(1, 1, 1).length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
   });
 
@@ -5159,7 +5234,7 @@ describe("SURFACE_FINISH variant", () => {
   ];
 
   const fetchLine =
-    "vec3 col = finishShade(base, pos, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot]);";
+    "vec3 col = finishShade(base, pos, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot], uAcceptPixelEps);";
 
   /** A finish with every field away from classic and every field a
    * different number, so a lane landing one component off is visible. */
@@ -5246,7 +5321,7 @@ describe("SURFACE_FINISH variant", () => {
       expect(
         countOccurrences(
           resolved,
-          "vec3 finishShade(vec3 base, vec3 pos, vec3 n, vec3 rd, float shadow, float ao, vec3 bg, vec4 fa, vec4 fb) {",
+          "vec3 finishShade(vec3 base, vec3 pos, vec3 n, vec3 rd, float shadow, float ao, vec3 bg, vec4 fa, vec4 fb, float acceptEps) {",
         ),
         name,
       ).toBe(1);
@@ -6192,7 +6267,7 @@ describe("SURFACE_PATTERN variant", () => {
     const material = createSurfaceMaterial();
     setSurfaceMaterials(material, patternMaterials(true));
     const fetchLine =
-      "vec3 col = finishShade(base, pos, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot]);";
+      "vec3 col = finishShade(base, pos, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot], uAcceptPixelEps);";
     const finished = (what: string) => {
       expect(material.defines.SURFACE_PATTERN, what).toBe(1);
       expect(material.defines.SURFACE_FINISH, what).toBe(1);
@@ -6355,7 +6430,11 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
           undefined,
           PEACE_SIGN_SHAPE,
         ),
-        hash: "854088efdea155ee0900152012121c8824986a490711c1a77dd5b1d0325141d9",
+        // Re-recorded for the pentagrid floor's arrival: the finish arm's
+        // reflection branch rides every finish-on program (the acceptEps
+        // parameter and its call-site argument), the branch itself
+        // plane-resolved away here — bytes moved, no value did.
+        hash: "8b94726252b2ecadc6b4c749caf7cafe1e5f1eea01be420a8e2f5c11c5a0ddc3",
       },
     ];
     for (const { source, hash } of cases) {

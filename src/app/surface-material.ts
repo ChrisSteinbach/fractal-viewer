@@ -103,6 +103,14 @@ import {
 } from "../fractal/surface-finish";
 import { surfacePatternShadeSource } from "../fractal/surface-pattern-shade";
 import {
+  DEFAULT_FLOOR_PENTAGRID,
+  PENTAGRID_FLOOR_GLSL,
+  packFloorPentagridUniforms,
+  pentagridDerived,
+  pentagridFloorAlbedoSource,
+  type FloorPentagrid,
+} from "../fractal/pentagrid-floor";
+import {
   CLASSIC_SURFACE_MATERIAL,
   surfaceMaterialLanes,
   surfaceMaterialOpticsLanes,
@@ -2780,6 +2788,20 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   uniform int uGroundPattern;
   uniform float uGroundTileScale;
   uniform float uGroundEmission;
+  /** The pentagrid floor's 32-float wire (fractal/pentagrid-floor.ts's
+   * packFloorPentagridUniforms): seed offset xy, rhombus scale, five family
+   * normals xy, five phason shifts, the color-rule id, the palette's
+   * a/b/c/d, grout. Present with every floor variant; read only by the
+   * pattern-2 branch below. */
+  uniform float uPentagridData[32];
+  /** The ONE body both GLSL tracers and the WGSL compute kernel splice —
+   * pentagridFloorAlbedoSource's GLSL emission, beside the checker branch
+   * it dispatches against (the checker text stays inline). It sits here,
+   * before the finish lighting block below, so that block's room body can
+   * call it in the reflection path: GLSL needs declaration before use, and
+   * the direct path (shadeGroundPlane below) and the reflection must
+   * agree. */
+${pentagridFloorAlbedoSource(PENTAGRID_FLOOR_GLSL)}
 #endif
 #if SURFACE_FINISH
   /** The parametric lighting composition — fractal/surface-finish.ts's
@@ -2789,7 +2811,7 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
    * the uBgTop/uBgBottom pair above, and at the classic lanes reproduces
    * the fixed formula in main()'s #else branch VALUE for value — never
    * byte for byte, which is why it is define-gated rather than shipped. */
-  ${surfaceFinishShadeSource(SURFACE_FINISH_GLSL, true)}
+  ${surfaceFinishShadeSource(SURFACE_FINISH_GLSL, true, true)}
 #endif
   ${backgroundShapeSource(BACKGROUND_SHAPE_GLSL)}
   /** Angular pixel footprint of the ACTIVE buffer (scene-set per frame):
@@ -6613,6 +6635,12 @@ ${surfaceSolidShadowSource(false)}
       vec2 tile = floor((hp.xz - uGroundBallC.xz) / cell);
       float checker = mod(tile.x + tile.y, 2.0);
       floorAlbedo *= mix(0.035, 1.0, checker);
+    } else if (uGroundPattern == 2) {
+      // The pentagrid floor: rel is already this point relative to the
+      // ball center, and the footprint is the tier-INDEPENDENT acceptance
+      // epsilon at the plane distance (the pattern arm's convention — a
+      // preview may coarsen sampling, never the material detail).
+      floorAlbedo = floorPentagridAlbedo(rel, uAcceptPixelEps * tp);
     }
     vec3 floorLinear = pow(floorAlbedo, vec3(2.2));
     vec3 col = pow(
@@ -7216,7 +7244,7 @@ ${surfaceTransportSource(false)}
 #else
     int fSlot = clamp(firstChoice, 0, uMapCount - 1);
 #endif
-    vec3 col = finishShade(base, pos, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot]);
+    vec3 col = finishShade(base, pos, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot], uAcceptPixelEps);
 #else
     float diffuse = max(dot(n, uLightDir), 0.0);
     vec3 halfVec = normalize(uLightDir - rd);
@@ -8235,6 +8263,12 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uGroundPattern: { value: 0 },
       uGroundTileScale: { value: 0.64 },
       uGroundEmission: { value: 0 },
+      // The pentagrid floor's 32-float wire, zeroed until
+      // packSurfacePentagridUniforms writes it (mutated in place — Three
+      // binds uniform values by object identity). Zeroed means scale 0 to
+      // a stray enabled read, but the branch that reads it dispatches on
+      // uGroundPattern, which the same pack keeps at 0 — inert together.
+      uPentagridData: { value: new Float32Array(32) },
       // Sphere-inversion header: inert unless SURFACE_SPHERE_INVERSION
       // (setSphereInversionSystem); the tables ride the SurfaceSphereInv3
       // block, attached only while the arm is compiled.
@@ -11524,9 +11558,42 @@ export interface SurfaceGroundPlaneSpec {
   ballRadius: number;
   /** sRGB floor albedo (lit in linear space like every hit). */
   albedo: Vec3;
-  pattern?: 0 | 1;
+  /** 0 solid, 1 checker, 2 pentagrid (the uGroundPattern dispatch). */
+  pattern?: 0 | 1 | 2;
   tileScale?: number;
   emission?: number;
+  /** The pentagrid block, RESOLVED (presentationFloorSpec fills defaults).
+   * Absent with pattern 2 packs the default block's wire — a stray read
+   * stays sane, exactly the inert-defaults discipline the other fields
+   * keep. */
+  pentagrid?: FloorPentagrid;
+}
+
+/**
+ * Write the pentagrid floor's 32-float wire into a tracer material's
+ * `uPentagridData` uniform — in place, the value bound by identity. Pattern
+ * 2 packs the spec's resolved block (absent → the default block, so a stray
+ * enabled read stays divide-by-zero-free like the other inert defaults);
+ * every other pattern zeroes it, the branch never reading it. ONE writer
+ * for both GLSL tracers; the WGSL compute path packs the same wire into its
+ * gated ShadeParams tail.
+ */
+export function packSurfacePentagridUniforms(
+  material: THREE.ShaderMaterial,
+  spec: SurfaceGroundPlaneSpec | null,
+): void {
+  const arr = material.uniforms.uPentagridData.value as Float32Array;
+  if (spec !== null && spec.pattern === 2) {
+    const block = spec.pentagrid ?? DEFAULT_FLOOR_PENTAGRID;
+    arr.set(
+      packFloorPentagridUniforms(
+        pentagridDerived(block, spec.ballRadius, spec.tileScale ?? 0.64),
+        block,
+      ),
+    );
+  } else {
+    arr.fill(0);
+  }
 }
 
 /**
@@ -11557,6 +11624,7 @@ export function setSurfaceGroundPlane(
     u.uGroundPattern.value = spec.pattern ?? 0;
     u.uGroundTileScale.value = spec.tileScale ?? 0.64;
     u.uGroundEmission.value = spec.emission ?? 0;
+    packSurfacePentagridUniforms(material, spec);
   } else {
     // Zeros are fine while the define is off — except the ball radius,
     // whose 1 keeps even a stray enabled read divide-by-zero-free,
@@ -11570,6 +11638,7 @@ export function setSurfaceGroundPlane(
     u.uGroundPattern.value = 0;
     u.uGroundTileScale.value = 0.64;
     u.uGroundEmission.value = 0;
+    packSurfacePentagridUniforms(material, null);
   }
   const want = spec ? 1 : 0;
   if (material.defines.SURFACE_GROUND_PLANE !== want) {
