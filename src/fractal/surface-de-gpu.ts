@@ -10,6 +10,12 @@ import {
 } from "./bulb-de";
 import { condensationTraversalDepth } from "./condensation-de";
 import {
+  PENTAGRID_FLOOR_WGSL,
+  PENTAGRID_UNIFORM_FLOATS,
+  pentagridFloorAlbedoSource,
+  type FloorPentagrid,
+} from "./pentagrid-floor";
+import {
   condensationSolidWgslSource,
   validateCondensationSolidWire,
   type CondensationSolidWire,
@@ -1831,6 +1837,17 @@ export const SURFACE_GPU_SHADE_LIGHTING_BYTES =
 export const SURFACE_GPU_SHADE_OPTICS_BYTES =
   SURFACE_GPU_SHADE_PATTERN_BYTES + 16;
 
+/** The pentagrid floor's gated shade tail: EIGHT vec4f — the 32-float wire
+ * `packFloorPentagridUniforms` packs — declared as the shade struct's
+ * `floorPentagrid` member ONLY under shade mode + the `floorPattern` gate,
+ * APPENDED LAST in the struct's conditional chain (after the pattern
+ * calibration, the lighting tail and the optics member), so no earlier
+ * member's offset ever moves. The member's own offset is whatever the
+ * conditional members before it close at — the packer mirrors the same
+ * arithmetic; with none of them live the struct ends at
+ * {@link SURFACE_GPU_SHADE_BYTES} + this. */
+export const SURFACE_GPU_SHADE_FLOOR_TAIL_BYTES = 8 * 16;
+
 /** Transport-lane runtime work caps (the contract keeps work budgets OUT
  * of material identity — these are the runtime's, not the document's).
  * The distance-estimator boundary query costs an order of magnitude more
@@ -2241,6 +2258,26 @@ export interface SurfaceGpuKernelOptions {
    * — every other backend, the unchunked diagnostics, the bench's log-off
    * arm — reproduces today's source BYTE FOR BYTE and allocates nothing. */
   transportLog?: boolean;
+  /** The pentagrid floor's gate (`fractal/pentagrid-floor.ts`): the floor
+   * PATTERN is a look field, so this flag keys the TEXT, never the pattern
+   * value — a floor session compiles it exactly when the ground-plane arm
+   * is on, and a live pattern/rule/palette/grout edit is a uniform rewrite
+   * of the 32-float tail, never a kernel regeneration. Under SHADE mode it
+   * declares the shade struct's `floorPentagrid: array<vec4f, 8>` member
+   * (appended LAST in the conditional chain —
+   * {@link SURFACE_GPU_SHADE_FLOOR_TAIL_BYTES}), splices the ONE shared
+   * WGSL floor body (`pentagridFloorAlbedoSource`) beside the checker
+   * branch both floor sites dispatch against (the checker text stays
+   * inline), widens the pattern dispatch to
+   * `>= 1.5` pentagrid / `>= 0.5` checker, and threads the finish room
+   * body's pentagrid reflection + the `acceptEps` parameter it reads
+   * (`params.pixelEps`, the march's own acceptance slope). The floor body
+   * reads `shade.floorPentagrid` and `params.groundAlbedo` — the look's
+   * wire on the shade struct, the ball on the geometry block. March and
+   * eval kernels stay byte-identical (structurally inert outside shade
+   * mode), and so does every floorPattern-absent shade kernel. THROWS
+   * without `groundPlane` — there is no floor to paint. */
+  floorPattern?: boolean;
   /** Finite DDA only: retain each axis's crossing time until its cell
    * changes, with the same division and tie order. Default true; false
    * preserves the original uncached query for diagnostic comparisons. */
@@ -2981,6 +3018,13 @@ export interface SurfaceGpuGroundPlane {
   pattern?: 0 | 1 | 2;
   tileScale?: number;
   emission?: number;
+  /** The pentagrid's RESOLVED block (presentationFloorSpec's resolution),
+   * present for every pattern; the force-frame key reads it, and it rides
+   * structurally beside the wire. */
+  pentagrid?: FloorPentagrid;
+  /** The 32-float wire for {@link pentagrid}, packed ONCE per spec build
+   * — the shade struct's gated tail packs it verbatim. */
+  pentagridWire?: Float32Array;
 }
 
 /** Write the plane block at its frozen offset (module-doc layout: y 288,
@@ -5311,6 +5355,17 @@ export interface SurfaceGpuShadeParams {
    * predating the transport — keeps the buffer byte for byte.
    */
   transport?: [number, number];
+  /**
+   * The pentagrid floor's 32-float wire (`packFloorPentagridUniforms`'s
+   * output, the spec's once-per-build `pentagridWire`), packed as the
+   * shade struct's `floorPentagrid` tail — EIGHT vec4f appended LAST in
+   * the conditional chain, so no earlier member's offset ever moves.
+   * Present EXACTLY when the shade kernel was generated with the
+   * `floorPattern` gate (the codegen throws for a shade struct without the
+   * kernel to read it). Absent — every caller predating the floor pattern
+   * — keeps the buffer byte for byte.
+   */
+  floorPentagrid?: Float32Array;
 }
 
 /** Pack the ShadeParams uniform (march "unproject" + mode "shade";
@@ -5318,19 +5373,29 @@ export interface SurfaceGpuShadeParams {
  * the independent balloon LUT. A present
  * `patternCalibration` grows the buffer to
  * {@link SURFACE_GPU_SHADE_PATTERN_BYTES} with the quartet at 224;
- * absent, the 224-byte buffer is byte for byte what it was. */
+ * absent, the 224-byte buffer is byte for byte what it was. A present
+ * `floorPentagrid` appends the pentagrid tail LAST — after whatever
+ * conditional members precede it — the struct's own conditional order. */
 export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
   const calibration = shade.patternCalibration;
   const transport = shade.transport;
+  const floor = shade.floorPentagrid;
+  if (floor !== undefined && floor.length !== PENTAGRID_UNIFORM_FLOATS) {
+    throw new RangeError(
+      `packSurfaceGpuShade: the floor pentagrid wire needs exactly ${PENTAGRID_UNIFORM_FLOATS} floats, got ${String(floor.length)}`,
+    );
+  }
   if (transport && shade.lighting) {
     throw new Error(
       "packSurfaceGpuShade: the optical transport member cannot combine with the lighting tail",
     );
   }
+  const conditionalBytes = (calibration ? 16 : 0) + (transport ? 16 : 0);
   const buf = new ArrayBuffer(
-    shade.lighting
+    (shade.lighting
       ? SURFACE_GPU_SHADE_LIGHTING_BYTES
-      : 224 + (calibration ? 16 : 0) + (transport ? 16 : 0),
+      : 224 + conditionalBytes) +
+      (floor ? SURFACE_GPU_SHADE_FLOOR_TAIL_BYTES : 0),
   );
   const view = new DataView(buf);
   for (let k = 0; k < 16; k++) {
@@ -5396,6 +5461,15 @@ export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
     new Float32Array(buf, SURFACE_GPU_SHADE_PATTERN_BYTES).set(
       surfaceLightingLanes(shade.lighting, shade.lightingRuntime),
     );
+  }
+  // The pentagrid floor's wire, appended LAST — after whatever conditional
+  // members precede it (the transport word, or the lighting tail), so no
+  // earlier member's offset ever moves.
+  if (floor) {
+    const floorOffset = shade.lighting
+      ? SURFACE_GPU_SHADE_LIGHTING_BYTES
+      : 224 + conditionalBytes;
+    new Float32Array(buf, floorOffset, PENTAGRID_UNIFORM_FLOATS).set(floor);
   }
   return buf;
 }
@@ -6553,6 +6627,19 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // inert elsewhere — and structurally EXCLUSIVE with the cinematic
   // lighting entry, which owns the same hit path's output.
   const optics = mode === "shade" && (opts.optics ?? false);
+  // The pentagrid floor's gate (option doc): the floor PATTERN is a look
+  // field — its 32-float wire rides the shade struct's gated tail and its
+  // body splices beside the checker branch — so the flag keys the TEXT, not
+  // the pattern value: a floor session compiles it whenever the plane arm
+  // is on, and a live pattern edit never regenerates kernels. Structurally
+  // inert outside shade mode (every splice lands in shade-emitted text
+  // alone) and refused without the plane — there is no floor to paint.
+  const floorPattern = mode === "shade" && (opts.floorPattern ?? false);
+  if (floorPattern && !groundPlane) {
+    throw new Error(
+      "surface-de-gpu: the floor pattern arm needs the ground plane — there is no floor to paint",
+    );
+  }
   if (optics && lighting) {
     throw new Error(
       "surface-de-gpu: the optical transport replaces the hit path and cannot compose with the cinematic lighting entry",
@@ -7359,6 +7446,20 @@ fn frontierIx(slot: u32, li: u32) -> u32 {
   // 224 without it). The host re-packs per replay dispatch.
   transport: vec4f,`
     : "";
+  // The pentagrid floor's wire, the shade struct's conditional chain's
+  // LAST member — the finish pair's append discipline: no earlier member's
+  // offset ever moves, whatever gates close before it.
+  const shadeFloorMember = floorPattern
+    ? `
+  // The pentagrid floor's 32-float wire (fractal/pentagrid-floor.ts's
+  // packFloorPentagridUniforms): seed offset xy, rhombus scale, five
+  // family normals xy, five phason shifts, the color-rule id, the
+  // palette's a/b/c/d, grout — eight vec4f at the offset the conditional
+  // members before it close at (the packer mirrors the arithmetic). Read
+  // by the pattern-2 floor dispatch below and by the finish room body's
+  // reflection branch.
+  floorPentagrid: array<vec4f, 8>,`
+    : "";
   const balloonLutIo =
     mode === "shade" && balloon
       ? `
@@ -7380,7 +7481,7 @@ fn hash2(p: vec2f) -> f32 {
         ? unproject
           ? `${rayIo}${shadeParamsWgsl("")}${statusIo}${hash2Io}`
           : `${rayIo}${statusIo}`
-        : `${rayIo}${shadeParamsWgsl(shadePatternCalibrationMember + shadeLightingMember + shadeOpticsMember)}${balloonLutIo}${lighting ? "\n@group(0) @binding(12) var cinematicBackgroundTex: texture_2d<f32>;" : ""}
+        : `${rayIo}${shadeParamsWgsl(shadePatternCalibrationMember + shadeLightingMember + shadeOpticsMember + shadeFloorMember)}${balloonLutIo}${lighting ? "\n@group(0) @binding(12) var cinematicBackgroundTex: texture_2d<f32>;" : ""}
 @group(0) @binding(5) var<storage, read> shadeMaps: array<vec4f>;
 @group(0) @binding(6) var<storage, read_write> colorOut: array<${lighting ? "vec4f" : "u32"}>;
 @group(0) @binding(7) var lutTex: texture_2d<f32>;
@@ -11053,7 +11154,7 @@ ${tilingSlabCoverHitInfoWrapText}`
     ? `
 // Per-slot finish lighting — surface-finish.ts's surfaceFinishShadeSource,
 // ONE emission shared by every core (the shade entry is shared text).
-${surfaceFinishShadeSource(SURFACE_FINISH_WGSL, groundPlane)}`
+${surfaceFinishShadeSource(SURFACE_FINISH_WGSL, groundPlane, groundPlane && floorPattern)}`
     : "";
   // The pattern body (surface-pattern-shade.ts's WGSL twin), ONE emission
   // shared by every core — the GLSL tracers' SURFACE_PATTERN arm in the
@@ -11095,7 +11196,7 @@ ${surfacePatternShadeSourceWgsl()}`
   // The fog lines after it are shared — they read col/t/tEnter/bg only.
   const shadeLighting = finish
     ? `  // Parametric finish lighting — surface-finish.ts's finishShade.
-  var col = finishShade(base, ${groundPlane ? "pos, " : ""}n, rd, shadow, ao, bg, fa, fb);`
+  var col = finishShade(base, ${groundPlane ? "pos, " : ""}n, rd, shadow, ao, bg, fa, fb${groundPlane && floorPattern ? ", params.pixelEps" : ""});`
     : `  let diffuse = max(dot(n, shade.lightDir), 0.0);
   let halfVec = normalize(shade.lightDir - rd);
   let specular = pow(max(dot(n, halfVec), 0.0), 32.0) * 0.4;
@@ -13673,7 +13774,17 @@ fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> GroundPlaneShad
     solidQuery ? "shadowV" : "shadow"
   }) * envTint;
   var floorAlbedo = params.groundAlbedo;
-  if (shade.balloonTint.z >= 0.5) {
+  ${
+    floorPattern
+      ? `if (shade.balloonTint.z >= 1.5) {
+    // The pentagrid floor: rel is this point relative to the ball center
+    // and tp the plane distance, so the footprint is the acceptance
+    // slope (uAcceptPixelEps semantics) at that distance — the direct
+    // path's tier-independent convention.
+    floorAlbedo = floorPentagridAlbedo(rel, params.pixelEps * tp);
+  } else if (shade.balloonTint.z >= 0.5) {`
+      : `if (shade.balloonTint.z >= 0.5) {`
+  }
     let cell = max(params.groundBallR * shade.balloonTint.x, 1.0e-4);
     let tile = floor((hp.xz - params.groundBallC.xz) / cell);
     let checker = ((i32(tile.x) + i32(tile.y)) % 2 + 2) % 2;
@@ -13701,7 +13812,7 @@ fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> GroundPlaneShad
 }
 `
               : ""
-          }${finishFnText}${patternFnText}
+          }${mode === "shade" && groundPlane && floorPattern ? `${pentagridFloorAlbedoSource(PENTAGRID_FLOOR_WGSL)}\n` : ""}${finishFnText}${patternFnText}
 @compute @workgroup_size(${workgroupSize})
 fn shadeRays(
   @builtin(global_invocation_id) gid: vec3u,
@@ -14037,7 +14148,7 @@ fn cinematicEnvironment(pos: vec3f, n: vec3f, rd: vec3f,
   ${
     finish
       ? `return pow(max(finishShade(baseEncoded, ${groundPlane ? "pos, " : ""}n, rd,
-    0.0, 0.0, vec3f(0.0), fa, vec4f(0.0, fb.y, 0.0, 0.0)), vec3f(0.0)), vec3f(2.2));`
+    0.0, 0.0, vec3f(0.0), fa, vec4f(0.0, fb.y, 0.0, 0.0)${groundPlane && floorPattern ? ", params.pixelEps" : ""}), vec3f(0.0)), vec3f(2.2));`
       : "return vec3f(0.0);"
   }
 }
@@ -14119,7 +14230,16 @@ ${
     ? `
   if (st.y == ${SURFACE_GPU_RAY_PLANE}.0) {
     var floorAlbedo = params.groundAlbedo;
-    if (shade.balloonTint.z >= 0.5) {
+    ${
+      floorPattern
+        ? `if (shade.balloonTint.z >= 1.5) {
+      // The pentagrid floor at the plane crossing: the acceptance slope
+      // (uAcceptPixelEps semantics) at the plane distance — the direct
+      // path's tier-independent convention.
+      floorAlbedo = floorPentagridAlbedo(pos.xz - params.groundBallC.xz, params.pixelEps * t);
+    } else if (shade.balloonTint.z >= 0.5) {`
+        : `if (shade.balloonTint.z >= 0.5) {`
+    }
       let cell = max(params.groundBallR * shade.balloonTint.x, 1.0e-4);
       let tile = floor((pos.xz - params.groundBallC.xz) / cell);
       let checker = ((i32(tile.x) + i32(tile.y)) % 2 + 2) % 2;

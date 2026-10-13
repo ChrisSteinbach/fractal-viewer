@@ -136,8 +136,15 @@ const PALETTE_COEFFS: Readonly<
 export function resolveFloorPentagrid(
   block: Partial<FloorPentagrid> | undefined,
 ): FloorPentagrid {
+  // In-domain values return UNCHANGED — the wrap arithmetic's add-and-
+  // subtract is not an identity in binary floating point (0.13 + 1 - 1 is
+  // a ulp off), and the resolution chain re-resolves resolved blocks (the
+  // presentation spec resolves the state's block, the force-frame key
+  // resolves the spec's), so idempotence is what makes "resolved" a fixed
+  // point instead of a rounding walk.
   const wrap01 = (v: number): number => {
     if (!Number.isFinite(v)) return 0;
+    if (v >= 0 && v < 1) return v;
     return ((v % 1) + 1) % 1;
   };
   const rawShifts = block?.shifts;
@@ -492,9 +499,10 @@ function strokeCoverage(d: number, halfW: number, aa: number): number {
  *   25..27 palette c
  *   28..30 palette d
  *   31     grout
- * GLSL reads it as `uniform float uPentagridData[32]`; WGSL appends the
- * same words to the gated ShadeParams tail; Solid and the cinematic
- * material read the identical array. ONE layout, ONE packer.
+ * GLSL reads it as `uniform float uPentagridData[32]`; WGSL reads the same
+ * words as the compute shade struct's gated `floorPentagrid` tail; Solid
+ * and the cinematic material read the identical array. ONE layout, ONE
+ * packer.
  */
 export const PENTAGRID_UNIFORM_FLOATS = 32;
 
@@ -554,6 +562,11 @@ export interface PentagridFloorDialect {
   readonly f: (name: string, init: string) => string;
   readonly v2: (name: string, init: string) => string;
   readonly v3: (name: string, init: string) => string;
+  /** A MUTABLE scalar local — the accumulator declarations the body's
+   * site-rebuild loop reassigns (mKSum/mX/mZ). GLSL spells it like every
+   * other local (function locals are mutable); WGSL needs `var` — a `let`
+   * binding there is immutable and the reassignment would not compile. */
+  readonly mf: (name: string, init: string) => string;
   /** Mutable f32 array declaration (element-assigned by the fill loop). */
   readonly fArr: (name: string, size: number) => string;
   /** The `for` header over `name = 0 .. limit-1`. */
@@ -575,6 +588,7 @@ vec3 pgSelV(vec3 a, vec3 b, bool c) { return c ? a : b; }
   f: (name, init) => `float ${name} = ${init};`,
   v2: (name, init) => `vec2 ${name} = ${init};`,
   v3: (name, init) => `vec3 ${name} = ${init};`,
+  mf: (name, init) => `float ${name} = ${init};`,
   fArr: (name, size) => `float ${name}[${size}];`,
   forRange: (name, limit) =>
     `for (int ${name} = 0; ${name} < ${limit}; ${name}++)`,
@@ -585,7 +599,14 @@ export const PENTAGRID_FLOOR_WGSL: PentagridFloorDialect = {
   vec2: "vec2f",
   vec3: "vec3f",
   cf: (e) => `f32(${e})`,
-  pf: (i) => `params.floorPentagrid[${i}]`,
+  // The compute kernel's floor wire rides the SHADE struct's gated tail
+  // (shade.floorPentagrid — the balloonTint precedent: the pattern is a
+  // look, never geometry params), while groundAlbedo stays on the geometry
+  // params block every ground-plane kernel declares. The tail is an
+  // array<vec4f, 8> — WGSL's uniform address space requires 16-byte array
+  // strides, so a scalar float array is invalid there — and the scalar
+  // float at word k is member[k / 4][k % 4].
+  pf: (i) => `shade.floorPentagrid[(${i}) / 4][(${i}) % 4]`,
   groundAlbedo: "params.groundAlbedo",
   sel: (a, b, cond) => `pgSelF(${a}, ${b}, ${cond})`,
   selV: (a, b, cond) => `pgSelV(${a}, ${b}, ${cond})`,
@@ -596,6 +617,7 @@ fn pgSelV(a: vec3f, b: vec3f, c: bool) -> vec3f { return select(b, a, c); }
   f: (name, init) => `let ${name}: f32 = ${init};`,
   v2: (name, init) => `let ${name}: vec2f = ${init};`,
   v3: (name, init) => `let ${name}: vec3f = ${init};`,
+  mf: (name, init) => `var ${name}: f32 = ${init};`,
   fArr: (name, size) => `var ${name}: array<f32, ${size}>;`,
   forRange: (name, limit) =>
     `for (var ${name}: i32 = 0; ${name} < ${limit}; ${name}++)`,
@@ -660,9 +682,9 @@ export function pentagridFloorAlbedoSource(
           ${D.f("cz", "(nX[i] * cj - ci * nX[j]) / det")}
           ${D.f("mI", "ki - 1.0")}
           ${D.f("mJ", "kj - 1.0")}
-          ${D.f("mKSum", "0.0")}
-          ${D.f("mX", "mI * nX[i] * scale + mJ * nX[j] * scale")}
-          ${D.f("mZ", "mI * nZ[i] * scale + mJ * nZ[j] * scale")}
+          ${D.mf("mKSum", "0.0")}
+          ${D.mf("mX", "mI * nX[i] * scale + mJ * nX[j] * scale")}
+          ${D.mf("mZ", "mI * nZ[i] * scale + mJ * nZ[j] * scale")}
           ${D.forRange("l", 5)} {
             if (abs(${D.cf("l")} - ${D.cf("i")}) < 0.5) { continue; }
             if (abs(${D.cf("l")} - ${D.cf("j")}) < 0.5) { continue; }
@@ -722,7 +744,7 @@ export function pentagridFloorAlbedoSource(
               ),
             )}
             ${D.f("tone", `${D.sel("1.0", "0.45", "fat > 0.5")} * alt`)}
-            ${D.f(
+            ${D.v3(
               "albedoSel",
               D.selV(
                 `${D.groundAlbedo} * tone`,

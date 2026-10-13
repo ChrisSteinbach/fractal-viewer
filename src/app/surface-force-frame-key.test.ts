@@ -2,6 +2,7 @@ import { surfaceComputeForceFrameKey } from "./surface-force-frame-key";
 import type { SurfaceComputeFrameSpec } from "./surface-compute";
 import { CLASSIC_SURFACE_FINISH } from "../fractal/surface-finish";
 import { resolveShapeTrap } from "../fractal/shape-trap";
+import { resolveFloorPentagrid } from "../fractal/pentagrid-floor";
 import { PEACE_SIGN_SHAPE } from "../fractal/shapes";
 import { resolveSphairahedron } from "../fractal/sphairahedron";
 import type {
@@ -232,6 +233,82 @@ describe("surfaceComputeForceFrameKey", () => {
     const off = surfaceComputeForceFrameKey(baseSpec({ envLight: 0 }));
     const on = surfaceComputeForceFrameKey(baseSpec({ envLight: 0.4 }));
     expect(off).not.toBe(on);
+  });
+
+  it("keys the pentagrid floor block inside the groundPlane block — the resolved block, never a sibling", () => {
+    const block = resolveFloorPentagrid({ colorRule: "pair" });
+    // A pentagrid edit under a parked camera must re-trace; the block is
+    // INSIDE groundPlane (without the plane arm the kernel emits no floor
+    // at all), and the key is the RESOLVED block's fields.
+    const groundPlane = {
+      y: -2,
+      fadeStart: 4,
+      fadeEnd: 10,
+      ballCenter: [0, 1, 0] as [number, number, number],
+      ballRadius: 5,
+      albedo: [0.2, 0.2, 0.2] as [number, number, number],
+      pattern: 2 as const,
+      tileScale: 0.64,
+      emission: 1.4,
+    };
+    const key = surfaceComputeForceFrameKey(
+      baseSpec({ groundPlane: { ...groundPlane, pentagrid: block } }),
+    );
+    const block2 = { ...block, shifts: [0.2, 0.4, 0.6, 0.8, 0.1] as const };
+    expect(
+      surfaceComputeForceFrameKey(
+        baseSpec({ groundPlane: { ...groundPlane, pentagrid: block2 } }),
+      ),
+    ).not.toBe(key);
+    expect(
+      surfaceComputeForceFrameKey(
+        baseSpec({
+          groundPlane: { ...groundPlane, pentagrid: { ...block, grout: 3 } },
+        }),
+      ),
+    ).not.toBe(key);
+    expect(
+      surfaceComputeForceFrameKey(
+        baseSpec({
+          groundPlane: {
+            ...groundPlane,
+            pentagrid: { ...block, colorRule: "orientation" as const },
+          },
+        }),
+      ),
+    ).not.toBe(key);
+    expect(
+      surfaceComputeForceFrameKey(
+        baseSpec({
+          groundPlane: {
+            ...groundPlane,
+            pentagrid: { ...block, palette: "marine" as const },
+          },
+        }),
+      ),
+    ).not.toBe(key);
+    expect(
+      surfaceComputeForceFrameKey(
+        baseSpec({
+          groundPlane: {
+            ...groundPlane,
+            pentagrid: { ...block, rotationDeg: 36 },
+          },
+        }),
+      ),
+    ).not.toBe(key);
+    // Absent and explicit-default key identically — the resolver's total
+    // resolution is what the packer sees.
+    expect(surfaceComputeForceFrameKey(baseSpec({ groundPlane }))).toBe(
+      surfaceComputeForceFrameKey(
+        baseSpec({
+          groundPlane: {
+            ...groundPlane,
+            pentagrid: resolveFloorPentagrid(undefined),
+          },
+        }),
+      ),
+    );
   });
 
   it("keys the camera-aligned autofocus plane metadata", () => {

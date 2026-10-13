@@ -57,6 +57,8 @@ import {
   SURFACE_GPU_RAY_MISS,
   SURFACE_GPU_RAY_PLANE,
   SURFACE_GPU_SHADE_BYTES,
+  SURFACE_GPU_SHADE_FLOOR_TAIL_BYTES,
+  SURFACE_GPU_SHADE_LIGHTING_BYTES,
   SURFACE_GPU_SHADE_OPTICS_BYTES,
   SURFACE_GPU_SHADE_PATTERN_BYTES,
   SURFACE_GPU_TILING_BYTES,
@@ -71,6 +73,12 @@ import {
   surfaceMeshSdfWgslSource,
   surfaceGpuWorkgroupBytes,
 } from "./surface-de-gpu";
+import { DEFAULT_SURFACE_LIGHTING } from "./surface-lighting";
+import {
+  packFloorPentagridUniforms,
+  pentagridDerived,
+  resolveFloorPentagrid,
+} from "./pentagrid-floor";
 import {
   BACKGROUND_SHAPE_WGSL,
   backgroundShapeSource,
@@ -1613,6 +1621,59 @@ describe("packSurfaceGpuShade", () => {
       packSurfaceGpuShade(shadeParams({ patternCalibration: [0, 0, 0, 0] }))
         .byteLength,
     ).toBe(SURFACE_GPU_SHADE_PATTERN_BYTES);
+  });
+
+  it("packs the pentagrid floor tail LAST — past whatever conditional members precede it — absent keeps the buffer byte for byte", () => {
+    expect(SURFACE_GPU_SHADE_FLOOR_TAIL_BYTES).toBe(128);
+    const block = resolveFloorPentagrid({ colorRule: "pair", grout: 2 });
+    const wire = packFloorPentagridUniforms(
+      pentagridDerived(block, 1.25, 0.64),
+      block,
+    );
+    // No other member: the tail lands at 224, the struct closes at 352.
+    const plain = packSurfaceGpuShade(shadeParams({ floorPentagrid: wire }));
+    expect(plain.byteLength).toBe(SURFACE_GPU_SHADE_BYTES + 128);
+    const plainView = new DataView(plain);
+    for (let k = 0; k < 32; k++) {
+      expect(plainView.getFloat32(224 + k * 4, true)).toBe(wire[k]);
+    }
+    // Pre-tail bytes are the 224-byte buffer's own.
+    const without = new Uint8Array(packSurfaceGpuShade(shadeParams()));
+    expect(without.byteLength).toBe(SURFACE_GPU_SHADE_BYTES);
+    expect(new Uint8Array(plain, 0, SURFACE_GPU_SHADE_BYTES)).toEqual(without);
+    // With the calibration quartet live the tail moves past it (the
+    // transport word's own conditional order) — no earlier offset moves.
+    const withBoth = packSurfaceGpuShade(
+      shadeParams({
+        patternCalibration: [1, 2, 3, 4],
+        floorPentagrid: wire,
+      }),
+    );
+    expect(withBoth.byteLength).toBe(240 + 128);
+    const bothView = new DataView(withBoth);
+    for (let k = 0; k < 32; k++) {
+      expect(bothView.getFloat32(240 + k * 4, true)).toBe(wire[k]);
+    }
+    // With the lighting tail live the tail rides past it.
+    const withLighting = packSurfaceGpuShade(
+      shadeParams({
+        lighting: DEFAULT_SURFACE_LIGHTING,
+        floorPentagrid: wire,
+      }),
+    );
+    expect(withLighting.byteLength).toBe(
+      SURFACE_GPU_SHADE_LIGHTING_BYTES + 128,
+    );
+    const lightView = new DataView(withLighting);
+    for (let k = 0; k < 32; k++) {
+      expect(
+        lightView.getFloat32(SURFACE_GPU_SHADE_LIGHTING_BYTES + k * 4, true),
+      ).toBe(wire[k]);
+    }
+    // A wrong-length wire refuses at pack.
+    expect(() =>
+      packSurfaceGpuShade(shadeParams({ floorPentagrid: new Float32Array(4) })),
+    ).toThrow(RangeError);
   });
 });
 
@@ -3412,6 +3473,153 @@ describe("surfaceDeKernelWgsl per-slot finishes (finish)", () => {
         src.indexOf("}", src.indexOf("struct ShadeParams")) + 1,
       );
     expect(struct(on)).toBe(struct(off));
+  });
+});
+
+describe("surfaceDeKernelWgsl pentagrid floor gate", () => {
+  const cores = [
+    "fold",
+    "affine",
+    "escape",
+    "bulb",
+    "affine4",
+    "fold4",
+    "escape4",
+  ] as const;
+
+  it("keeps omitted and explicit floorPattern:false byte-identical across every core and mode", () => {
+    for (const core of cores) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        const omitted = surfaceDeKernelWgsl(
+          kernelOpts({ mode, core, width: 4 }),
+        );
+        const explicit = surfaceDeKernelWgsl(
+          kernelOpts({ mode, core, width: 4, floorPattern: false }),
+        );
+        expect(explicit).toBe(omitted);
+      }
+    }
+  });
+
+  it("is structurally inert in march/eval even with the flag on — one flag serves the session's kernel pair", () => {
+    for (const core of cores) {
+      for (const mode of ["eval", "march"] as const) {
+        const off = surfaceDeKernelWgsl(
+          kernelOpts({ mode, core, width: 4, groundPlane: true }),
+        );
+        const on = surfaceDeKernelWgsl(
+          kernelOpts({
+            mode,
+            core,
+            width: 4,
+            groundPlane: true,
+            floorPattern: true,
+          }),
+        );
+        expect(on).toBe(off);
+      }
+    }
+  });
+
+  it("refuses the flag without the ground plane — there is no floor to paint", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", width: 4, floorPattern: true }),
+      ),
+    ).toThrow(/floor to paint/);
+    // Ground plane alone stays legal, flag on or off.
+    expect(() =>
+      surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", width: 4, groundPlane: true }),
+      ),
+    ).not.toThrow();
+  });
+
+  it("splices the floor body once, declares the shade tail, and widens the dispatch at both floor sites", () => {
+    const shade = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "fold",
+        width: 4,
+        groundPlane: true,
+        floorPattern: true,
+      }),
+    );
+    // The ONE body emission — the shade entry's floor branch, the finish
+    // room branch and the cinematic floor all CALL it.
+    expect(shade.split("fn floorPentagridAlbedo(")).toHaveLength(2);
+    // The shade struct's tail member, appended LAST.
+    expect(shade).toContain("floorPentagrid: array<vec4f, 8>,");
+    const structEnd = shade.indexOf("}", shade.indexOf("struct ShadeParams"));
+    expect(shade.slice(structEnd - 120, structEnd)).toContain(
+      "floorPentagrid: array<vec4f, 8>,",
+    );
+    // Both floor sites dispatch pentagrid FIRST and the checker beside
+    // them (the checker text inline and unchanged). The plain shade kernel
+    // carries the shade entry's own site; the cinematic lighting entry's
+    // floor rides the lighting gate's emission.
+    expect(shade.split("if (shade.balloonTint.z >= 1.5)")).toHaveLength(2);
+    expect(shade.split("else if (shade.balloonTint.z >= 0.5) {")).toHaveLength(
+      2,
+    );
+    // The checker's plain dispatch is the flag-off kernel's own line; the
+    // flag-on count counts the else-if's substring too.
+    const flagOff = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "fold",
+        width: 4,
+        groundPlane: true,
+      }),
+    );
+    expect(flagOff.split("if (shade.balloonTint.z >= 0.5) {")).toHaveLength(2);
+    // Flag on, the checker's plain dispatch becomes the else-if's own
+    // substring — one occurrence again.
+    expect(shade.split("if (shade.balloonTint.z >= 0.5) {")).toHaveLength(2);
+    expect(shade).toContain(
+      "floorAlbedo = floorPentagridAlbedo(rel, params.pixelEps * tp);",
+    );
+    const cinematic = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "fold",
+        width: 4,
+        groundPlane: true,
+        floorPattern: true,
+        lighting: true,
+      }),
+    );
+    expect(cinematic).toContain("if (shade.balloonTint.z >= 1.5) {");
+    expect(cinematic).toContain("else if (shade.balloonTint.z >= 0.5) {");
+    expect(cinematic).toContain(
+      "floorAlbedo = floorPentagridAlbedo(pos.xz - params.groundBallC.xz, params.pixelEps * t);",
+    );
+  });
+
+  it("threads the finish room branch and its acceptEps parameter only when both gates compile", () => {
+    const both = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "fold",
+        width: 4,
+        groundPlane: true,
+        floorPattern: true,
+        finish: true,
+      }),
+    );
+    expect(both).toContain(
+      "floorBase = floorPentagridAlbedo(floorP.xz - params.groundBallC.xz, acceptEps * floorT);",
+    );
+    expect(both).toContain(
+      "finishShade(base, pos, n, rd, shadow, ao, bg, fa, fb, params.pixelEps);",
+    );
+    // Flag off: the finish body and its call keep their pre-pentagrid text.
+    const off = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "fold", width: 4, finish: true }),
+    );
+    expect(off).not.toContain("floorPentagridAlbedo");
+    expect(off).not.toContain("acceptEps");
+    expect(off).toContain("finishShade(base, n, rd, shadow, ao, bg, fa, fb);");
   });
 });
 
