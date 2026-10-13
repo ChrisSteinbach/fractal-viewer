@@ -4851,6 +4851,15 @@ export class FractalScene {
         this.camera.matrixWorldInverse,
       )
       .invert();
+    // The frame's angular pixel footprint at THIS render's buffer — the
+    // Solid path has no tier, so the live buffer IS the full-resolution
+    // frame and the pentagrid floor's grout reads this directly.
+    const drawingBuffer = this.renderer.getDrawingBufferSize(
+      new THREE.Vector2(),
+    );
+    u.uPixelEps.value =
+      (2 * Math.tan((this.camera.fov * Math.PI) / 360)) /
+      Math.max(drawingBuffer.y, 1);
     this.renderer.setRenderTarget(null);
     this.voxelQuad.render(this.renderer);
   }

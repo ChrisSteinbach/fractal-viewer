@@ -20,6 +20,10 @@ import {
   type ResolvedTiling,
 } from "../fractal/tiling";
 import type { PresentationFloorSpec } from "../fractal/presentation-floor";
+import {
+  PENTAGRID_FLOOR_GLSL,
+  pentagridFloorAlbedoSource,
+} from "../fractal/pentagrid-floor";
 import type { Vec3 } from "../fractal/types";
 import {
   VOXEL_MAX_HIERARCHY_TRAVERSAL_CELL_SPAN,
@@ -1404,6 +1408,11 @@ function voxelFloorHelper(
       ivec2 tile = ivec2(floor((hp.xz - uGroundBallC.xz) / cell));
       int checker = ((tile.x + tile.y) % 2 + 2) % 2;
       floorAlbedo *= mix(0.035, 1.0, float(checker));
+    } else if (uGroundPattern == 2) {
+      // The pentagrid floor: rel is this point relative to the ball center
+      // and the footprint is the pixel-epsilon uniform at the plane
+      // distance — the tracers' tier-independent convention.
+      floorAlbedo = floorPentagridAlbedo(rel, uPixelEps * tp);
     }
     // Albedo is authored sRGB; light and emission operate in linear space.
     vec3 floorLinear = pow(floorAlbedo, vec3(2.2));
@@ -1517,6 +1526,11 @@ ${aoTap}
       ivec2 tile = ivec2(floor((hp.xz - uGroundBallC.xz) / cell));
       int checker = ((tile.x + tile.y) % 2 + 2) % 2;
       floorAlbedo *= mix(0.035, 1.0, float(checker));
+    } else if (uGroundPattern == 2) {
+      // The pentagrid floor: rel is this point relative to the ball center
+      // and the footprint is the pixel-epsilon uniform at the plane
+      // distance — the tracers' tier-independent convention.
+      floorAlbedo = floorPentagridAlbedo(rel, uPixelEps * tp);
     }
     // Albedo is authored sRGB; light and emission operate in linear space.
     vec3 floorLinear = pow(floorAlbedo, vec3(2.2));
@@ -1564,7 +1578,7 @@ function buildVoxelPresentationFragment(
     presentationUniforms += `  // Surface-parity two-stop hue environment.\n  uniform float uEnvLight;\n`;
   }
   if (floor) {
-    presentationUniforms += `  // Shared world-space presentation floor.\n  uniform float uGroundY;\n  uniform float uGroundFadeStart;\n  uniform float uGroundFadeEnd;\n  uniform float uGroundBallR;\n  uniform vec3 uGroundBallC;\n  uniform vec3 uGroundAlbedo;\n  uniform int uGroundPattern;\n  uniform float uGroundTileScale;\n  uniform float uGroundEmission;\n`;
+    presentationUniforms += `  // Shared world-space presentation floor.\n  uniform float uGroundY;\n  uniform float uGroundFadeStart;\n  uniform float uGroundFadeEnd;\n  uniform float uGroundBallR;\n  uniform vec3 uGroundBallC;\n  uniform vec3 uGroundAlbedo;\n  uniform int uGroundPattern;\n  uniform float uGroundTileScale;\n  uniform float uGroundEmission;\n  // The pentagrid floor's 32-float wire (fractal/pentagrid-floor.ts's\n  // packFloorPentagridUniforms) and the frame's pixel footprint — both\n  // read only by the pattern-2 floor branch.\n  uniform float uPentagridData[32];\n  uniform float uPixelEps;\n`;
   }
   source = spliceVoxelBalloon(
     source,
@@ -1574,7 +1588,7 @@ function buildVoxelPresentationFragment(
 
   const envHelper = environment
     ? `  /** Surface's normalized two-stop hue convention: strength changes
-   * tint, never the light's peak brightness. */
+    * tint, never the light's peak brightness. */
   vec3 voxelEnvTint(vec3 n) {
     vec3 e = mix(uBgBottom, uBgTop, n.y * 0.5 + 0.5);
     return mix(vec3(1.0), e / max(max(e.r, max(e.g, e.b)), 1.0e-4), uEnvLight);
@@ -1582,7 +1596,11 @@ function buildVoxelPresentationFragment(
 
 `
     : "";
-  const floorHelper = floor ? voxelFloorHelper(environment, tiling) : "";
+  // The pentagrid body BEFORE the floor helper — GLSL needs declaration
+  // before use, and both shadeVoxelFloor variants call it.
+  const floorHelper = floor
+    ? `${pentagridFloorAlbedoSource(PENTAGRID_FLOOR_GLSL)}${voxelFloorHelper(environment, tiling)}`
+    : "";
   source = spliceVoxelBalloon(
     source,
     "  void main() {\n",
@@ -2097,6 +2115,15 @@ export function packVoxelPresentation(
     u.uGroundPattern.value = floor.pattern;
     u.uGroundTileScale.value = floor.tileScale;
     u.uGroundEmission.value = floor.emission;
+    // The pentagrid wire lands f32-packed from the spec's once-per-build
+    // wire (pattern 2); every other pattern zeroes it — the branch never
+    // reads it. In place: Three binds uniform values by object identity.
+    const data = u.uPentagridData.value as Float32Array;
+    if (floor.pattern === 2 && floor.pentagridWire !== undefined) {
+      data.set(floor.pentagridWire);
+    } else {
+      data.fill(0);
+    }
   } else {
     u.uGroundY.value = 0;
     u.uGroundFadeStart.value = 0;
@@ -2107,6 +2134,7 @@ export function packVoxelPresentation(
     u.uGroundPattern.value = 0;
     u.uGroundTileScale.value = 0.64;
     u.uGroundEmission.value = 0;
+    (u.uPentagridData.value as Float32Array).fill(0);
   }
   material.userData[ENVIRONMENT_ENABLED_KEY] = spec.envLight !== 0;
   material.userData[FLOOR_REQUESTED_KEY] = spec.floor !== null;
@@ -2159,6 +2187,13 @@ export function createVoxelMaterial(
       uGroundPattern: { value: 0 },
       uGroundTileScale: { value: 0.64 },
       uGroundEmission: { value: 0 },
+      // The pentagrid floor's 32-float wire, zeroed until
+      // packVoxelPresentation writes it (mutated in place — Three binds
+      // uniform values by object identity), plus the frame's pixel
+      // footprint the pattern-2 branch reads (renderSolid rewrites it per
+      // frame at the render's own resolution).
+      uPentagridData: { value: new Float32Array(32) },
+      uPixelEps: { value: 0.002 },
       // Acceleration is opt-in per exact worker snapshot. These uniforms stay
       // inert (and the fragment source stays unchanged) until its traversal
       // program is selected; the 1x1x1 R8 binding makes absence explicit.
