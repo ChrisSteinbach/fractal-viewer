@@ -2585,7 +2585,115 @@
             <select id="solidFloorPatternSelect">
               <option value="solid">Solid</option>
               <option value="checker">Checkerboard</option>
+              <option value="pentagrid">Penrose</option>
             </select>
+          </label>
+          <!-- The pentagrid pattern's authored details, revealed only while
+               the pattern itself is selected (ui.ts's syncSolidFloorRows).
+               Domains are the resolver's own (pentagrid-floor.ts): shifts
+               wrap to [0,1), rotation to [0,72), grout clamps to
+               [PENTAGRID_GROUT_MIN, MAX] — the sliders present exactly
+               those spans so a readout is never a value the resolver would
+               silently move. Edits are sparse-block writes (a field lands
+               in the document only once its own control moves) and are
+               live-reactive uniform rewrites, never a restart. -->
+          <label class="select-label hidden" id="solidFloorPentagridShift0Row">
+            Phason 1: <span id="solidFloorPentagridShift0Label">0.13</span>
+            <input
+              type="range"
+              id="solidFloorPentagridShift0Slider"
+              min="0"
+              max="0.99"
+              step="0.01"
+              value="0.13"
+            />
+          </label>
+          <label class="select-label hidden" id="solidFloorPentagridShift1Row">
+            Phason 2: <span id="solidFloorPentagridShift1Label">0.62</span>
+            <input
+              type="range"
+              id="solidFloorPentagridShift1Slider"
+              min="0"
+              max="0.99"
+              step="0.01"
+              value="0.62"
+            />
+          </label>
+          <label class="select-label hidden" id="solidFloorPentagridShift2Row">
+            Phason 3: <span id="solidFloorPentagridShift2Label">0.35</span>
+            <input
+              type="range"
+              id="solidFloorPentagridShift2Slider"
+              min="0"
+              max="0.99"
+              step="0.01"
+              value="0.35"
+            />
+          </label>
+          <label class="select-label hidden" id="solidFloorPentagridShift3Row">
+            Phason 4: <span id="solidFloorPentagridShift3Label">0.81</span>
+            <input
+              type="range"
+              id="solidFloorPentagridShift3Slider"
+              min="0"
+              max="0.99"
+              step="0.01"
+              value="0.81"
+            />
+          </label>
+          <label class="select-label hidden" id="solidFloorPentagridShift4Row">
+            Phason 5: <span id="solidFloorPentagridShift4Label">0.47</span>
+            <input
+              type="range"
+              id="solidFloorPentagridShift4Slider"
+              min="0"
+              max="0.99"
+              step="0.01"
+              value="0.47"
+            />
+          </label>
+          <label
+            class="select-label hidden"
+            id="solidFloorPentagridRotationRow"
+          >
+            Rotation: <span id="solidFloorPentagridRotationLabel">0°</span>
+            <input
+              type="range"
+              id="solidFloorPentagridRotationSlider"
+              min="0"
+              max="71"
+              step="1"
+              value="0"
+            />
+          </label>
+          <label class="select-label hidden" id="solidFloorPentagridRuleRow">
+            Color rule
+            <select id="solidFloorPentagridRuleSelect">
+              <option value="grey">Grey</option>
+              <option value="orientation">Orientation</option>
+              <option value="height">Height</option>
+              <option value="pair">Pair</option>
+            </select>
+          </label>
+          <label class="select-label hidden" id="solidFloorPentagridPaletteRow">
+            Palette
+            <select id="solidFloorPentagridPaletteSelect">
+              <option value="sunset">Sunset</option>
+              <option value="marine">Marine</option>
+              <option value="dusk">Dusk</option>
+              <option value="moss">Moss</option>
+            </select>
+          </label>
+          <label class="select-label hidden" id="solidFloorPentagridGroutRow">
+            Grout: <span id="solidFloorPentagridGroutLabel">1.00</span>
+            <input
+              type="range"
+              id="solidFloorPentagridGroutSlider"
+              min="0.25"
+              max="8"
+              step="0.05"
+              value="1"
+            />
           </label>
           <label class="select-label hidden" id="solidFloorTileScaleRow">
             Tile size: <span id="solidFloorTileScaleLabel">0.64×</span>
@@ -2984,7 +3092,107 @@
             <select id="surfaceFloorPatternSelect">
               <option value="solid">Solid</option>
               <option value="checker">Checkerboard</option>
+              <option value="pentagrid">Penrose</option>
             </select>
+          </label>
+          <!-- The pentagrid pattern's authored details, revealed only while
+               the pattern itself is selected (ui.ts's
+               syncSurfaceFloorRows). Same domains and same sparse-write
+               rule as Solid's twins above; the ids are the section's own. -->
+          <label class="select-label" id="surfaceFloorPentagridShift0Row">
+            Phason 1: <span id="surfaceFloorPentagridShift0Label">0.13</span>
+            <input
+              type="range"
+              id="surfaceFloorPentagridShift0Slider"
+              min="0"
+              max="0.99"
+              step="0.01"
+              value="0.13"
+            />
+          </label>
+          <label class="select-label" id="surfaceFloorPentagridShift1Row">
+            Phason 2: <span id="surfaceFloorPentagridShift1Label">0.62</span>
+            <input
+              type="range"
+              id="surfaceFloorPentagridShift1Slider"
+              min="0"
+              max="0.99"
+              step="0.01"
+              value="0.62"
+            />
+          </label>
+          <label class="select-label" id="surfaceFloorPentagridShift2Row">
+            Phason 3: <span id="surfaceFloorPentagridShift2Label">0.35</span>
+            <input
+              type="range"
+              id="surfaceFloorPentagridShift2Slider"
+              min="0"
+              max="0.99"
+              step="0.01"
+              value="0.35"
+            />
+          </label>
+          <label class="select-label" id="surfaceFloorPentagridShift3Row">
+            Phason 4: <span id="surfaceFloorPentagridShift3Label">0.81</span>
+            <input
+              type="range"
+              id="surfaceFloorPentagridShift3Slider"
+              min="0"
+              max="0.99"
+              step="0.01"
+              value="0.81"
+            />
+          </label>
+          <label class="select-label" id="surfaceFloorPentagridShift4Row">
+            Phason 5: <span id="surfaceFloorPentagridShift4Label">0.47</span>
+            <input
+              type="range"
+              id="surfaceFloorPentagridShift4Slider"
+              min="0"
+              max="0.99"
+              step="0.01"
+              value="0.47"
+            />
+          </label>
+          <label class="select-label" id="surfaceFloorPentagridRotationRow">
+            Rotation: <span id="surfaceFloorPentagridRotationLabel">0°</span>
+            <input
+              type="range"
+              id="surfaceFloorPentagridRotationSlider"
+              min="0"
+              max="71"
+              step="1"
+              value="0"
+            />
+          </label>
+          <label class="select-label" id="surfaceFloorPentagridRuleRow">
+            Color rule
+            <select id="surfaceFloorPentagridRuleSelect">
+              <option value="grey">Grey</option>
+              <option value="orientation">Orientation</option>
+              <option value="height">Height</option>
+              <option value="pair">Pair</option>
+            </select>
+          </label>
+          <label class="select-label" id="surfaceFloorPentagridPaletteRow">
+            Palette
+            <select id="surfaceFloorPentagridPaletteSelect">
+              <option value="sunset">Sunset</option>
+              <option value="marine">Marine</option>
+              <option value="dusk">Dusk</option>
+              <option value="moss">Moss</option>
+            </select>
+          </label>
+          <label class="select-label" id="surfaceFloorPentagridGroutRow">
+            Grout: <span id="surfaceFloorPentagridGroutLabel">1.00</span>
+            <input
+              type="range"
+              id="surfaceFloorPentagridGroutSlider"
+              min="0.25"
+              max="8"
+              step="0.05"
+              value="1"
+            />
           </label>
           <label class="select-label" id="surfaceFloorTileScaleRow">
             Tile size: <span id="surfaceFloorTileScaleLabel">0.64×</span>

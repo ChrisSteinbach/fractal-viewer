@@ -154,9 +154,16 @@ export function resolveFloorPentagrid(
   }) as [number, number, number, number, number];
   const blockDeg = block?.rotationDeg;
   const rotationDeg = Number.isFinite(blockDeg)
-    ? (((blockDeg as number) % PENTAGRID_ROTATION_PERIOD_DEG) +
-        PENTAGRID_ROTATION_PERIOD_DEG) %
-      PENTAGRID_ROTATION_PERIOD_DEG
+    ? // Same in-domain fast path as the shifts: the wrap's add-and-subtract
+      // is not a floating-point identity, and the resolution chain
+      // re-resolves resolved blocks, so an in-domain angle must come back
+      // UNCHANGED instead of drifting an ulp per resolve.
+      (blockDeg as number) >= 0 &&
+      (blockDeg as number) < PENTAGRID_ROTATION_PERIOD_DEG
+      ? (blockDeg as number)
+      : (((blockDeg as number) % PENTAGRID_ROTATION_PERIOD_DEG) +
+          PENTAGRID_ROTATION_PERIOD_DEG) %
+        PENTAGRID_ROTATION_PERIOD_DEG
     : DEFAULT_FLOOR_PENTAGRID.rotationDeg;
   const colorRule =
     block?.colorRule !== undefined &&
@@ -170,7 +177,10 @@ export function resolveFloorPentagrid(
       : DEFAULT_FLOOR_PENTAGRID.palette;
   const groutRaw = block?.grout;
   const grout = Number.isFinite(groutRaw)
-    ? Math.min(GROUT_MAX, Math.max(GROUT_MIN, groutRaw as number))
+    ? Math.min(
+        PENTAGRID_GROUT_MAX,
+        Math.max(PENTAGRID_GROUT_MIN, groutRaw as number),
+      )
     : DEFAULT_FLOOR_PENTAGRID.grout;
   return { shifts, rotationDeg, colorRule, palette, grout };
 }
@@ -199,8 +209,15 @@ export const PENTAGRID_RULE_WIRE_ID: Readonly<
 > = { grey: 0, orientation: 1, height: 2, pair: 3 };
 
 export const PENTAGRID_ROTATION_PERIOD_DEG = 72;
-const GROUT_MIN = 0.25;
-const GROUT_MAX = 8;
+
+/**
+ * The grout knob's domain — the resolver's own clamp range, exported so the
+ * panel sliders' min/max attributes and their spec entries read ONE
+ * definition instead of restating it. The resolver stays the only authority:
+ * the pentagrid setters deliberately do not re-clamp through these.
+ */
+export const PENTAGRID_GROUT_MIN = 0.25;
+export const PENTAGRID_GROUT_MAX = 8;
 
 /**
  * Host-side derived quantities, computed once per frame and pushed as
