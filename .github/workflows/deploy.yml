@@ -21,6 +21,19 @@ name: Deploy to GitHub Pages
 # that stops an untested commit reaching main at all. The ruleset carries
 # no bypass actors; in a genuine emergency the repo admin can deactivate
 # it from the repo's Rules settings, eyes open.
+#
+# MEASURED FAILURE MODE (2026-10-13, the pentagrid floor's merge): a rebase
+# merge whose push event produces NO push-triggered CI at all (every prior
+# merge fired lint/build/test/smoke + the GPU sweep on the new tip within a
+# minute; this one produced zero runs) strands the new tip with no check runs
+# of its own, so re-dispatching this workflow refuses forever at preflight
+# ("missing checks") no matter how long one waits. The refusal is still the
+# gate working — never weaken the exact-commit question for it — and the
+# recovery is to RE-FIRE THE PIPELINE: land a small records-only PR (any
+# commit re-exercises PR CI + the sweep, and the merge's own push event
+# re-arms main's tip), watch main's CI on the new tip, then dispatch. A
+# stuck refusal whose tip never gains checks is that recovery's trigger,
+# not a gate bug to route around.
 on:
   workflow_dispatch:
 
