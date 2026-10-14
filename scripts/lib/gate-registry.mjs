@@ -80,6 +80,11 @@ export const GATES = {
     modeFlag: "--mode",
     urlFlag: "--url",
   },
+  "live-4d-presets": {
+    script: "live-4d-presets.verify.mjs",
+    modeFlag: "--mode",
+    urlFlag: "--url",
+  },
 
   // --mode gates that hardcode the default preview URL ----------------------
   "sphere-inversion-family": {

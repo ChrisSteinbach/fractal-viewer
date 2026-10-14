@@ -337,6 +337,31 @@ describe("GPU workflow gates", () => {
     expect(condition).not.toContain("||");
     expect(condition.split("&&")).toHaveLength(2);
   });
+  it("admits the live 4D preset sweep the same way", () => {
+    // verify-live-presets is the same class of job one level over — a
+    // post-deploy gate behind deploy — so it carries the same explicit
+    // admission with the same shape, or the transitive-skip defect above
+    // reintroduces itself here the first time a sweep-reuse deploy runs.
+    const job = workflow("deploy").jobs["verify-live-presets"];
+    expect(job).toBeDefined();
+    const condition = String(job.if);
+    expect(condition).toContain("!cancelled()");
+    expect(condition).toContain("needs.deploy.result == 'success'");
+    expect(condition).not.toContain("||");
+    expect(condition.split("&&")).toHaveLength(2);
+    // The SwiftShader arm is the CI arm and the fast tier its window's
+    // basis — a run without them re-measures the full pane's hyperkifs
+    // settle against a CI budget and times out the job.
+    const step = job.steps.find((s: Step) =>
+      String(s.run ?? "").includes("live-4d-presets.verify.mjs"),
+    );
+    expect(step).toBeDefined();
+    expect(String(step.run)).toContain("--mode=sw");
+    expect(String(step.run)).toContain("--tier=fast");
+    // Only the checking-side exit is rerunnable — a preset leg's verdict
+    // (exit 3) is a site verdict, not an environment flake to retry away.
+    expect(String(step.run)).toMatch(/-ne 2/);
+  });
   it("preserves the ci.yml required checks on every PR and main push", () => {
     const ci = workflow("ci");
     // build/lint/smoke/test are the four names main's ruleset requires;
