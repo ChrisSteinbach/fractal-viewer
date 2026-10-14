@@ -303,7 +303,7 @@ function validateShapeSpec(spec: ShapeSpec): void {
 }
 
 /** Non-finite or non-positive scale resolves to the identity (module doc). */
-function resolvePoseScale(pose: ShapePose | undefined): number {
+export function resolvePoseScale(pose: ShapePose | undefined): number {
   const s = pose?.scale;
   return typeof s === "number" && Number.isFinite(s) && s > 0 ? s : 1;
 }

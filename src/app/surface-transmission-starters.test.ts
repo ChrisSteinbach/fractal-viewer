@@ -33,10 +33,12 @@ describe("surface transmission starters", () => {
     expect(SURFACE_TRANSMISSION_STARTERS.map((s) => s.id)).toEqual([
       "glass-garden",
       "glass-corner-cells",
+      "glass-star",
       "glass-cells",
       "glass-beads",
       "glass-rings",
       "glass-beads-4d",
+      "glass-star-4d",
     ]);
     expect(surfaceTransmissionStarterValue("glass-garden")).toBe(
       "glass:glass-garden",
@@ -48,7 +50,11 @@ describe("surface transmission starters", () => {
   });
 
   it("builds 3D emitter-only unions that are eligible and closed-solid admitted", () => {
-    for (const id of ["glass-garden", "glass-corner-cells"] as const) {
+    for (const id of [
+      "glass-garden",
+      "glass-corner-cells",
+      "glass-star",
+    ] as const) {
       const snap = createSurfaceTransmissionStarter(id);
       const eligibility = analyzeSurfaceSystem(
         snap.transforms,
@@ -82,48 +88,50 @@ describe("surface transmission starters", () => {
   });
 
   it("builds a native 4D composition whose saved slice carries every flat", () => {
-    const snap = createSurfaceTransmissionStarter("glass-cells");
-    expect(snap.fourD).toBeDefined();
-    // Genuinely non-flat: the members' w translation lifts them out of
-    // w = 0 (this is what makes the starter native 4D at all).
-    const state = { ...initialState(true), transforms: snap.transforms };
-    expect(systemIsNonFlat(state)).toBe(true);
-    const eligibility = analyzeSurfaceSystem4(
-      snap.transforms,
-      snap.finalTransform ?? null,
-      null,
-      { order: 1, plane: "xy" },
-    );
-    expect(eligibility.status).toBe("eligible");
-    const de = buildSurfaceDE4(
-      snap.transforms,
-      snap.finalTransform ?? null,
-      { order: 1, plane: "xy" },
-      {},
-    );
-    expect(de.maps.length).toBe(0);
-    const pose = snap.fourD!;
-    expect(pose.sliceW).toBe(0);
-    expect(
-      surfaceClosedSolidAdmitted(
-        de,
+    for (const id of ["glass-cells", "glass-star-4d"] as const) {
+      const snap = createSurfaceTransmissionStarter(id);
+      expect(snap.fourD).toBeDefined();
+      // Genuinely non-flat: the members' w translation lifts them out of
+      // w = 0 (this is what makes the starter native 4D at all).
+      const state = { ...initialState(true), transforms: snap.transforms };
+      expect(systemIsNonFlat(state)).toBe(true);
+      const eligibility = analyzeSurfaceSystem4(
+        snap.transforms,
+        snap.finalTransform ?? null,
+        null,
+        { order: 1, plane: "xy" },
+      );
+      expect(eligibility.status).toBe("eligible");
+      const de = buildSurfaceDE4(
+        snap.transforms,
+        snap.finalTransform ?? null,
+        { order: 1, plane: "xy" },
         {},
-        {
-          rotor: rotorMatrix(pose.pair),
-          w0: 0,
-          sliceHalfW: 0,
-        },
-      ),
-    ).toBe(true);
-    // The same members off their carried flat refuse — the honest
-    // degradation the panel note discloses.
-    expect(
-      surfaceClosedSolidAdmitted(
-        de,
-        {},
-        { rotor: rotorMatrix(pose.pair), w0: 0.25, sliceHalfW: 0 },
-      ),
-    ).toBe(false);
+      );
+      expect(de.maps.length).toBe(0);
+      const pose = snap.fourD!;
+      expect(pose.sliceW).toBe(0);
+      expect(
+        surfaceClosedSolidAdmitted(
+          de,
+          {},
+          {
+            rotor: rotorMatrix(pose.pair),
+            w0: 0,
+            sliceHalfW: 0,
+          },
+        ),
+      ).toBe(true);
+      // The same members off their carried flat refuse — the honest
+      // degradation the panel note discloses.
+      expect(
+        surfaceClosedSolidAdmitted(
+          de,
+          {},
+          { rotor: rotorMatrix(pose.pair), w0: 0.25, sliceHalfW: 0 },
+        ),
+      ).toBe(false);
+    }
   });
 
   it("builds the curved-solid fractals: maps beside one glass emitter, admitted by the general solid and not by C0", () => {

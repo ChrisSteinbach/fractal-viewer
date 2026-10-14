@@ -70,8 +70,16 @@
  * SDFs — sphere, box, torus with `minor <= major`, capsule — combined by
  * UNION only (a union of exact fields is exact outside and conservative
  * inside, and its sign is exact). An intersect part keeps the sign and
- * loses the distance; the gear and the baked mesh are conservative by
- * construction. They refuse, and no gear remedy is scheduled.
+ * loses the distance; the gear is conservative by construction and refuses
+ * (no gear remedy is scheduled). A MESH part ships its own
+ * DECLARED-RESOLUTION treatment: its field is the conservative node
+ * lattice — the same declared wall the display's primary march draws —
+ * whose sign is exact BY DECLARATION for the lattice's own negative
+ * region (which contains the true mesh: F <= sd everywhere, so the
+ * declared solid never loses a wall), and the transport's interior strides
+ * cap at the declared resolution ({@link condensationMeshDeclaredStrideCap}).
+ * The declared solid is fatter than the mesh by up to ~two cell radii and
+ * merges sub-resolution gaps — disclosed, never silent.
  *
  * THE 4D HALF is `condensation-solid-4d.ts`: the same search one dimension
  * up over the transport's penalty term, admitted only in the canonical
@@ -141,9 +149,10 @@ export interface CondensationSolidOptions {
    * torus) that the emitter rule refuses. The field stays sound over them —
    * only the pruned-equals-brute-force exactness and the look are lost —
    * so the look sheet's gear panel and the soundness tests build them as an
-   * INSTRUMENT. Routing never passes it. A mesh stays refused either way
-   * (its baked lattice is not a CPU-side shape SDF this module evaluates
-   * against a kernel). */
+   * INSTRUMENT. Routing never passes it. A mesh part carries the
+   * declared-resolution treatment in BOTH modes (its sign is exact by
+   * declaration, and the transport's interior strides cap at the declared
+   * resolution), so the mesh is not this option's subject. */
   admitConservativeShapes?: boolean;
 }
 
@@ -182,7 +191,11 @@ export function condensationSolidAdmission3(
 
 /** Why an emitter shape falls outside the exact-SDF vocabulary (module
  * doc's emitter rule), or `null` when it is admitted. Shared by both
- * dimensions: the 4D emitter is the same 3D shape on its flat. */
+ * dimensions: the 4D emitter is the same 3D shape on its flat. A mesh
+ * part is admitted through its own declared-resolution treatment (the
+ * module doc's emitter rule): the field is the conservative node lattice,
+ * sign-exact by declaration, with the transport's interior strides capped
+ * at the declared resolution. */
 export function condensationSolidShapeRefusal(
   shape: ShapeSpec,
   options: CondensationSolidOptions = {},
@@ -190,7 +203,6 @@ export function condensationSolidShapeRefusal(
   const exact = !options.admitConservativeShapes;
   for (const part of shape.parts) {
     const prim = part.primitive;
-    if (prim.kind === "mesh") return "a mesh emitter shape";
     if (!exact) continue;
     if (part.combine !== "union") return "an intersect emitter part";
     switch (prim.kind) {

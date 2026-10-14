@@ -5,7 +5,10 @@ import {
   installSurfaceLightingUniforms,
 } from "./surface-lighting-material";
 import type { SurfaceLighting } from "../fractal/surface-lighting";
-import { condensationTraversalDepth } from "../fractal/condensation-de";
+import {
+  condensationMeshDeclaredStrideCap,
+  condensationTraversalDepth,
+} from "../fractal/condensation-de";
 import type { BulbDE } from "../fractal/bulb-de";
 import { BULB_ITERATIONS, BULB_STEP_SCALE } from "../fractal/bulb-de";
 import type { MengerDE } from "../fractal/menger-de";
@@ -138,6 +141,7 @@ import {
   SURFACE_GPU_TRANSPORT_INVALID,
   SURFACE_GPU_TRANSPORT_MAX_INTERFACES,
   SURFACE_GPU_TRANSPORT_MAX_PROCESSED_PATHS,
+  SURFACE_GPU_TRANSPORT_MEMBERSHIP_BISECT_STEPS,
   SURFACE_GPU_TRANSPORT_PENDING,
   SURFACE_GPU_TRANSPORT_REASON_INVALID_INPUT,
   SURFACE_GPU_TRANSPORT_REASON_VISIT_CAP,
@@ -1476,6 +1480,7 @@ export function surfaceSolidShadowSource(fourD: boolean): string {
   ${dielectricOpticsSource("glsl")}
 #if SURFACE_OPTICS_CLOSED_SOLID
 ${fourD ? transportSolidField4D() : transportSolidField3D()}
+//__SOLID_MESH_CONTAINS__
   vec3 transportShadowVisibility(
     vec3 origin,
     vec3 dir,
@@ -1512,7 +1517,7 @@ ${fourD ? transportSolidField4D() : transportSolidField3D()}
       if (!(f > -1.0e30)) {
         break;
       }
-      if (abs(f) < eps) {
+      if (abs(f) < eps//__SOLID_MESH_BAND_FIRE__) {
         // The declared crossing band: the boundary is here, within the
         // declared resolution. Fire the state's crossing (entry when
         // the march is outside, exit when inside), then leave the
@@ -1562,11 +1567,12 @@ ${fourD ? transportSolidField4D() : transportSolidField3D()}
           if (!(fq > -1.0e30) || abs(fq) >= eps) {
             break;
           }
+          //__SOLID_MESH_BAND_ADVANCE__
           ts = ts + 2.0 * eps;
         }
         continue;
       }
-      if ((f < 0.0 ? 1 : 0) != (inside ? 1 : 0)) {
+      if ((f < 0.0 ? 1 : 0) != (inside ? 1 : 0)//__SOLID_MESH_FLIP__) {
         // A stride jumped clean across the band: the crossing happened
         // between the samples; report it here (within one stride — the
         // strides step the field itself, so no far overshoot exists).
@@ -1601,7 +1607,7 @@ ${fourD ? transportSolidField4D() : transportSolidField3D()}
         }
         inside = f < 0.0;
       }
-      ts = ts + clamp(abs(f) * uStepScale, ballR * 2.0e-4, visR);
+      ts = ts + clamp(//__SOLID_MESH_STRIDE__abs(f) * uStepScale, ballR * 2.0e-4, visR);
       if (dot(sp - ballC, dir) > 0.0 && length(sp - ballC) > ballR * 1.05) {
         break;
       }
@@ -1782,118 +1788,7 @@ ${domainRadius}
     return dot(grad, grad) > 1.0e-12 ? normalize(grad) : -dir;
   }
 
-  // The closed-solid boundary query (option doc): the estimator query's
-  // march structure over the SIGNED union field. The sign unlocks the
-  // inside traversal a refracted child needs: outside, the field
-  // understates the distance and the march steps it forward; inside, |f|
-  // is the deepest containing part's certified depth — a lower bound on
-  // the distance to the union's complement, because the merged interval
-  // along the ray ends at the LAST containing part's exit — so a step
-  // cannot cross the boundary without sampling its band. The medium
-  // state is the caller's and is now CHECKED: at the anchored restart,
-  // beyond the anchor envelope, a field whose membership contradicts the
-  // caller's medium refuses state-mismatch (the qualified fixture's
-  // exact-occupancy discipline, made real by the sign). The crossing
-  // band is two-sided (|f| < eps); an inside crossing is reported at the
-  // query point, an outside one advanced to the band's edge. The anchor
-  // envelope, crossing scale, step budget and domain gate are the
-  // estimator query's own definitions.
-  TransportBoundary transportNextBoundary(
-    vec3 origin,
-    vec3 dir,
-    int anchorPresent,
-    vec3 anchorPoint,
-    int inside,
-    float eps
-  ) {
-    TransportBoundary result;
-    result.kind = 3;
-    result.reason = TRANSPORT_REASON_VISIT_CAP;
-    result.t = 0.0;
-    result.normal = vec3(0.0);
-    vec3 p = origin;
-    float t = 0.0;
-    if (anchorPresent == 1) {
-      // Same-boundary suppression, part 1 (the estimator query's rule).
-      float skip = 2.0 * eps;
-      p = p + dir * skip;
-      t = t + skip;
-      // The medium cross-check: just past the anchored boundary the
-      // field's membership must agree with the caller's medium beyond
-      // the anchor envelope — within it, the boundary's own band is
-      // consistent with either medium (a grazing child rides it).
-      float f0 = transportSolidField(p);
-      if (f0 > -1.0e30 &&
-          ((inside == 1 && f0 > TRANSPORT_ANCHOR_ENVELOPE_REL * eps) ||
-           (inside == 0 && f0 < -TRANSPORT_ANCHOR_ENVELOPE_REL * eps))) {
-        result.reason = TRANSPORT_REASON_STATE_MISMATCH;
-        return result;
-      }
-    }
-    float tFar = transportDomainExit(origin, dir);
-    for (int i = 0; i < TRANSPORT_QUERY_MAX_STEPS; i++) {
-      if (tFar < 0.0 || t >= tFar) {
-        result.kind = 2;
-        result.reason = 0;
-        result.t = t;
-        return result;
-      }
-      float f = transportSolidField(p);
-      if (!(f > -1.0e30)) {
-        result.kind = 3;
-        result.reason = TRANSPORT_REASON_INVALID_INPUT;
-        return result;
-      }
-      if (abs(f) < eps) {
-        // Land the crossing ON the surface: one secant step along the
-        // ray with the field's unit-normalized gradient at the query
-        // point (the kernel's closed-solid query's own rule — the
-        // band-edge advance left the hit short of the surface for
-        // oblique approaches and the grazing TIR crawl's children
-        // drifted). A touch whose zero is not ahead of the query point
-        // within the band's own scale is not a crossing: step past the
-        // band and keep marching.
-        vec3 n0 = transportSolidNormal(p, dir, eps);
-        float dN = dot(dir, n0);
-        float run = abs(dN) > 1.0e-4 ? -f / dN : -1.0;
-        if (!(run >= 0.0 && run <= 32.0 * eps)) {
-          p += dir * (2.0 * eps);
-          t += 2.0 * eps;
-          continue;
-        }
-        float dd = run;
-        vec3 hitP = p + dir * dd;
-        float tc = t + dd;
-        // Same-boundary suppression, part 2, MEDIUM-AWARE (the kernel's
-        // rule): suppress only while the claimed medium continues
-        // beyond the landing — a union's corner region puts a DIFFERENT
-        // face within the anchor envelope, and the distance test alone
-        // ate an honest exit crossing there.
-        bool suppress = false;
-        if (anchorPresent == 1 &&
-            distance(hitP, anchorPoint) <= TRANSPORT_ANCHOR_ENVELOPE_REL * eps) {
-          float fBeyond = transportSolidField(hitP + dir * (2.0 * eps));
-          suppress = (inside == 1 && fBeyond < 0.0) ||
-            (inside == 0 && fBeyond > 0.0);
-        }
-        if (suppress) {
-          float skip = 2.0 * eps;
-          p = hitP + dir * skip;
-          t = tc + skip;
-          continue;
-        }
-        result.kind = 1;
-        result.reason = 0;
-        result.t = tc;
-        result.normal = transportSolidNormal(hitP, dir, eps);
-        return result;
-      }
-      float stride = abs(f) * uStepScale;
-      p = p + dir * stride;
-      t = t + stride;
-    }
-    return result;
-  }
+  //__SURFACE_SOLID_QUERY__
 #else
   TransportBoundary transportNextBoundary(
     vec3 origin,
@@ -2349,6 +2244,258 @@ ${domainRadius}
     return result;
   }
 `;
+}
+
+/**
+ * The closed-solid boundary query's GLSL text, spliced at the baked
+ * `//__SURFACE_SOLID_QUERY__` placeholder by the resolver — which ALWAYS
+ * resolves the placeholder, so a session without the mesh band receives
+ * the analytic text byte for byte (the bytes the baked source used to
+ * carry) and every existing source is unchanged.
+ *
+ * `meshSolidBand` non-null is the mesh emitter's DECLARED-RESOLUTION
+ * treatment (the transport contract's closed-solid section): the mesh
+ * lattice's interior is not a certified stepping bound — nodes within a
+ * cell radius of the surface store the blanket `-2r`, so |field|
+ * overstates the interior clearance and the field's zero-crossing ramp is
+ * steeper than a distance field, letting a band landing straddle it. The
+ * declared treatment owns exactly that: the optical solid IS the
+ * lattice's own negative region (the same declared wall the display's
+ * primary march draws, and a superset of the true mesh — F <= sd
+ * everywhere, so no wall is ever lost); membership is the field's sign,
+ * EXACT BY DECLARATION for the declared set, emitted as
+ * `transportSolidContains`; the query runs WITH the membership gate (the
+ * anchor state the march can re-arrive, the sign-flip bisection that
+ * finds a wall at any slope); and the interior strides (f < 0) cap at the
+ * declared resolution — the tightest mesh member's cell at its own scale,
+ * baked as a literal — so a deep stride cannot overshoot a declared wall
+ * and sub-resolution gaps merge optically, declared, never silent. The
+ * same three pieces the WGSL core emits for the same sessions
+ * (`surface-de-gpu.ts`'s closed-solid block), token for token.
+ */
+export function surfaceSolidQuerySource(meshSolidBand: number | null): string {
+  const analytic = `  // The closed-solid boundary query (option doc): the estimator query's
+  // march structure over the SIGNED union field. The sign unlocks the
+  // inside traversal a refracted child needs: outside, the field
+  // understates the distance and the march steps it forward; inside, |f|
+  // is the deepest containing part's certified depth — a lower bound on
+  // the distance to the union's complement, because the merged interval
+  // along the ray ends at the LAST containing part's exit — so a step
+  // cannot cross the boundary without sampling its band. The medium
+  // state is the caller's and is now CHECKED: at the anchored restart,
+  // beyond the anchor envelope, a field whose membership contradicts the
+  // caller's medium refuses state-mismatch (the qualified fixture's
+  // exact-occupancy discipline, made real by the sign). The crossing
+  // band is two-sided (|f| < eps); an inside crossing is reported at the
+  // query point, an outside one advanced to the band's edge. The anchor
+  // envelope, crossing scale, step budget and domain gate are the
+  // estimator query's own definitions.
+  TransportBoundary transportNextBoundary(
+    vec3 origin,
+    vec3 dir,
+    int anchorPresent,
+    vec3 anchorPoint,
+    int inside,
+    float eps
+  ) {
+    TransportBoundary result;
+    result.kind = 3;
+    result.reason = TRANSPORT_REASON_VISIT_CAP;
+    result.t = 0.0;
+    result.normal = vec3(0.0);
+    vec3 p = origin;
+    float t = 0.0;
+    if (anchorPresent == 1) {
+      // Same-boundary suppression, part 1 (the estimator query's rule).
+      float skip = 2.0 * eps;
+      p = p + dir * skip;
+      t = t + skip;
+      // The medium cross-check: just past the anchored boundary the
+      // field's membership must agree with the caller's medium beyond
+      // the anchor envelope — within it, the boundary's own band is
+      // consistent with either medium (a grazing child rides it).
+      float f0 = transportSolidField(p);
+      if (f0 > -1.0e30 &&
+          ((inside == 1 && f0 > TRANSPORT_ANCHOR_ENVELOPE_REL * eps) ||
+           (inside == 0 && f0 < -TRANSPORT_ANCHOR_ENVELOPE_REL * eps))) {
+        result.reason = TRANSPORT_REASON_STATE_MISMATCH;
+        return result;
+      }
+    }
+    float tFar = transportDomainExit(origin, dir);
+    for (int i = 0; i < TRANSPORT_QUERY_MAX_STEPS; i++) {
+      if (tFar < 0.0 || t >= tFar) {
+        result.kind = 2;
+        result.reason = 0;
+        result.t = t;
+        return result;
+      }
+      float f = transportSolidField(p);
+      if (!(f > -1.0e30)) {
+        result.kind = 3;
+        result.reason = TRANSPORT_REASON_INVALID_INPUT;
+        return result;
+      }
+      if (abs(f) < eps) {
+        // Land the crossing ON the surface: one secant step along the
+        // ray with the field's unit-normalized gradient at the query
+        // point (the kernel's closed-solid query's own rule — the
+        // band-edge advance left the hit short of the surface for
+        // oblique approaches and the grazing TIR crawl's children
+        // drifted). A touch whose zero is not ahead of the query point
+        // within the band's own scale is not a crossing: step past the
+        // band and keep marching.
+        vec3 n0 = transportSolidNormal(p, dir, eps);
+        float dN = dot(dir, n0);
+        float run = abs(dN) > 1.0e-4 ? -f / dN : -1.0;
+        if (!(run >= 0.0 && run <= 32.0 * eps)) {
+          p += dir * (2.0 * eps);
+          t += 2.0 * eps;
+          continue;
+        }
+        float dd = run;
+        vec3 hitP = p + dir * dd;
+        float tc = t + dd;
+        // Same-boundary suppression, part 2, MEDIUM-AWARE (the kernel's
+        // rule): suppress only while the claimed medium continues
+        // beyond the landing — a union's corner region puts a DIFFERENT
+        // face within the anchor envelope, and the distance test alone
+        // ate an honest exit crossing there.
+        bool suppress = false;
+        if (anchorPresent == 1 &&
+            distance(hitP, anchorPoint) <= TRANSPORT_ANCHOR_ENVELOPE_REL * eps) {
+          float fBeyond = transportSolidField(hitP + dir * (2.0 * eps));
+          suppress = (inside == 1 && fBeyond < 0.0) ||
+            (inside == 0 && fBeyond > 0.0);
+        }
+        if (suppress) {
+          float skip = 2.0 * eps;
+          p = hitP + dir * skip;
+          t = tc + skip;
+          continue;
+        }
+        result.kind = 1;
+        result.reason = 0;
+        result.t = tc;
+        result.normal = transportSolidNormal(hitP, dir, eps);
+        return result;
+      }
+      float stride = abs(f) * uStepScale;
+      p = p + dir * stride;
+      t = t + stride;
+    }
+    return result;
+  }`;
+  if (meshSolidBand === null) return analytic;
+  const cap = glslFloatLit(meshSolidBand);
+  return `  // Membership is the field's sign, EXACT BY DECLARATION for the mesh
+  // lattice's own negative region (the declared solid — the transport
+  // contract's declared-resolution treatment).
+  bool transportSolidContains(vec3 p) {
+    return transportSolidField(p) <= 0.0;
+  }
+
+${analytic
+  // The mesh variant's gated pieces, spliced into the analytic text —
+  // the WGSL core's gated query, token for token.
+  .replace(
+    `    vec3 p = origin;
+    float t = 0.0;`,
+    `    vec3 p = origin;
+    float t = 0.0;
+    // The membership gate re-anchors at a phantom landing, so the anchor
+    // is the march's own state here rather than the caller's argument.
+    int anchorState = anchorPresent;
+    vec3 anchorPos = anchorPoint;`,
+  )
+  .replace(
+    `           (inside == 0 && f0 < -TRANSPORT_ANCHOR_ENVELOPE_REL * eps))) {`,
+    `           (inside == 0 && f0 < -TRANSPORT_ANCHOR_ENVELOPE_REL * eps)) &&
+          // With an exact predicate the cross-check asks IT rather than
+          // the sign of a bound, which reads the wrong side often enough
+          // outside the anchor envelope to refuse honest children.
+          transportSolidContains(p) != (inside == 1)) {`,
+  )
+  .replace(
+    `    float tFar = transportDomainExit(origin, dir);
+    for (int i = 0; i < TRANSPORT_QUERY_MAX_STEPS; i++) {`,
+    `    float tFar = transportDomainExit(origin, dir);
+    // The last sample's t, for the membership-crossed branch's bisection.
+    float tPrev = t;
+    for (int i = 0; i < TRANSPORT_QUERY_MAX_STEPS; i++) {`,
+  )
+  .replace(
+    `        result.reason = TRANSPORT_REASON_INVALID_INPUT;
+        return result;
+      }
+      if (abs(f) < eps) {`,
+    `        result.reason = TRANSPORT_REASON_INVALID_INPUT;
+        return result;
+      }
+      if ((inside == 1 ? f > 0.0 : f < 0.0) &&
+          (anchorState == 0 ||
+            distance(p, anchorPos) > TRANSPORT_ANCHOR_ENVELOPE_REL * eps) &&
+          transportSolidContains(p) != (inside == 1)) {
+        // THE MEMBERSHIP-CROSSED BRANCH (the twin's): the march has LEFT
+        // the claimed medium without a band landing — the field's sign
+        // and exact membership both contradict the claim. A transported
+        // bound's gradient degenerates near a tangency cusp, so the
+        // landing's "is the zero ahead" test can read backwards and step
+        // past a real exit; unrecovered, the path fails its trace
+        // inside-miss. Bisect exact membership between the previous
+        // sample and this one and report the crossing at the bracket's
+        // claimed-medium end.
+        float lo = tPrev;
+        float hi = t;
+        for (int k = 0; k < ${SURFACE_GPU_TRANSPORT_MEMBERSHIP_BISECT_STEPS}; k++) {
+          float mid = 0.5 * (lo + hi);
+          if (transportSolidContains(origin + dir * mid) == (inside == 1)) {
+            lo = mid;
+          } else {
+            hi = mid;
+          }
+        }
+        result.kind = 1;
+        result.reason = 0;
+        result.t = lo;
+        result.normal = transportSolidNormal(origin + dir * lo, dir, eps);
+        return result;
+      }
+      tPrev = t;
+      if (abs(f) < eps) {`,
+  )
+  .replace(
+    `        bool suppress = false;
+        if (anchorPresent == 1 &&
+            distance(hitP, anchorPoint) <= TRANSPORT_ANCHOR_ENVELOPE_REL * eps) {`,
+    `        bool suppress = false;
+        if (transportSolidContains(hitP + dir * (2.0 * eps)) == (inside == 1)) {
+          // THE MEMBERSHIP GATE (option doc): the band fired where the
+          // certified bound is loose, not at a surface — membership does
+          // not flip across this landing, so there is no interface here.
+          // Step past it on the SAME budget; a phantom costs steps, never
+          // a crossing.
+          p = hitP + dir * (2.0 * eps);
+          t = tc + 2.0 * eps;
+          anchorState = 1;
+          anchorPos = hitP;
+          continue;
+        }
+        if (anchorState == 1 &&
+            distance(hitP, anchorPos) <= TRANSPORT_ANCHOR_ENVELOPE_REL * eps) {`,
+  )
+  .replace(
+    `      float stride = abs(f) * uStepScale;
+      p = p + dir * stride;`,
+    `      // The declared-resolution interior stride: inside the declared
+      // solid (f < 0) the stride caps at the declared cell radius — |f|
+      // overstates the clearance there — while outside it is the
+      // certified bound and steps unchanged.
+      float stride = f < 0.0
+        ? min(abs(f) * uStepScale, ${cap})
+        : abs(f) * uStepScale;
+      p = p + dir * stride;`,
+  )}`;
 }
 
 /**
@@ -8666,6 +8813,9 @@ export function setSurfaceSystem(
     (
       material.userData as { surfaceCondensationShapes?: ShapeSpec[] | null }
     ).surfaceCondensationShapes = condensationShapes;
+    (
+      material.userData as { surfaceSolidMeshBand?: number | null }
+    ).surfaceSolidMeshBand = condensationMeshDeclaredStrideCap(emitters);
     material.defines.SURFACE_GROUND_PLANE = plane;
     material.fragmentShader = surfaceFragmentFor(
       0,
@@ -8688,6 +8838,10 @@ export function setSurfaceSystem(
       0, // sphereInversion — handed back above in this rebuild path
       optics,
       materialOpticsBackend(material),
+      false, // slabCapable
+      0, // menger
+      0, // sphaira
+      materialSolidMeshBand(material),
     );
     material.needsUpdate = true;
   }
@@ -9867,6 +10021,12 @@ export function surfaceFragmentResolvedFor(
   // The sphairahedron fold's arm, appended last so every positional
   // caller keeps its meaning (the menger flag's own reason).
   sphaira = 0,
+  // The mesh emitter's declared-resolution treatment for the closed-solid
+  // backend: the ONE shared derivation's answer
+  // (condensationMeshDeclaredStrideCap), passed exactly when the
+  // condensation shapes carry a mesh — the resolver validates the pairing
+  // and emits the mesh query + the corridor's gated clauses from it.
+  meshSolidBand: number | null = null,
 ): string {
   if (sphereInversion !== 0) {
     // The arm replaces the descent bodies wholesale (the escape/bulb
@@ -10000,9 +10160,19 @@ export function surfaceFragmentResolvedFor(
         "SURFACE_OPTICS_CLOSED_SOLID cannot follow the balloon echo",
       );
     }
-    if (condensation.some((shape) => shapeMeshIds(shape).length > 0)) {
+    // Mesh-bearing emitter shapes ride the declared-resolution treatment:
+    // the resolver emits the mesh query (the membership gate, the sign's
+    // declaration, the interior stride cap) and the corridor's gated
+    // clauses, keyed on the caller's `meshSolidBand` — the ONE shared
+    // derivation (`condensationMeshDeclaredStrideCap`) the caller passed
+    // here. A mesh shape without the band (or the band without a mesh
+    // shape) is a caller bug: the treatment is one unit.
+    const meshShapes = condensation.some(
+      (shape) => shapeMeshIds(shape).length > 0,
+    );
+    if (meshShapes !== (meshSolidBand !== null)) {
       throw new RangeError(
-        "SURFACE_OPTICS_CLOSED_SOLID refuses mesh-bearing emitter shapes — the mesh lattice's interior band is not a certified stepping bound",
+        "SURFACE_OPTICS_CLOSED_SOLID: the mesh emitter's declared-resolution treatment is one unit — pass condensationMeshDeclaredStrideCap's answer as meshSolidBand exactly when the condensation shapes carry a mesh",
       );
     }
   }
@@ -10132,6 +10302,62 @@ export function surfaceFragmentResolvedFor(
       condensationShapeDispatch(condensation, condensation4),
     );
   }
+  // The closed-solid boundary query, spliced per session: the analytic
+  // text by default (the bytes the baked source used to carry — every
+  // existing resolve unchanged), the mesh query (the declared-resolution
+  // treatment) when `meshSolidBand` is set. The corridor's gated pieces
+  // resolve alongside it — empty tokens when there is no mesh band, so
+  // the analytic closed-solid and estimator resolves keep their bytes.
+  baked = baked.replace(
+    "  //__SURFACE_SOLID_QUERY__\n",
+    `${surfaceSolidQuerySource(meshSolidBand)}\n`,
+  );
+  const meshGated = meshSolidBand !== null;
+  baked = baked
+    .replaceAll(
+      "\n//__SOLID_MESH_CONTAINS__",
+      meshGated
+        ? `
+  // Membership is the field's sign, EXACT BY DECLARATION for the mesh
+  // lattice's own negative region (the declared solid — the transport
+  // contract's declared-resolution treatment).
+  bool transportSolidContains(vec3 p) {
+    return transportSolidField(p) <= 0.0;
+  }`
+        : "",
+    )
+    .replaceAll(
+      "//__SOLID_MESH_BAND_FIRE__",
+      meshGated
+        ? ` &&
+          transportSolidContains(sp + dir * (2.0 * eps)) != inside `
+        : "",
+    )
+    .replaceAll(
+      "\n          //__SOLID_MESH_BAND_ADVANCE__",
+      meshGated
+        ? `
+          // The exact predicate ends the advance once the sample agrees
+          // with the medium the crossing established: a transported
+          // BOUND's band is many times wider in space than the interface.
+          if (transportSolidContains(origin + dir * ts) == inside) {
+            break;
+          }`
+        : "",
+    )
+    .replaceAll(
+      "//__SOLID_MESH_FLIP__",
+      meshGated
+        ? ` &&
+        transportSolidContains(sp) != inside `
+        : "",
+    )
+    .replaceAll(
+      "//__SOLID_MESH_STRIDE__",
+      meshGated
+        ? `f < 0.0 ? min(abs(f) * uStepScale, ${glslFloatLit(meshSolidBand)}) : `
+        : "",
+    );
   return lighting
     ? withSurfaceLightingGlsl(baked, {
         finish: finish !== 0,
@@ -10219,6 +10445,7 @@ export function surfaceFragmentFor(
   slabCapable = false,
   menger = 0,
   sphaira = 0,
+  meshSolidBand: number | null = null,
 ): string {
   const resolved = surfaceFragmentResolvedFor(
     escape,
@@ -10244,6 +10471,7 @@ export function surfaceFragmentFor(
     slabCapable,
     menger,
     sphaira,
+    meshSolidBand,
   );
   return plane !== 0 || resolved.length > SURFACE_GLSL_STRIP_BYTES
     ? stripGlslSource(resolved)
@@ -11414,6 +11642,10 @@ export function setSphereInversionSystem(
       1, // sphereInversion — this install's own arm
       material.defines.SURFACE_OPTICS === 1 ? 1 : 0,
       materialOpticsBackend(material),
+      false, // slabCapable
+      0, // menger
+      0, // sphaira
+      materialSolidMeshBand(material),
     );
     material.needsUpdate = true;
   }
@@ -11494,6 +11726,7 @@ export function setSurfaceBalloon(
       false,
       material.defines.SURFACE_MENGER === 1 ? 1 : 0,
       material.defines.SURFACE_SPHAIRA === 1 ? 1 : 0,
+      materialSolidMeshBand(material),
     );
     material.needsUpdate = true;
   }
@@ -11671,6 +11904,7 @@ export function setSurfaceGroundPlane(
       false,
       material.defines.SURFACE_MENGER === 1 ? 1 : 0,
       material.defines.SURFACE_SPHAIRA === 1 ? 1 : 0,
+      materialSolidMeshBand(material),
     );
     material.needsUpdate = true;
   }
@@ -11700,6 +11934,21 @@ export function materialOpticsBackend(material: THREE.ShaderMaterial): 0 | 1 {
     (material.userData as { surfaceOpticsBackend?: 0 | 1 })
       .surfaceOpticsBackend ?? 0
   );
+}
+
+/** The closed-solid mesh emitter's declared-resolution stride cap, as the
+ * system setter stored it (`condensationMeshDeclaredStrideCap`'s answer
+ * for the session's condensation emitters), or null for a material whose
+ * shapes carry no mesh — and null too whenever the stamped backend is not
+ * the closed-solid one (the treatment rides that backend's query alone). */
+export function materialSolidMeshBand(
+  material: THREE.ShaderMaterial,
+): number | null {
+  const band = (material.userData as { surfaceSolidMeshBand?: number | null })
+    .surfaceSolidMeshBand;
+  return materialOpticsBackend(material) === 1 && typeof band === "number"
+    ? band
+    : null;
 }
 
 /** Install the unified per-map A/B material wire and its independent compile
@@ -11823,6 +12072,7 @@ export function setSurfaceMaterials(
       false,
       material.defines.SURFACE_MENGER === 1 ? 1 : 0,
       material.defines.SURFACE_SPHAIRA === 1 ? 1 : 0,
+      materialSolidMeshBand(material),
     );
     material.needsUpdate = true;
   }
@@ -11864,6 +12114,7 @@ export function setSurfaceLighting(
     false,
     material.defines.SURFACE_MENGER === 1 ? 1 : 0,
     material.defines.SURFACE_SPHAIRA === 1 ? 1 : 0,
+    materialSolidMeshBand(material),
   );
   material.needsUpdate = true;
 }

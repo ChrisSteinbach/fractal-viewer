@@ -8,7 +8,10 @@ import {
   BULB_STEP_SCALE,
   type BulbDE,
 } from "./bulb-de";
-import { condensationTraversalDepth } from "./condensation-de";
+import {
+  condensationMeshDeclaredStrideCap,
+  condensationTraversalDepth,
+} from "./condensation-de";
 import {
   PENTAGRID_FLOOR_WGSL,
   PENTAGRID_UNIFORM_FLOATS,
@@ -2461,10 +2464,17 @@ export interface SurfaceGpuKernelOptions {
    * symmetry-expanded emitters directly; codegen validates the same 24-record
    * and unique-shade suffix contract as the packers, then bakes one ShapeSpec
    * per unique base-emitter shade. Absent, null, or an empty emitter list
-   * emits the pre-condensation source byte for byte. Descent cores only. */
+   * emits the pre-condensation source byte for byte. Descent cores only.
+   * `sigmaMin` (the emitter affine's smallest singular value) is the
+   * declared-resolution stride cap's world scale for mesh-bearing emitter
+   * shapes — the closed-solid mesh treatment's derivation reads it. */
   condensation?: {
     mapCount: number;
-    emitters: readonly { shape: ShapeSpec; shadeIndex: number }[];
+    emitters: readonly {
+      shape: ShapeSpec;
+      shadeIndex: number;
+      sigmaMin: number;
+    }[];
   } | null;
   /** Hybrid alphabet codegen gate. `mapCount` is the recursive A count;
    * `scheduleMapCount` is the affine B suffix packed immediately after A.
@@ -6719,12 +6729,29 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
         "surface-de-gpu: the closed-solid transport backend cannot follow the balloon echo",
       );
     }
-    if (condensationShapes.some((shape) => shapeMeshIds(shape).length > 0)) {
-      throw new Error(
-        "surface-de-gpu: the closed-solid transport backend refuses mesh-bearing emitter shapes — the mesh lattice's interior band is not a certified stepping bound",
-      );
-    }
   }
+  // THE MESH EMITTER'S DECLARED-RESOLUTION TREATMENT (the transport
+  // contract's closed-solid section): the mesh lattice's interior is not a
+  // certified stepping bound — nodes within a cell radius of the surface
+  // store the blanket -2r, so |field| overstates the interior clearance
+  // and the field's sign is the true mesh's only up to the lattice's own
+  // resolution. The declared treatment owns exactly that: the optical
+  // solid is the lattice's own negative region — the same declared wall
+  // the display's primary march draws, and a superset of the true mesh
+  // (F <= sd everywhere, so no wall is ever lost) — membership is the
+  // field's sign, EXACT BY DECLARATION for the declared set; the boundary
+  // query runs WITH the membership gate (the declared band's zero-crossing
+  // ramp is steeper than a distance field, so a band landing can straddle
+  // it — the sign-flip bisection finds the wall at any slope); and the
+  // interior strides cap at the declared resolution (the tightest mesh
+  // member's cell at its own scale), so a deep stride cannot overshoot a
+  // declared wall and sub-resolution gaps merge optically — declared,
+  // never silent. null when no emitter carries a mesh: every other
+  // session's source is byte for byte today's.
+  const solidMeshStrideCap =
+    opticsBackend === "closedSolid" && opts.condensation?.emitters.length
+      ? condensationMeshDeclaredStrideCap(opts.condensation.emitters)
+      : null;
   const condensationSolid = opts.condensationSolid ?? null;
   if (condensationSolid) {
     if (opticsBackend !== "closedSolid") {
@@ -11235,9 +11262,22 @@ ${surfacePatternShadeSourceWgsl()}`
   // curved solid's is its field's sign (condensation-solid-gpu.ts), so
   // gating a band fire on a real sign flip removes the phantom crossings
   // its union's sub-eps gaps fire — without it they flipped the medium
-  // and failed inside-miss or state-mismatch. The emitter-only
-  // closed-solid emission stays byte-identical.
-  const membershipGate = siGlass || condensationSolid !== null;
+  // and failed inside-miss or state-mismatch. A MESH-bearing emitter-only
+  // solid joins it through the declared-resolution treatment: the sign is
+  // exact by declaration for the lattice's own negative region, and the
+  // declared band's steep ramp makes the bisection the robust wall-finder.
+  // The emitter-only analytic closed-solid emission stays byte-identical.
+  const membershipGate =
+    siGlass || condensationSolid !== null || solidMeshStrideCap !== null;
+  // The mesh band's interior stride rule (the declared-resolution
+  // treatment): inside the declared solid (f < 0) the stride caps at the
+  // declared cell radius — |f| overstates the clearance there (the
+  // blanket's constant -2r, the deep nodes' sd - r) — while outside it is
+  // the certified bound and steps unchanged. Absent, the line is today's
+  // text byte for byte.
+  const solidMeshStrideLineWgsl = solidMeshStrideCap
+    ? `select(abs(f) * params.stepScale, min(abs(f) * params.stepScale, ${wgslFloatLit(solidMeshStrideCap)}), f < 0.0)`
+    : "abs(f) * params.stepScale";
   // The finite-solid backend: the exact DDA over the construction. The
   // codegen gate above pinned it to the finite cores, so the display
   // source (and its finiteLift the DDA reads) is always in the same
@@ -11339,7 +11379,23 @@ fn transportSolidField(p: vec3f) -> f32 {
     }
   }
   return best * ${wgslFloatLit(SHAPE_MARCH_SAFETY)};
+}${
+              // The mesh emitter's declared-resolution treatment (the 3D
+              // branch's rule one dimension up): the membership gate's exact
+              // predicate, the field's own sign — exact BY DECLARATION for
+              // the lattice's negative region. Emitted only for a
+              // mesh-bearing emitter-only solid.
+              solidMeshStrideCap
+                ? `
+
+// Membership is the field's sign, EXACT BY DECLARATION for the mesh
+// lattice's own negative region (the declared solid — the transport
+// contract's declared-resolution treatment).
+fn transportSolidContains(p: vec3f) -> bool {
+  return transportSolidField(p) <= 0.0;
 }`
+                : ""
+            }`
           : condensationSolid
             ? condensationSolidWgslSource(condensationSolid)
             : `// The closed-solid field (opticsBackend "closedSolid"): the session's
@@ -11349,7 +11405,24 @@ fn transportSolidField(p: vec3f) -> f32 {
 // found with.
 fn transportSolidField(p: vec3f) -> f32 {
   return condensationTerm(p, 1.0, 0u);
-}`;
+}${
+                // The mesh emitter's declared-resolution treatment: the
+                // membership gate needs the exact predicate — the field's
+                // own sign, exact BY DECLARATION for the lattice's negative
+                // region (the declared solid). Emitted only for a
+                // mesh-bearing emitter-only solid; every other session's
+                // source is byte for byte today's.
+                solidMeshStrideCap
+                  ? `
+
+// Membership is the field's sign, EXACT BY DECLARATION for the mesh
+// lattice's own negative region (the declared solid — the transport
+// contract's declared-resolution treatment).
+fn transportSolidContains(p: vec3f) -> bool {
+  return transportSolidField(p) <= 0.0;
+}`
+                  : ""
+              }`;
   // The closed-solid straight shadow visibility (the rear-scene task):
   // the floor corridor's shadow ray through the session's optical
   // solid. A bounded march of the SIGNED field along an UNREFRACTED ray,
@@ -11529,7 +11602,7 @@ fn transportSolidField(p: vec3f) -> f32 {
       }
       inside = f < 0.0;
     }
-    ts = ts + clamp(abs(f) * params.stepScale, ballR * 2.0e-4, visR);
+    ts = ts + clamp(${solidMeshStrideLineWgsl}, ballR * 2.0e-4, visR);
     if (dot(sp - ballC, dir) > 0.0 && length(sp - ballC) > ballR * 1.05) {
       break;
     }
@@ -12075,7 +12148,7 @@ fn transportNextBoundary(
       t = t + 2.0 * eps;
       continue;
     }
-    let stride = abs(f) * params.stepScale;
+    let stride = ${solidMeshStrideLineWgsl};
     p = p + dir * stride;
     t = t + stride;
   }

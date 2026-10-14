@@ -1,6 +1,7 @@
 /** CPU-side condensation shape terms shared by the 3D and 4D surface DEs. */
-import { SHAPE_MARCH_SAFETY, shapeSdf } from "./shapes";
+import { SHAPE_MARCH_SAFETY, resolvePoseScale, shapeSdf } from "./shapes";
 import type { ShapeSpec } from "./shapes";
+import { bakeMeshSdf } from "./mesh-shapes";
 
 /** Inclusive word-depth band. Root is 0; ordinary-map children are 1. */
 export interface CondensationDepthBand {
@@ -232,4 +233,43 @@ export function condensationBoundingRadius4(de: CondensationDE4): number {
     radius = Math.max(radius, Math.hypot(...emitter.center) + emitter.radius);
   }
   return radius;
+}
+
+/**
+ * The mesh emitter's DECLARED-RESOLUTION interior treatment (the transport
+ * contract's closed-solid section): the world-unit cap on the closed-solid
+ * boundary query's interior stride over a mesh-bearing union's declared
+ * field, or `null` when no emitter carries a mesh — the query unchanged,
+ * byte-identically.
+ *
+ * The mesh lattice's interior is not a certified stepping bound: nodes
+ * within a cell radius of the surface store the blanket `-2r`, so the
+ * field's magnitude overstates the interior clearance (deep nodes store
+ * `sd − r`, also more negative than the clearance). The declared treatment
+ * owns that: the optical solid IS the lattice's own negative region — the
+ * same declared wall the display's primary march draws — and the interior
+ * march steps at most one declared cell (`r · the part's own pose scale ·
+ * the emitter affine's σ_min`, the cell's smallest world extent) per stride,
+ * so no declared wall is crossed by more than the declared resolution
+ * between samples. The tightest mesh member's cap is the session's (a cap
+ * can only slow, never unsound). The source generators bake the cap as a
+ * literal and the fixture's CPU twin takes it from this one definition, so
+ * every realization clamps identically.
+ */
+export function condensationMeshDeclaredStrideCap(
+  emitters: readonly { shape: ShapeSpec; sigmaMin: number }[],
+): number | null {
+  let cap: number | null = null;
+  for (const emitter of emitters) {
+    for (const part of emitter.shape.parts) {
+      const prim = part.primitive;
+      if (prim.kind !== "mesh") continue;
+      const world =
+        bakeMeshSdf(prim.meshId).cellRadius *
+        resolvePoseScale(part.pose) *
+        emitter.sigmaMin;
+      if (cap === null || world < cap) cap = world;
+    }
+  }
+  return cap;
 }

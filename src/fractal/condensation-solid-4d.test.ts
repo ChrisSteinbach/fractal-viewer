@@ -327,6 +327,47 @@ describe("condensation solid emitter rule (both dimensions)", () => {
     expect(reasons(lens)).toEqual([refused, refused]);
   });
 
+  it("carries the mesh emitter's declared-resolution treatment into 4D: the same solid on the canonical slice", () => {
+    const star: ShapeSpec = {
+      parts: [
+        {
+          primitive: { kind: "mesh", meshId: "star-prism-v1" },
+          combine: "union",
+        },
+      ],
+    };
+    const meshEmitter = (id = 4): Transform => ({
+      id,
+      position: [0.04, -0.06, 0.02],
+      rotation: [0.18, -0.12, 0.07],
+      scale: [0.48, 0.48, 0.48],
+      weight: 1.2,
+      emitter: star,
+    });
+    const transforms = [meshEmitter()];
+    const solid4 = solid4Of(transforms, { maxDepth: 0 });
+    const solid3 = solid3Of(transforms, { maxDepth: 0 });
+    for (const p of slicePoints(250, 11)) {
+      const d3 = condensationSolidSignedDistance3(solid3, p);
+      const d4 = condensationSolidSignedDistance4(solid4, p);
+      expect(Math.abs(d4 - d3)).toBeLessThanOrEqual(
+        1e-12 * Math.max(1, Math.abs(d3)),
+      );
+      expect(condensationSolidContains4(solid4, p)).toBe(
+        condensationSolidContains3(solid3, p),
+      );
+    }
+    // The mesh emitter is admitted in both dimensions (the 4D admission
+    // shares the 3D twin's refusal list).
+    expect(
+      condensationSolidAdmission4(
+        buildSurfaceDE4(transforms, null, undefined, {
+          condensationDepthBand: { maxDepth: 0 },
+        }),
+      ).ok,
+    ).toBe(true);
+  });
+
   it("refuses the gear and a spindle torus", () => {
     const gear = { ok: false, reason: "a gear emitter shape" };
     expect(reasons(GEAR_SHAPE)).toEqual([gear, gear]);

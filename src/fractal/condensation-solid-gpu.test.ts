@@ -62,7 +62,7 @@ function solidOpts(
     opticsBackend: "closedSolid",
     condensation: {
       mapCount: 4,
-      emitters: [{ shape: SPHERE, shadeIndex: 4 }],
+      emitters: [{ shape: SPHERE, shadeIndex: 4, sigmaMin: 1 }],
     },
     ...overrides,
   };
@@ -158,7 +158,7 @@ describe("the closed-solid kernel's condensationSolid option", () => {
       solidOpts({
         condensation: {
           mapCount: 0,
-          emitters: [{ shape: SPHERE, shadeIndex: 0 }],
+          emitters: [{ shape: SPHERE, shadeIndex: 0, sigmaMin: 1 }],
         },
       }),
     );
@@ -186,7 +186,7 @@ describe("the closed-solid kernel's condensationSolid option", () => {
     const opts = solidOpts({
       condensation: {
         mapCount: 0,
-        emitters: [{ shape: SPHERE, shadeIndex: 0 }],
+        emitters: [{ shape: SPHERE, shadeIndex: 0, sigmaMin: 1 }],
       },
     });
     expect(surfaceDeKernelWgsl({ ...opts, condensationSolid: null })).toBe(

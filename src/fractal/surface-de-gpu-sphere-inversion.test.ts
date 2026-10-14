@@ -551,6 +551,7 @@ describe("the sphere-inversion glass backend (opticsBackend sphereInversion)", (
               ],
             },
             shadeIndex: 0,
+            sigmaMin: 1,
           },
         ],
       },
