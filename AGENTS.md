@@ -189,15 +189,12 @@ real build in a real browser): `npm run build && npm run preview &` then
 the Escape-time menu group FROM THE MENU, enters Surface, waits on the
 `?surfacestate` settle latch and checks four things no unit test reaches: that
 each preset enters unaided; that the members of each trio render DIFFERENT
-objects (a knob that never reaches the DE renders the same picture three
-times); that `PRESET_FINALS` installs and clears in both directions, read out
-of the `#v1=` document hash rather than the panel (the transform list hides
-outside explorer mode, so a DOM probe passes vacuously); and WHICH ENGINE each
+objects; that `PRESET_FINALS` installs and clears in both directions, read out
+of the `#v1=` document hash rather than the panel; and WHICH ENGINE each
 session takes — measured compute for all nine, which is what keeps the
 `core:"bulb"` WGSL kernel from being dead code. It also gates the empty-set
 toast, the `antialiasing pass k/8` disclosure, and that a TRUSTED CLICK lands
-mid-settle (the no-automatic-give-up line's standing assumption, caught off
-the settle latch itself). `--mode=sw` runs everything
+mid-settle. `--mode=sw` runs everything
 but the engine question without a display.
 
 The 4D lifts' gate and the nonlinear slab's reload/capture gate:
@@ -282,11 +279,10 @@ a deploy (DNS/Pages changes, diagnosing a report against production).
 
 The post-deploy live 4D preset sweep: `node scripts/live-4d-presets.verify.mjs
 --mode=sw --tier=fast` (deploy.yml's `verify-live-presets`) drives the six 4D
-presets FROM THE MENU on the deployed origin and asserts each enters compute
-and its first frame lands; the settle is asserted only on the real-driver arm
-(`--mode=x11:<display>`, hyperkifs 73.6 s measured) — on SwiftShader it is
-disclosed, its wall past any CI window (measured >16 min at the fast tier).
-Record: the script header.
+presets FROM THE MENU on the deployed origin and asserts entered-compute +
+first frame; the settle is asserted on the real-driver arm
+(`--mode=x11:<display>`) and disclosed on SwiftShader, whose wall is past any
+CI window. Record: the script header.
 
 The WebGPU compute-surface and flame teardown gates (not npm scripts — they
 need a real Firefox build with WebGPU enabled on a display, and they gate
