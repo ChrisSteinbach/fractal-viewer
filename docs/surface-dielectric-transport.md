@@ -517,6 +517,15 @@ never enter it) — the known-software-crash class the bench's other
 SwiftShader false failures record, real-driver-gated like the rest of the
 mesh transport machinery.
 
+**Owner-accepted (2026-10-14).** The owner reviewed the shipped "Glass
+stars" starters (3D and 4D, the dev build, the declared fattening and
+sub-resolution point rounding visible) and ACCEPTED the look — the mesh
+emitter class joins the analytic class's accepted look (the sphere/torus
+rows). The look sheet's resolve-rate instrument was not run for this
+class; the owner's direct visual call is the record, and the refusal
+lever (the mesh arm of `condensationSolidShapeRefusal`) stays one edit
+away if the look ever needs closing again.
+
 Measured (quiet RX 7900 XTX / radeonsi, 2026-09-15): the agreement legs
 pin the closed-solid query and trace against the f64 twin in both
 dimensions (radiance ≤ 7.7e-5, residual ≤ 4.4e-7, normals ≤ 1.5e-5 over
