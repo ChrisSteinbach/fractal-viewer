@@ -107,6 +107,7 @@ import {
   POINT_COUNT_DETENTS,
   removeTransform,
   resolveBalloonPalette,
+  resolveFloorPaletteAlbedo,
   resolveFlameBackdropPalette,
   resolveSceneBackground,
   selectTransform,
@@ -199,7 +200,11 @@ import {
   setSphairahedronField,
   updateTransform,
 } from "./state";
-import { autoBackground, resolveBackground } from "./background";
+import {
+  autoBackground,
+  autoFloorAlbedo,
+  resolveBackground,
+} from "./background";
 import {
   barnsleyFern,
   defaultFinalTransform,
@@ -2463,6 +2468,59 @@ describe("resolveSceneBackground", () => {
     const state = setBackgroundMode(initialState(true), "auto");
     expect(resolveSceneBackground(state)).toEqual(
       resolveBackground({ mode: "dark" }),
+    );
+  });
+});
+
+describe("resolveFloorPaletteAlbedo", () => {
+  it("stays neutral for the static backdrops in either source", () => {
+    for (const mode of ["dark", "haze", "custom"] as const) {
+      const state = setBackgroundMode(initialState(true), mode);
+      expect(resolveFloorPaletteAlbedo(state, "gradient")).toBeNull();
+      expect(resolveFloorPaletteAlbedo(state, "flame")).toBeNull();
+    }
+  });
+
+  it("ties to the active render's palette under an auto gradient", () => {
+    const state = setBackgroundMode(
+      setRampPaletteId(initialState(true), "sunset"),
+      "auto",
+    );
+    expect(resolveFloorPaletteAlbedo(state, "gradient")).toEqual(
+      autoFloorAlbedo("sunset"),
+    );
+  });
+
+  it("follows the active render mode's own palette select under auto", () => {
+    const state = setBackgroundMode(
+      setRenderMode(setSolidPaletteId(initialState(true), "ember"), "solid"),
+      "auto",
+    );
+    expect(resolveFloorPaletteAlbedo(state, "gradient")).toEqual(
+      autoFloorAlbedo("ember"),
+    );
+  });
+
+  it("ties to the Flame echo's own palette only while that image is the backdrop", () => {
+    const state = setBackgroundMode(
+      setBackgroundFlamePaletteId(initialState(true), "aurora"),
+      "flame",
+    );
+    expect(resolveFloorPaletteAlbedo(state, "flame")).toEqual(
+      autoFloorAlbedo("aurora"),
+    );
+    // The same state under the gradient source is the dark placeholder the
+    // subjects' suppression keeps — no tie.
+    expect(resolveFloorPaletteAlbedo(state, "gradient")).toBeNull();
+  });
+
+  it("resolves the echo's Custom selection through the shared authored stops", () => {
+    const state = setBackgroundMode(
+      setBackgroundFlamePaletteId(initialState(true), "custom"),
+      "flame",
+    );
+    expect(resolveFloorPaletteAlbedo(state, "flame")).toEqual(
+      autoFloorAlbedo(state.customPalette!),
     );
   });
 });

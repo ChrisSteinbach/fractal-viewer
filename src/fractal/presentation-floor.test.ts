@@ -110,4 +110,38 @@ describe("presentationFloorSpec", () => {
     expect(second.albedo).toEqual([0.62, 0.62, 0.62]);
     expect(look).toEqual({ pattern: "solid", tileScale: 0.5, emission: 0.2 });
   });
+
+  // The scene-palette tie rides the look's optional albedo: present exactly
+  // while the backdrop on screen is palette-linked, absent (= neutral)
+  // byte-identically otherwise. The 32-float pentagrid wire packs derived
+  // geometry and palette coefficients, never the albedo — the tie moves no
+  // wire word.
+  it("keeps the neutral albedo when the look carries no tie", () => {
+    const spec = presentationFloorSpec(
+      { center: [0, 0, 0], radius: 1 },
+      { pattern: "checker", tileScale: 0.8, emission: 0 },
+    )!;
+    expect(spec.albedo).toEqual([0.62, 0.62, 0.62]);
+  });
+
+  it("lands the tie's albedo in the spec and copies it, leaving the pentagrid wire untouched", () => {
+    const tint: [number, number, number] = [0.71, 0.62, 0.53];
+    const tied = presentationFloorSpec(
+      { center: [0, 0, 0], radius: 1 },
+      {
+        pattern: "pentagrid",
+        tileScale: 0.5,
+        emission: 0,
+        albedo: tint,
+      },
+    )!;
+    const plain = presentationFloorSpec(
+      { center: [0, 0, 0], radius: 1 },
+      { pattern: "pentagrid", tileScale: 0.5, emission: 0 },
+    )!;
+    expect(tied.albedo).toEqual(tint);
+    tied.albedo[0] = 0;
+    expect(tint).toEqual([0.71, 0.62, 0.53]);
+    expect(tied.pentagridWire).toEqual(plain.pentagridWire);
+  });
 });

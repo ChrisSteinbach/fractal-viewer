@@ -429,6 +429,7 @@ import {
   MIN_BALLOON_RADIUS,
   removeTransform,
   resolveBalloonPalette,
+  resolveFloorPaletteAlbedo,
   resolveFlameBackdropPalette,
   resolveSceneBackground,
   selectTransform,
@@ -1541,6 +1542,18 @@ async function main(): Promise<void> {
     // the shape pops to the target's at the leg's first pushBackground call,
     // exactly like every other caller.
     scene.setBackground(stops, state.background.shape ?? "linear");
+    syncFloorPaletteTie();
+  }
+  /** The presentation floor's palette tie: push the albedo the CURRENT
+   * backdrop's palette derives for the floor's neutral grey
+   * (resolveFloorPaletteAlbedo reads liveBackgroundSource, so a delivered
+   * Flame echo image ties to its own palette, an "auto" gradient to the
+   * active render's, everything else unties). Value-guarded in the scene,
+   * so calling it beside every push and re-derive costs nothing. */
+  function syncFloorPaletteTie(): void {
+    scene.setFloorPaletteAlbedo(
+      resolveFloorPaletteAlbedo(state, liveBackgroundSource),
+    );
   }
   /** Snap the scene to the CURRENT document's backdrop, discarding any
    * in-flight crossfade — control edits and non-morph loads land instantly.
@@ -1574,6 +1587,12 @@ async function main(): Promise<void> {
    * still settles on the right derivation.
    */
   function trackAutoBackground(): void {
+    // The floor tie rides every re-derive BEFORE the mode early-returns —
+    // a palette edit under a delivered Flame image (the mode's own palette
+    // select, a custom-gradient drag), a render-mode switch under "auto",
+    // and the auto→static clears all move it, though none of them may reach
+    // a pushBackground below.
+    syncFloorPaletteTie();
     if (state.background.mode === "flame") {
       if (!backgroundTween.active() && !backgroundMorphHeld) {
         requestFlameBackdrop();
@@ -4418,6 +4437,10 @@ async function main(): Promise<void> {
     }
     scene.setFlameBackdropImage(image);
     liveBackgroundSource = "flame";
+    // The tie follows the delivered image's own palette (the source flips
+    // gradient → flame exactly here; the placeholder push before it tied
+    // nothing).
+    syncFloorPaletteTie();
   }
 
   const flameBackdropGenerator = new FlameBackdropGenerator({

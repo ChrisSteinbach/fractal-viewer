@@ -52,7 +52,7 @@ import {
   resolveChaosEntry,
   runChaosGame,
 } from "../fractal/chaos-game";
-import { resolveBackground } from "./background";
+import { autoFloorAlbedo, resolveBackground } from "./background";
 import { resolveCondensationDepthBand } from "../fractal/condensation-de";
 import type { CondensationDepthBand } from "../fractal/condensation-de";
 import type { ShapeSpec } from "../fractal/shapes";
@@ -73,6 +73,7 @@ import type {
   SymmetryPlane,
   SymmetryParams,
   Transform,
+  Vec3,
 } from "../fractal/types";
 import { clamp } from "../fractal/vec";
 import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
@@ -3643,6 +3644,34 @@ export function resolveFlameBackdropPalette(state: AppState): PaletteSpec {
  */
 export function resolveSceneBackground(state: AppState): BackgroundGradient {
   return resolveBackground(state.background, activeScenePalette(state));
+}
+
+/**
+ * The presentation floor's palette tie — the albedo the floor's neutral
+ * grey takes while the backdrop ON SCREEN is palette-linked, `null` (stay
+ * neutral) for every other backdrop. What ties follows what is actually
+ * showing, `source` being main.ts's `liveBackgroundSource`: in `"flame"`
+ * mode a delivered Flame echo image ties to its own authored palette
+ * ({@link resolveFlameBackdropPalette}), an `"auto"` gradient ties to the
+ * active render's palette ({@link activeScenePalette}), and everything
+ * else — dark, haze, custom, a `"flame"` mode still showing its dark
+ * placeholder (the subjects suppress the echo) — stays neutral. The curve
+ * is `background.ts`'s {@link autoFloorAlbedo}; the derived value is
+ * session-only, never persisted — the document keeps the mode and the
+ * palette ids it already carries, and the tie re-derives from them on
+ * every load exactly like the `"auto"` backdrop's own stops.
+ */
+export function resolveFloorPaletteAlbedo(
+  state: AppState,
+  source: "gradient" | "flame",
+): Vec3 | null {
+  if (state.background.mode === "flame" && source === "flame") {
+    return autoFloorAlbedo(resolveFlameBackdropPalette(state));
+  }
+  if (state.background.mode === "auto") {
+    return autoFloorAlbedo(activeScenePalette(state));
+  }
+  return null;
 }
 
 /**

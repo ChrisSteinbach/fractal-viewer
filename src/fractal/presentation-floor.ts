@@ -40,6 +40,16 @@ export interface PresentationFloorLook {
    * defaults (`resolveFloorPentagrid`), matching the fold-radii persistence
    * rule: a field is written only once its own control moves. */
   pentagrid?: Partial<FloorPentagrid>;
+  /** The scene-palette tie: the albedo the scene's palette-linked backdrop
+   * derives for the floor (`background.ts`'s `autoFloorAlbedo`, pushed by
+   * main.ts). Absent = the neutral {@link PRESENTATION_FLOOR_ALBEDO},
+   * byte-identical to every caller and every document that does not tie —
+   * the absence-means-classic rule the finish and fold-length fields keep.
+   * The grey rule and the checker multiply this albedo exactly as before;
+   * the pentagrid's colored rules replace it, and the grout edge stays its
+   * own fixed dark grey (a shader-body literal), so the tie is a host-side
+   * value only — no shader change, no wire change. */
+  albedo?: Vec3;
 }
 
 /**
@@ -53,7 +63,11 @@ export interface PresentationFloorSpec {
   fadeEnd: number;
   ballCenter: Vec3;
   ballRadius: number;
-  /** sRGB albedo; renderers decode it before lighting. */
+  /** sRGB albedo; renderers decode it before lighting. The neutral studio
+   * grey unless the scene-palette tie is engaged (an authored `"auto"` or
+   * delivered-flame backdrop), in which case `autoFloorAlbedo`'s derived
+   * tint — every mirror (uGroundAlbedo, the WGSL `params.groundAlbedo`,
+   * the 32-float wire's own rules) reads it from here. */
   albedo: Vec3;
   /** Numeric because it crosses both GLSL-uniform and GPU-wire boundaries:
    * 0 solid, 1 checker, 2 pentagrid (the uGroundPattern dispatch). */
@@ -87,7 +101,10 @@ export function presentationFloorSpec(
     fadeEnd: ball.radius * PRESENTATION_FLOOR_FADE_END,
     ballCenter: [...ball.center],
     ballRadius: ball.radius,
-    albedo: [...PRESENTATION_FLOOR_ALBEDO],
+    albedo:
+      look.albedo !== undefined
+        ? [...look.albedo]
+        : [...PRESENTATION_FLOOR_ALBEDO],
     pattern:
       look.pattern === "checker" ? 1 : look.pattern === "pentagrid" ? 2 : 0,
     tileScale: look.tileScale,
