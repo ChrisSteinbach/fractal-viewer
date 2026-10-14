@@ -3012,6 +3012,64 @@ orbits: they now settle in 7.9 s against 6.3 s for 3D, where the pre-fix
 record was 43.1 s against 10.4 s. What remains of the 4D cost question is
 open work (fr-7y60).
 
+### The owned primary reaches the other signed backends (2026-10-14)
+
+That fix was the curved solid's emission only; the two remaining
+signed-field backends still forced the primary split — the sphere-inversion
+glass and the emitter-only closed solid (C0). The flip keys the
+owned-primary emission on the SIGNED QUERY instead of the curved solid:
+every `solidQuery` backend (closedSolid, sphereInversion) starts with one
+unanchored outside path at the march's hit; the estimator backend keeps its
+split, byte-identically (the digest pins hold untouched). C0's field sign
+is exact, so its gate is the field's own sign
+(`transportSolidField(p) <= 0`) — which is why that backend carries no
+separate membership predicate and the boundary query's emission is
+unchanged; the sphere-inversion glass keeps its exact-membership gate. The
+GLSL twins are untouched: the fragment tracer has no sphere-inversion
+backend (compute-only by decision) and its closed-solid arm keeps the split
+— the fallback's own recorded quality, and the arms sit near the strip
+threshold, so no paragraph was added there.
+
+THE CENSUS, before → after, the app's starters on the real driver
+(`x11::0`, amd rdna-3, 960×540, 1 sample, `?surfacetrace`; the si-glass
+gate's own run re-measures the pearls rows and the failure mixes are read
+off the same feed's `transport failures` lines — f1 processed cap, f2
+interface cap, f4/r3 traversal state-mismatch, f5 inside miss):
+
+| Starter (backend)             | Resolved share | Unresolved mix before → after             |
+| ----------------------------- | -------------- | ----------------------------------------- |
+| `glassPearls` (si, 3D)        | 95.69 → 98.22% | f4/r3 3,197→1,433; f1 631→261; f2 277→0   |
+| `glassPearls4` (si, 4D)       | 94.79 → 95.04% | f4/r3 4,832→4,618; f1 32→15; f2 6→0       |
+| `glass-garden` (C0, 3D)       | 94.20 → 94.48% | f5 2,456→2,552; f4/r3 591→713; f1 421→417 |
+| `glass-corner-cells` (C0, 3D) | 77.94 → 78.34% | f5 6,403→6,265; f4/r3 718→731             |
+| `glass-cells` (C0, 4D)        | 98.74 → 98.57% | f5 600→662; f4/r3 218→243; f1 48→77       |
+
+The beads starter is the flip's winner and its own record: the interface
+cap VANISHED, the processed cap fell 2.4×, and the state-mismatch mass
+halved — the split's silhouette chords were most of all three (the same
+capped-orbit class the curved solid's fix measured, plus the split's
+anchored inside claim contradicting a hit that sat outside). The 4D
+starter's residue is the near-kissing tangency class and barely moves. The
+C0 starters move ±0.3pp: their residue is inside-miss and state-mismatch —
+the union-gap band-crossing class, not silhouettes — so the primary
+treatment is not their lever.
+
+THE TRADE-OFF, on the bench's hostile rows: the near-kissing shell
+arrangements' chunk rows moved worse (`siCell24Shell4` 54/10 → 46/18
+resolved/unresolved; `si600Medallion4@WKISS` 16/10 → 15/11; the pearls row
+19/2 → 21/0). The f64 twin reproduces the direction on its own hit set
+(split 46 resolved/17 refusals → owned 41/22), so this is not an f32
+realization. The mechanism is walk divergence, not a systematic entry
+defect: the refusing queries sit DEEP in the chains (a reproduced ray
+refused at chain query 301 of 302, an anchored restart whose origin's own
+field already read 6.3·eps outside its inside claim — the stale-claim
+class), and the near-kissing thin shells' long refracting chains are
+refusal-prone either way — the split's own twin census there was already
+27% unresolved (17 of 64; the GPU's pre-flip record was 15.6%). The
+shipped glass look is the pearls pair; the shell rows are
+bench constructions, and their recorded trade is disclosed here rather
+than tuned away.
+
 ## The fused front-to-back walk (2026-09-25)
 
 A general word-tree transport query had enumerated EVERY leaf the ray clips

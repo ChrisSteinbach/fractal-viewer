@@ -437,12 +437,17 @@ describe("the sphere-inversion glass backend (opticsBackend sphereInversion)", (
     }
   });
 
-  it("splits the primary hit on the SIGNED field's normal, as the twin does", () => {
-    // This core's surfaceDE is the unsigned estimator; its interior values
-    // are folded member signals, so taps across the surface draw garbage.
+  it("owns the primary interface instead of splitting at the march's hit", () => {
+    // A silhouette ray the display march accepts beside a generator it
+    // never enters was split there: its chord started outside the ball,
+    // met the wall past the critical angle and circled by total internal
+    // reflection until the path capped — the curved solid's measured
+    // defect, one backend over. The signed query now owns the entry (a
+    // near-miss misses: background), in both dimensions.
     for (const core of ["sphereInv", "sphereInv4"] as const) {
       const src = surfaceDeKernelWgsl(glass(core));
-      expect(src).toContain("let n0 = transportSolidNormal(origin, dir, eps);");
+      expect(src).toContain("primary.anchorPresent = 0u;");
+      expect(src).not.toContain("the primary split (the march's own hit");
       expect(src).not.toContain(
         "let n0 = transportOpticalNormal(origin, dir, eps, li);",
       );

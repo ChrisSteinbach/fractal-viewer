@@ -2643,6 +2643,22 @@ speckle are the envelope work's, as is the 3D starter's settle at the
 shipped eight passes. An earlier 2x run of the 3D starter took 405.9 s to
 export 1920×1080 at one pass, which is why the gate's default scale is 1.
 
+RE-MEASURED 2026-10-14 under the owned primary (the signed backends'
+entry rule, `docs/surface-dielectric-transport.md`): the same gate, same
+settings, all legs PASS. The resolved shares are the flip's headline:
+
+| Starter      | Settle | Covered | Glass hits resolved / unresolved / invalid | vs Classic | Link reload | Tiled (3 bands) |
+| ------------ | ------ | ------- | ------------------------------------------ | ---------- | ----------- | --------------- |
+| glassPearls  | 6.5 s  | 62.7%   | 93481 / 1694 / 0 (98.22%)                  | 22.3%      | max diff 0  | max diff 0      |
+| glassPearls4 | 3.5 s  | 75.9%   | 88834 / 4633 / 0 (95.04%)                  | 12.2%      | max diff 0  | max diff 0      |
+
+The settles are unchanged (the 3D starter's 6.5 s matches its pre-flip
+6.4 s); what moved is the RESOLVED SHARE and only that: the 3D starter's
+unresolved mass fell 4105 → 1694 — the split's silhouette chords were most
+of it (the interface cap 277 → 0, the processed cap 631 → 261, the
+state-mismatch refusals 3197 → 1433). The 4D slice scrub now resolves
+96.94%.
+
 ### The resumable trace lifts the generator cap (2026-09-23)
 
 The admission used to stop glass at 30 generators because one WORKGROUP of
@@ -3120,6 +3136,19 @@ settle pixels moved by more than 8/255 against the approved look. The
 opt-in arm (`?surfacesinormal=exact`, `sphereInversionExactNormal`) stays
 as this measurement's executable record.
 
+RE-MEASURED 2026-10-14 under the owned primary (the signed backends'
+entry rule; `docs/surface-dielectric-transport.md`), the twin's own
+schedule: the RESOLUTION objection no longer reproduces on this fixture —
+the taps arm and the exact arm now resolve the same 2,120 of 2,137 hits
+(the split's anchored-restart class the exact normal tripped is gone with
+the split). What the exact normal buys under the flipped schedule is
+speed: 3.57M → 2.27M evaluations and the worst in-order critical path
+52,294 → 29,063 (16,894 side by side). The verdict stands on its own
+grounds — the moved pixels against the approved look, the machinery
+re-derivation, and the owner's call — but the cost case the re-derivation
+would make has strengthened: a future session taking the exact normal
+re-runs the look sheet, not the resolution question.
+
 WHERE THE 3D GAP STANDS: preview 2.0 s truncated (2.6 s unbudgeted) against
 1 s, and settle 16.8 s against 10 s, both unchanged. The two measured
 remainders are the per-sample serial DRAIN (~1.1 s a sample, which needs
@@ -3301,6 +3330,13 @@ a later pass can finish in the same chunk as its predecessor (the quantum
 grows between chunks), so a speculative trace must write to its own slot's
 side region, never the ray's pixel, until the host promotes it.
 
+RE-MEASURED 2026-10-14 under the owned primary, the twin's own schedule:
+9 of 2,137 hits run more than one pass, and no ray runs past pass 2, so
+the worst ray's 52,294 evaluations are the same figure in order, on first
+pending and fully side by side — the 2.3× column's evidence has retired
+with the capped orbits the flip removed. Speculation still stands as
+shipped; it simply has less to speculate about on this fixture.
+
 ### Speculative replay passes (2026-09-23)
 
 The critical-path evidence above says a pending ray's passes cost their sum
@@ -3411,6 +3447,9 @@ warm repeat from 0.82 to 1.02 s. The cost sheet's critical-path line gained
 the chain's column: at 64 px the worst ray is 119,747 evaluations in order,
 79,021 chained and 52,262 fully side by side. At 192 px (about the preview's
 ray count) it is 142,712, 86,850 and 53,066. No traced ray ran past pass 3.
+(Under the owned primary, 2026-10-14, the 64-px column reads 52,294 in all
+three — no ray runs past pass 2, so the three schedules coincide; the
+192-px column is the pre-flip record.)
 
 MEASURED on the RX 7900 XTX, two back-to-back rounds per arm on one build,
 the chain disabled by a temporary toggle. UNCERTIFIED: the quiet check read
@@ -3586,7 +3625,14 @@ pass 2's to 30%; the worst in-order critical path HALVES (196,851 →
 consuming chain's source log exists it is consumed 100% (pass 2's 89.6%
 is its own processed cap truncating the trace, not a miss). The kernel
 does not get the model's full win at the frame, and the difference is the
-point of the numbers below.
+point of the numbers below. (Re-measured 2026-10-14 under the owned
+primary, the twin's own schedule: pass 1's recompute 270,493 → 61,560
+evaluations, 23% of its baseline, and no ray reaches pass 2 at this cap,
+so pass 2 has nothing to save; the worst in-order critical path is
+unchanged at 95,798 — its pass 0 dominates and pass 0 can consume
+nothing. The log's saving on the frame's tail is smaller than its
+recorded one because the capped orbits the flip removed were most of
+what the log was shortening.)
 
 THE KERNEL (`surface-de-gpu.ts`'s `transportLog`, si glass shade sessions
 only, default on): each armed pool slot carries TWO log regions that
