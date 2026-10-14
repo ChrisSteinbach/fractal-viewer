@@ -9,13 +9,19 @@ import type { SurfaceDE4 } from "../../fractal/surface-de-4d";
  */
 export interface SurfaceCondensationKernelSpec {
   mapCount: number;
-  emitters: readonly { shape: ShapeSpec; shadeIndex: number }[];
+  emitters: readonly {
+    shape: ShapeSpec;
+    shadeIndex: number;
+    sigmaMin: number;
+  }[];
 }
 
 /**
  * Project a built condensation DE onto the exact input expected by the WGSL
  * generator. Keeping this projection beside the bench makes its dedicated
  * Gearworks eval/march legs follow the same host contract as production.
+ * `sigmaMin` rides along: the closed-solid mesh treatment's declared-
+ * resolution stride cap derives from it.
  */
 export function surfaceCondensationKernelSpec(
   de: Pick<SurfaceDE | SurfaceDE4, "maps" | "condensation">,
@@ -29,6 +35,7 @@ export function surfaceCondensationKernelSpec(
     emitters: condensation.emitters.map((emitter) => ({
       shape: emitter.shape,
       shadeIndex: emitter.shadeIndex,
+      sigmaMin: emitter.sigmaMin,
     })),
   };
 }

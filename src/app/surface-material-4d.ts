@@ -4,7 +4,10 @@ import {
   installSurfaceLightingUniforms,
 } from "./surface-lighting-material";
 import type { SurfaceLighting } from "../fractal/surface-lighting";
-import { condensationTraversalDepth } from "../fractal/condensation-de";
+import {
+  condensationMeshDeclaredStrideCap,
+  condensationTraversalDepth,
+} from "../fractal/condensation-de";
 import {
   BACKGROUND_SHAPE_GLSL,
   backgroundShapeSource,
@@ -48,6 +51,7 @@ import {
   SURFACE_FULL_SHADOW_STEPS,
   installSurfaceTiling,
   materialOpticsBackend,
+  materialSolidMeshBand,
   materialSurfaceTiling,
   setSurfaceShapeMeshSdf,
   surfaceShapeMeshSdfUniform,
@@ -3408,6 +3412,9 @@ export function surface4FragmentFor(
   // resolver into `withTilingGlsl`'s `slabCapable`. Absent (false) keeps
   // every existing caller's source byte-identical.
   slabCapable = false,
+  // The closed-solid mesh emitter's declared-resolution treatment, the 3D
+  // wrapper's own rule one dimension up.
+  meshSolidBand: number | null = null,
 ): string {
   if (optics !== 0 && opticsBackend === 1 && swirlLens !== 0) {
     throw new RangeError(
@@ -3436,6 +3443,9 @@ export function surface4FragmentFor(
     optics,
     opticsBackend,
     slabCapable,
+    0, // menger
+    0, // sphaira
+    meshSolidBand,
   );
 }
 
@@ -3458,6 +3468,7 @@ export function surface4FragmentResolvedFor(
   optics = 0,
   opticsBackend = 0,
   slabCapable = false,
+  meshSolidBand: number | null = null,
 ): string {
   if (optics !== 0 && opticsBackend === 1 && swirlLens !== 0) {
     throw new RangeError(
@@ -3486,6 +3497,9 @@ export function surface4FragmentResolvedFor(
     optics,
     opticsBackend,
     slabCapable,
+    0, // menger
+    0, // sphaira
+    meshSolidBand,
   );
 }
 
@@ -3998,6 +4012,7 @@ export function setSurfaceSystem4(
   const data = material.userData as {
     surfaceCondensationShapeKey4?: string | null;
     surfaceCondensationShapes4?: ShapeSpec[] | null;
+    surfaceSolidMeshBand?: number | null;
     surface4SlabCapable?: boolean;
   };
   const wantCondensation = emitters.length > 0 ? 1 : 0;
@@ -4034,6 +4049,7 @@ export function setSurfaceSystem4(
     else delete material.defines.SURFACE4_SWIRL_LENS;
     data.surfaceCondensationShapeKey4 = condensationKey;
     data.surfaceCondensationShapes4 = condensationShapes;
+    data.surfaceSolidMeshBand = condensationMeshDeclaredStrideCap(emitters);
     data.surface4SlabCapable = slabCapable;
     material.fragmentShader = surface4FragmentFor(
       material.defines.SURFACE4_BALLOON === 1 ? 1 : 0,
@@ -4049,6 +4065,7 @@ export function setSurfaceSystem4(
       material.defines.SURFACE4_OPTICS === 1 ? 1 : 0,
       materialOpticsBackend(material),
       material4SlabCapable(material),
+      materialSolidMeshBand(material),
     );
     material.needsUpdate = true;
   }
@@ -4327,6 +4344,7 @@ export function setSurface4Balloon(
       material.defines.SURFACE4_OPTICS === 1 ? 1 : 0,
       materialOpticsBackend(material),
       material4SlabCapable(material),
+      materialSolidMeshBand(material),
     );
     material.needsUpdate = true;
   }
@@ -4377,6 +4395,7 @@ export function setSurface4GroundPlane(
           material.defines.SURFACE4_OPTICS === 1 ? 1 : 0,
           materialOpticsBackend(material),
           material4SlabCapable(material),
+          materialSolidMeshBand(material),
         );
   const u = material.uniforms;
   if (spec) {
@@ -4514,6 +4533,7 @@ export function setSurface4Materials(
       wantOptics,
       materialOpticsBackend(material),
       material4SlabCapable(material),
+      materialSolidMeshBand(material),
     );
     material.needsUpdate = true;
   }

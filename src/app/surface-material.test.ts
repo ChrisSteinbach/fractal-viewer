@@ -7181,7 +7181,7 @@ describe("SURFACE_OPTICS_CLOSED_SOLID (the signed closed-solid backend)", () => 
     ).toThrow(/balloon echo/);
   });
 
-  it("refuses mesh-bearing emitter shapes and resolves the analytic union", () => {
+  it("admits a mesh emitter through the declared-resolution treatment and resolves the analytic union", () => {
     const meshShapes: readonly ShapeSpec[] = [
       {
         parts: [
@@ -7192,32 +7192,82 @@ describe("SURFACE_OPTICS_CLOSED_SOLID (the signed closed-solid backend)", () => 
         ],
       },
     ];
+    // The treatment is one unit: a mesh shape without the caller's
+    // declared-resolution cap (or the cap without a mesh shape) is a
+    // caller bug.
     expect(() =>
       surfaceFragmentResolvedFor(
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        undefined,
-        null,
-        meshShapes,
-        false,
-        0,
-        0,
-        0,
-        null,
-        0,
-        0,
-        0,
-        1,
-        1,
+        0, // escape
+        0, // lens
+        0, // balloon
+        0, // plane
+        0, // bulb
+        0, // finish
+        0, // pattern
+        undefined, // source
+        null, // trap
+        meshShapes, // condensation
+        false, // condensation4
+        0, // trapGeometry
+        0, // schedule
+        0, // chaos
+        null, // tiling
+        0, // post
+        0, // lighting
+        0, // sphereInversion
+        1, // optics
+        1, // opticsBackend
+        false, // slabCapable
+        0, // menger
+        0, // sphaira
+        null, // meshSolidBand — the pairing is a caller bug
       ),
-    ).toThrow(/mesh-bearing/);
+    ).toThrow(/one unit/);
+    const mesh = surfaceFragmentResolvedFor(
+      0, // escape
+      0, // lens
+      0, // balloon
+      0, // plane
+      0, // bulb
+      0, // finish
+      0, // pattern
+      undefined, // source
+      null, // trap
+      meshShapes, // condensation
+      false, // condensation4
+      0, // trapGeometry
+      0, // schedule
+      0, // chaos
+      null, // tiling
+      0, // post
+      0, // lighting
+      0, // sphereInversion
+      1, // optics
+      1, // opticsBackend
+      false, // slabCapable
+      0, // menger
+      0, // sphaira
+      0.017, // meshSolidBand
+    );
+    // The exact predicate the gate's branches call, emitted ahead of the
+    // corridor that shares it.
+    expect(mesh).toContain(
+      "bool transportSolidContains(vec3 p) {\n    return transportSolidField(p) <= 0.0;\n  }",
+    );
+    // The membership-crossed branch's bisection, which finds the declared
+    // wall at any ramp slope.
+    expect(mesh).toContain("transportSolidContains(origin + dir * mid)");
+    // The interior stride caps at the declared resolution; the corridor's
+    // stride carries the same declared cap.
+    expect(mesh).toMatch(
+      /float stride = f < 0\.0\n {8}\? min\(abs\(f\) \* uStepScale, 0\.017\)\n {8}: abs\(f\) \* uStepScale;/,
+    );
+    expect(mesh).toMatch(
+      /ts = ts \+ clamp\(f < 0\.0 \? min\(abs\(f\) \* uStepScale, 0\.017\) : abs\(f\) \* uStepScale, ballR \* 2\.0e-4, visR\);/,
+    );
     // The analytic union resolves: the signed query over the condensation
-    // term at the root.
+    // term at the root — and its bytes are the pre-treatment ones (no
+    // contains fn, no clamp, no gate branch).
     const src = surfaceFragmentResolvedFor(
       0,
       0,
@@ -7244,6 +7294,8 @@ describe("SURFACE_OPTICS_CLOSED_SOLID (the signed closed-solid backend)", () => 
     expect(src).toContain("return condensationTerm(p, 1.0, 0).x;");
     expect(src).toContain("TRANSPORT_REASON_STATE_MISMATCH");
     expect(src).toContain("if (abs(f) < eps) {");
+    expect(src).not.toContain("transportSolidContains");
+    expect(src).not.toContain("min(abs(f) * uStepScale");
     // The estimator query is gone — the backend REPLACES it.
     expect(src).not.toContain("float d = surfaceDE(p, 0.0);");
   });

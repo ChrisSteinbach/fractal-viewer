@@ -448,14 +448,74 @@ unsigned estimator never had:
   anchor/corner/roundoff conventions remain the reference the contract
   pins against. It REFUSES (loudly, at emission): no condensation
   emitters (the signed field IS their union), graph-directed selection,
-  hybrid schedules, the fold-final lens, tiling, balloon (the wrapped
+  hybrid schedules, the fold-final lens, tiling, and balloon (the wrapped
   displayed solid is no longer the base union the field describes — those
   sessions keep the estimator query and its disclosed vacuous-optics
-  state), and mesh-bearing emitter shapes (the mesh lattice's interior
-  band is not a certified stepping bound; the mesh's declared-resolution
-  treatment is its own follow-up). Ground plane composes (rear-scene
+  state). Mesh-bearing emitter shapes admit through the
+  DECLARED-RESOLUTION treatment below. Ground plane composes (rear-scene
   terminal, orthogonal). The estimator body's emitted text is unchanged;
   the absent path stays byte-identical across every mode/core/variant.
+
+### The mesh emitter's declared-resolution treatment
+
+A mesh part's field is the conservative node lattice (`mesh-shapes.ts`'s
+bake, the same trilinear sample every consumer already renders): nodes
+within one cell radius `r = √3·h/2` of the surface store the blanket
+`−2r`, so `|field|` is NOT a certified stepping bound there and the
+field's sign is the true mesh's only up to the lattice's own resolution.
+The earlier verdict refused the whole shape on those grounds; the shipped
+treatment owns them instead, as a DECLARATION rather than a fix:
+
+- **The optical solid is the lattice's own negative region** — the same
+  declared wall the display's primary march draws (the transport contract's
+  "the PUBLIC displayed object" rule, which is also what REFUSES the BVH
+  re-derivation alternative: an exact-sign re-derivation at the query would
+  trace the TRUE mesh surface, a different object than the one the display
+  draws). `F ≤ sd` holds at every point (the bake's interpolation
+  inequality), so the declared solid CONTAINS the true mesh — a fatter
+  solid, never a thinner one; glass never loses a wall.
+- **Membership is the field's sign, EXACT BY DECLARATION** for the
+  declared set. The transport's every-step sign-contradiction check, the
+  anchor cross-check and the crossing bisection are consistent with it by
+  construction; nothing in the transport's text had to change for them.
+- **The closed-solid query runs WITH the membership gate** (the
+  sphere-inversion/word-tree machinery the WGSL and GLSL backends already
+  carry): the declared band's zero-crossing ramp is steeper than a
+  distance field (the interpolation rises ~2r over ~0.5r), so a band
+  landing can straddle the declared wall — the sign-flip bisection finds
+  it at any slope. An emitter-only C0 mesh session emits the gate and its
+  `transportSolidContains` (= the field's sign); every analytic C0
+  session's source is byte for byte today's.
+- **The interior stride caps at the declared resolution**: inside the
+  declared solid (`f < 0`) the march's stride min-clamps at the session's
+  `condensationMeshDeclaredStrideCap` — the tightest mesh member's cell
+  radius at its own scale (`r · part pose scale · emitter σ_min`), baked
+  as a source literal in both engines and taken from the same one
+  derivation by the fixture's CPU twin. Deep nodes' `sd − r` and the
+  blanket's `−2r` overstate the interior clearance, so an uncapped deep
+  stride can overshoot a declared wall; the cap bounds every blind step to
+  one declared cell. Outside (`f ≥ 0`) the field is the certified bound
+  and steps unchanged. The floor corridor's straight shadow march clamps
+  identically.
+- **The declared resolution is disclosed, not silent**: the optical solid
+  is fatter than the mesh by up to ~2 cell radii and merges features and
+  gaps below the declared resolution — the same merge rule the crossing
+  scale's own doc states for the analytic backends, at the lattice's
+  coarser scale. `docs/mesh-sdf-delivery.md`'s conservative-display
+  verdict is the same fact one render mode earlier.
+
+Measured (quiet RX 7900 XTX / rdna-3, 2026-10-14): the transport
+agreement legs `closedSolidMesh3`/`closedSolidMesh4` — the emitter-only
+C0 union whose members are the star-prism catalog mesh, the treatment's
+first shipped subject (the "Glass stars" starters) — RESOLVE and pin the
+kernel to the f64 twin: radiance ≤ 4.6e-8, residual ≤ 1.3e-6, normals ≤
+1.9e-5, shadow ≤ 1.7e-7, boundary + trace agreement true in both
+dimensions. On SwiftShader the legs SKIP with a disclosed note: the
+atlas-bearing control pipeline's compile kills the software GPU process
+outright (`closedSolidMesh3` begin → device.lost; the leg's own numbers
+never enter it) — the known-software-crash class the bench's other
+SwiftShader false failures record, real-driver-gated like the rest of the
+mesh transport machinery.
 
 Measured (quiet RX 7900 XTX / radeonsi, 2026-09-15): the agreement legs
 pin the closed-solid query and trace against the f64 twin in both
@@ -1029,7 +1089,10 @@ the two qualifications the codegen cannot see:
   honest refusal, but an all-dark material), no chaos, no schedule, no
   final transform of any kind (a plain-affine final warps the query before
   the condensation term, exactly like the fold-final lens it twins), no
-  tiling, no balloon, and no mesh-bearing emitter shape.
+  tiling, and no balloon. A mesh-bearing emitter shape admits through the
+  declared-resolution treatment (the section above): the codegen emits the
+  membership gate, the sign declaration and the interior stride cap
+  exactly when the session's condensation shapes carry a mesh.
 - **The 4D canonical pose.** The 4D field is the intrinsic solid plus the
   shape flat's distance as a penalty, exact only where the displayed slice
   CARRIES every member's flat. The admission checks exactly that, in WORLD

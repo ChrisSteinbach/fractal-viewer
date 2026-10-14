@@ -955,7 +955,14 @@ bench:surface` (`--display=:0` for real-driver rows;
     (`surface-optics.ts`) is LIVE on compute affine/affine4/fold4; the
     closed-solid backend (the SIGNED condensation-union query) RESOLVES
     and is ROUTED (`surface-optics-backend.ts`) where the composition
-    admits it — one decision per session, both engines.
+    admits it — one decision per session, both engines. Mesh-bearing
+    emitter shapes ADMIT through the declared-resolution treatment: the
+    optical solid IS the mesh lattice's declared wall (the same surface
+    the display draws), membership the field's sign exact by
+    declaration, interior strides capped at the declared cell radius;
+    its bench legs are real-driver-gated (the atlas-bearing control
+    compile kills SwiftShader's GPU process). Record:
+    `docs/surface-dielectric-transport.md`'s declared-resolution section.
     Cinematic rigs (`surface-lighting.ts`): ONE both-dialect emitter,
     unresolved rays dark;
     NO PARTICIPATING MEDIUM (measured cost; a look call). Record:

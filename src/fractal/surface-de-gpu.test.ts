@@ -8955,10 +8955,10 @@ describe("surfaceDeKernelWgsl condensation", () => {
   const condensation = {
     mapCount: 1,
     emitters: [
-      { shape: shapes[0], shadeIndex: 1 },
-      { shape: shapes[1], shadeIndex: 2 },
-      { shape: shapes[0], shadeIndex: 1 },
-      { shape: shapes[1], shadeIndex: 2 },
+      { shape: shapes[0], shadeIndex: 1, sigmaMin: 1 },
+      { shape: shapes[1], shadeIndex: 2, sigmaMin: 1 },
+      { shape: shapes[0], shadeIndex: 1, sigmaMin: 1 },
+      { shape: shapes[1], shadeIndex: 2, sigmaMin: 1 },
     ],
   } as const;
 
@@ -8989,8 +8989,8 @@ describe("surfaceDeKernelWgsl condensation", () => {
     const meshCondensation = {
       mapCount: 1,
       emitters: [
-        { shape: MESH_SHAPE, shadeIndex: 1 },
-        { shape: MESH_SHAPE, shadeIndex: 1 },
+        { shape: MESH_SHAPE, shadeIndex: 1, sigmaMin: 1 },
+        { shape: MESH_SHAPE, shadeIndex: 1, sigmaMin: 1 },
       ],
     };
     for (const core of ["affine", "affine4"] as const) {
@@ -9173,6 +9173,7 @@ describe("surfaceDeKernelWgsl condensation", () => {
             emitters: Array.from({ length: 49 }, (_, shadeIndex) => ({
               shape: GEAR_SHAPE,
               shadeIndex,
+              sigmaMin: 1,
             })),
           },
         }),
@@ -9527,8 +9528,8 @@ describe("surfaceDeKernelWgsl hybrid schedule", () => {
     const condensation = {
       mapCount: 2,
       emitters: [
-        { shape: CONDENSATION_SPHERE, shadeIndex: 2 },
-        { shape: CONDENSATION_BOX, shadeIndex: 3 },
+        { shape: CONDENSATION_SPHERE, shadeIndex: 2, sigmaMin: 1 },
+        { shape: CONDENSATION_BOX, shadeIndex: 3, sigmaMin: 1 },
       ],
     };
     const wgsl = surfaceDeKernelWgsl(
@@ -9686,7 +9687,7 @@ describe("graph-directed Surface GPU ABI", () => {
     const schedule = { mapCount: 2, scheduleMapCount: 1 };
     const condensation = {
       mapCount: 2,
-      emitters: [{ shape: CONDENSATION_SPHERE, shadeIndex: 2 }],
+      emitters: [{ shape: CONDENSATION_SPHERE, shadeIndex: 2, sigmaMin: 1 }],
     };
     for (const core of ["fold", "affine", "fold4", "affine4"] as const) {
       for (const lens of [false, true]) {
@@ -9905,7 +9906,9 @@ describe("finite reflection tiling WGSL and params ABI", () => {
         schedule: { mapCount: 1, scheduleMapCount: 1 },
         condensation: {
           mapCount: 1,
-          emitters: [{ shape: CONDENSATION_SPHERE, shadeIndex: 1 }],
+          emitters: [
+            { shape: CONDENSATION_SPHERE, shadeIndex: 1, sigmaMin: 1 },
+          ],
         },
         chaos: { activeStateCount: 1, predecessorMasks: [1] },
       }),
@@ -11011,7 +11014,7 @@ describe("the closed-solid transport backend (opticsBackend)", () => {
       opticsBackend: "closedSolid",
       condensation: {
         mapCount: 0,
-        emitters: [{ shape: CONDENSATION_SPHERE, shadeIndex: 0 }],
+        emitters: [{ shape: CONDENSATION_SPHERE, shadeIndex: 0, sigmaMin: 1 }],
       },
       ...overrides,
     });
@@ -11096,16 +11099,41 @@ describe("the closed-solid transport backend (opticsBackend)", () => {
     expect(() => surfaceDeKernelWgsl(solidOpts({ balloon: true }))).toThrow(
       /cannot follow the balloon echo/,
     );
-    expect(() =>
-      surfaceDeKernelWgsl(
-        solidOpts({
-          condensation: {
-            mapCount: 0,
-            emitters: [{ shape: MESH_SHAPE, shadeIndex: 0 }],
-          },
-        }),
-      ),
-    ).toThrow(/refuses mesh-bearing emitter shapes/);
+  });
+
+  it("admits a mesh emitter through the declared-resolution treatment: the membership gate, the sign's declaration and the interior stride cap", () => {
+    const mesh = surfaceDeKernelWgsl(
+      solidOpts({
+        condensation: {
+          mapCount: 0,
+          emitters: [{ shape: MESH_SHAPE, shadeIndex: 0, sigmaMin: 0.35 }],
+        },
+      }),
+    );
+    // The exact predicate the gate's branches call, emitted beside the
+    // emitter-only field (the general wire's own text).
+    expect(mesh).toContain(
+      "fn transportSolidContains(p: vec3f) -> bool {\n  return transportSolidField(p) <= 0.0;\n}",
+    );
+    // The membership-crossed branch's bisection, which finds the declared
+    // wall at any ramp slope.
+    expect(mesh).toContain("transportSolidContains(origin + dir * mid)");
+    // The interior stride caps at the declared resolution — the mesh
+    // member's cell at its own scale, baked as a literal — and the
+    // exterior stride is the certified bound unchanged.
+    expect(mesh).toMatch(
+      /let stride = select\(abs\(f\) \* params\.stepScale, min\(abs\(f\) \* params\.stepScale, [0-9.e-]+\), f < 0\.0\);/,
+    );
+    // The corridor's stride carries the same declared cap.
+    expect(mesh).toMatch(
+      /ts = ts \+ clamp\(select\(abs\(f\) \* params\.stepScale, min\(abs\(f\) \* params\.stepScale, [0-9.e-]+\), f < 0\.0\), ballR \* 2\.0e-4, visR\);/,
+    );
+    // The cap is the mesh member's world cell radius: r * sigmaMin, with
+    // the star-prism's 64^3 bake's cellRadius. The analytic analytic
+    // closed-solid source stays byte-identical: no contains fn, no clamp.
+    const analytic = surfaceDeKernelWgsl(solidOpts());
+    expect(analytic).not.toContain("fn transportSolidContains");
+    expect(analytic).toContain("let stride = abs(f) * params.stepScale;");
   });
 });
 
@@ -11122,7 +11150,7 @@ describe("the closed-solid floor corridor's straight shadow visibility", () => {
       opticsBackend: "closedSolid",
       condensation: {
         mapCount: 0,
-        emitters: [{ shape: CONDENSATION_SPHERE, shadeIndex: 0 }],
+        emitters: [{ shape: CONDENSATION_SPHERE, shadeIndex: 0, sigmaMin: 1 }],
       },
       ...overrides,
     });
@@ -11221,7 +11249,9 @@ describe("the optical distortion's terminal splice", () => {
             opticsBackend: "closedSolid" as const,
             condensation: {
               mapCount: 0,
-              emitters: [{ shape: CONDENSATION_SPHERE, shadeIndex: 0 }],
+              emitters: [
+                { shape: CONDENSATION_SPHERE, shadeIndex: 0, sigmaMin: 1 },
+              ],
             },
           }
         : {}),

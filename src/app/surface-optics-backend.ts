@@ -1,4 +1,3 @@
-import { shapeMeshIds } from "../fractal/shapes";
 import { transformHasEmitter, systemHasChaos } from "../fractal/chaos-game";
 import { composeAffine, isIdentityAffine } from "../fractal/affine";
 import {
@@ -54,8 +53,11 @@ import {
  * union: emitter-only C0 (no recursive maps — with maps the field describes
  * only the root term, and every path through the IFS part refuses
  * `state-mismatch`), no graph-directed selection, no hybrid schedule, no
- * fold-final lens, no tiling, no balloon, and no mesh-bearing emitter shape
- * (the mesh lattice's interior band is not a certified stepping bound).
+ * fold-final lens, and no tiling or balloon. A MESH-bearing emitter shape
+ * admits through the declared-resolution treatment: the optical solid is
+ * the mesh lattice's own negative region — the same declared wall the
+ * display draws — with the transport's interior strides capped at the
+ * declared resolution and the membership gate on (the codegen emits both).
  *
  * THE 4D POSE ADMISSION. The 4D field is the intrinsic solid plus the
  * shape flat's distance as a penalty (`sigmaMin·sd + |local w|`): exact —
@@ -208,11 +210,12 @@ export function surfaceClosedSolidAdmitted(
   if (de.final && !finalIsIdentity(de.final)) return false;
   if (composition.tiling) return false;
   if (composition.balloon) return false;
-  // Mesh-bearing emitter shapes refuse (the mesh lattice's interior band
-  // is not a certified stepping bound).
-  for (const emitter of emitters) {
-    if (shapeMeshIds(emitter.shape).length > 0) return false;
-  }
+  // Mesh-bearing emitter shapes admit through the declared-resolution
+  // treatment: the optical solid is the mesh lattice's own negative region
+  // (the same declared wall the display draws), the transport's interior
+  // strides cap at the declared resolution, and the membership gate rides
+  // the emitted query. The codegen emits all three when the session's
+  // condensation shapes carry a mesh.
   // The 4D canonical-pose admission: exact where the displayed slice
   // carries every flat.
   if (pose4) {
@@ -380,13 +383,10 @@ export function surfaceOpticsOutlook(
   ) {
     return { resolves: false };
   }
-  // Mesh-bearing emitter shapes refuse (the mesh lattice's interior band
-  // is not a certified stepping bound — the DE-level predicate's own term).
-  for (const emitter of active) {
-    if (emitter.emitter && shapeMeshIds(emitter.emitter).length > 0) {
-      return { resolves: false };
-    }
-  }
+  // Mesh-bearing emitter shapes admit through the declared-resolution
+  // treatment (the DE-level predicate's own term): the optical solid is
+  // the mesh lattice's own negative region, strides capped at the
+  // declared resolution, the membership gate on.
   // A final the descent warps the query by is the DE-level predicate's
   // `de.final` refusal; the exact identity (the enabled lens nobody moved)
   // admits. Any authored variation or live post makes the final a real

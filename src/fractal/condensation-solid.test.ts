@@ -4,9 +4,20 @@ import {
   buildCondensationSolid3,
   condensationSolidAdmission3,
   condensationSolidContains3,
+  condensationSolidShapeRefusal,
   condensationSolidSignedDistance3,
 } from "./condensation-solid";
-import type { CondensationDepthBand } from "./condensation-de";
+import {
+  condensationDistance3,
+  condensationMeshDeclaredStrideCap,
+  type CondensationDepthBand,
+} from "./condensation-de";
+import {
+  bakeMeshSdf,
+  meshAsset,
+  meshContainsPoint,
+  meshUnsignedDistance,
+} from "./mesh-shapes";
 import { sierpinskiTetrahedron } from "./presets";
 import { mulberry32 } from "./rng";
 import { SHAPE_MARCH_SAFETY, shapeSdf, type ShapeSpec } from "./shapes";
@@ -327,5 +338,127 @@ describe("condensation solid (3D)", () => {
         if (s > 0) expect(refined).toBeGreaterThanOrEqual(0.3 * s);
       }
     }
+  });
+});
+
+describe("the mesh emitter's declared-resolution treatment", () => {
+  const STAR: ShapeSpec = {
+    parts: [
+      {
+        primitive: { kind: "mesh", meshId: "star-prism-v1" },
+        combine: "union",
+      },
+    ],
+  };
+  const GEAR: ShapeSpec = {
+    parts: [
+      {
+        primitive: {
+          kind: "gear",
+          teeth: 9,
+          radius: 0.8,
+          tooth: [0.18, 0.1],
+          hole: 0.1,
+          halfHeight: 0.25,
+        },
+        combine: "union",
+      },
+    ],
+  };
+
+  function meshEmitter(id = 4): Transform {
+    return {
+      id,
+      position: [0.02, -0.04, 0.03],
+      rotation: [0.15, -0.1, 0.05],
+      scale: [0.5, 0.5, 0.5],
+      weight: 1.2,
+      emitter: STAR,
+    };
+  }
+
+  it("admits a mesh emitter in both modes while the gear still refuses exact", () => {
+    expect(
+      condensationSolidAdmission3(
+        buildSurfaceDE([meshEmitter()], null, undefined, {
+          condensationDepthBand: { maxDepth: 0 },
+        }),
+      ).ok,
+    ).toBe(true);
+    expect(condensationSolidShapeRefusal(STAR)).toBeNull();
+    expect(
+      condensationSolidShapeRefusal(STAR, { admitConservativeShapes: true }),
+    ).toBeNull();
+    expect(condensationSolidShapeRefusal(GEAR)).toMatch(/gear/);
+    expect(
+      condensationSolidShapeRefusal(GEAR, { admitConservativeShapes: true }),
+    ).toBeNull();
+  });
+
+  it("declares the stride cap from the tightest mesh member's cell at its own scale", () => {
+    const star = bakeMeshSdf("star-prism-v1");
+    const crescent: ShapeSpec = {
+      parts: [
+        {
+          primitive: { kind: "mesh", meshId: "crescent-moon-v1" },
+          combine: "union",
+        },
+      ],
+    };
+    expect(
+      condensationMeshDeclaredStrideCap([{ shape: SPHERE, sigmaMin: 0.5 }]),
+    ).toBeNull();
+    expect(
+      condensationMeshDeclaredStrideCap([{ shape: STAR, sigmaMin: 0.5 }]),
+    ).toBeCloseTo(star.cellRadius * 0.5, 14);
+    const mixed = condensationMeshDeclaredStrideCap([
+      { shape: STAR, sigmaMin: 0.5 },
+      { shape: crescent, sigmaMin: 0.3 },
+    ]);
+    expect(mixed).toBeCloseTo(
+      Math.min(
+        star.cellRadius * 0.5,
+        bakeMeshSdf("crescent-moon-v1").cellRadius * 0.3,
+      ),
+      14,
+    );
+  });
+
+  it("declares a solid that contains the true mesh and certifies its far exterior", () => {
+    const transforms = [meshEmitter()];
+    const de = buildSurfaceDE(transforms, null, undefined, {});
+    const em = de.condensation!.emitters[0];
+    const m = em.invM;
+    const t = em.invT;
+    const local = (p: Vec3): Vec3 => [
+      m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + t[0],
+      m[3] * p[0] + m[4] * p[1] + m[5] * p[2] + t[1],
+      m[6] * p[0] + m[7] * p[1] + m[8] * p[2] + t[2],
+    ];
+    const field = (p: Vec3): number =>
+      condensationDistance3(de.condensation!, p[0], p[1], p[2]);
+    const mesh = meshAsset("star-prism-v1");
+    const r = bakeMeshSdf("star-prism-v1").cellRadius;
+    let insideTrue = 0;
+    let outsideFar = 0;
+    for (const p of samples(1200, 29, 0.9)) {
+      const q = local(p);
+      if (meshContainsPoint(mesh, q)) {
+        // The declared interior contains the true mesh: F <= sd everywhere,
+        // so a truly-inside point can never read positive.
+        expect(field(p) < 0).toBe(true);
+        insideTrue += 1;
+      } else {
+        const world = meshUnsignedDistance(mesh, q) * em.sigmaMin;
+        // Past three declared cells the lattice's exterior certifies: every
+        // neighbourhood node is non-blanket with stored sd - r >= 2r > 0.
+        if (world > 3 * r * em.sigmaMin) {
+          expect(field(p) > 0).toBe(true);
+          outsideFar += 1;
+        }
+      }
+    }
+    expect(insideTrue).toBeGreaterThan(0);
+    expect(outsideFar).toBeGreaterThan(0);
   });
 });

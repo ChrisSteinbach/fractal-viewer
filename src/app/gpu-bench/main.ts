@@ -170,8 +170,10 @@ import {
   ORBIT_RING_SHAPE,
   PEACE_SIGN_SHAPE,
   SHAPE_MARCH_SAFETY,
+  shapeMeshIds,
   type ShapeSpec,
 } from "../../fractal/shapes";
+import { activeMeshSdfAtlas } from "../../fractal/mesh-sdf-atlas-cache";
 import type { EscapeDE } from "../../fractal/escape-de";
 import {
   analyzeEscapeSystem4,
@@ -244,6 +246,7 @@ import type {
 } from "../../fractal/surface-de";
 import {
   condensationDistance3,
+  condensationMeshDeclaredStrideCap,
   condensationSignedDistance4,
 } from "../../fractal/condensation-de";
 import {
@@ -8929,7 +8932,7 @@ async function acquireSurfaceDevice(
  * are backend-conditional, and the finite backend's extra fields extend
  * the strides (query 128 → 192, result 64 → 96) without moving an older
  * offset. */
-function surfaceTransportControlWgsl(
+export function surfaceTransportControlWgsl(
   backend: SurfaceTransportLegBackend,
   fieldProbe = backend === "sphereInversion",
   /** The GENERAL word-tree walk's FiniteBoundary carries the media
@@ -10306,12 +10309,27 @@ async function runSurfaceTransportAgreementLegs(
   /** Run only this backend's legs (the sphere-inversion-only iteration
    * path); the other legs' build-or-skip notes are dropped with them. */
   only?: SurfaceTransportLegBackend,
+  /** SwiftShader-class device: the mesh emitter's declared-resolution legs
+   * SKIP here — the control pipeline's atlas-bearing compile kills the
+   * software GPU process outright (measured: `closedSolidMesh3` begin ->
+   * device.lost, engine-independent of the leg's own numbers, which the
+   * real driver certifies: radiance <= 4.6e-8, residual <= 1.3e-6,
+   * normals <= 1.9e-5, shadow <= 1.7e-7, both dimensions). Every other
+   * backend's legs run on both classes. */
   /** The fold leg's A/B arms (the spill work's instruments). The leg
    * itself always gates at {@link SURFACE_TRANSPORT_FOLD_LEG_MAX_PATHS};
    * `foldProbe: "shared"` swaps the workgroup-shared (LDS) frontier arm
    * in, and `foldPaths` re-measures any cap (8+ is the driver's job cut,
    * recorded). */
   opts?: { foldProbe?: "" | "1" | "shared"; foldPaths?: number },
+  /** SwiftShader-class device: the mesh emitter's declared-resolution legs
+   * SKIP here — the control pipeline's atlas-bearing compile kills the
+   * software GPU process outright (measured: `closedSolidMesh3` begin ->
+   * device.lost, engine-independent of the leg's own numbers, which the
+   * real driver certifies: radiance <= 4.6e-8, residual <= 1.3e-6,
+   * normals <= 1.9e-5, shadow <= 1.7e-7, both dimensions). Every other
+   * backend's legs run on both classes. */
+  software = false,
 ): Promise<{
   rows: SurfaceTransportAgreementRow[];
   notes: string[];
@@ -10572,6 +10590,137 @@ async function runSurfaceTransportAgreementLegs(
       },
     });
   };
+  // THE MESH EMITTER'S DECLARED-RESOLUTION legs (both dimensions): the
+  // closed-solid query over an emitter-only C0 whose shape carries the
+  // star-prism catalog mesh — the treatment the transport contract's
+  // closed-solid section declares. The declared field IS the kernel's
+  // shapeMeshSdf atlas body (binding 11, uploaded and bound exactly as
+  // every mesh-bearing kernel does), its sign is the declared solid's
+  // (the lattice's own negative region — exact by declaration), the query
+  // carries the membership gate, and the interior strides cap at the
+  // declared resolution (condensationMeshDeclaredStrideCap's literal) —
+  // the twin takes the same cap from the ONE shared derivation.
+  const pushClosedSolidMeshLeg = (fourD: boolean): void => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.32, -0.08, 0.04],
+        rotation: [0.2, -0.15, 0.12],
+        scale: [0.34, 0.34, 0.34],
+        emitter: {
+          parts: [
+            {
+              primitive: { kind: "mesh", meshId: "star-prism-v1" },
+              combine: "union",
+            },
+          ],
+        },
+      },
+      {
+        id: 1,
+        position: [-0.38, 0.2, -0.06],
+        rotation: [-0.1, 0.18, -0.14],
+        scale: [0.3, 0.3, 0.3],
+        emitter: {
+          parts: [
+            {
+              primitive: { kind: "mesh", meshId: "star-prism-v1" },
+              combine: "union",
+            },
+          ],
+        },
+      },
+    ];
+    const de3 = fourD
+      ? null
+      : buildSurfaceDE(transforms, null, { order: 1, plane: "xy" }, {});
+    const de4 = fourD
+      ? buildSurfaceDE4(transforms, null, { order: 1, plane: "xy" }, {})
+      : null;
+    const de = fourD ? de4 : de3;
+    if (!de || de.maps.length !== 0 || !de.condensation) {
+      throw new Error(
+        `transport closed-solid mesh: the ${fourD ? "4D" : "3D"} fixture ` +
+          "did not build its emitter-only union",
+      );
+    }
+    const cap = condensationMeshDeclaredStrideCap(de.condensation.emitters);
+    if (cap === null) {
+      throw new Error(
+        "transport closed-solid mesh: the fixture built no declared cap — the emitter shapes carry no mesh",
+      );
+    }
+    legs.push({
+      core: fourD ? "affine4" : "affine",
+      systemName: `closedSolidMesh${fourD ? "4" : "3"}`,
+      backend: "closedSolid",
+      options: {
+        mode: "shade",
+        core: fourD ? "affine4" : "affine",
+        width: SURFACE_AFFINE_LADDER_WIDTH,
+        workgroupSize: SURFACE_TRANSPORT_WG,
+        sharedFrontier: false,
+        bnbStage2: false,
+        optics: true,
+        opticsBackend: "closedSolid",
+        transportMaxPaths: SURFACE_TRANSPORT_LEG_MAX_PATHS,
+        condensation: surfaceCondensationKernelSpec(de),
+      },
+      packParams: (n) =>
+        de4
+          ? packSurface4GpuParams(de4, canonicalView4, {
+              itemCount: n,
+              cutoff: 0,
+            })
+          : packSurfaceGpuParams(de3!, { itemCount: n, cutoff: 0 }),
+      packMaps: () =>
+        new Float32Array(
+          de4 ? packSurfaceGpuMaps4(de4) : packSurfaceGpuMaps(de3!),
+        ),
+      fixture: {
+        estimate: (p) =>
+          SHAPE_MARCH_SAFETY *
+          (de4
+            ? condensationSignedDistance4(
+                de4.condensation!,
+                p[0],
+                p[1],
+                p[2],
+                0,
+              )
+            : condensationDistance3(de3!.condensation!, p[0], p[1], p[2])),
+        stepScale: de.stepScale,
+        visibleRadius: de.visibleBoundingRadius,
+        // The declared solid's membership: the lattice field's own sign —
+        // the SAME declaration the kernel's transportSolidContains makes,
+        // so the gate's branches are pinned end to end.
+        contains: (p) =>
+          SHAPE_MARCH_SAFETY *
+            (de4
+              ? condensationSignedDistance4(
+                  de4.condensation!,
+                  p[0],
+                  p[1],
+                  p[2],
+                  0,
+                )
+              : condensationDistance3(de3!.condensation!, p[0], p[1], p[2])) <=
+          0,
+        // The declared-resolution interior stride: the ONE shared
+        // derivation's answer, exactly what the kernel baked as a literal.
+        meshStrideCap: cap,
+        // The kernel's signed-backend rule: the query owns the primary
+        // interface.
+        ownsPrimary: true,
+      },
+      ulpEnsemble: true,
+    });
+  };
+  // The mesh legs lead the bisect order while the treatment is new: a leg
+  // that kills the device names itself first.
+  pushClosedSolidMeshLeg(false);
+  pushClosedSolidMeshLeg(true);
+
   pushClosedSolidLeg(false);
   pushClosedSolidLeg(true);
   pushClosedSolidLeg(false, "abutting");
@@ -11541,6 +11690,13 @@ async function runSurfaceTransportAgreementLegs(
   }
   const rows: SurfaceTransportAgreementRow[] = [];
   for (const leg of legs) {
+    if (software && leg.systemName.startsWith("closedSolidMesh")) {
+      note(
+        `transport: leg ${leg.core} (${leg.systemName}) SKIPPED on the software device — ` +
+          "the atlas-bearing control compile kills the SwiftShader GPU process; the real driver certifies the row",
+      );
+      continue;
+    }
     note(`transport: leg ${leg.core} (${leg.systemName}) begin`);
     status(`transport agreement: compiling ${leg.core} × ${leg.systemName}…`);
     activity.setState("gpu", `Surface transport agreement — ${leg.core}`);
@@ -12420,6 +12576,45 @@ async function runSurfaceTransportAgreementLegs(
             GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           )
         : null;
+    // The mesh atlas (frozen binding 11): a leg whose condensation shapes
+    // carry a mesh compiles the conservative lattice's 3D texture, exactly
+    // as every mesh-bearing kernel does (the frame leg's own arm) — its
+    // `transportSolidField` reads the atlas bodies. An unused binding must
+    // stay out of the derived layout's bind group.
+    const legMeshIds = leg.options.condensation
+      ? [
+          ...new Set(
+            leg.options.condensation.emitters.flatMap((emitter) =>
+              shapeMeshIds(emitter.shape),
+            ),
+          ),
+        ]
+      : [];
+    const legMeshAtlas =
+      legMeshIds.length > 0 ? activeMeshSdfAtlas(legMeshIds) : null;
+    let legMeshTex: GPUTexture | null = null;
+    if (legMeshAtlas) {
+      legMeshTex = device.createTexture({
+        label: `surface-de transport mesh atlas ${leg.core}`,
+        format: "r32float",
+        dimension: "3d",
+        size: [legMeshAtlas.width, legMeshAtlas.height, legMeshAtlas.depth],
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      });
+      device.queue.writeTexture(
+        { texture: legMeshTex },
+        legMeshAtlas.values,
+        {
+          bytesPerRow: legMeshAtlas.width * Float32Array.BYTES_PER_ELEMENT,
+          rowsPerImage: legMeshAtlas.height,
+        },
+        {
+          width: legMeshAtlas.width,
+          height: legMeshAtlas.height,
+          depthOrArrayLayers: legMeshAtlas.depth,
+        },
+      );
+    }
     if (legOpticsMaps && !legMediaOptics) {
       device.queue.writeBuffer(
         legOpticsMaps,
@@ -12520,6 +12715,9 @@ async function runSurfaceTransportAgreementLegs(
           ...(maps ? [{ binding: 1, resource: { buffer: maps } }] : []),
           ...(legOpticsMaps
             ? [{ binding: 13, resource: { buffer: legOpticsMaps } }]
+            : []),
+          ...(legMeshTex
+            ? [{ binding: 11, resource: legMeshTex.createView() }]
             : []),
           { binding: 16, resource: { buffer: queriesBuf } },
           { binding: 17, resource: { buffer: resultsBuf } },
@@ -12684,6 +12882,7 @@ async function runSurfaceTransportAgreementLegs(
       params.destroy();
       maps?.destroy();
       legOpticsMaps?.destroy();
+      legMeshTex?.destroy();
     }
 
     let maxRadianceDelta = 0;
@@ -23931,6 +24130,7 @@ async function runSurfaceDeSection(
               foldProbe: config.foldTransportProbe,
               foldPaths: config.foldTransportPaths,
             },
+            acquired.software,
           );
         results.transportAgreement = rows;
         for (const n of transportNotes) results.notes.push(n);
@@ -29188,6 +29388,9 @@ async function runSurfaceDeSection(
           status,
           activity,
           (text) => results.notes.push(text),
+          undefined,
+          undefined,
+          acquired.software,
         );
       results.transportAgreement = rows;
       for (const n of transportNotes) results.notes.push(n);

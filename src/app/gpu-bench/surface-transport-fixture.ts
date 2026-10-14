@@ -108,6 +108,14 @@ export interface TransportFixtureSystem {
   /** Exact membership in the displayed solid, for a field that is a
    * certified bound rather than a signed distance (interface doc). */
   contains?: (p: Vec3) => boolean;
+  /** The mesh emitter's declared-resolution interior stride cap
+   * (condensationMeshDeclaredStrideCap's answer): inside the declared
+   * solid (f < 0) the march's stride caps here — |f| overstates the
+   * clearance there (the lattice's blanket -2r and its sd - r interiors)
+   * — while outside it is the certified bound and steps unchanged. The
+   * WGSL/GSLSL closed-solid queries emit the same clamp when the session's
+   * condensation shapes carry a mesh; absent, the march is unchanged. */
+  meshStrideCap?: number;
   /** An EXACT unit normal of the field, in place of the tetrahedron taps
    * (the sphere-inversion family's Möbius normal — an A/B the kernel does
    * not ship). Null falls back to the taps. Absent is the kernel's rule. */
@@ -479,10 +487,17 @@ export function transportSolidBoundaryQueryCPU(
       };
     }
     const stride = Math.abs(f) * system.stepScale;
-    px += dir[0] * stride;
-    py += dir[1] * stride;
-    pz += dir[2] * stride;
-    t += stride;
+    // The declared-resolution interior stride (the mesh emitter's
+    // treatment): f < 0 caps at the declared cell radius, exactly the
+    // kernel's emitted clamp.
+    const capped =
+      system.meshStrideCap !== undefined && f < 0
+        ? Math.min(stride, system.meshStrideCap)
+        : stride;
+    px += dir[0] * capped;
+    py += dir[1] * capped;
+    pz += dir[2] * capped;
+    t += capped;
   }
   return { kind: "refused", reason: 1, t, normal: [0, 0, 0] };
 }
@@ -1660,7 +1675,13 @@ export function transportShadowVisibilityCPU(
       }
       inside = f < 0;
     }
-    ts += clamp(Math.abs(f) * stepScale, ballR * 2.0e-4, visR);
+    ts += clamp(
+      system.meshStrideCap !== undefined && f < 0
+        ? Math.min(Math.abs(f) * stepScale, system.meshStrideCap)
+        : Math.abs(f) * stepScale,
+      ballR * 2.0e-4,
+      visR,
+    );
     const rx = sp[0] - ballC[0];
     const ry = sp[1] - ballC[1];
     const rz = sp[2] - ballC[2];

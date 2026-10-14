@@ -77,10 +77,12 @@ import { ORBIT_RING_SHAPE } from "../fractal/shapes";
 export const SURFACE_TRANSMISSION_STARTERS = [
   { id: "glass-garden", label: "Glass garden (3D)" },
   { id: "glass-corner-cells", label: "Glass corner cells (3D)" },
+  { id: "glass-star", label: "Glass stars (3D)" },
   { id: "glass-cells", label: "Glass cells (4D)" },
   { id: "glass-beads", label: "Glass beads fractal (3D)" },
   { id: "glass-rings", label: "Glass rings fractal (3D)" },
   { id: "glass-beads-4d", label: "Glass beads fractal (4D)" },
+  { id: "glass-star-4d", label: "Glass stars (4D)" },
 ] as const;
 
 export type SurfaceTransmissionStarterId =
@@ -291,6 +293,81 @@ function glassCornerCells(): SceneSnapshot {
   };
 }
 
+/** THE MESH EMITTER'S FLAGSHIP (the transport contract's declared-
+ * resolution treatment's first shipped subject): three star-prism catalog
+ * meshes — the treatment that re-admits mesh-bearing emitter shapes to the
+ * closed-solid glass. The optical solid IS the mesh lattice's own declared
+ * wall (the same surface every other render mode's surface march draws),
+ * so the stars read a shade fatter than their triangles and any feature
+ * below the declared cell radius (~1/64 of the prism's span, at the
+ * member's own scale) merges — disclosed, never silent. The flat prism
+ * faces keep analytic-quiet refraction; the star's points show the
+ * declared resolution's rounding. The emitters sit on the checker floor at
+ * three scales, one turned to face its flat side to the camera. */
+function glassStar(): SceneSnapshot {
+  const state = baseState();
+  const star = {
+    parts: [
+      {
+        primitive: { kind: "mesh", meshId: "star-prism-v1" } as const,
+        combine: "union" as const,
+      },
+    ],
+  };
+  state.transforms = [
+    glassEmitter(0, [0, -0.32, 0], 0.62, 0.55, star),
+    glassEmitter(1, [-0.95, -0.42, 0.35], 0.4, 0.3, star),
+    glassEmitter(2, [0.9, -0.44, 0.3], 0.34, 0.75, star),
+  ];
+  state.transforms[1].rotation = [0.1, 1.2566, 0.08];
+  state.transforms[2].rotation = [0.14, 0.6283, 0.1];
+  return {
+    ...toSnapshot(state),
+    camera: camera([1.35, 0.4, 2.4], [0, -0.25, 0], 0.62),
+  };
+}
+
+/** The flagship's 4D twin: the star prisms carry a `w` scale (the non-flat
+ * degree of freedom), the canonical composition the closed-solid field's
+ * penalty form needs — every member's flat in the w = 0 hyperplane the
+ * slice displays, the pose the starter saves. Scrubbing the slice off zero
+ * is real 4D navigation with the disclosed cost that the transmission
+ * degrades to honest refusals off the carried flat. */
+function glassStar4d(): SceneSnapshot {
+  const state = baseState();
+  const star = {
+    parts: [
+      {
+        primitive: { kind: "mesh", meshId: "star-prism-v1" } as const,
+        combine: "union" as const,
+      },
+    ],
+  };
+  const corners: Array<[Vec3, number]> = [
+    [[0.5, -0.15, 0.45], 0.12],
+    [[-0.5, -0.15, 0.45], 0.55],
+    [[0, -0.15, -0.6], 0.72],
+    [[0, 0.72, 0.1], 0.35],
+  ];
+  const r = 0.55;
+  state.transforms = corners.map(([position, colorIndex], id) => ({
+    id,
+    position,
+    rotation: [0, 0, 0],
+    scale: [r, r, r],
+    weight: 1,
+    colorIndex,
+    w: { scale: 0.5 },
+    optics: { ...STARTER_OPTICS },
+    emitter: star,
+  }));
+  return {
+    ...toSnapshot(state),
+    camera: camera([1.9, 0.85, 2.9], [0, 0.05, 0], 0.6),
+    fourD: posed4DPose(),
+  };
+}
+
 /** The general curved solid's starter: the corners stamping one centred
  * glass emitter over the band [0, 2] (the look sheet's subject). `fourD`
  * gives every transform a `w` scale, the native-4D twin whose flats all lie
@@ -356,6 +433,8 @@ export function createSurfaceTransmissionStarter(
       return glassGarden();
     case "glass-corner-cells":
       return glassCornerCells();
+    case "glass-star":
+      return glassStar();
     case "glass-cells":
       return glassCells();
     case "glass-beads":
@@ -364,5 +443,7 @@ export function createSurfaceTransmissionStarter(
       return glassFractal(ORBIT_RING_SHAPE, 0.36, false);
     case "glass-beads-4d":
       return glassFractal(sphere(1), 0.28, true);
+    case "glass-star-4d":
+      return glassStar4d();
   }
 }
