@@ -32,6 +32,8 @@ import type {
   RgbStop,
 } from "../fractal/palette";
 import { buildPaletteLUT } from "../fractal/palette";
+import { PRESENTATION_FLOOR_ALBEDO } from "../fractal/presentation-floor";
+import type { Vec3 } from "../fractal/types";
 import { DARK_BACKDROP, HAZE_BACKDROP, hexToRgb01 } from "./constants";
 
 export type { BackgroundShape } from "../fractal/background-shape";
@@ -210,6 +212,67 @@ export function autoBackground(palette: PaletteSpec): BackgroundGradient {
       AUTO_BACKGROUND_TUNING.bottom,
     ),
   };
+}
+
+/**
+ * The presentation floor's side of the scene-palette tie: the tuning of
+ * {@link autoFloorAlbedo}, exported so the tests pin the CONTRACT (sample
+ * position, chroma share, luma preservation) rather than magic numbers.
+ *
+ * The curve is a CHROMA OFFSET, deliberately not `deriveAutoStop`'s
+ * scale-then-desaturate: the floor keeps its own luma (the neutral grey's,
+ * so the checker's and the pentagrid grey rule's tone multipliers keep
+ * their exact contrast — the floor stays a mid reference the attractor
+ * reads against), and a scale-to-target-luma form would clamp badly on
+ * monochromatic stops — a near-pure-blue sample's channels overshoot 1
+ * long before its luma reaches the floor's 0.62, and clamping them back
+ * drops the luma it was scaling toward. Offsetting the luma-centered
+ * chroma vector (`sample − luma·white`) instead preserves the luma by
+ * construction, keeps the sample's hue direction, and bounds the tint by
+ * the sample's own chroma — a dark palette stop tints subtly, a saturated
+ * one strongly. The share kept is the backdrop's own desaturate rule
+ * applied as `strength = 1 − desaturate`.
+ */
+export const AUTO_FLOOR_TUNING = {
+  /** The LUT position the tie samples — the backdrop's own bottom stop
+   * ({@link AUTO_BACKGROUND_TUNING}'s `bottomT`), so floor and backdrop
+   * echo the same stop of the same palette. */
+  t: AUTO_BACKGROUND_TUNING.bottomT,
+  /** Chroma kept from the palette sample (1 − the backdrop's desaturate). */
+  strength: 1 - AUTO_BACKGROUND_TUNING.desaturate,
+  /** A sample below this luma carries no usable hue — stay neutral, the
+   * same no-hue rule the derived backdrop stops keep. */
+  blackFloor: AUTO_BACKGROUND_TUNING.blackFloor,
+} as const;
+
+/**
+ * The floor albedo the palette-linked backdrop ties to: the palette's own
+ * LUT sample at {@link AUTO_FLOOR_TUNING}'s position, its chroma laid over
+ * the neutral floor grey at the neutral grey's own luma. `"legacy"` has no
+ * gradient to echo (`buildPaletteLUT` returns `null`) and a below-floor
+ * sample carries no usable hue — both keep the neutral
+ * {@link PRESENTATION_FLOOR_ALBEDO} exactly, so an untied scene renders
+ * byte for byte as before. Pure and palette-total: the caller (state.ts's
+ * `resolveFloorPaletteAlbedo`) owns WHICH palette ties and whether the
+ * scene ties at all.
+ */
+export function autoFloorAlbedo(palette: PaletteSpec): Vec3 {
+  const lut = buildPaletteLUT(palette);
+  if (lut === null) return [...PRESENTATION_FLOOR_ALBEDO] as Vec3;
+  const o = Math.round(AUTO_FLOOR_TUNING.t * 255) * 3;
+  const sample: Vec3 = [lut[o], lut[o + 1], lut[o + 2]];
+  const luma = luma709(sample);
+  if (luma < AUTO_FLOOR_TUNING.blackFloor) {
+    return [...PRESENTATION_FLOOR_ALBEDO] as Vec3;
+  }
+  const k = AUTO_FLOOR_TUNING.strength;
+  const channel = (base: number, s: number): number =>
+    Math.min(1, Math.max(0, base + k * (s - luma)));
+  return [
+    channel(PRESENTATION_FLOOR_ALBEDO[0], sample[0]),
+    channel(PRESENTATION_FLOOR_ALBEDO[1], sample[1]),
+    channel(PRESENTATION_FLOOR_ALBEDO[2], sample[2]),
+  ];
 }
 
 /**

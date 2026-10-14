@@ -405,7 +405,12 @@ morphs into place instead of snapping (see **Presets** below).
     (0–4, default 0). The floor uses the cloud's stable enclosing sphere: in
     4D it remains at the origin with the full 4D radius while the rotor and W
     slice move. Changes are live presentation work and never rebuild the voxel
-    grid. Balloon has no horizon, so an effective Balloon temporarily hides
+    grid. With a palette-linked backdrop — **Auto**, or a delivered **Flame**
+    echo — the floor's own grey tints toward that palette's hue at the
+    grey's own brightness (the backdrop's derivation, floor-side), so floor
+    and backdrop read as one lighting environment; the Penrose color rules
+    that paint their own palette are untouched, and the grout edge stays
+    neutral. Balloon has no horizon, so an effective Balloon temporarily hides
     the floor while preserving the authored checkbox and appearance settings;
     turning Balloon off restores it. The **Penrose** pattern (a de Bruijn
     pentagrid's Penrose-rhombus dual) reveals its own detail rows: five
@@ -894,7 +899,8 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   visible but disables beside “Floor unavailable while Balloon encloses this
   Surface.” Its saved check and settings are retained, and return when Balloon
   goes off. A refused escape-time/Mandelbulb Balloon does not gate Floor; the
-  floor remains editable and visible there. Expect the floor to
+  floor remains editable and visible there. The floor's grey ties to a
+  palette-linked backdrop exactly like Solid's (above). Expect the floor to
   cost something on heavy fold systems — every pixel of floor used to be
   a cheap background miss and now pays a shadow march against the fractal
   — absorbed by the same bounded-progress machinery as every other
@@ -1659,7 +1665,9 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   captures render exactly what's on screen. Depth Fade and Aerial Haze's fog
   also tints toward it, so switching the backdrop re-tints the fog to match
   (the **Fog** and **Tint** controls below set how thick that atmosphere is
-  and shift what it fades toward).
+  and shift what it fades toward). The presentation floor's grey ties to the
+  same palette while Auto or a delivered Flame echo is the backdrop — see
+  **Floor**, above.
   Persists in the link and scene file — Auto persists as the choice, not as
   baked colors, and Flame persists its own palette but not generated image
   bytes, so a shared link keeps tracking its scene and view; a link saved

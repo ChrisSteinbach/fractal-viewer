@@ -1,6 +1,8 @@
 import {
   AUTO_BACKGROUND_TUNING,
   autoBackground,
+  AUTO_FLOOR_TUNING,
+  autoFloorAlbedo,
   BACKGROUND_MODES,
   backgroundGradientsEqual,
   BackgroundTween,
@@ -11,6 +13,7 @@ import {
 import type { BackgroundGradient } from "./background";
 import { DARK_BACKDROP, HAZE_BACKDROP, hexToRgb01 } from "./constants";
 import { FLAME_PALETTE_IDS } from "../fractal/palette";
+import { PRESENTATION_FLOOR_ALBEDO } from "../fractal/presentation-floor";
 
 describe("BACKGROUND_MODES", () => {
   it("lists the five modes in UI order", () => {
@@ -99,6 +102,95 @@ describe("autoBackground", () => {
     for (const channel of gradient.bottom) {
       expect(channel).toBeCloseTo(bottomMax, 10);
     }
+  });
+});
+
+describe("autoFloorAlbedo", () => {
+  const NEUTRAL = [...PRESENTATION_FLOOR_ALBEDO] as [number, number, number];
+
+  it("keeps the neutral floor albedo for the legacy (non-gradient) palette", () => {
+    expect(autoFloorAlbedo("legacy")).toEqual(NEUTRAL);
+  });
+
+  it("keeps the neutral albedo for an all-white custom palette (no chroma to lay over)", () => {
+    expect(
+      autoFloorAlbedo({
+        stops: [
+          [1, 1, 1],
+          [1, 1, 1],
+        ],
+      }),
+    ).toEqual(NEUTRAL);
+  });
+
+  it("keeps the neutral albedo for an all-black custom palette (no usable hue)", () => {
+    expect(
+      autoFloorAlbedo({
+        stops: [
+          [0, 0, 0],
+          [0, 0, 0],
+        ],
+      }),
+    ).toEqual(NEUTRAL);
+  });
+
+  // The chroma-offset form's point: the floor keeps its own luma even on a
+  // monochromatic sample a scale-to-target-luma curve would clamp badly.
+  it("preserves the floor's own luma and follows the hue on a deep-blue sample", () => {
+    const albedo = autoFloorAlbedo({
+      stops: [
+        [0, 0, 0.5],
+        [0, 0, 0.5],
+      ],
+    });
+    expect(luma709(albedo)).toBeCloseTo(luma709(NEUTRAL), 10);
+    expect(albedo[2]).toBeGreaterThan(albedo[0]);
+  });
+
+  it("tints every built-in gradient palette within the channel range and near the floor's luma", () => {
+    for (const id of FLAME_PALETTE_IDS.filter((id) => id !== "legacy")) {
+      const albedo = autoFloorAlbedo(id);
+      for (const channel of albedo) {
+        expect(channel).toBeGreaterThanOrEqual(0);
+        expect(channel).toBeLessThanOrEqual(1);
+      }
+      expect(luma709(albedo)).toBeGreaterThanOrEqual(0.5);
+      expect(luma709(albedo)).toBeLessThanOrEqual(0.72);
+    }
+  });
+
+  it("derives a blue-dominant floor from a blue first stop, like the backdrop does", () => {
+    const albedo = autoFloorAlbedo({
+      stops: [
+        [0, 0, 1],
+        [0, 1, 0],
+      ],
+    });
+    expect(albedo[2]).toBeGreaterThan(albedo[0]);
+    // The sample's blue channel overshoots 1 and clamps, which shifts the
+    // luma by that clamp's slack alone — still the floor's luma to 3 places.
+    expect(luma709(albedo)).toBeCloseTo(luma709(NEUTRAL), 3);
+  });
+
+  it("tints more strongly than the backdrop's desaturation when the sample is saturated", () => {
+    const sample: [number, number, number] = [1, 0, 0];
+    const albedo = autoFloorAlbedo({ stops: [sample, sample] });
+    const luma = luma709(sample);
+    // The kept chroma share is exactly AUTO_FLOOR_TUNING.strength of the
+    // sample's own channel offsets (clamped only at the channel ceiling).
+    expect(albedo[0]).toBeCloseTo(
+      Math.min(
+        1,
+        PRESENTATION_FLOOR_ALBEDO[0] +
+          AUTO_FLOOR_TUNING.strength * (sample[0] - luma),
+      ),
+      10,
+    );
+    expect(albedo[1]).toBeCloseTo(
+      PRESENTATION_FLOOR_ALBEDO[1] +
+        AUTO_FLOOR_TUNING.strength * (sample[1] - luma),
+      10,
+    );
   });
 });
 
