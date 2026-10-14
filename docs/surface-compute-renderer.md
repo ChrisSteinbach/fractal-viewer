@@ -748,6 +748,63 @@ measurements (a batch is only as safe as the multiple by which an
 unmeasured band can exceed the measured one), not a free win to bundle
 into this one.
 
+#### The headroom taken — the immersed regime's drain, and the cap that was its guard (2026-10-14)
+
+The report that took it: a live Surface session on the sphere-less
+sphaira families (tetra333) orbits "too slow to be practical". The
+naive case does NOT reproduce it — at matched entry poses the infinite
+tetra is cheaper than the finite control on every engine this repo can
+drive (compute 1.7 s vs 2.1 s at 1024x640 on the RX 7900 XTX; SwiftShader
+21 s vs 49 s), because its limit-set plane draws 5% of the pane where the
+quasisphere draws 28%. What reproduces it is the owner's actual flow:
+load the finite `sphairaOrb` preset, uncheck Finite in the panel (the
+construction becomes the unbounded machinery, no camera refit), enter
+Surface, zoom toward the plane — and the camera ends up INSIDE the union
+of tiles, where every ray hits. That immersed regime is the defect, and
+it is not sphaira-specific: dollying into the finite quasisphere costs
+the same (8.4-10.5 s settles at 1920x1080). The sphere-less families just
+reach immersion at ordinary zoom.
+
+The regime's accounting (`?surfacetrace`, one 8x-AA settle pass at
+1920x1080, 100% hit coverage — 2,073,600 hits): 536 dispatches, 87
+fences, 1064 ms of wall against 162 ms of GPU work. 507 of the
+dispatches are hit-shade batches of ≤4096 hits each, every one paying
+~1.25 ms of submission wall against ~0.3 ms of GPU work; the settle is
+6x its own GPU arithmetic, times eight AA passes. The March chunk EMA
+self-corrects in-frame (its chunks grow 25000 → 2,073,600 rays within
+one pass), so the shade width is the whole story.
+
+The `?surfaceshadehits` A/B on the owner-flow document, 1920x1080
+settles, RX 7900 XTX (`--display=:0`): auto (the 4096 cap) 8.0 s /
+536 passes; 16384 → 4.4 s / 156; 65536 → 3.7 s / 61; 262144 → 3.5 s /
+37, the last already march-floored. At `?surfacesamples=1`: 1.13 s →
+0.50 s at 65536.
+
+The raise, WITH its safety argument: the cap is 65536, and the width's
+ceiling is no longer the cap alone — `shadeBandHitCap` clamps it by the
+frame's own measured worst per-eval march rate (`marchWorstRayStepUs`,
+saturated widths), because the march crosses every band the shade queue
+will drain: `width ≤ SHADE_CEILING / (4096 × worstRayStepUs)` bounds the
+unpriced band's product `width × marginal` at the shade dispatch ceiling
+for any rate the record spans, which is exactly the multiple-by-which-an-
+unmeasured-band-exceeds-the-measured-one argument the headroom note asked
+for. The floor is the legacy 4096, so no scene's width shrinks below
+today's; mandelboxKifs (march rate ~2 µs/ray·step) and kaleido4 keep
+their byCost-bound widths and their behavior is byte-identical. The
+stated residual: a scene whose shade bands cost more than 4096x the
+march's worst saturated per-eval rate — a shadow corridor the primary
+rays never crossed — can still land one bad dispatch, priced at the same
+~2 s the 4096 cap accepted, now across every width.
+
+Verified end to end on the raised cap (real driver, compute, 8 AA
+samples): the owner-flow document's immersed settles fall 9.4-9.6 s →
+3.4-3.5 s (533 → 58 passes) and its non-immersed azimuth settles
+3.0-3.2 s → 1.6-1.7 s; `scripts/surface-repro.verify.mjs
+--scenario=all --runs=2 --mode=x11::0` reports DETERMINISTIC with 0
+differing pixels on all five scenarios (boxfold3, pentatope4,
+pentatope4direct, lens3, sierpinski3 as the WebGL control) — a sizing
+change may not move a pixel, and none moved.
+
 `colorOut` WAS prefilled from the last frame, nearest-resampled — the strip
 settle's preview-seeded-target discipline — and the record below is that
 design's. It no longer is: the background-compositing split made every
