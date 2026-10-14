@@ -1855,16 +1855,24 @@ bench:surface` (`--display=:0` for real-driver rows;
     fixes the RATIO of its two terms — so `K`
     (`SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST`) is a WIDTH, not a ratio.
     `SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS` sits outside the range
-    real scenes measure in; that PLACEMENT is the measurement. THE LIT
-    QUEUE IS SIZED THE SAME WAY (`nextLightingRayCap`): an
+    real scenes measure in; that PLACEMENT is the measurement. THE HIT CAP
+    IS BAND-CLAMPED, NOT FLAT: `SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH` is
+    65536 and `shadeBandHitCap` clamps the width's ceiling by the frame's
+    own worst measured per-eval march rate, so an unmeasured expensive
+    band's width×marginal stays under the shade ceiling at any width; the
+    4096 floor keeps every recorded scene's width — the immersed regime
+    (a pane whose every ray hits) was submission-bound at 4096,
+    ~507 dispatches × ~1.2 ms each against 0.3 ms of GPU work, the
+    sphaira owner report's mechanism and the finite control's alike
+    (A/B + byte-identity rows in docs/surface-compute-renderer.md).
+    THE LIT QUEUE IS SIZED THE SAME WAY (`nextLightingRayCap`): an
     inert cost lane is a pinned width, not a safe default. AND NO SIZING MODEL OR LADDER MAY READ A
     RAW DISPATCH TIME: the session calibrates its own fence round-trip once
-    (minimum of five probes) and every model, ladder and EMA reads the
+    (five probes) and every model, ladder and EMA reads the
     GPU-side pass-duration instrument wherever the session's own fence is
     cheap enough for its after-fence resolve to be free
-    (`SURFACE_COMPUTE_TS_FENCE_COST_MS`; Chrome engages, Firefox's ~100 ms
-    poll keeps the wall currency) and wall MINUS that fence otherwise; the
-    tally alone always reads wall. The resolve rides its own submission
+    (`SURFACE_COMPUTE_TS_FENCE_COST_MS`), wall MINUS that fence otherwise;
+    the tally alone always reads wall. The resolve rides its own submission
     after the fence — same-submission is measured-broken on Chrome/Dawn.
     THE FENCE IS PAID PER GROUP, NOT PER DISPATCH: a dispatch is still its
     own SUBMISSION (the preemption boundary) but several queue behind ONE
@@ -1874,11 +1882,10 @@ bench:surface` (`--display=:0` for real-driver rows;
     present/budget deadline — whichever first — each lane's first group
     PILOTED at one. NEVER SIZE A GROUP OFF A MODEL PREDICTION (a
     dispatch's predicted cost IS the target by construction).
-    `SURFACE_COMPUTE_FENCE_GROUP_MAX` IS A MEASURED CEILING, NOT A DIAL:
-    8 since the frame prefill left the queue — Firefox died at 4+ while
-    `runFrame` staged it, and the repro settled staged VOLUME behind a
-    fence (row C 0/20); groups also close at
-    `SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES`; a killed device never
+    `SURFACE_COMPUTE_FENCE_GROUP_MAX` IS A MEASURED CEILING, NOT A DIAL
+    (8 — the repro settled staged VOLUME behind a fence, not a count;
+    groups also close at
+    `SURFACE_COMPUTE_FENCE_GROUP_STAGED_BYTES`); a killed device never
     returns, so the loss latch is
     one-way by measurement (`scripts/webgpu-staging-ceiling.repro.mjs`).
     THE WATCHDOG'S UNIT IS THE SUBMISSION: submissions ARE separate driver

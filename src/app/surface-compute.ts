@@ -1765,13 +1765,111 @@ export function marchChunkFor(
   );
 }
 
-/** HIT shade batch ceiling — plenty to swallow a cheap-probe frame's hits
- * in one bounded dispatch once the measured cost allows it. Hit-only
- * since the free/hit drain split: the FREE queue has no cost model to cap
- * (see the free-batch comment in `runFrame`), and one constant standing
- * for both queues is
- * what let a MEAN over them be read as a finding. */
-export const SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH = 4096;
+/** HIT shade batch ceiling — the capacity ladder's saturation point and the
+ * width's hard stop. Hit-only since the free/hit drain split: the FREE
+ * queue has no cost model to cap (see the free-batch comment in
+ * `runFrame`), and one constant standing for both queues is what let a
+ * MEAN over them be read as a finding.
+ *
+ * IT SAT AT 4096 FROM BIRTH AND THAT VALUE WAS A DELIBERATELY DECLINED
+ * HEADROOM, not a finding: the free-drain work's own record measured
+ * `lens3`'s batches pinned at it costing 66 ms against a 250 ms budget —
+ * the model would have asked ~15000 hits — and left it, because the cap is
+ * the last absolute stop on the model being WRONG and raising it "is a
+ * separate safety argument with its own measurements (a batch is only as
+ * safe as the multiple by which an unmeasured band can exceed the measured
+ * one)". That argument exists now, and it is {@link shadeBandHitCap}: the
+ * width's ceiling is no longer this constant alone but this constant
+ * clamped by the frame's own measured worst per-eval march rate, so the
+ * unmeasured band's product `width × marginal` stays under the shade
+ * dispatch ceiling at any width this constant allows. With that bound in
+ * place the 4096 value is what the immersed regime's measurements paid for
+ * keeping: a pane whose every ray hits (a camera inside the drawn solid —
+ * the sphere-less sphaira families' ordinary zoom, any deep dolly one
+ * family over) shades ~2.07M hits per supersampling pass at ≤4096 hits per
+ * dispatch, ~507 hit dispatches each paying its ~1.2 ms submission wall
+ * against 0.3 ms of GPU work, and the 1080p settle ran 9.4 s against
+ * 3.7 s at 65536 (MEASURED on the AMD RX 7900 XTX, 2026-10-14, the
+ * `?surfaceshadehits` A/B: 16384 → 4.4 s, 65536 → 3.7 s, 262144 → 3.45 s,
+ * the last already march-floored). The finite control pays the same in the
+ * same regime, so the raise is the renderer's, not the family's.
+ *
+ * 65536 AND NOT 262144: the extra 7% rides a wider first-encounter
+ * exposure for no measured settle gain, and the band ceiling's cliff
+ * argument prices every width this constant allows — a smaller constant is
+ * the same argument with more margin. */
+export const SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH = 65536;
+
+/**
+ * THE WIDTH'S BAND CEILING — the safety argument the 4096 cap used to be
+ * alone. The cap bounds a dispatch whose batch the model MISPRICED: the
+ * queue's raster-ordered drain means a cheap band (ground-plane terminals
+ * shading analytically, a shallow field) can drive the capacity ladder's
+ * honest climb far past the width an expensive band later in the same
+ * queue can afford, and one dispatch then pays `width × the band's true
+ * marginal` with no measurement behind it. The shipped 4096 priced that
+ * product at the record's worst band (~390 µs/hit, mandelboxKifs on Iris)
+ * at ~1.6-2 s — the accepted boundary, measured survived. 65536 would
+ * price it at 25 s, past every watchdog on record. So the ceiling is now
+ * a FUNCTION of the one instrument that sees the expensive band BEFORE the
+ * shade queue does: the march lane's worst measured per-ray·step cost at
+ * saturated widths (`marchWorstRayStepUs`, the same frame, reset with the
+ * march EMA). The shade chain is the same DE at the same query field — a
+ * hit's cost is its probe taps' evals, and the march crossed every band
+ * the drain will shade — so the product stays bounded:
+ *
+ *     width ≤ SHADE_CEILING / (BAND_EVALS_BOUND × worstRayStepUs)
+ *     cliff  = width × marginal ≤ width × BAND_EVALS_BOUND × worstRayStepUs
+ *            ≤ SHADE_CEILING
+ *
+ * with BAND_EVALS_BOUND the conservative wall-normalized evals per hit:
+ * the shade chain's own eval budget (shadow 32 steps + normal/AO taps ≈
+ * 44-64 evals at the full tier) times the shadow-corridor margin (a
+ * shadow ray may traverse bands the primary rays never crossed — the one
+ * hole a march reading cannot close), together 4096. The record's scenes
+ * sit far inside it: marginal/worstRayStep measures 130-600 (mandelboxKifs
+ * ~195, the sphaira ~600, kaleido4 ≤65), so the bound's product holds with
+ * ~7x margin, and the RESIDUAL is stated, not hidden: a scene whose shade
+ * bands cost more than 4096× the march's worst saturated per-eval rate can
+ * still land one bad dispatch — the constant prices that risk at the same
+ * ~2 s the shipped 4096 cap accepted, now across every width instead of
+ * only below 4096.
+ *
+ * THE FLOOR. `shadeBandHitCap` never returns less than
+ * {@link SURFACE_COMPUTE_SHADE_HIT_CAP_FLOOR} — the legacy 4096 — so no
+ * scene's width shrinks below what shipped before the raise: the heaviest
+ * recorded scenes' widths are byCost- or ladder-bound below it and their
+ * behavior is byte-identical, while the floor only ever LIFTS the ceiling
+ * the band argument would otherwise impose on them.
+ */
+export const SURFACE_COMPUTE_SHADE_BAND_EVALS_BOUND = 4096;
+
+/** The band ceiling's floor — the hit cap the first four months shipped,
+ * kept as the width's lower bound so the band argument can never shrink a
+ * scene's width below its shipped behavior. See
+ * {@link SURFACE_COMPUTE_SHADE_BAND_EVALS_BOUND}. */
+export const SURFACE_COMPUTE_SHADE_HIT_CAP_FLOOR = 4096;
+
+/**
+ * The hit-shade width's band-aware ceiling, from the march lane's own
+ * worst measured per-ray·step rate — see
+ * {@link SURFACE_COMPUTE_SHADE_BAND_EVALS_BOUND} for the argument and its
+ * stated residual. `worstRayStepUs` of 0 (nothing measured yet) returns
+ * the hard cap: the capacity ladder paces the climb out of the cold model
+ * through measured doublings, which is the same first-encounter bound the
+ * 4096 cap provided, at ladder speed instead of by decree. Pure so the
+ * bound is unit-tested.
+ */
+export function shadeBandHitCap(worstRayStepUs: number): number {
+  const worst = Math.max(worstRayStepUs, 1e-6);
+  const ceiling =
+    (SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS * 1000) /
+    (SURFACE_COMPUTE_SHADE_BAND_EVALS_BOUND * worst);
+  return Math.max(
+    SURFACE_COMPUTE_SHADE_HIT_CAP_FLOOR,
+    Math.min(SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH, Math.floor(ceiling)),
+  );
+}
 
 /** First hit-batch CAPACITY of a frame — deliberately minimal: even at
  * the worst per-hit cost measured on Iris (~250 ms full-width probes at a
@@ -1871,19 +1969,21 @@ export const SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS = 2000;
  * {@link SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS} term already aims a
  * genuinely expensive scene at the ceiling, and this term must not turn a
  * dispatch into a watchdog conversation on a scene nobody has measured.
- * The other half is that `7 · PIVOT` = 3584 is within 14% of
- * {@link SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH} = 4096: at 8, or at any
- * pivot above 585, the CAP becomes the binding constraint instead and
- * these two dials stop meaning what their comments say. Raising either
- * past that is the cap's separate safety argument, with its own
- * measurements. 8·intercept is the predicted total here, so the
- * ceiling still binds first wherever the fixed cost alone exceeds 250 ms —
- * and `mandelboxKifs`, the hardest scene in the project, sits exactly on
- * that boundary. Its own measurement (800x520, a 150 s fixed window, since
- * it does not settle): 387.3 -> 1299.9 hits/s, 3.36x, at a worst dispatch
- * of 2056.5 ms against the old width's 1744.5 — the ceiling's number
- * rather than this constant's, 2.8% over its predicted 2000 ms and 3.6x
- * under the ~7.5 s i915 watchdog.
+ * The other half used to be that `7 · PIVOT` = 3584 sat within 14% of the
+ * 4096 the hit cap then shipped, so the cap was the next binding
+ * constraint and these two dials stopped meaning what their comments say
+ * past it. That collision is gone — the cap is 65536 and its safety
+ * argument moved into {@link shadeBandHitCap}'s band ceiling — but the
+ * width dial still stops paying at 7: the measured curve above is the
+ * whole of that record, and the cap's raise changed nothing about where
+ * THIS constant's knee sits. 8·intercept is the predicted total here, so
+ * the ceiling still binds first wherever the fixed cost alone exceeds
+ * 250 ms — and `mandelboxKifs`, the hardest scene in the project, sits
+ * exactly on that boundary. Its own measurement (800x520, a 150 s fixed
+ * window, since it does not settle): 387.3 -> 1299.9 hits/s, 3.36x, at a
+ * worst dispatch of 2056.5 ms against the old width's 1744.5 — the
+ * ceiling's number rather than this constant's, 2.8% over its predicted
+ * 2000 ms and 3.6x under the ~7.5 s i915 watchdog.
  */
 export const SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST = 7;
 
@@ -1923,9 +2023,10 @@ export const SURFACE_COMPUTE_SHADE_MARGINAL_DECAY = 0.5;
  * `SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST` times THIS number of hits.
  * Moving the pivot moves the shipped batch width by the same factor — a
  * second dial on the same quantity, and the one whose doc comment does
- * not say so — until 585, past which
- * {@link SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH} binds instead and moving it
- * does nothing. Change the other one. */
+ * not say so — until the width reaches
+ * {@link SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH}, past which moving it does
+ * nothing (the cap was 4096 when this was written, so that crossover sat
+ * at a pivot of 585; it now needs 128). Change the other one. */
 export const SURFACE_COMPUTE_SHADE_COST_PIVOT = 512;
 
 /**
@@ -7586,6 +7687,13 @@ export class SurfaceComputeRenderer {
         // ladder below: the growth threshold has to be the number the
         // sizer aimed at, not a fixed constant.
         const hitBudgetMs = shadeHitBudgetUs(sizer.cost.interceptUs) / 1000;
+        // The BAND ceiling: this frame's own worst measured per-eval march
+        // rate prices the largest width an unmeasured expensive band can
+        // still afford — the cliff argument
+        // {@link SURFACE_COMPUTE_SHADE_BAND_EVALS_BOUND} carries. Read per
+        // batch: the march lane's worst updates as the frame's sweeps
+        // measure, and the drain interleaves with them.
+        const bandCap = shadeBandHitCap(marchWorstRayStepUs);
         // shadeHitsPin is unclamped at parse too, but it names a HIT
         // COUNT, not per-ray work, so the device's own maxDispatchRays
         // clamp on this batch already bounds it exactly like the free
@@ -7602,7 +7710,11 @@ export class SurfaceComputeRenderer {
                       lightingSizer!.rayCap,
                     ),
                   )
-                : (shadeHitsPin ?? shadeHitBatchSize(sizer.cost, sizer.cap)),
+                : (shadeHitsPin ??
+                    shadeHitBatchSize(
+                      sizer.cost,
+                      Math.min(sizer.cap, bandCap),
+                    )),
               maxDispatchRays,
             );
         // HOLD a partial hit batch for the next sweep's hits rather than
@@ -7645,7 +7757,7 @@ export class SurfaceComputeRenderer {
           );
         }
         tr(
-          `shade BEGIN isFree=${isFree} hitQ=${shadeHitQueue.length} freeQ=${shadeFreeQueue.length} batchSize=${batchSize} len=${batch.length} interceptUs=${sizer.cost.interceptUs.toFixed(0)} marginalUs=${sizer.cost.marginalUs.toFixed(1)} budgetMs=${hitBudgetMs.toFixed(0)} cap=${sizer.cap}`,
+          `shade BEGIN isFree=${isFree} hitQ=${shadeHitQueue.length} freeQ=${shadeFreeQueue.length} batchSize=${batchSize} len=${batch.length} interceptUs=${sizer.cost.interceptUs.toFixed(0)} marginalUs=${sizer.cost.marginalUs.toFixed(1)} budgetMs=${hitBudgetMs.toFixed(0)} cap=${sizer.cap} bandCap=${bandCap}`,
         );
         if (!(await stageDispatch(batch.length, 0, batch))) return null;
         if (

@@ -15,6 +15,7 @@ import {
   nextStepsPerPass,
   resampleSurfacePixels,
   shadeHitBatchSize,
+  shadeBandHitCap,
   SURFACE_COMPUTE_TRANSPORT_DISPATCH_CEILING_MS,
   transportBatchSize,
   nextTransportQuantum,
@@ -23,6 +24,8 @@ import {
   shadeHitAllowanceUs,
   shadeHitBudgetUs,
   SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH,
+  SURFACE_COMPUTE_SHADE_HIT_CAP_FLOOR,
+  SURFACE_COMPUTE_SHADE_BAND_EVALS_BOUND,
   SURFACE_COMPUTE_MAX_STEPS_PER_PASS,
   SURFACE_COMPUTE_MAX_TILE_RAYS,
   SURFACE_COMPUTE_PASS_TARGET_MS,
@@ -1171,11 +1174,12 @@ describe("the unlit hit capacity ladder under a Firefox-class fence", () => {
   it("stays pinned at the starting capacity for the whole run on RAW wall time", () => {
     // Iterated, the frozen ladder is the damage: the capacity never
     // leaves the width it started at, so every hit batch of the session
-    // is sized by a cap that has learned nothing.
+    // is sized by a cap that has learned nothing. Ten doublings is what
+    // the fence-subtracted reading needs to saturate the raised cap.
     const budgetMs = shadeHitBudgetUs(16_600) / 1000;
     let rawCap = SURFACE_COMPUTE_SHADE_HIT_CAP_START;
     let workCap = SURFACE_COMPUTE_SHADE_HIT_CAP_START;
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 10; i++) {
       rawCap = nextShadeBatchSize(rawCap, 301, budgetMs);
       workCap = nextShadeBatchSize(
         workCap,
@@ -1277,6 +1281,95 @@ describe("shadeHitBatchSize", () => {
     );
     expect(shadeHitBatchSize({ interceptUs: 0, marginalUs: 1_000 }, 4096)).toBe(
       250,
+    );
+  });
+});
+
+describe("shadeBandHitCap", () => {
+  // The band ceiling is the safety argument the flat 4096 cap used to
+  // provide alone, now that the hard cap rose 16x for the immersed regime
+  // (the free-drain record's own declined headroom, taken with measurements
+  // this time). Its product bound: a dispatch's worst plausible cost is
+  // width x BAND_EVALS_BOUND x worstRayStepUs, and the ceiling divides the
+  // shade dispatch ceiling by exactly that factor, so every width it
+  // allows prices the unmeasured band at or under the ceiling the shipped
+  // 4096 cap accepted.
+  it("never returns below the floor the first four months shipped", () => {
+    // No scene's width may shrink below today's behavior: the heaviest
+    // recorded march rates would otherwise cap the width BELOW the 4096
+    // their byCost answers already sit at.
+    for (const worstRayStepUs of [0, 1e-6, 0.002, 1.6, 3, 100, 1e9]) {
+      expect(shadeBandHitCap(worstRayStepUs)).toBeGreaterThanOrEqual(
+        SURFACE_COMPUTE_SHADE_HIT_CAP_FLOOR,
+      );
+    }
+  });
+
+  it("hands a frame that has measured nothing the hard cap — the ladder paces the climb", () => {
+    // worstRayStepUs of zero is the cold frame: the march's first sweeps
+    // have not produced a saturated dispatch yet. The ladder's measured
+    // doublings are the first-encounter bound there, at ladder speed
+    // instead of by decree.
+    expect(shadeBandHitCap(0)).toBe(SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH);
+  });
+
+  it("lets the immersed regime reach the hard cap — the sphaira's measured march rate", () => {
+    // The sphere-less tetra's zoomed settle measures ~0.0005-0.002 µs per
+    // ray·step at saturated widths. The band ceiling there is millions of
+    // hits, so the hard cap binds and the drain's 2.07M hits run in ~32
+    // dispatches instead of ~507 (the measured A/B: 9.4 s -> 3.7 s).
+    expect(shadeBandHitCap(0.0005)).toBe(SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH);
+    expect(shadeBandHitCap(0.002)).toBe(SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH);
+  });
+
+  it("holds the recorded scenes' widths where they shipped", () => {
+    // mandelboxKifs reads ~1.6-3 µs per ray·step on the deep bands and its
+    // width is ceiling-bound at ~2731 — under the floor, so the band cap
+    // must hand back the floor and leave the scene byte-identical. Same
+    // for a kaleido4-class ~1 µs rate against a byCost of ~3854.
+    expect(shadeBandHitCap(2)).toBe(SURFACE_COMPUTE_SHADE_HIT_CAP_FLOOR);
+    expect(shadeBandHitCap(3)).toBe(SURFACE_COMPUTE_SHADE_HIT_CAP_FLOOR);
+    expect(shadeBandHitCap(1)).toBe(SURFACE_COMPUTE_SHADE_HIT_CAP_FLOOR);
+  });
+
+  it("prices an unmeasured expensive band at or under the shade dispatch ceiling", () => {
+    // The product the constant exists to bound: for any marginal the
+    // band argument covers (marginal <= BAND_EVALS_BOUND x worstRayStepUs
+    // — the record measures the ratio at 130-600 against a bound of
+    // 4096), the width this cap allows times that marginal stays under
+    // the ~2 s the shipped 4096 x 390 µs/hit accepted. Swept over the
+    // march rates the record spans — the sphaira's ~0.0005 µs through
+    // mandelboxKifs's ~3 µs and out to where the ceiling term stops
+    // binding and the floor takes over (today's behavior exactly).
+    const ceilingUs = SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS * 1000;
+    const crossover =
+      ceilingUs /
+      (SURFACE_COMPUTE_SHADE_BAND_EVALS_BOUND *
+        SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH);
+    for (let w = 1e-6; w <= crossover; w *= 1.25) {
+      const cap = shadeBandHitCap(w);
+      const cliffUs = cap * SURFACE_COMPUTE_SHADE_BAND_EVALS_BOUND * w;
+      expect(cliffUs).toBeLessThanOrEqual(ceilingUs + 1e-6);
+    }
+  });
+
+  it("binds below the hard cap exactly where the record's margin runs out", () => {
+    // The crossover: BAND_EVALS_BOUND x worstRayStepUs = CEILING / MAX —
+    // a march rate past ~0.0075 µs per ray·step narrows the ceiling below
+    // the hard cap, the scenes expensive enough that an unmeasured band
+    // at the hard width would outrun the accepted dispatch. The sphaira's
+    // ~0.0005 sits 15x under it; mandelboxKifs's ~2 sits far past it,
+    // where the floor holds the width at today's cap.
+    const ceilingUs = SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS * 1000;
+    const crossover =
+      ceilingUs /
+      (SURFACE_COMPUTE_SHADE_BAND_EVALS_BOUND *
+        SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH);
+    expect(shadeBandHitCap(crossover)).toBe(
+      SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH,
+    );
+    expect(shadeBandHitCap(crossover * 2)).toBe(
+      Math.floor(SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH / 2),
     );
   });
 });
@@ -4010,7 +4103,14 @@ describe("SurfaceComputeRenderer finite continuation", () => {
       (b) => b.descriptor.label === "finite-transport-work",
     );
     expect(scratch).toHaveLength(1);
-    expect(scratch[0].descriptor.size).toBe(finiteTransportWorkBytes(4096));
+    // The scratch is bounded by min(this frame's rays, the hit cap) — at
+    // this 5000-ray raster the raster itself is the bound, the cap having
+    // risen past it with the band-ceiling raise.
+    expect(scratch[0].descriptor.size).toBe(
+      finiteTransportWorkBytes(
+        Math.min(5000, SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH),
+      ),
+    );
     h.spec.width = 3;
     expect(await h.renderer.renderFrame(h.spec)).not.toBeNull();
     expect(h.dispatches.at(-1)!.generation).toBeGreaterThan(before);
