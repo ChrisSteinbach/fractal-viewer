@@ -314,6 +314,35 @@ engine column is reported, not gated. The slab's reload/capture rows are a
 second gate, `scripts/surface-slab-4d.verify.mjs`, whose fixtures and
 measured rows are in `docs/surface-slice-thickness.md`.
 
+### The live-site 4D preset sweep
+
+The one-off post-deploy sweep that first certified the six 4D presets on
+fractal-4d.com (2026-09-28, headless SwiftShader-Chromium with WebGPU
+flags) settled five and watched hyperkifs time out at its seven-minute
+window with the pane still reading "Full detail · WebGPU (software) 0%" —
+hyperkifs is the one preset that routes to the 16-map 4D fold kernel,
+whose per-query cost dominates a software adapter. The live deployment
+serves the preset correctly (the rdna-3 pass had settled it pre-merge);
+what was missing was a standing leg that could say so on every deploy.
+
+`scripts/live-4d-presets.verify.mjs` is that leg, standing. It drives the
+six presets FROM THE MENU on a target origin (the deployed site by
+default) and, per preset, asserts the document landed, Surface accepted
+it, the session entered COMPUTE (asserted on both arms — the 4D
+fold/escape kernels are compute-only, so `webgl` on the deployed bundle
+is dead-code routing), its first frame landed and the pane draws
+(non-backdrop coverage). The settle is arm-conditional: asserted on the
+real-driver arm, DISCLOSED on the SwiftShader arm, whose hyperkifs wall
+no CI budget carries — measured (AMD RX 7900 XTX, SwiftShader compute,
+live origin, `?surfacemaxrays=163840&surfacesamples=1`): first frame
+7.6 s, settle still incomplete at 16 minutes; the five lighter presets
+settle at 1.5-1.8 s there, so their settle rows land on a green run and
+only hyperkifs exits at the disclosed grace. The real-driver arm asserts
+all six settles (measured same day on radeonsi, full tier, live origin:
+1.6-1.8 s on the five, 73.6 s on hyperkifs, first frames at or under
+1.0 s). deploy.yml runs the SwiftShader arm after every deploy as
+`verify-live-presets`; the real-driver arm is the manual settle gate.
+
 ## References
 
 - A. Hanson, _Visualizing Quaternions_ — and his 4D visualization work, the

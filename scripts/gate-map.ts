@@ -170,6 +170,19 @@ export const GATE_MAP: GateMapEntry[] = [
       "src/app/four-d-view.ts",
     ],
   },
+  // The live-deployment gate class: never cached, never backgrounded —
+  // its default target is the deployed origin and its engine question is
+  // a measurement.
+  {
+    name: "live-4d-presets",
+    kind: "gate",
+    cost: "lifecycle",
+    modules: [
+      "src/fractal/presets.ts",
+      "src/app/surface-compute.ts",
+      "src/app/surface-eligibility.ts",
+    ],
+  },
   // ---- The fast tier's other gates ----------------------------------------
   {
     name: "surface-4d",

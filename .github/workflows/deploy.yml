@@ -328,3 +328,72 @@ jobs:
             echo "exit 2 is a checking-side failure — retrying in 20s."
             sleep 20
           done
+
+  # Post-deploy LIVE 4D PRESET SWEEP: scripts/live-4d-presets.verify.mjs
+  # drives the six 4D presets (the escape4 trio and the fold4 trio) FROM
+  # THE MENU on the deployed origin and asserts each enters compute and
+  # its first frame lands — the routing question the smoke test above
+  # cannot ask (it never leaves the default scene). SwiftShader arm at the
+  # fast tier: the sweep the 2026-09-28 one-off ran out of window on
+  # hyperkifs' 16-map fold4 settle, which a software adapter prices past
+  # any CI budget — that leg's settle is DISCLOSED there, never asserted,
+  # and the settle regression gate is the script's real-driver arm
+  # (--mode=x11:<display>), run by hand against a deployed or preview
+  # origin. Exit 0 is PASS, 3 a preset leg's verdict, 2 INCONCLUSIVE
+  # (checking side) — only 2 retries.
+  verify-live-presets:
+    needs: deploy
+    if: ${{ !cancelled() && needs.deploy.result == 'success' }}
+    runs-on: ubuntu-latest
+    # The sweep measured ~4.5 min on a 16-core box; a 2-core runner pays
+    # slower first frames inside the same disclosed 7-minute leg windows,
+    # plus npm ci and the browser install — 25 is the live smoke's margin.
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-playwright-
+
+      - name: Install Playwright Chromium
+        run: npx playwright-core install chromium
+
+      - name: Verify live 4D preset sweep
+        run: |
+          attempts=0
+          max=3
+          while :; do
+            attempts=$((attempts + 1))
+            echo "Attempt ${attempts}/${max}: live 4D preset sweep"
+            set +e
+            node scripts/live-4d-presets.verify.mjs --mode=sw --tier=fast
+            code=$?
+            set -e
+            if [ "$code" -eq 0 ]; then
+              echo "live 4D preset sweep PASS (attempt ${attempts})."
+              exit 0
+            fi
+            if [ "$code" -ne 2 ]; then
+              echo "::error::live 4D preset sweep FAIL (exit ${code}, attempt ${attempts}) — site verdict, not rerunning."
+              exit "$code"
+            fi
+            if [ "$attempts" -ge "$max" ]; then
+              echo "::error::live 4D preset sweep INCONCLUSIVE (exit 2) on all ${max} attempts — giving up."
+              exit 2
+            fi
+            echo "exit 2 is a checking-side failure — retrying in 20s."
+            sleep 20
+          done

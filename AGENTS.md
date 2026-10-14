@@ -280,6 +280,14 @@ controlling SW, no console errors; exit 2 is a CHECKING failure
 automatically as `verify-live`; hand-run it for another origin, or outside
 a deploy (DNS/Pages changes, diagnosing a report against production).
 
+The post-deploy live 4D preset sweep: `node scripts/live-4d-presets.verify.mjs
+--mode=sw --tier=fast` (deploy.yml's `verify-live-presets`) drives the six 4D
+presets FROM THE MENU on the deployed origin and asserts each enters compute
+and its first frame lands; the settle is asserted only on the real-driver arm
+(`--mode=x11:<display>`, hyperkifs 73.6 s measured) — on SwiftShader it is
+disclosed, its wall past any CI window (measured >16 min at the fast tier).
+Record: the script header.
+
 The WebGPU compute-surface and flame teardown gates (not npm scripts — they
 need a real Firefox build with WebGPU enabled on a display, and they gate
 renderer LIFECYCLE rather than built output, so the dev server hosts them):
