@@ -10563,6 +10563,12 @@ async function runSurfaceTransportAgreementLegs(
             : condensationDistance3(de3!.condensation!, p[0], p[1], p[2])),
         stepScale: de.stepScale,
         visibleRadius: de.visibleBoundingRadius,
+        // The kernel's signed-backend rule (the curved solid's measured
+        // defect, one backend over): the query owns the primary interface.
+        // C0's sign is exact — the SAFETY-scaled union field is negative
+        // exactly inside — so no separate membership predicate rides the
+        // fixture and both engines' cross-checks read the field's own sign.
+        ownsPrimary: true,
       },
     });
   };
@@ -10799,7 +10805,20 @@ async function runSurfaceTransportAgreementLegs(
             : sphereInversionContains(de, p),
         stepScale: 1,
         visibleRadius: de.boundingRadius,
+        // The kernel's signed-backend rule (the curved solid's measured
+        // defect, one backend over): the query owns the primary interface,
+        // so a silhouette near-miss misses to background instead of
+        // refracting a chord that starts outside the ball. And the curved
+        // solid legs' ULP ensemble rides along: the owned-primary chain
+        // visits mid-trace anchored restarts beside the near-kissing
+        // tangencies, where the twin's OWN answers bifurcate across one
+        // f32 ulp of the origin (measured on the orbit leg's near-cusp
+        // chain: three neighbours at t 2·eps, three at t 7·eps) — the
+        // realization-split class the ensemble excludes and counts, never
+        // a kernel defect to gate.
+        ownsPrimary: true,
       },
+      ulpEnsemble: true,
     });
   };
   pushSphereInversionGlassLeg(false, "analytic");
@@ -12050,7 +12069,9 @@ async function runSurfaceTransportAgreementLegs(
       boundaryCounts.push(boundaryQueries.length - boundaryStart);
       traceQueries.push({
         // Finite transport, including its primary interface, starts outside.
-        // The other backends retain their display-hit primary split.
+        // The signed backends' traces start at the march's hit with the
+        // query owning the primary interface (the fixture's ownsPrimary);
+        // the estimator backend retains its display-hit primary split.
         origin: finite
           ? (probe.hitPos.map((v, a) =>
               Math.fround(v - 2 * visR * probe.dir[a]),

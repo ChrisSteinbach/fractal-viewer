@@ -12,38 +12,42 @@
  *
  * The second test is a REFUTED lever's record: stopping a trace as soon as
  * its residual passes the per-sample budget (it could no longer be accepted
- * at its theta). Outcomes agree on every glass hit and it saves 0.4% of the
+ * at its theta). Outcomes agree on every glass hit and it saves ~1% of the
  * evaluations, because the expensive traces fail rather than overrun.
  *
  * THE NORMAL TAPS are counted too: the twin re-taps each tetrahedron point
  * per gradient component, so the duplicates it answers uncounted (halved)
- * are the kernel's four taps per normal — 35.1% of all evaluations. With
- * `SIGC_EXACT=1` the twin normals every site with the exact Möbius normal
- * (`sphereInversionSignedNormal`, one evaluation, counted as one) — the
- * refuted lever's record: in the kernel's own schedule it RESOLVES FEWER
- * (1,566 -> 1,259 of 2,137 hits, the growth traversal state-mismatch
- * refusals 557 -> 846) and saves only 6% of evaluations, because the
- * failures it adds end traces the taps would have finished
- * (`docs/sphere-inversion-family.md`, "The exact normal").
+ * are the kernel's four taps per normal — 33.8% of all evaluations under
+ * the owned primary (2026-10-14; 35.1% before it). With `SIGC_EXACT=1` the
+ * twin normals every site with the exact Möbius normal
+ * (`sphereInversionSignedNormal`, one evaluation, counted as one) — under
+ * the owned primary it resolves the SAME 2,120 of 2,137 hits (the
+ * resolution objection the pre-flip schedule recorded — 1,566 -> 1,259 —
+ * no longer reproduces) and buys 3.57M -> 2.27M evaluations; the look
+ * objection is what stands (`docs/sphere-inversion-family.md`, "The exact
+ * normal").
  *
  * THE REPLAY PASSES' CRITICAL PATH is priced too: per glass hit, the
  * evaluations of each pass the kernel runs (0..the first accepted or failed
  * one). A frame's tail is its longest serial trace, and a pending ray
  * re-traces from scratch, so in order its passes cost their SUM and side by
- * side their MAX. At 64 px: 24 of 2,137 hits run more than one pass; the
- * worst sum is 119,747 evaluations and the worst max 52,262, 2.3x shorter —
+ * side their MAX. At 64 px under the owned primary (2026-10-14): 9 of 2,137
+ * hits run more than one pass and no ray runs past pass 2, so the worst
+ * sum, its side-by-side max and the chain's column coincide at 52,294 —
  * the evidence for running a pending-prone ray's passes speculatively
- * (`docs/sphere-inversion-family.md`, "The glass tail is latency").
+ * (`docs/sphere-inversion-family.md`, "The glass tail is latency"; the
+ * 2.3x column the schedule was taken on was the pre-flip record).
  *
  * THE THIRD TEST is the pending chain's replay log, built and shipped
  * (`surface-transport-fixture.ts`'s `replay` option): the in-order
  * schedule traced twice per glass hit — without the log, and with pass
- * k+1 consuming pass k's recorded answers — outcomes identical, pass 1's
- * recompute fallen to 18% of its baseline and the worst critical path
- * halved. The fixture THROWS on a consumed entry whose inputs differ
- * from the pop's own, so the run is also the executable form of the
- * alignment argument the kernel's positional log rests on; its per-pass
- * entry counts sized the kernel's log cap.
+ * k+1 consuming pass k's recorded answers — outcomes identical; under the
+ * owned primary pass 1's recompute falls to 23% of its baseline and no ray
+ * reaches pass 2 at the model's cap, so the worst in-order critical path
+ * is unchanged (its pass 0 dominates). The fixture THROWS on a consumed
+ * entry whose inputs differ from the pop's own, so the run is also the
+ * executable form of the alignment argument the kernel's positional log
+ * rests on; its per-pass entry counts sized the kernel's log cap.
  *
  * Run: npx vitest run --config scripts/vitest.harness.config.ts \
  *        scripts/sphere-inversion-glass-cost.harness.ts
@@ -166,6 +170,9 @@ describe("sphere-inversion glass: the transport's evaluation profile", () => {
       },
       stepScale: 1,
       visibleRadius: radius,
+      // The kernel's signed-backend rule: the query owns the primary
+      // interface, so the profile is the flipped trace's schedule.
+      ownsPrimary: true,
       ...(process.env.SIGC_EXACT === "1"
         ? {
             normal: (p: Vec3) => {
@@ -453,6 +460,9 @@ describe("sphere-inversion glass: the transport's evaluation profile", () => {
       },
       stepScale: 1,
       visibleRadius: radius,
+      // The kernel's signed-backend rule (the query owns the primary
+      // interface), so both schedules price the flipped trace.
+      ownsPrimary: true,
     };
     const material: DielectricMaterial = {
       ior: DIELECTRIC_IOR,
@@ -600,6 +610,9 @@ describe("sphere-inversion glass: the transport's evaluation profile", () => {
       },
       stepScale: 1,
       visibleRadius: radius,
+      // The kernel's signed-backend rule (the query owns the primary
+      // interface), so the log's schedule prices the flipped trace.
+      ownsPrimary: true,
     };
     const material: DielectricMaterial = {
       ior: DIELECTRIC_IOR,

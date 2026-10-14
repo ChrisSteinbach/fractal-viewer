@@ -162,9 +162,12 @@ describe("the closed-solid kernel's condensationSolid option", () => {
         },
       }),
     );
-    expect(c0).toContain(
-      "let n0 = transportOpticalNormal(origin, dir, eps, li);",
-    );
+    // The signed backends share the owned-primary emission (the
+    // sphere-inversion and emitter-only closed solid ride it with the
+    // curved solid now): C0's sign is exact, so its query owns the
+    // entry the same way.
+    expect(c0).toContain("primary.anchorPresent = 0u;");
+    expect(c0).not.toContain("the primary split (the march's own hit");
   });
 
   it("gates band crossings on a real sign flip of the curved solid's field", () => {

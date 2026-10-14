@@ -772,6 +772,23 @@ All four legs agree, and the family's own legs reran green:
 | `sphereInversionGlassOrbit3` |     295 | 7.5e-5         | 3.2e-4         | 4.6e-4       | 4.3e-6       | 5.53e-8 (1172)                               |
 | `sphereInversionGlassOrbit4` |      78 | 1.9e-6         | 1.0e-6         | 2.6e-4       | 6.5e-6       | 1.03e-7 (1124)                               |
 
+RE-MEASURED on 2026-10-14 under the owned primary (the signed backends'
+entry rule; `docs/surface-dielectric-transport.md`), same box and flags.
+The legs' fixtures now carry `ownsPrimary` — the trace opens with the
+query's own crossing at the march's hit instead of the split — and the
+curved-solid legs' ULP ensemble (`ulpEnsemble: true`), because the
+owned-primary chain visits mid-trace anchored restarts beside the
+near-kissing tangencies where the twin's OWN answers bifurcate across one
+f32 ulp of the origin (measured on the near-cusp chain: three neighbours
+at t 2·eps, three at t 7·eps). Exclusions are counted per row and capped:
+
+| Leg                          | Queries | Max radiance Δ | Max residual Δ | Max normal Δ | Max shadow Δ | Flips excluded | Pre-slack interior excess |
+| ---------------------------- | ------: | -------------- | -------------- | ------------ | ------------ | -------------: | ------------------------- |
+| `sphereInversionGlassBall3`  |      14 | 2.6e-9         | 4.1e-12        | 2.0e-4       | 2.1e-8       |              0 | 3.85e-8 (1196)            |
+| `sphereInversionGlassBall4`  |      14 | 2.6e-9         | 4.1e-12        | 2.0e-4       | 2.1e-8       |              0 | 3.85e-8 (1196)            |
+| `sphereInversionGlassOrbit3` |     184 | 1.5e-3         | 7.8e-5         | 4.0e-4       | 4.3e-6       |              4 | 5.53e-8 (1172)            |
+| `sphereInversionGlassOrbit4` |      81 | 2.3e-6         | 1.8e-5         | 2.5e-4       | 6.5e-6       |              1 | 1.03e-7 (1124)            |
+
 The real-driver interior excess peaks at 1.03e-7, about 10× under the 1e-6
 slack. That is the figure the f32 argument owed; the CPU emulation's was
 1.39e-7 on a different fixture set.
@@ -856,6 +873,16 @@ emitter-only rows are unchanged. The curved-solid trace rows:
 The query counts moved because a trace now opens with the owned primary
 query rather than a split.
 
+RE-MEASURED 2026-10-14 when the owned primary became every signed
+backend's rule: the four emitter-only legs' fixtures now carry
+`ownsPrimary` too (their traces open with the query's own crossing; C0's
+sign is exact, so the gate stays the field's own sign and the boundary
+query's emission is untouched), and all nine legs agree again — the
+curved-solid rows reproduce the 2026-09-24 table above number for number
+(Beads 112 / 2.8e-8 / 1.3e-10 / 6.2e-6 / 2.00e-5, and so on down), and the
+emitter-only rows read radiance ≤ 1.3e-7, residual ≤ 3.9e-8, normals ≤
+2.0e-5, shadow ≤ 1.7e-4.
+
 ### The glass continuation leg (the resumable trace)
 
 A glass trace here can outrun the watchdog from a single workgroup, so the
@@ -896,6 +923,19 @@ heavy full-width chunk caps it there:
 | `siOct6Pearls3`         | 0, 1, 32, adaptive              | 19 / 2                | 2,048 / 64 / 13                 | yes           |
 | `siCell24Shell4`        | 0, 1, 32, adaptive              | 54 / 10               | 749 / 23 / 18                   | yes           |
 | `si600Medallion4@WKISS` | 1, 8, 32, adaptive              | 16 / 10               | 633 / 19 / 19                   | yes           |
+
+RERUN 2026-10-14 under the owned primary (the signed backends' entry rule;
+`docs/surface-dielectric-transport.md`), same card, `quiet=YES`, all quanta
+byte-identical within each row as always. The censuses move with the flip —
+the pearls row IMPROVES to all-resolved, the two near-kissing shell rows
+lose rays to the traversal state-mismatch class (the trade recorded in the
+transport contract's section):
+
+| Row                     | Quanta (first is the reference) | Resolved / unresolved | Resumes per quantum, in order | All identical |
+| ----------------------- | ------------------------------- | --------------------- | ----------------------------- | ------------- |
+| `siOct6Pearls3`         | 0, 1, 32, adaptive              | 21 / 0                | 0 / 254 / 7 / 3               | yes           |
+| `siCell24Shell4`        | 0, 1, 32, adaptive              | 46 / 18               | 0 / 1,196 / 36 / 22           | yes           |
+| `si600Medallion4@WKISS` | 1, 8, 32, adaptive              | 15 / 11               | 1,898 / 236 / 59 / 59         | yes           |
 
 ### The glass envelope (opt-in, measured not gated)
 

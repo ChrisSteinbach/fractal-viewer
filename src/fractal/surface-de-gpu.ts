@@ -2380,8 +2380,8 @@ export interface SurfaceGpuKernelOptions {
   condensationSolid?: CondensationSolidWire | null;
   /** The sphere-inversion glass backend's EXACT MÖBIUS NORMAL, OPT-IN and
    * not the shipped default: every transport normal (the boundary query's
-   * landing and reported normals, the primary split, the floor shadow's
-   * crossings) comes from the binding member's folded normal reflected back
+   * landing and reported normals, the floor shadow's crossings) comes from
+   * the binding member's folded normal reflected back
    * through the fold (`sphere-inversion.ts`'s
    * `sphereInversionFoldedNormal`, one estimator evaluation) instead of four
    * tetrahedron taps, falling back to the taps where no gradient exists.
@@ -12321,17 +12321,22 @@ ${
   stack[0] = primary;
   sp = 1u;
 `
-    : condensationSolid
-      ? `  // THE QUERY OWNS THE PRIMARY INTERFACE (the general curved solid). The
-  // display march accepts a hit anywhere within its pixel cone, so a
-  // silhouette ray can be accepted beside a bead it never enters; a split
-  // forced there refracts a chord that starts outside the sphere, meets
-  // the wall past the critical angle and circles by total internal
-  // reflection until the path caps. This backend's field is SIGNED with
-  // an exact sign, so the query can say whether the ray really enters:
-  // one unanchored outside path from the march's hit, whose miss is the
-  // rear scene (the near-miss reads as background, as the oracle's trace
-  // reads it) and whose boundary is split by the loop like any other.
+    : solidQuery
+      ? `  // THE QUERY OWNS THE PRIMARY INTERFACE (every signed-field backend:
+  // the general curved solid, the emitter-only closed solid, and the
+  // sphere-inversion glass — the same rule the curved solid's fix
+  // measured, applied to its two siblings). The display march accepts a
+  // hit anywhere within its pixel cone, so a silhouette ray can be
+  // accepted beside a bead it never enters; a split forced there
+  // refracts a chord that starts outside the sphere, meets the wall
+  // past the critical angle and circles by total internal reflection
+  // until the path caps. All three fields are SIGNED with an exact
+  // membership (the curved solid's and C0's is the field's own sign; the
+  // sphere-inversion set's is its exact membership predicate), so the
+  // query can say whether the ray really enters: one unanchored outside
+  // path from the march's hit, whose miss is the rear scene (the
+  // near-miss reads as background, as the oracle's trace reads it) and
+  // whose boundary is split by the loop like any other.
   var primary: TransportPath;
   primary.origin = origin;
   primary.dir = dir;
@@ -12357,19 +12362,8 @@ ${
   // outside their solid entirely) and a secant re-landing of the child
   // origin (at an edge the smoothed normal faces away from the approach
   // and the landing cannot fire; re-sampling the split normal at the
-  // landing re-drew the corner normals for a net loss).${
-    siGlass
-      ? `
-  // The sphere-inversion backend taps its SIGNED field here, as the twin
-  // does: this core's surfaceDE is the unsigned estimator, whose interior
-  // values are folded member signals at the wrong scale, so its taps across
-  // the surface drew a garbage split normal (the orbit leg's near-cusp
-  // probe traced straight through as backdrop). (The general curved solid
-  // never reaches this split: its query owns the primary interface.)
-  let n0 = transportSolidNormal(origin, dir, eps);`
-      : `
-  let n0 = transportOpticalNormal(origin, dir, eps, li);`
-  }
+  // landing re-drew the corner normals for a net loss).
+  let n0 = transportOpticalNormal(origin, dir, eps, li);
   let cosI0 = abs(dot(dir, n0));
   let f0 = dielectricFresnel(cosI0, 1.0, ior);
   let bend0 = dielectricRefract(dir[0], dir[1], dir[2], n0[0], n0[1], n0[2], 1.0, ior);
