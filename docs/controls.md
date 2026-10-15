@@ -1361,7 +1361,9 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   the subject (sphere inversion, a Menger carve, a chain of folding maps,
   …), the map count and variation mix, and the active render's colors and
   atmosphere — into a copyable, freely editable textarea, with 🎲 Reroll
-  re-wording the same facts and an optional scene link appended.
+  re-wording the same facts and an optional scene link appended —
+  shortened via da.gd when the service answers (the app's one
+  off-origin fetch), the full link kept on any failure.
   **⤓ Save scene file** is the link's file counterpart (see below);
   **⤓ Export .flame** writes the system's flat XY shadow as a
   flam3/Apophysis `.flame` file other flame tools can open (see

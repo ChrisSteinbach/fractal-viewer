@@ -7662,10 +7662,14 @@ export class Ui {
   }
 
   /** Paint the description and its live character count — the one number
-   * that tells the user whether their edit still fits the post it is for. */
-  setDescribeText(text: string): void {
+   * that tells the user whether their edit still fits the post it is for.
+   * The optional note rides the same line ("link shortened via da.gd"),
+   * disclosing what got refined while the user was composing. */
+  setDescribeText(text: string, linkNote?: string): void {
     this.describeText.value = text;
-    this.describeChars.textContent = `${text.length} characters`;
+    this.describeChars.textContent = `${text.length} characters${
+      linkNote ? ` · ${linkNote}` : ""
+    }`;
   }
 
   /** The dialog's current text, edits included — the copy button's payload. */

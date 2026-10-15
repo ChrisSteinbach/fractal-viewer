@@ -218,6 +218,7 @@ import type {
 } from "./cloud-worker-core";
 import { glowExposure } from "./exposure";
 import { describeScene } from "./describe";
+import { shortenUrl } from "./shorten-url";
 import {
   defaultFinalTransform,
   PRESET_FINALS,
@@ -11851,6 +11852,27 @@ async function main(): Promise<void> {
   // re-yields the same text within a session.
   let describeSeed = 0;
   let describeIncludeLink = false;
+  // The optional link rides the SAME document bytes Copy link uses, but a
+  // multi-kilobyte #v1= hash is far past what a microblog post can carry,
+  // so it SHORTENS through da.gd (shorten-url.ts; is.gd and v.gd refuse
+  // this domain outright — one shared backend, one blocklist, measured).
+  // The link is HELD
+  // ONCE per dialog session: the describe modal blocks every scene edit,
+  // so the pose at hold time is the scene being posted, and the only thing
+  // that moves behind the modal is automatic motion — a moving destination
+  // must not churn the link (or re-ask the shortener) under the user's
+  // composing. The hold carries its own short link once the service
+  // answers (rerolls then recompose instantly, same URL), a pending flag
+  // so overlapping recomposes never double-ask, and the swap lands only
+  // when the user has not edited the textarea meanwhile — their edits beat
+  // our refinement, the stale-but-honest rule thumbnail-patch.ts carries.
+  let describeLinkHold: {
+    long: string;
+    short: string | null;
+    pending: boolean;
+  } | null = null;
+  let describeLastDescription = "";
+  let describeLastWritten = "";
   const refreshDescribeText = () => {
     const description = describeScene({
       state,
@@ -11859,17 +11881,54 @@ async function main(): Promise<void> {
       paletteName: (control, id) => ui.paletteNameFor(control, id),
       rng: mulberry32(describeSeed),
     });
-    // The link rides the SAME document bytes Copy link uses — camera and
-    // non-flat FourDPose included — and is refused for mesh scenes exactly
-    // as Copy link refuses them (the checkbox is disabled there; this
-    // guard keeps a stale checked state from shipping one anyway).
-    const link =
-      describeIncludeLink && !sceneHasCustomMeshes(currentDocument())
-        ? `\n\n${location.origin}${location.pathname}#${encodeScene(
-            currentDocument(),
-          )}`
-        : "";
-    ui.setDescribeText(`${description}${link}`);
+    describeLastDescription = description;
+    // The link is refused for mesh scenes exactly as Copy link refuses
+    // them (the checkbox is disabled there; this guard keeps a stale
+    // checked state from shipping one anyway).
+    const withLink =
+      describeIncludeLink && !sceneHasCustomMeshes(currentDocument());
+    if (!withLink) {
+      describeLinkHold = null;
+      describeLastWritten = description;
+      ui.setDescribeText(description);
+      return;
+    }
+    if (describeLinkHold === null) {
+      describeLinkHold = {
+        long: `${location.origin}${location.pathname}#${encodeScene(
+          currentDocument(),
+        )}`,
+        short: null,
+        pending: false,
+      };
+    }
+    const hold = describeLinkHold;
+    const text = `${description}\n\n${hold.short ?? hold.long}`;
+    describeLastWritten = text;
+    ui.setDescribeText(
+      text,
+      hold.short ? "link shortened via da.gd" : undefined,
+    );
+    if (hold.short === null && !hold.pending) {
+      hold.pending = true;
+      void shortenUrl(hold.long).then((outcome) => {
+        hold.pending = false;
+        if (!outcome.ok) return; // keep the full link for this hold
+        hold.short = outcome.shortUrl;
+        // The swap lands only if the box is still on, this hold is still
+        // the dialog's, and the user has not edited the textarea.
+        if (
+          !describeIncludeLink ||
+          describeLinkHold !== hold ||
+          ui.describeTextValue() !== describeLastWritten
+        ) {
+          return;
+        }
+        const swapped = `${describeLastDescription}\n\n${hold.short}`;
+        describeLastWritten = swapped;
+        ui.setDescribeText(swapped, "link shortened via da.gd");
+      });
+    }
   };
 
   ui.bind({
@@ -13061,13 +13120,14 @@ async function main(): Promise<void> {
     onDescribeOpen: () => {
       describeSeed = Math.floor(Math.random() * 0x7fffffff);
       describeIncludeLink = false;
+      describeLinkHold = null; // a fresh dialog session re-holds the link
       ui.setDescribeLinkAvailability(!sceneHasCustomMeshes(currentDocument()));
       ui.openDescribe();
       refreshDescribeText();
     },
     onDescribeReroll: () => {
       describeSeed = Math.floor(Math.random() * 0x7fffffff);
-      refreshDescribeText();
+      refreshDescribeText(); // the hold survives: a reroll re-words, not re-links
     },
     onDescribeCopy: () => {
       void copyToClipboard(ui.describeTextValue()).then((ok) =>
@@ -13078,6 +13138,10 @@ async function main(): Promise<void> {
     },
     onDescribeLinkChange: (includeLink) => {
       describeIncludeLink = includeLink;
+      // Turning the link off (and therefore back on) re-holds at the
+      // CURRENT pose — the checkbox is the user's "link to what I see
+      // now" gesture, same as Copy link's.
+      if (!includeLink) describeLinkHold = null;
       refreshDescribeText();
     },
     // The file counterpart of Copy link: the SAME document bytes — camera +
