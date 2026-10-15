@@ -598,6 +598,16 @@ export interface UiHandlers {
   ) => void;
   /** "🔗 Copy link" was clicked: copy a shareable URL of the current scene. */
   onCopyLink: () => void;
+  /** "✍️ Describe" was clicked: open the scene-description dialog with a
+   * freshly composed description (main.ts owns the composing). */
+  onDescribeOpen: () => void;
+  /** "🎲 Reroll" was clicked: re-word the description over the same facts. */
+  onDescribeReroll: () => void;
+  /** "⧉ Copy" was clicked: copy the dialog's current text, edits included. */
+  onDescribeCopy: () => void;
+  /** The "Include scene link" checkbox changed — the text recomposes with
+   * or without the link appended. */
+  onDescribeLinkChange: (includeLink: boolean) => void;
   /** "⬇ Back up collection" was clicked: download the whole saved-scene
    * collection as a JSON backup file. */
   onExportCollection: () => void;
@@ -2602,6 +2612,16 @@ export class Ui {
   private readonly galleryBtn: HTMLButtonElement;
   private readonly copyLinkBtn: HTMLButtonElement;
   private readonly copyLinkTitle: string;
+  private readonly describeSceneBtn: HTMLButtonElement;
+  private readonly describeModal: HTMLElement;
+  private readonly describeBackdrop: HTMLElement;
+  private readonly describeCloseBtn: HTMLButtonElement;
+  private readonly describeText: HTMLTextAreaElement;
+  private readonly describeChars: HTMLElement;
+  private readonly describeRerollBtn: HTMLButtonElement;
+  private readonly describeCopyBtn: HTMLButtonElement;
+  private readonly describeIncludeLink: HTMLInputElement;
+  private readonly describeLinkOption: HTMLLabelElement;
   private readonly localAssetShareNote: HTMLElement;
   private readonly exportCollectionBtn: HTMLButtonElement;
   /** "⬇ Back up collection"'s authored title, restored whenever the button
@@ -3563,6 +3583,16 @@ export class Ui {
     this.galleryBtn = this.byId("galleryBtn");
     this.copyLinkBtn = this.byId("copyLinkBtn");
     this.copyLinkTitle = this.copyLinkBtn.title;
+    this.describeSceneBtn = this.byId("describeSceneBtn");
+    this.describeModal = this.byId("describeModal");
+    this.describeBackdrop = this.byId("describeBackdrop");
+    this.describeCloseBtn = this.byId("describeCloseBtn");
+    this.describeText = this.byId("describeText");
+    this.describeChars = this.byId("describeChars");
+    this.describeRerollBtn = this.byId("describeRerollBtn");
+    this.describeCopyBtn = this.byId("describeCopyBtn");
+    this.describeIncludeLink = this.byId("describeIncludeLink");
+    this.describeLinkOption = this.byId("describeLinkOption");
     this.localAssetShareNote = this.byId("localAssetShareNote");
     this.exportCollectionBtn = this.byId("exportCollectionBtn");
     this.exportCollectionTitle = this.exportCollectionBtn.title;
@@ -4641,6 +4671,23 @@ export class Ui {
       handlers.onDriftCollection(),
     );
     this.copyLinkBtn.addEventListener("click", () => handlers.onCopyLink());
+    this.describeSceneBtn.addEventListener("click", () =>
+      handlers.onDescribeOpen(),
+    );
+    // Closing the description dialog is a pure view concern (the text is
+    // the caller's; nothing to reset) — the ✕, the backdrop and Escape all
+    // just closeDescribe(), the gallery-close pattern.
+    this.describeCloseBtn.addEventListener("click", () => this.closeDescribe());
+    this.describeBackdrop.addEventListener("click", () => this.closeDescribe());
+    this.describeRerollBtn.addEventListener("click", () =>
+      handlers.onDescribeReroll(),
+    );
+    this.describeCopyBtn.addEventListener("click", () =>
+      handlers.onDescribeCopy(),
+    );
+    this.describeIncludeLink.addEventListener("change", () =>
+      handlers.onDescribeLinkChange(this.describeIncludeLink.checked),
+    );
     // Closing the gallery is a pure view concern (no app state to update), so
     // the Ui owns it directly rather than routing through a handler — the ✕,
     // the backdrop, and Escape (bound only while open) all just closeGallery().
@@ -7593,6 +7640,59 @@ export class Ui {
   closeAbout(): void {
     this.aboutModal.classList.add("hidden");
     this.releaseModalFocus(this.aboutModal);
+  }
+
+  /**
+   * Open the scene-description dialog, arm Escape-to-close and trap focus.
+   * The dialog is pure view: the caller composes the text and paints it
+   * through {@link setDescribeText} — the derivation and its reroll live in
+   * `describe.ts` + main.ts, and this layer never reads state.
+   */
+  openDescribe(): void {
+    this.describeModal.classList.remove("hidden");
+    this.trapModalFocus(this.describeModal, this.describeCloseBtn, () =>
+      this.closeDescribe(),
+    );
+  }
+
+  closeDescribe(): void {
+    if (this.describeModal.classList.contains("hidden")) return;
+    this.describeModal.classList.add("hidden");
+    this.releaseModalFocus(this.describeModal);
+  }
+
+  /** Paint the description and its live character count — the one number
+   * that tells the user whether their edit still fits the post it is for. */
+  setDescribeText(text: string): void {
+    this.describeText.value = text;
+    this.describeChars.textContent = `${text.length} characters`;
+  }
+
+  /** The dialog's current text, edits included — the copy button's payload. */
+  describeTextValue(): string {
+    return this.describeText.value;
+  }
+
+  /** Availability of the "Include scene link" option: mesh scenes have no
+   * link (the Copy-link button's own rule), so the checkbox disables with
+   * its label dimmed, and an availability flip mid-session clears a stale
+   * checked state rather than copying a link that cannot be built. */
+  setDescribeLinkAvailability(available: boolean): void {
+    this.describeIncludeLink.disabled = !available;
+    this.describeLinkOption.classList.toggle("disabled", !available);
+    if (!available) this.describeIncludeLink.checked = false;
+  }
+
+  /** The checkbox's current state — the caller recomposes around it. */
+  describeIncludesLink(): boolean {
+    return this.describeIncludeLink.checked;
+  }
+
+  /** The display name of a palette id, read off the panel `<select>` that
+   * picked it — the legend's own lookup, exposed so the scene description
+   * names palettes the same words the legend captions them with. */
+  paletteNameFor(control: LegendPaletteControl, id: PaletteSelection): string {
+    return paletteDisplayName(this.scalarSelect(control), id);
   }
 
   /** Open the mutation-grid modal with all nine cells reset to placeholders,

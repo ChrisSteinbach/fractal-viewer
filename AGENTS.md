@@ -1525,6 +1525,18 @@ bench:surface` (`--display=:0` for real-driver rows;
     DISPLAY name (index.html's `<option>` labels are the app's single source
     of those), so the caller injects a `paletteName` lookup keyed by which
     `<select>` picked it.
+  - `describe.ts` — the Share section's scene description as PROSE:
+    `describeScene`, a pure derivation (legend-spec's pattern) composing a
+    post-sized two-sentence description for the user to copy, edit and
+    post. Three enforced policies: conversational, not technical; the
+    COMPOSITION never the inventory (the map count is ONE clause,
+    variation types speak only as the mix's identity, mechanisms cap at
+    two); only what is authored (absent means unmentioned). The subject
+    precedence copies `scene-dimension.ts`'s and the transform family
+    comes from the SAME analyzers the renderers route through; blocks
+    dormant in a mode (Menger/glass/chain twist outside Surface) stay
+    silent there; the reroll re-words the same facts through an injected
+    rng (same seed, same text).
   - `constants.ts` — shared UI/interaction magic numbers.
   - `interactions.ts` — pointer/touch/wheel handling (Three.js raycasting).
     Flame's frozen gate is action-specific: it refuses ordinary camera and

@@ -217,6 +217,7 @@ import type {
   CloudResult4D,
 } from "./cloud-worker-core";
 import { glowExposure } from "./exposure";
+import { describeScene } from "./describe";
 import {
   defaultFinalTransform,
   PRESET_FINALS,
@@ -462,6 +463,7 @@ import {
   setTransforms,
   setTransformEmitter,
   systemIsNonFlat,
+  displayedIsNonFlat,
   updateTransform,
 } from "./state";
 import type { AppState, RenderMode } from "./state";
@@ -11841,6 +11843,35 @@ async function main(): Promise<void> {
   // loads a preset/ Surprise-Me system, or selects a transform stays a
   // bespoke handler and is UNGUARDED: the single editor and transform list
   // are live for a non-flat system exactly like a flat one.
+  // The scene description's share text: composed fresh on open and per
+  // reroll from the LIVE state (describe.ts's pure derivation), then
+  // optionally extended with the scene link. The seed is a fresh random
+  // draw per open/reroll — the reroll's whole point is a new phrasing, and
+  // describeScene is deterministic in its seed, so the same seed always
+  // re-yields the same text within a session.
+  let describeSeed = 0;
+  let describeIncludeLink = false;
+  const refreshDescribeText = () => {
+    const description = describeScene({
+      state,
+      nonFlat: displayedIsNonFlat(state),
+      renderMode: state.renderMode,
+      paletteName: (control, id) => ui.paletteNameFor(control, id),
+      rng: mulberry32(describeSeed),
+    });
+    // The link rides the SAME document bytes Copy link uses — camera and
+    // non-flat FourDPose included — and is refused for mesh scenes exactly
+    // as Copy link refuses them (the checkbox is disabled there; this
+    // guard keeps a stale checked state from shipping one anyway).
+    const link =
+      describeIncludeLink && !sceneHasCustomMeshes(currentDocument())
+        ? `\n\n${location.origin}${location.pathname}#${encodeScene(
+            currentDocument(),
+          )}`
+        : "";
+    ui.setDescribeText(`${description}${link}`);
+  };
+
   ui.bind({
     onAdd: () => {
       applyDiscreteTransformEdit(() => {
@@ -13026,6 +13057,28 @@ async function main(): Promise<void> {
       void copyToClipboard(link).then((ok) =>
         ui.flashToast(ok ? "Link copied" : "Couldn't copy the link"),
       );
+    },
+    onDescribeOpen: () => {
+      describeSeed = Math.floor(Math.random() * 0x7fffffff);
+      describeIncludeLink = false;
+      ui.setDescribeLinkAvailability(!sceneHasCustomMeshes(currentDocument()));
+      ui.openDescribe();
+      refreshDescribeText();
+    },
+    onDescribeReroll: () => {
+      describeSeed = Math.floor(Math.random() * 0x7fffffff);
+      refreshDescribeText();
+    },
+    onDescribeCopy: () => {
+      void copyToClipboard(ui.describeTextValue()).then((ok) =>
+        ui.flashToast(
+          ok ? "Description copied" : "Couldn't copy the description",
+        ),
+      );
+    },
+    onDescribeLinkChange: (includeLink) => {
+      describeIncludeLink = includeLink;
+      refreshDescribeText();
     },
     // The file counterpart of Copy link: the SAME document bytes — camera +
     // non-flat FourDPose included — wrapped in the JSON file envelope instead

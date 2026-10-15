@@ -3968,6 +3968,14 @@
           </button>
           <button
             class="btn btn-ghost"
+            id="describeSceneBtn"
+            type="button"
+            title="Compose a short description of this scene to copy into a social post"
+          >
+            ✍️ Describe
+          </button>
+          <button
+            class="btn btn-ghost"
             id="saveSceneFileBtn"
             type="button"
             aria-describedby="localAssetShareNote"
@@ -4008,6 +4016,51 @@
           />
           <p class="flame-hint">Or drop a file anywhere on the page.</p>
         </details>
+      </div>
+    </div>
+
+    <div
+      id="describeModal"
+      class="gallery-modal hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Scene description"
+    >
+      <div id="describeBackdrop" class="gallery-backdrop"></div>
+      <div class="gallery-dialog describe-dialog">
+        <div class="gallery-header">
+          <h2 class="gallery-title">Scene description</h2>
+          <button
+            id="describeCloseBtn"
+            class="notice-dismiss"
+            type="button"
+            aria-label="Close description"
+          >
+            ✕
+          </button>
+        </div>
+        <div class="describe-body">
+          <p class="flame-hint">Edit freely, then copy into your post.</p>
+          <textarea
+            id="describeText"
+            rows="4"
+            aria-label="Scene description text"
+            spellcheck="true"
+          ></textarea>
+          <div class="describe-actions">
+            <button id="describeRerollBtn" class="btn btn-ghost" type="button">
+              🎲 Reroll
+            </button>
+            <label class="describe-link-option" id="describeLinkOption">
+              <input type="checkbox" id="describeIncludeLink" />
+              Include scene link
+            </label>
+            <button id="describeCopyBtn" class="btn" type="button">
+              ⧉ Copy
+            </button>
+          </div>
+          <p class="flame-hint" id="describeChars" aria-live="polite"></p>
+        </div>
       </div>
     </div>
 

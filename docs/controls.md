@@ -1357,6 +1357,11 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
 - **Share** — the current scene as a portable document, plus the
   app's one import door. **🔗 Copy link** copies a shareable `#v1=…` link
   built fresh from the current state, not the (debounced) address bar.
+  **✍️ Describe** composes a short, post-sized description of the scene —
+  the subject (sphere inversion, a Menger carve, a chain of folding maps,
+  …), the map count and variation mix, and the active render's colors and
+  atmosphere — into a copyable, freely editable textarea, with 🎲 Reroll
+  re-wording the same facts and an optional scene link appended.
   **⤓ Save scene file** is the link's file counterpart (see below);
   **⤓ Export .flame** writes the system's flat XY shadow as a
   flam3/Apophysis `.flame` file other flame tools can open (see
