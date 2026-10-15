@@ -124,6 +124,14 @@
  * read soft near the crumpled ball and the lens archetype's p95 steps
  * exceed the full-tier budget — the animation transits it; rest is what
  * persists, and it is clean.
+ *
+ * FORWARD-ORBIT MODES RENDER PLAIN (the routing rule): a filled solid's
+ * interior reaches the ball center, so its echo swallows the camera — the
+ * measured verdict for the escape folds. The Mandelbulb's own routing
+ * re-measured it rather than inheriting it: DE(0) = 0 with 100% of a
+ * 0.1R neighbourhood of the centre interior, union DE exactly 0 at the
+ * session's own opening eye for R = 0.35 and 0.9 raw-ball radii, and a
+ * flat featureless frame at every R.
  */
 import type { SurfaceDE, SurfaceDistanceSample } from "./surface-de";
 import type { SurfaceDE4 } from "./surface-de-4d";
