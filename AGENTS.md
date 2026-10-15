@@ -1518,13 +1518,13 @@ bench:surface` (`--display=:0` for real-driver rows;
     DISPLAY name (index.html's `<option>` labels are the app's single source
     of those), so the caller injects a `paletteName` lookup keyed by which
     `<select>` picked it.
-  - `describe.ts` — the scene description as PROSE: `describeScene`, a
-    pure derivation composing a post-sized description to copy, edit and
-    post. The prose policies (conversational; the composition never the
-    inventory; only what is authored) and the mode-dormancy rule live in
-    the module doc; the subject precedence copies `scene-dimension.ts`'s
-    and the family comes from the SAME analyzers the renderers route
-    through.
+  - `describe.ts` + `shorten-url.ts` — the scene description as PROSE:
+    `describeScene` composes a post-sized description to copy, edit and
+    post; its optional scene link shortens via da.gd (`shorten-url.ts`,
+    never-throw, any failure keeps the full link). The module doc owns the
+    prose policies and mode dormancy; the subject precedence copies
+    `scene-dimension.ts`'s and the family comes from the SAME analyzers
+    the renderers route through.
   - `constants.ts` — shared UI/interaction magic numbers.
   - `interactions.ts` — pointer/touch/wheel handling (Three.js raycasting).
     Flame's frozen gate is action-specific: it refuses ordinary camera and
