@@ -2577,8 +2577,8 @@
             Balloon temporarily hides the floor without clearing settings.
           </p>
           <p class="flame-hint">
-            An Auto or Flame backdrop tints the grey floor toward the scene's
-            palette.
+            An Auto or Flame backdrop tints the grey floor while Backdrop tint
+            is on.
           </p>
           <label
             class="checkbox-label"
@@ -2587,6 +2587,14 @@
           >
             <input type="checkbox" id="solidFloorEnabledCheckbox" />
             Floor
+          </label>
+          <label
+            class="checkbox-label hidden"
+            id="solidFloorPaletteTieRow"
+            title="Tint the floor toward an Auto or Flame backdrop's palette colour"
+          >
+            <input type="checkbox" id="solidFloorPaletteTieCheckbox" />
+            Backdrop tint
           </label>
           <label class="select-label hidden" id="solidFloorPatternRow">
             Floor pattern
@@ -3071,8 +3079,8 @@
         >
           <summary>Floor</summary>
           <p class="flame-hint">
-            An Auto or Flame backdrop tints the grey floor toward the scene's
-            palette.
+            An Auto or Flame backdrop tints the grey floor while Backdrop tint
+            is on.
           </p>
           <!-- The surface ground plane: an infinite floor under the
                fractal, catching its shadow. Persisted (state.groundPlane),
@@ -3099,6 +3107,14 @@
             role="status"
             aria-live="polite"
           ></p>
+          <label
+            class="checkbox-label"
+            id="surfaceFloorPaletteTieRow"
+            title="Tint the floor toward an Auto or Flame backdrop's palette colour"
+          >
+            <input type="checkbox" id="surfaceFloorPaletteTieCheckbox" />
+            Backdrop tint
+          </label>
           <label class="select-label" id="surfaceFloorPatternRow">
             Floor pattern
             <select id="surfaceFloorPatternSelect">

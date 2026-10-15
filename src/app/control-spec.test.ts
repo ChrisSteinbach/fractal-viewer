@@ -1860,6 +1860,31 @@ describe("effects", () => {
       expect(fx.scene.setSurfaceParams).not.toHaveBeenCalled();
     });
 
+    it("solidFloorPaletteTieCheckbox applies the sparse intent and re-derives through the backdrop pipeline", () => {
+      const spec = specById("solidFloorPaletteTieCheckbox");
+      const previous = initialState(true);
+      const on = applyScalarControl(previous, spec, true);
+      expect(on.solid.floorPaletteTie).toBe(true);
+      const fx = mockEffects();
+      spec.effect?.(on, fx, previous);
+      expect(fx.trackAutoBackground).toHaveBeenCalledTimes(1);
+      const off = applyScalarControl(on, spec, false);
+      expect(off.solid.floorPaletteTie).toBeUndefined();
+    });
+
+    it("surfaceFloorPaletteTieCheckbox applies the sparse intent and re-derives through the backdrop pipeline", () => {
+      const spec = specById("surfaceFloorPaletteTieCheckbox");
+      const previous = initialState(true);
+      const on = applyScalarControl(previous, spec, true);
+      expect(on.surface.floorPaletteTie).toBe(true);
+      expect(on.solid.floorPaletteTie).toBeUndefined();
+      const fx = mockEffects();
+      spec.effect?.(on, fx, previous);
+      expect(fx.trackAutoBackground).toHaveBeenCalledTimes(1);
+      const off = applyScalarControl(on, spec, false);
+      expect(off.surface.floorPaletteTie).toBeUndefined();
+    });
+
     it("solidPalette effect posts setPalette to the voxel worker", () => {
       const spec = specById("solidPalette");
       const previous = initialState(true);

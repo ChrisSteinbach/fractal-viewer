@@ -8790,3 +8790,64 @@ describe("pentagrid-floor codec (the floor's pentagrid block)", () => {
     expect(encodeScene(toSnapshot(cleared))).toBe(encodeScene(baseSnapshot()));
   });
 });
+
+describe("floor palette-tie codec (the floors' opt-in intent)", () => {
+  it("encodes a scene without the tie byte-identically to one predating the field", () => {
+    const s = baseSnapshot();
+    const hash = encodeScene(s);
+    const jsonBody = JSON.parse(
+      atob(
+        hash.slice(3).replace(/-/g, "+").replace(/_/g, "/") +
+          "=".repeat((4 - (hash.slice(3).length % 4)) % 4),
+      ),
+    ) as Record<string, unknown>;
+    expect(
+      (jsonBody.solid as Record<string, unknown>).floorPaletteTie,
+    ).toBeUndefined();
+    expect(
+      (jsonBody.surface as Record<string, unknown>).floorPaletteTie,
+    ).toBeUndefined();
+    expect(decodeScene(hash)!.solid.floorPaletteTie).toBeUndefined();
+    expect(decodeScene(hash)!.surface.floorPaletteTie).toBeUndefined();
+    expect(encodeScene(decodeScene(hash)!)).toBe(hash);
+  });
+
+  it("round-trips an authored tie per floor and re-encodes to a fixed point", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      solid: { ...baseSnapshot().solid, floorPaletteTie: true },
+      surface: { ...baseSnapshot().surface, floorPaletteTie: true },
+    };
+    const hash = encodeScene(s);
+    const decoded = decodeScene(hash)!;
+    expect(decoded.solid.floorPaletteTie).toBe(true);
+    expect(decoded.surface.floorPaletteTie).toBe(true);
+    expect(encodeScene(decoded)).toBe(hash);
+  });
+
+  it("drops a non-boolean tie to absent without rejecting the scene", () => {
+    for (const bad of ["yes", 1, null]) {
+      const jsonBody = JSON.parse(
+        atob(
+          encodeScene(baseSnapshot())
+            .slice(3)
+            .replace(/-/g, "+")
+            .replace(/_/g, "/") +
+            "=".repeat(
+              (4 - (encodeScene(baseSnapshot()).slice(3).length % 4)) % 4,
+            ),
+        ),
+      ) as Record<string, unknown>;
+      (jsonBody.solid as Record<string, unknown>).floorPaletteTie = bad;
+      (jsonBody.surface as Record<string, unknown>).floorPaletteTie = bad;
+      const reencoded = btoa(JSON.stringify(jsonBody))
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
+      const decoded = decodeScene("v1=" + reencoded);
+      expect(decoded, JSON.stringify(bad)).not.toBeNull();
+      expect(decoded!.solid.floorPaletteTie).toBeUndefined();
+      expect(decoded!.surface.floorPaletteTie).toBeUndefined();
+    }
+  });
+});

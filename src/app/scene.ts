@@ -1316,14 +1316,16 @@ export class FractalScene {
    * balloon variant refuses the plane arm); the intent survives so the
    * floor returns when the balloon leaves. */
   private surfaceGroundPlaneOn = false;
-  /** The scene-palette tie's pushed albedo for both presentation floors —
-   * `resolveFloorPaletteAlbedo`'s value (null = untied neutral). Session
-   * state derived from the document's own backdrop/palette fields, never
+  /** The scene-palette tie's pushed albedo for each presentation floor —
+   * `resolveFloorPaletteAlbedo`'s value (null = untied neutral), gated by
+   * each mode's own authored `floorPaletteTie` intent. Session state
+   * derived from the document's own backdrop/palette fields, never
    * persisted; read at {@link applySolidPresentation}'s and
    * {@link surfaceGroundPlaneSpec}'s spec builds, so every consumer
-   * (uGroundAlbedo, the WGSL params.groundAlbedo, the force-frame key's
+   * (uGroundAlbedo, the WGSL `params.groundAlbedo`, the force-frame key's
    * albedo field) moves through the spec's one albedo. */
-  private floorPaletteAlbedo: Vec3 | null = null;
+  private solidFloorPaletteAlbedo: Vec3 | null = null;
+  private surfaceFloorPaletteAlbedo: Vec3 | null = null;
   /** Normalized balloon radius (multiples of the raw ball radius —
    * buildBalloon's rMult). 1.6 mirrors {@link balloonEchoRadius}'s inert
    * default; main.ts overwrites it before it can matter. */
@@ -4778,8 +4780,8 @@ export class FractalScene {
         tileScale: params.floorTileScale,
         emission: params.floorEmission,
         pentagrid: params.floorPentagrid,
-        ...(this.floorPaletteAlbedo !== null
-          ? { albedo: this.floorPaletteAlbedo }
+        ...(this.solidFloorPaletteAlbedo !== null
+          ? { albedo: this.solidFloorPaletteAlbedo }
           : {}),
       }),
     });
@@ -5500,27 +5502,39 @@ export class FractalScene {
     this.applySurfaceGroundPlane();
   }
 
-  /** Push the scene-palette tie — main.ts's `syncFloorPaletteTie` beside
-   * every background push and re-derive. Value-guarded (a no-op while the
-   * tuple is unchanged, so the per-frame crossfade pushes cost nothing);
-   * a change re-asserts both presentation-floor consumers — Solid's spec
+  /** Push the scene-palette tie for ONE presentation floor — main.ts's
+   * `syncFloorPaletteTie` beside every background push and re-derive, each
+   * floor gated by its own authored `floorPaletteTie` intent. Value-guarded
+   * (a no-op while the tuple is unchanged, so the per-frame crossfade pushes
+   * cost nothing); a change re-asserts that floor's consumer — Solid's spec
    * is rebuilt, Surface's plane uniforms re-packed — and marks the frame
    * dirty so a parked still and the compute path's next spec assembly pick
    * the new albedo up. A mid-settle change is the same disclosed live-edit
    * class as a floor-pattern edit: the force-frame memo keys the albedo. */
-  setFloorPaletteAlbedo(albedo: Vec3 | null): void {
+  setFloorPaletteAlbedo(mode: "solid" | "surface", albedo: Vec3 | null): void {
+    const current =
+      mode === "solid"
+        ? this.solidFloorPaletteAlbedo
+        : this.surfaceFloorPaletteAlbedo;
     const same =
       albedo === null
-        ? this.floorPaletteAlbedo === null
-        : this.floorPaletteAlbedo !== null &&
-          this.floorPaletteAlbedo[0] === albedo[0] &&
-          this.floorPaletteAlbedo[1] === albedo[1] &&
-          this.floorPaletteAlbedo[2] === albedo[2];
+        ? current === null
+        : current !== null &&
+          current[0] === albedo[0] &&
+          current[1] === albedo[1] &&
+          current[2] === albedo[2];
     if (same) return;
-    this.floorPaletteAlbedo = albedo === null ? null : [...albedo];
+    if (mode === "solid") {
+      this.solidFloorPaletteAlbedo = albedo === null ? null : [...albedo];
+    } else {
+      this.surfaceFloorPaletteAlbedo = albedo === null ? null : [...albedo];
+    }
     this.renderNeeded = true;
-    this.applySolidPresentation();
-    this.applySurfaceGroundPlane();
+    if (mode === "solid") {
+      this.applySolidPresentation();
+    } else {
+      this.applySurfaceGroundPlane();
+    }
   }
 
   /** The live ground-plane parameter block derived from the stored
@@ -5538,8 +5552,8 @@ export class FractalScene {
       tileScale: room?.floorTileScale ?? 0.64,
       emission: room?.floorEmission ?? 0,
       pentagrid: room?.floorPentagrid,
-      ...(this.floorPaletteAlbedo !== null
-        ? { albedo: this.floorPaletteAlbedo }
+      ...(this.surfaceFloorPaletteAlbedo !== null
+        ? { albedo: this.surfaceFloorPaletteAlbedo }
         : {}),
     });
   }

@@ -307,6 +307,14 @@ export interface SolidParams {
    * its control moves). Absent until authored; presentation-floor.ts's
    * `presentationFloorSpec` is the ONE resolution site. */
   floorPentagrid?: Partial<FloorPentagrid>;
+  /** The scene-palette tie's intent: the grey floor tints toward a
+   * palette-linked backdrop (`background.ts`'s `autoFloorAlbedo` — an
+   * "auto" gradient or a delivered Flame echo). Sparse like the pentagrid
+   * block: absent/false = the neutral grey, byte-identical to every
+   * document predating the tie. The DERIVED albedo itself is never
+   * persisted — the document carries this intent plus the palette ids the
+   * tie re-derives from on every load. */
+  floorPaletteTie?: boolean;
   /**
    * Structural-coloring palette (shares the flame render's
    * `PaletteSelection` union — see `palette.ts`). A cosine-gradient id
@@ -479,6 +487,10 @@ export interface SurfaceParams {
    * field, separate from the Surface one by the same rule that keeps the
    * two floor owners separate. Absent until authored. */
   floorPentagrid?: Partial<FloorPentagrid>;
+  /** The Surface floor's own scene-palette tie intent — same sparse rule
+   * and same re-derivation as {@link SolidState.floorPaletteTie}, kept
+   * separate by the rule that keeps the two floor owners separate. */
+  floorPaletteTie?: boolean;
 }
 
 /** Snapshot of everything the UI and renderer need to draw a frame. */
@@ -3143,6 +3155,24 @@ export function setSolidFloorPentagrid(
 }
 
 /**
+ * Author Solid's scene-palette tie intent — {@link SolidState.floorPaletteTie}.
+ * Sparse boolean: `true` is the only written value; clearing removes the
+ * field outright (absence = off, byte-identical to every document that never
+ * touched the checkbox). Live-reactive: the tie is a packed albedo, not a
+ * shader variant.
+ */
+export function setSolidFloorPaletteTie(
+  state: AppState,
+  tie: boolean,
+): AppState {
+  const { floorPaletteTie: _dropped, ...solid } = state.solid;
+  return {
+    ...state,
+    solid: { ...solid, ...(tie ? { floorPaletteTie: true } : {}) },
+  };
+}
+
+/**
  * Set the solid render's structural-coloring palette. Not clamped — it is an
  * enum (see `palette.ts`), and the UI only offers valid ids (persistence
  * validates untrusted input in `decodeScene`). Restarts accumulation in the
@@ -3349,6 +3379,22 @@ export function setSurfaceFloorPentagrid(
         ? { floorPentagrid: cloneFloorPentagridBlock(floorPentagrid) }
         : {}),
     },
+  };
+}
+
+/**
+ * Author the Surface floor's scene-palette tie intent — the Surface twin of
+ * {@link setSolidFloorPaletteTie}, its own field by the same rule that keeps
+ * the two floor owners separate. Same sparse boolean.
+ */
+export function setSurfaceFloorPaletteTie(
+  state: AppState,
+  tie: boolean,
+): AppState {
+  const { floorPaletteTie: _dropped, ...surface } = state.surface;
+  return {
+    ...state,
+    surface: { ...surface, ...(tie ? { floorPaletteTie: true } : {}) },
   };
 }
 
@@ -3649,22 +3695,28 @@ export function resolveSceneBackground(state: AppState): BackgroundGradient {
 /**
  * The presentation floor's palette tie — the albedo the floor's neutral
  * grey takes while the backdrop ON SCREEN is palette-linked, `null` (stay
- * neutral) for every other backdrop. What ties follows what is actually
- * showing, `source` being main.ts's `liveBackgroundSource`: in `"flame"`
- * mode a delivered Flame echo image ties to its own authored palette
+ * neutral) for every other backdrop. The tie is OPT-IN per floor:
+ * `mode`'s own `floorPaletteTie` flag must be authored (`true`), so a
+ * document that never checked the box renders the neutral grey even under
+ * an auto/flame backdrop. What ties follows what is actually showing,
+ * `source` being main.ts's `liveBackgroundSource`: in `"flame"` mode a
+ * delivered Flame echo image ties to its own authored palette
  * ({@link resolveFlameBackdropPalette}), an `"auto"` gradient ties to the
  * active render's palette ({@link activeScenePalette}), and everything
  * else — dark, haze, custom, a `"flame"` mode still showing its dark
  * placeholder (the subjects suppress the echo) — stays neutral. The curve
  * is `background.ts`'s {@link autoFloorAlbedo}; the derived value is
- * session-only, never persisted — the document keeps the mode and the
- * palette ids it already carries, and the tie re-derives from them on
- * every load exactly like the `"auto"` backdrop's own stops.
+ * session-only, never persisted — the document keeps the mode, the flag
+ * and the palette ids it already carries, and the tie re-derives from them
+ * on every load exactly like the `"auto"` backdrop's own stops.
  */
 export function resolveFloorPaletteAlbedo(
   state: AppState,
   source: "gradient" | "flame",
+  mode: "solid" | "surface",
 ): Vec3 | null {
+  const tie = mode === "solid" ? state.solid : state.surface;
+  if (!tie.floorPaletteTie) return null;
   if (state.background.mode === "flame" && source === "flame") {
     return autoFloorAlbedo(resolveFlameBackdropPalette(state));
   }

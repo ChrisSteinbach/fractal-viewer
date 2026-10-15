@@ -304,6 +304,7 @@ const SOLID_FIELDS = {
   floorTileScale: true,
   floorEmission: true,
   floorPentagrid: true,
+  floorPaletteTie: true,
   paletteId: true,
 } satisfies Fields<SolidParams>;
 const SURFACE_FIELDS = {
@@ -321,6 +322,7 @@ const SURFACE_FIELDS = {
   floorTileScale: true,
   floorEmission: true,
   floorPentagrid: true,
+  floorPaletteTie: true,
 } satisfies Fields<SurfaceParams>;
 /** The pentagrid floor's sparse authored block — every field optional (the
  * defaults own absence), each validated only when present. */
@@ -1218,6 +1220,9 @@ function solid(value: unknown, path: string, hasCustomPalette: boolean): void {
   if (entry.floorPentagrid !== undefined) {
     floorPentagrid(entry.floorPentagrid, `${path}.floorPentagrid`);
   }
+  if (entry.floorPaletteTie !== undefined) {
+    boolean(entry.floorPaletteTie, `${path}.floorPaletteTie`);
+  }
   palette(
     required(entry, "paletteId", path),
     `${path}.paletteId`,
@@ -1344,6 +1349,9 @@ function surface(
   );
   if (entry.floorPentagrid !== undefined) {
     floorPentagrid(entry.floorPentagrid, `${path}.floorPentagrid`);
+  }
+  if (entry.floorPaletteTie !== undefined) {
+    boolean(entry.floorPaletteTie, `${path}.floorPaletteTie`);
   }
 }
 

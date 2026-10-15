@@ -162,6 +162,7 @@ import {
   setSolidEnvLight,
   setSolidFloorEmission,
   setSolidFloorEnabled,
+  setSolidFloorPaletteTie,
   setSolidFloorPattern,
   setSolidFloorPentagrid,
   setSolidFloorTileScale,
@@ -177,6 +178,7 @@ import {
   setSurfaceColorSpeed,
   setSurfaceDepthOfField,
   setSurfaceEnvLight,
+  setSurfaceFloorPaletteTie,
   setSurfaceFloorPentagrid,
   setSurfaceLightAzimuth,
   setSurfaceLightElevation,
@@ -2473,55 +2475,107 @@ describe("resolveSceneBackground", () => {
 });
 
 describe("resolveFloorPaletteAlbedo", () => {
-  it("stays neutral for the static backdrops in either source", () => {
+  it("stays neutral for the static backdrops in either source, per floor", () => {
     for (const mode of ["dark", "haze", "custom"] as const) {
       const state = setBackgroundMode(initialState(true), mode);
-      expect(resolveFloorPaletteAlbedo(state, "gradient")).toBeNull();
-      expect(resolveFloorPaletteAlbedo(state, "flame")).toBeNull();
+      for (const tie of [true, undefined]) {
+        const tied = setSolidFloorPaletteTie(
+          setSurfaceFloorPaletteTie(state, tie === true),
+          tie === true,
+        );
+        expect(resolveFloorPaletteAlbedo(tied, "gradient", "solid")).toBeNull();
+        expect(resolveFloorPaletteAlbedo(tied, "flame", "surface")).toBeNull();
+      }
     }
   });
 
-  it("ties to the active render's palette under an auto gradient", () => {
+  it("stays neutral while the floor's tie intent is not authored", () => {
     const state = setBackgroundMode(
       setRampPaletteId(initialState(true), "sunset"),
       "auto",
     );
-    expect(resolveFloorPaletteAlbedo(state, "gradient")).toEqual(
+    // The shipped default: a document that never checked the box renders
+    // the neutral grey even under a palette-linked backdrop.
+    expect(resolveFloorPaletteAlbedo(state, "gradient", "solid")).toBeNull();
+    expect(resolveFloorPaletteAlbedo(state, "gradient", "surface")).toBeNull();
+  });
+
+  it("ties a floor whose own intent is authored, and only that floor", () => {
+    const base = setBackgroundMode(
+      setRampPaletteId(initialState(true), "sunset"),
+      "auto",
+    );
+    const solidOnly = setSolidFloorPaletteTie(base, true);
+    expect(resolveFloorPaletteAlbedo(solidOnly, "gradient", "solid")).toEqual(
       autoFloorAlbedo("sunset"),
     );
+    expect(
+      resolveFloorPaletteAlbedo(solidOnly, "gradient", "surface"),
+    ).toBeNull();
+    const surfaceOnly = setSurfaceFloorPaletteTie(base, true);
+    expect(
+      resolveFloorPaletteAlbedo(surfaceOnly, "gradient", "surface"),
+    ).toEqual(autoFloorAlbedo("sunset"));
+    expect(
+      resolveFloorPaletteAlbedo(surfaceOnly, "gradient", "solid"),
+    ).toBeNull();
   });
 
   it("follows the active render mode's own palette select under auto", () => {
-    const state = setBackgroundMode(
-      setRenderMode(setSolidPaletteId(initialState(true), "ember"), "solid"),
-      "auto",
+    const state = setSolidFloorPaletteTie(
+      setBackgroundMode(
+        setRenderMode(setSolidPaletteId(initialState(true), "ember"), "solid"),
+        "auto",
+      ),
+      true,
     );
-    expect(resolveFloorPaletteAlbedo(state, "gradient")).toEqual(
+    expect(resolveFloorPaletteAlbedo(state, "gradient", "solid")).toEqual(
       autoFloorAlbedo("ember"),
     );
   });
 
   it("ties to the Flame echo's own palette only while that image is the backdrop", () => {
-    const state = setBackgroundMode(
-      setBackgroundFlamePaletteId(initialState(true), "aurora"),
-      "flame",
+    const state = setSurfaceFloorPaletteTie(
+      setBackgroundMode(
+        setBackgroundFlamePaletteId(initialState(true), "aurora"),
+        "flame",
+      ),
+      true,
     );
-    expect(resolveFloorPaletteAlbedo(state, "flame")).toEqual(
+    expect(resolveFloorPaletteAlbedo(state, "flame", "surface")).toEqual(
       autoFloorAlbedo("aurora"),
     );
     // The same state under the gradient source is the dark placeholder the
     // subjects' suppression keeps — no tie.
-    expect(resolveFloorPaletteAlbedo(state, "gradient")).toBeNull();
+    expect(resolveFloorPaletteAlbedo(state, "gradient", "surface")).toBeNull();
   });
 
   it("resolves the echo's Custom selection through the shared authored stops", () => {
-    const state = setBackgroundMode(
-      setBackgroundFlamePaletteId(initialState(true), "custom"),
-      "flame",
+    const state = setSolidFloorPaletteTie(
+      setBackgroundMode(
+        setBackgroundFlamePaletteId(initialState(true), "custom"),
+        "flame",
+      ),
+      true,
     );
-    expect(resolveFloorPaletteAlbedo(state, "flame")).toEqual(
+    expect(resolveFloorPaletteAlbedo(state, "flame", "solid")).toEqual(
       autoFloorAlbedo(state.customPalette!),
     );
+  });
+
+  it("clearing the tie removes the sparse field outright", () => {
+    const on = setSolidFloorPaletteTie(
+      setSurfaceFloorPaletteTie(initialState(true), true),
+      true,
+    );
+    expect(on.solid.floorPaletteTie).toBe(true);
+    expect(on.surface.floorPaletteTie).toBe(true);
+    const off = setSolidFloorPaletteTie(
+      setSurfaceFloorPaletteTie(on, false),
+      false,
+    );
+    expect(off.solid.floorPaletteTie).toBeUndefined();
+    expect(off.surface.floorPaletteTie).toBeUndefined();
   });
 });
 
