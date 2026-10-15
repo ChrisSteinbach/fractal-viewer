@@ -406,10 +406,12 @@ morphs into place instead of snapping (see **Presets** below).
     4D it remains at the origin with the full 4D radius while the rotor and W
     slice move. Changes are live presentation work and never rebuild the voxel
     grid. **Backdrop tint** opts the floor into the scene-palette tie: with it
-    checked and a palette-linked backdrop — **Auto**, or a delivered **Flame**
-    echo — the floor's own grey tints toward that palette's hue at the
-    grey's own brightness (the backdrop's derivation, floor-side), so floor
-    and backdrop read as one lighting environment. Off by default and
+    checked, the floor's own grey tints toward what the backdrop actually
+    renders — the palette's echo for **Auto** and a delivered **Flame**
+    echo, the authored stops of **Dark**, **Haze** and **Custom** (a subtle
+    cool cast for the built-in pairs) — at the grey's own brightness (the
+    backdrop's derivation, floor-side), so floor and backdrop read as one
+    lighting environment. Off by default and
     authored per floor, so a document that never checked the box renders the
     neutral grey byte-identically; the tie itself is a live uniform rewrite
     that re-derives from the document's palette ids on every load, never a
@@ -904,8 +906,8 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   visible but disables beside “Floor unavailable while Balloon encloses this
   Surface.” Its saved check and settings are retained, and return when Balloon
   goes off. A refused escape-time/Mandelbulb Balloon does not gate Floor; the
-  floor remains editable and visible there. The floor's grey ties to a
-  palette-linked backdrop exactly like Solid's (above) — its own
+  floor remains editable and visible there. The floor's grey ties to the
+  backdrop exactly like Solid's (above) — its own
   **Backdrop tint** checkbox, off by default. Expect the floor to
   cost something on heavy fold systems — every pixel of floor used to be
   a cheap background miss and now pays a shadow march against the fractal

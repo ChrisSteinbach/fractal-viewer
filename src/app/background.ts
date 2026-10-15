@@ -107,12 +107,14 @@ export interface BackgroundParams {
 export const DEFAULT_BACKGROUND: BackgroundParams = { mode: "dark" };
 
 /** The built-in backdrops as resolved stops — `constants.ts`'s authored hex
- * pairs, converted once. */
-const DARK_GRADIENT: BackgroundGradient = {
+ * pairs, converted once. Exported for the floor tie's static half
+ * (`state.ts`'s `resolveFloorPaletteAlbedo` samples the bottom stop the
+ * backdrop actually renders). */
+export const DARK_GRADIENT: BackgroundGradient = {
   top: hexToRgb01(DARK_BACKDROP.top),
   bottom: hexToRgb01(DARK_BACKDROP.bottom),
 };
-const HAZE_GRADIENT: BackgroundGradient = {
+export const HAZE_GRADIENT: BackgroundGradient = {
   top: hexToRgb01(HAZE_BACKDROP.top),
   bottom: hexToRgb01(HAZE_BACKDROP.bottom),
 };
@@ -246,22 +248,17 @@ export const AUTO_FLOOR_TUNING = {
 } as const;
 
 /**
- * The floor albedo the palette-linked backdrop ties to: the palette's own
- * LUT sample at {@link AUTO_FLOOR_TUNING}'s position, its chroma laid over
- * the neutral floor grey at the neutral grey's own luma. `"legacy"` has no
- * gradient to echo (`buildPaletteLUT` returns `null`) and a below-floor
- * sample carries no usable hue — both keep the neutral
- * {@link PRESENTATION_FLOOR_ALBEDO} exactly, so an untied scene renders
- * byte for byte as before. Pure and palette-total: the caller (state.ts's
- * `resolveFloorPaletteAlbedo`) owns WHICH palette ties and whether the
- * scene ties at all.
+ * The tie's shared curve, applied to ONE stop: lay the stop's chroma
+ * (`stop − its own luma`) over the neutral floor grey at the grey's own
+ * luma — {@link AUTO_FLOOR_TUNING}'s strength keeps the share, the
+ * `blackFloor` rule keeps a below-floor sample (near-noise, no usable hue)
+ * neutral. This is the ONE derivation both halves of the tie read: the
+ * palette-linked backdrops sample their palette's LUT first
+ * ({@link autoFloorAlbedo}), the static backdrops hand their authored
+ * bottom stop straight over. Pure.
  */
-export function autoFloorAlbedo(palette: PaletteSpec): Vec3 {
-  const lut = buildPaletteLUT(palette);
-  if (lut === null) return [...PRESENTATION_FLOOR_ALBEDO] as Vec3;
-  const o = Math.round(AUTO_FLOOR_TUNING.t * 255) * 3;
-  const sample: Vec3 = [lut[o], lut[o + 1], lut[o + 2]];
-  const luma = luma709(sample);
+export function stopFloorAlbedo(bottom: RgbStop): Vec3 {
+  const luma = luma709(bottom);
   if (luma < AUTO_FLOOR_TUNING.blackFloor) {
     return [...PRESENTATION_FLOOR_ALBEDO] as Vec3;
   }
@@ -269,10 +266,28 @@ export function autoFloorAlbedo(palette: PaletteSpec): Vec3 {
   const channel = (base: number, s: number): number =>
     Math.min(1, Math.max(0, base + k * (s - luma)));
   return [
-    channel(PRESENTATION_FLOOR_ALBEDO[0], sample[0]),
-    channel(PRESENTATION_FLOOR_ALBEDO[1], sample[1]),
-    channel(PRESENTATION_FLOOR_ALBEDO[2], sample[2]),
+    channel(PRESENTATION_FLOOR_ALBEDO[0], bottom[0]),
+    channel(PRESENTATION_FLOOR_ALBEDO[1], bottom[1]),
+    channel(PRESENTATION_FLOOR_ALBEDO[2], bottom[2]),
   ];
+}
+
+/**
+ * The floor albedo the palette-linked backdrop ties to: the palette's own
+ * LUT sample at {@link AUTO_FLOOR_TUNING}'s position, through the shared
+ * curve ({@link stopFloorAlbedo}). `"legacy"` has no gradient to echo
+ * (`buildPaletteLUT` returns `null`) and a below-floor sample carries no
+ * usable hue — both keep the neutral {@link PRESENTATION_FLOOR_ALBEDO}
+ * exactly, so an untied scene renders byte for byte as before. Pure and
+ * palette-total: the caller (state.ts's `resolveFloorPaletteAlbedo`) owns
+ * WHICH palette ties and whether the scene ties at all.
+ */
+export function autoFloorAlbedo(palette: PaletteSpec): Vec3 {
+  const lut = buildPaletteLUT(palette);
+  if (lut === null) return [...PRESENTATION_FLOOR_ALBEDO] as Vec3;
+  const o = Math.round(AUTO_FLOOR_TUNING.t * 255) * 3;
+  const sample: RgbStop = [lut[o], lut[o + 1], lut[o + 2]];
+  return stopFloorAlbedo(sample);
 }
 
 /**

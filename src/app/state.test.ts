@@ -205,8 +205,12 @@ import {
 import {
   autoBackground,
   autoFloorAlbedo,
+  DARK_GRADIENT,
+  HAZE_GRADIENT,
   resolveBackground,
+  stopFloorAlbedo,
 } from "./background";
+import type { BackgroundGradient } from "./background";
 import {
   barnsleyFern,
   defaultFinalTransform,
@@ -2475,29 +2479,64 @@ describe("resolveSceneBackground", () => {
 });
 
 describe("resolveFloorPaletteAlbedo", () => {
-  it("stays neutral for the static backdrops in either source, per floor", () => {
-    for (const mode of ["dark", "haze", "custom"] as const) {
-      const state = setBackgroundMode(initialState(true), mode);
-      for (const tie of [true, undefined]) {
-        const tied = setSolidFloorPaletteTie(
-          setSurfaceFloorPaletteTie(state, tie === true),
-          tie === true,
-        );
-        expect(resolveFloorPaletteAlbedo(tied, "gradient", "solid")).toBeNull();
-        expect(resolveFloorPaletteAlbedo(tied, "flame", "surface")).toBeNull();
-      }
+  it("ties every backdrop's own bottom stop while the floor's intent is authored", () => {
+    for (const mode of ["dark", "haze"] as const) {
+      const state = setBackgroundMode(
+        setSolidFloorPaletteTie(
+          setSurfaceFloorPaletteTie(initialState(true), true),
+          true,
+        ),
+        mode,
+      );
+      const expected = stopFloorAlbedo(
+        mode === "dark" ? DARK_GRADIENT.bottom : HAZE_GRADIENT.bottom,
+      );
+      expect(resolveFloorPaletteAlbedo(state, "gradient", "solid")).toEqual(
+        expected,
+      );
+      expect(resolveFloorPaletteAlbedo(state, "gradient", "surface")).toEqual(
+        expected,
+      );
     }
   });
 
-  it("stays neutral while the floor's tie intent is not authored", () => {
-    const state = setBackgroundMode(
-      setRampPaletteId(initialState(true), "sunset"),
-      "auto",
+  it("ties a custom backdrop's authored bottom stop", () => {
+    const custom: BackgroundGradient = {
+      top: [1, 0, 0],
+      bottom: [0, 0, 1],
+    };
+    const state = setBackgroundCustom(
+      setBackgroundMode(
+        setSolidFloorPaletteTie(initialState(true), true),
+        "custom",
+      ),
+      custom,
     );
-    // The shipped default: a document that never checked the box renders
-    // the neutral grey even under a palette-linked backdrop.
+    expect(resolveFloorPaletteAlbedo(state, "gradient", "solid")).toEqual(
+      stopFloorAlbedo([0, 0, 1]),
+    );
+  });
+
+  it("stays neutral while the floor's tie intent is not authored, every mode", () => {
+    for (const mode of ["dark", "haze", "auto"] as const) {
+      const state = setBackgroundMode(initialState(true), mode);
+      expect(resolveFloorPaletteAlbedo(state, "gradient", "solid")).toBeNull();
+      expect(
+        resolveFloorPaletteAlbedo(state, "gradient", "surface"),
+      ).toBeNull();
+      expect(resolveFloorPaletteAlbedo(state, "flame", "solid")).toBeNull();
+      expect(resolveFloorPaletteAlbedo(state, "flame", "surface")).toBeNull();
+    }
+  });
+
+  it("stays neutral for a custom mode with no authored payload", () => {
+    // The reducer seeds a payload before the mode, so this shape is only
+    // reachable by hand — the defensive null keeps it honest anyway.
+    const state = setSolidFloorPaletteTie(
+      { ...initialState(true), background: { mode: "custom" } },
+      true,
+    );
     expect(resolveFloorPaletteAlbedo(state, "gradient", "solid")).toBeNull();
-    expect(resolveFloorPaletteAlbedo(state, "gradient", "surface")).toBeNull();
   });
 
   it("ties a floor whose own intent is authored, and only that floor", () => {
@@ -2546,7 +2585,8 @@ describe("resolveFloorPaletteAlbedo", () => {
       autoFloorAlbedo("aurora"),
     );
     // The same state under the gradient source is the dark placeholder the
-    // subjects' suppression keeps — no tie.
+    // subjects' suppression keeps — a loading state, not an authored
+    // choice, so the tie waits for the real echo.
     expect(resolveFloorPaletteAlbedo(state, "gradient", "surface")).toBeNull();
   });
 

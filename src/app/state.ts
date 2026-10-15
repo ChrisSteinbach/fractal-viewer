@@ -52,7 +52,13 @@ import {
   resolveChaosEntry,
   runChaosGame,
 } from "../fractal/chaos-game";
-import { autoFloorAlbedo, resolveBackground } from "./background";
+import {
+  autoFloorAlbedo,
+  DARK_GRADIENT,
+  HAZE_GRADIENT,
+  resolveBackground,
+  stopFloorAlbedo,
+} from "./background";
 import { resolveCondensationDepthBand } from "../fractal/condensation-de";
 import type { CondensationDepthBand } from "../fractal/condensation-de";
 import type { ShapeSpec } from "../fractal/shapes";
@@ -3694,21 +3700,26 @@ export function resolveSceneBackground(state: AppState): BackgroundGradient {
 
 /**
  * The presentation floor's palette tie — the albedo the floor's neutral
- * grey takes while the backdrop ON SCREEN is palette-linked, `null` (stay
- * neutral) for every other backdrop. The tie is OPT-IN per floor:
- * `mode`'s own `floorPaletteTie` flag must be authored (`true`), so a
- * document that never checked the box renders the neutral grey even under
- * an auto/flame backdrop. What ties follows what is actually showing,
- * `source` being main.ts's `liveBackgroundSource`: in `"flame"` mode a
- * delivered Flame echo image ties to its own authored palette
- * ({@link resolveFlameBackdropPalette}), an `"auto"` gradient ties to the
- * active render's palette ({@link activeScenePalette}), and everything
- * else — dark, haze, custom, a `"flame"` mode still showing its dark
- * placeholder (the subjects suppress the echo) — stays neutral. The curve
- * is `background.ts`'s {@link autoFloorAlbedo}; the derived value is
- * session-only, never persisted — the document keeps the mode, the flag
- * and the palette ids it already carries, and the tie re-derives from them
- * on every load exactly like the `"auto"` backdrop's own stops.
+ * grey takes while the backdrop ON SCREEN can supply one, `null` (stay
+ * neutral) otherwise. The tie is OPT-IN per floor: `mode`'s own
+ * `floorPaletteTie` flag must be authored (`true`), so a document that
+ * never checked the box renders the neutral grey under every backdrop.
+ * WHAT TIES FOLLOWS WHAT IS ACTUALLY ON SCREEN, `source` being main.ts's
+ * `liveBackgroundSource`: in `"flame"` mode a delivered Flame echo image
+ * ties to its own authored palette ({@link resolveFlameBackdropPalette}),
+ * an `"auto"` gradient ties to the active render's palette
+ * ({@link activeScenePalette}), and the STATIC backdrops tie to the bottom
+ * stop they themselves render — `"dark"`/`"haze"`'s authored pair
+ * (a subtle cool cast; the stops are near-neutral) and `"custom"`'s
+ * authored gradient. The one state that stays neutral is a `"flame"` mode
+ * still showing its dark placeholder (`source === "gradient"`): a loading
+ * state, not an authored choice, so the tie waits for the real echo rather
+ * than flashing a dark-tinted floor before the palette-tinted one. The
+ * curve is `background.ts`'s {@link autoFloorAlbedo} / {@link stopFloorAlbedo};
+ * the derived value is session-only, never persisted — the document keeps
+ * the mode, the flag and the palette ids it already carries, and the tie
+ * re-derives from them on every load exactly like the `"auto"` backdrop's
+ * own stops.
  */
 export function resolveFloorPaletteAlbedo(
   state: AppState,
@@ -3722,6 +3733,15 @@ export function resolveFloorPaletteAlbedo(
   }
   if (state.background.mode === "auto") {
     return autoFloorAlbedo(activeScenePalette(state));
+  }
+  if (state.background.mode === "dark") {
+    return stopFloorAlbedo(DARK_GRADIENT.bottom);
+  }
+  if (state.background.mode === "haze") {
+    return stopFloorAlbedo(HAZE_GRADIENT.bottom);
+  }
+  if (state.background.mode === "custom" && state.background.custom) {
+    return stopFloorAlbedo(state.background.custom.bottom);
   }
   return null;
 }
