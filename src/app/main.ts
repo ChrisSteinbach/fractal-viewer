@@ -408,7 +408,7 @@ import {
   motionClipFrameCount,
   resolveMotionClip,
   resolveMotionExportFps,
-  waitForFlameFrame,
+  waitForFrameRestart,
   type MotionKind,
 } from "./motion-export";
 import { sameProjection } from "./four-d-worker-view";
@@ -2273,9 +2273,9 @@ async function main(): Promise<void> {
   let lastProjectionSnapshot: number[] | null = null;
 
   function nonFlatOfActiveRenderSession(): boolean {
-    return state.renderMode === "surface"
-      ? surfaceSessionIs4D
-      : activeFlameNonFlat;
+    if (state.renderMode === "surface") return surfaceSessionIs4D;
+    if (state.renderMode === "solid") return activeSolidNonFlat;
+    return activeFlameNonFlat;
   }
 
   /** The Capture section's "Record motion" button: start a frame-exact clip
@@ -2360,11 +2360,11 @@ async function main(): Promise<void> {
   /**
    * One motion-clip run: `offline-export.ts`'s driver loop with a different
    * motion source. There is no park machinery — every frame's convergence is
-   * awaited inside `renderFrame` (flame: the two-phase restart-then-budget
-   * wait; surface compute: the force-frame trace; surface WebGL: the
-   * synchronous full-tier strip drain inside the forced tick) — so
-   * `renderParked` is constant false and the virtual clock never holds.
-   * `stepFrame` advances the ONE automatic motion and commits it; the
+   * awaited inside `renderFrame` (flame and solid: the two-phase
+   * restart-then-budget wait; surface compute: the force-frame trace;
+   * surface WebGL: the synchronous full-tier strip drain inside the forced
+   * tick) — so `renderParked` is constant false and the virtual clock never
+   * holds. `stepFrame` advances the ONE automatic motion and commits it; the
    * convergence await and the paint both happen in `renderFrame`, keeping
    * the OfflineExportDeps contract's "paint is the final synchronous act"
    * shape. The `finally` unwinds exactly what `driveOfflineExport`'s does:
@@ -2391,7 +2391,9 @@ async function main(): Promise<void> {
       capFrames,
     );
     const maxFrames = Math.max(1, totalFrames);
+    const clipMode = state.renderMode;
     const flameMode = state.renderMode === "flame";
+    const solidMode = state.renderMode === "solid";
     const surfaceMode = state.renderMode === "surface";
     // The committed-pose guard: skip a frame whose motion advanced to
     // exactly the last committed pose (a zero-advance edge — a paused
@@ -2433,6 +2435,13 @@ async function main(): Promise<void> {
       stopWaiter = null;
     };
     motionExportStop = stopRun;
+    // The wait's stop predicate doubles as the session-death guard: a
+    // worker error exits its session and drops the app back to Points
+    // WITHOUT passing a chokepoint (nothing stops the run), so the wait
+    // would otherwise park forever on a flag nothing will ever move again —
+    // the export-wait policy's own `renderMode() !== mode` check, applied
+    // here.
+    const stillOwned = () => !running || state.renderMode !== clipMode;
     // A resize changes the canvas the encoder is pinned to — the realtime
     // capture's own stop rule, kept for parity.
     const onResize = (): void => stopRun();
@@ -2467,6 +2476,22 @@ async function main(): Promise<void> {
                 frameAwait = true;
                 flameSession.post({ type: "setFourDView", view });
               }
+            } else if (solidMode) {
+              // The solid worker bakes the pose into its density volume, so
+              // the commit is the settled-edit path itself — its own dedup,
+              // revision bump, first-frame gate closure, status restart and
+              // post, exactly what a manual rotor edit does. One FULL VOXEL
+              // REBUILD per frame is the honest per-frame cost this clip
+              // signs up for (the flame tumble clip's own cost class); the
+              // completion wait below holds each frame until its rebuild's
+              // budget is met.
+              const view = fourDWorkerView();
+              const commitKey = JSON.stringify(view);
+              if (commitKey !== lastCommitted) {
+                lastCommitted = commitKey;
+                frameAwait = true;
+                commitFourDWorkerView();
+              }
             } else {
               const commitKey = JSON.stringify([
                 fourDView.matrix(),
@@ -2499,8 +2524,10 @@ async function main(): Promise<void> {
                 flameSession.post({ type: "setProjection", projection });
               }
             }
-            // Surface 3D: nothing to commit here — the camera lives in the
-            // force-frame spec, assembled per frame in renderFrame below.
+            // Surface 3D and flat Solid: nothing to commit here — the
+            // surface camera lives in the force-frame spec, and the solid
+            // volume is world-space (its camera is a raymarcher uniform),
+            // both assembled per frame in renderFrame below.
           }
           return Promise.resolve();
         },
@@ -2512,25 +2539,33 @@ async function main(): Promise<void> {
           // applied here so the surface spec assembles from THIS frame's
           // projection (the same ordering fix the timeline export gets).
           scene.applyCamera(orbit);
-          if (flameMode) {
+          if (flameMode || solidMode) {
             // The restart's accumulation must be complete before this
             // frame paints: the two-phase wait (restart landed, then
             // budget met) consumes the signal stream the progress events
-            // already feed. A stopped run resolves false and paints
-            // nothing more. A frame whose commit was skipped (the
-            // zero-advance edge) re-encodes the previous frame's pixels —
-            // no wait, or it would hang on a `restarted` that never comes.
+            // already feed — flame's own and solid's revision-filtered
+            // restarted/grid stream alike. A stopped run (or a session
+            // that died out from under the clip) resolves false, stops the
+            // run, and paints nothing more. A frame whose commit was
+            // skipped (the zero-advance edge) re-encodes the previous
+            // frame's pixels — no wait, or it would hang on a `restarted`
+            // that never comes.
             if (frameAwait) {
               const stopSignal = () =>
                 new Promise<void>((resolve) => {
                   stopWaiter = resolve;
                 });
-              const done = await waitForFlameFrame(
-                () => renderComplete.flame,
+              const done = await waitForFrameRestart(
+                flameMode
+                  ? () => renderComplete.flame
+                  : () => renderComplete.solid,
                 () => Promise.race([nextRenderSignal(), stopSignal()]),
-                () => !running,
+                stillOwned,
               );
-              if (!done) return;
+              if (!done) {
+                stopRun();
+                return;
+              }
             }
             tickRender(frameNowMs, true);
             return;
@@ -14181,8 +14216,15 @@ async function main(): Promise<void> {
       if (!viewIs4D) {
         const dt = Math.min((now - lastMotionTickMs) / 1000, 0.1);
         lastMotionTickMs = now;
+        // An offline driver's frames own the camera: the motion clip
+        // advances this same turntable itself in stepFrame (a live-loop tick
+        // interleaving its own advance would double the authored rate), and
+        // the timeline export parks on authored poses. The realtime
+        // recorder is NOT one of these — it exists to record this motion.
         if (
           autoOrbitOn &&
+          motionExportStop === null &&
+          offlineExport === null &&
           !evolutionModalOpen &&
           !gestures.gestureActive() &&
           !cameraTween.poseGliding
