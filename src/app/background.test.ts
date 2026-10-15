@@ -9,6 +9,7 @@ import {
   lerpBackground,
   luma709,
   resolveBackground,
+  stopFloorAlbedo,
 } from "./background";
 import type { BackgroundGradient } from "./background";
 import { DARK_BACKDROP, HAZE_BACKDROP, hexToRgb01 } from "./constants";
@@ -102,6 +103,36 @@ describe("autoBackground", () => {
     for (const channel of gradient.bottom) {
       expect(channel).toBeCloseTo(bottomMax, 10);
     }
+  });
+});
+
+describe("stopFloorAlbedo", () => {
+  const NEUTRAL = [...PRESENTATION_FLOOR_ALBEDO] as [number, number, number];
+
+  it("is the neutral floor for a pure-grey stop (no chroma to lay over)", () => {
+    expect(stopFloorAlbedo([0.3, 0.3, 0.3])).toEqual(NEUTRAL);
+  });
+
+  it("is the neutral floor for a below-blackFloor stop (no usable hue)", () => {
+    expect(stopFloorAlbedo([0.01, 0.01, 0.01])).toEqual(NEUTRAL);
+  });
+
+  it("preserves the floor's own luma and follows the stop's hue direction", () => {
+    const albedo = stopFloorAlbedo([0.12, 0.13, 0.22]);
+    expect(luma709(albedo)).toBeCloseTo(luma709(NEUTRAL), 10);
+    expect(albedo[2]).toBeGreaterThan(albedo[0]);
+  });
+
+  it("autoFloorAlbedo reads through the same curve", () => {
+    // A palette whose LUT at the tie's sample position is pure blue: the
+    // palette-sampling half and the stop-sampling half agree exactly.
+    const lutBlue = {
+      stops: [
+        [0, 0, 1],
+        [0, 0, 1],
+      ],
+    } as const;
+    expect(autoFloorAlbedo(lutBlue)).toEqual(stopFloorAlbedo([0, 0, 1]));
   });
 });
 
