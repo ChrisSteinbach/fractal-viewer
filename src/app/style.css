@@ -2585,6 +2585,54 @@ summary.editor-group-title {
   max-width: 430px;
 }
 
+/* The scene description dialog: a copyable textarea over the reroll/copy
+   row. Narrower than the gallery dialog — the text is two short sentences,
+   and a wide box invites drafting prose the character count then punishes. */
+.describe-dialog {
+  max-width: 480px;
+}
+
+.describe-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.describe-body textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 84px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.5;
+}
+
+.describe-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.describe-link-option {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.describe-link-option.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* The prose outgrows a phone screen, and the dialog column clips (overflow:
    hidden) — without a scrollable body the tail (the Learn-more links) is
    unreachable. `auto` also lifts the flex min-content floor, letting the
