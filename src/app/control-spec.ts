@@ -130,6 +130,7 @@ import {
   setSolidEnvLight,
   setSolidFloorEmission,
   setSolidFloorEnabled,
+  setSolidFloorPaletteTie,
   setSolidFloorPentagrid,
   setSolidFloorPattern,
   setSolidFloorTileScale,
@@ -146,6 +147,7 @@ import {
   setSurfaceDepthOfField,
   setSurfaceEnvLight,
   setSurfaceFloorEmission,
+  setSurfaceFloorPaletteTie,
   setSurfaceFloorPentagrid,
   setSurfaceFloorPattern,
   setSurfaceFloorTileScale,
@@ -2726,6 +2728,16 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     effect: solidParamsEffect,
   },
   {
+    // The scene-palette tie's opt-in: live (the tie is a packed albedo,
+    // never a shader variant); the re-derive rides the backdrop pipeline
+    // trackAutoBackground already drives, whose first act is the tie push.
+    kind: "checkbox",
+    id: "solidFloorPaletteTieCheckbox",
+    read: (s) => s.solid.floorPaletteTie === true,
+    apply: (s, checked) => setSolidFloorPaletteTie(s, checked),
+    effect: (s, fx) => fx.trackAutoBackground(),
+  },
+  {
     kind: "select",
     id: "solidFloorPatternSelect",
     read: (s) => s.solid.floorPattern,
@@ -2993,6 +3005,15 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     read: (s) => s.surface.floorPattern,
     apply: (s, raw) => setSurfaceFloorPattern(s, raw as SurfaceFloorPattern),
     effect: surfaceParamsEffect,
+  },
+  {
+    // The Surface floor's own scene-palette tie opt-in — the Solid twin's
+    // live albedo rewrite, no restart.
+    kind: "checkbox",
+    id: "surfaceFloorPaletteTieCheckbox",
+    read: (s) => s.surface.floorPaletteTie === true,
+    apply: (s, checked) => setSurfaceFloorPaletteTie(s, checked),
+    effect: (s, fx) => fx.trackAutoBackground(),
   },
   // The Surface twin of Solid's pentagrid details above.
   ...pentagridSectionControls(SURFACE_PENTAGRID_WIRE),

@@ -405,10 +405,15 @@ morphs into place instead of snapping (see **Presets** below).
     (0–4, default 0). The floor uses the cloud's stable enclosing sphere: in
     4D it remains at the origin with the full 4D radius while the rotor and W
     slice move. Changes are live presentation work and never rebuild the voxel
-    grid. With a palette-linked backdrop — **Auto**, or a delivered **Flame**
+    grid. **Backdrop tint** opts the floor into the scene-palette tie: with it
+    checked and a palette-linked backdrop — **Auto**, or a delivered **Flame**
     echo — the floor's own grey tints toward that palette's hue at the
     grey's own brightness (the backdrop's derivation, floor-side), so floor
-    and backdrop read as one lighting environment; the Penrose color rules
+    and backdrop read as one lighting environment. Off by default and
+    authored per floor, so a document that never checked the box renders the
+    neutral grey byte-identically; the tie itself is a live uniform rewrite
+    that re-derives from the document's palette ids on every load, never a
+    persisted color. The Penrose color rules
     that paint their own palette are untouched, and the grout edge stays
     neutral. Balloon has no horizon, so an effective Balloon temporarily hides
     the floor while preserving the authored checkbox and appearance settings;
@@ -900,7 +905,8 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   Surface.” Its saved check and settings are retained, and return when Balloon
   goes off. A refused escape-time/Mandelbulb Balloon does not gate Floor; the
   floor remains editable and visible there. The floor's grey ties to a
-  palette-linked backdrop exactly like Solid's (above). Expect the floor to
+  palette-linked backdrop exactly like Solid's (above) — its own
+  **Backdrop tint** checkbox, off by default. Expect the floor to
   cost something on heavy fold systems — every pixel of floor used to be
   a cheap background miss and now pays a shadow march against the fractal
   — absorbed by the same bounded-progress machinery as every other

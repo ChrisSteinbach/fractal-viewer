@@ -2360,7 +2360,11 @@ function decodeSolidParams(
   const out = { ...defaults };
   const numeric: Exclude<
     keyof SolidParams,
-    "paletteId" | "floorEnabled" | "floorPattern" | "floorPentagrid"
+    | "paletteId"
+    | "floorEnabled"
+    | "floorPattern"
+    | "floorPentagrid"
+    | "floorPaletteTie"
   >[] = [
     "resolution",
     "iterations",
@@ -2415,6 +2419,10 @@ function decodeSolidParams(
     floorTileScale: clampToSpec(PARAM.solidFloorTileScale, out.floorTileScale),
     floorEmission: clampToSpec(PARAM.solidFloorEmission, out.floorEmission),
     ...(floorPentagrid ? { floorPentagrid } : {}),
+    // The scene-palette tie's sparse intent: written only when authored
+    // (true), absent = off — a document that never checked the box keeps
+    // its short link byte-identical.
+    ...(s.floorPaletteTie === true ? { floorPaletteTie: true } : {}),
     paletteId,
   };
 }
@@ -2535,6 +2543,7 @@ function decodeSurfaceParams(
     | "paletteId"
     | "floorPattern"
     | "floorPentagrid"
+    | "floorPaletteTie"
     | "lighting"
   >[] = [
     "lightAzimuth",
@@ -2613,6 +2622,7 @@ function decodeSurfaceParams(
     ),
     floorEmission: clampToSpec(PARAM.surfaceFloorEmission, out.floorEmission),
     ...(floorPentagrid ? { floorPentagrid } : {}),
+    ...(s.floorPaletteTie === true ? { floorPaletteTie: true } : {}),
     ...(lighting === undefined ? {} : { lighting }),
   };
 }
@@ -3630,6 +3640,9 @@ export function encodeScene(s: SceneSnapshot): string {
       // a document that never touched the controls keeps its short link
       // byte-identical. Numeric leaves round4 like every other float.
       ...encodeFloorPentagrid(s.solid.floorPentagrid),
+      // The scene-palette tie's sparse intent, same rule: written only when
+      // authored (true), absent = the neutral floor.
+      ...(s.solid.floorPaletteTie ? { floorPaletteTie: true as const } : {}),
       paletteId: s.solid.paletteId,
     },
     surface: {
@@ -3652,6 +3665,7 @@ export function encodeScene(s: SceneSnapshot): string {
       floorTileScale: round4(s.surface.floorTileScale),
       floorEmission: round4(s.surface.floorEmission),
       ...encodeFloorPentagrid(s.surface.floorPentagrid),
+      ...(s.surface.floorPaletteTie ? { floorPaletteTie: true as const } : {}),
       ...(s.surface.lighting === undefined
         ? {}
         : { lighting: cloneSurfaceLighting(s.surface.lighting) }),

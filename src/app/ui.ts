@@ -3990,6 +3990,7 @@ export class Ui {
     this.surfaceGroundPlaneCheckbox = this.byId("surfaceGroundPlaneCheckbox");
     this.surfaceGroundPlaneNote = this.byId("surfaceGroundPlaneNote");
     this.surfaceGroundPlaneDependentRows = [
+      this.byId("surfaceFloorPaletteTieRow"),
       this.byId("surfaceFloorPatternRow"),
       this.byId("surfaceFloorTileScaleRow"),
       this.byId("surfaceFloorEmissionRow"),
@@ -4006,6 +4007,7 @@ export class Ui {
       "surfaceFloorPentagridGroutRow",
     ].map((id) => this.byId(id));
     this.solidFloorDependentRows = [
+      this.byId("solidFloorPaletteTieRow"),
       this.byId("solidFloorPatternRow"),
       this.byId("solidFloorTileScaleRow"),
       this.byId("solidFloorEmissionRow"),

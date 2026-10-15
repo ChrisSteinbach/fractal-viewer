@@ -1547,15 +1547,21 @@ async function main(): Promise<void> {
     scene.setBackground(stops, state.background.shape ?? "linear");
     syncFloorPaletteTie();
   }
-  /** The presentation floor's palette tie: push the albedo the CURRENT
-   * backdrop's palette derives for the floor's neutral grey
+  /** The presentation floors' palette tie: push each floor's albedo — the
+   * CURRENT backdrop's palette derives it for that floor's neutral grey,
+   * and only while the floor's own `floorPaletteTie` intent is authored
    * (resolveFloorPaletteAlbedo reads liveBackgroundSource, so a delivered
    * Flame echo image ties to its own palette, an "auto" gradient to the
    * active render's, everything else unties). Value-guarded in the scene,
    * so calling it beside every push and re-derive costs nothing. */
   function syncFloorPaletteTie(): void {
     scene.setFloorPaletteAlbedo(
-      resolveFloorPaletteAlbedo(state, liveBackgroundSource),
+      "solid",
+      resolveFloorPaletteAlbedo(state, liveBackgroundSource, "solid"),
+    );
+    scene.setFloorPaletteAlbedo(
+      "surface",
+      resolveFloorPaletteAlbedo(state, liveBackgroundSource, "surface"),
     );
   }
   /** Snap the scene to the CURRENT document's backdrop, discarding any
