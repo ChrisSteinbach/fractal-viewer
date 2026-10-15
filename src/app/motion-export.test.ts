@@ -6,7 +6,7 @@ import {
   motionClipFrameCount,
   resolveMotionClip,
   resolveMotionExportFps,
-  waitForFlameFrame,
+  waitForFrameRestart,
 } from "./motion-export";
 
 describe("resolveMotionExportFps", () => {
@@ -68,16 +68,24 @@ describe("resolveMotionClip", () => {
     });
   });
 
+  it("records the auto-orbit turntable in a flat Solid session", () => {
+    expect(resolveMotionClip("solid", false)).toEqual({
+      ok: true,
+      kind: "orbit",
+    });
+  });
+
+  it("records the tumble in a non-flat Solid session", () => {
+    expect(resolveMotionClip("solid", true)).toEqual({
+      ok: true,
+      kind: "tumble",
+    });
+  });
+
   it("refuses Points with the enter-a-render-mode reason", () => {
     const plan = resolveMotionClip("points", true);
     expect(plan.ok).toBe(false);
-    if (!plan.ok) expect(plan.reason).toMatch(/Flame or Surface/);
-  });
-
-  it("refuses Solid as not supported yet", () => {
-    const plan = resolveMotionClip("solid", true);
-    expect(plan.ok).toBe(false);
-    if (!plan.ok) expect(plan.reason).toMatch(/Solid/);
+    if (!plan.ok) expect(plan.reason).toMatch(/Flame, Solid or Surface/);
   });
 
   it("refuses Points symmetrically in both dimensions", () => {
@@ -114,7 +122,7 @@ describe("motionClipFrameCount", () => {
   });
 });
 
-describe("waitForFlameFrame", () => {
+describe("waitForFrameRestart", () => {
   /** A scripted flag + a signal queue: `push` resolves one pending waiter
    * (a render-progress event landing), each `await` of the helper's
    * nextSignal parks until the next push. */
@@ -141,7 +149,7 @@ describe("waitForFlameFrame", () => {
     const { nextSignal, push } = makeSignals();
     let complete = true; // frame i−1 finished before the commit.
     const stopped = false;
-    const run = waitForFlameFrame(
+    const run = waitForFrameRestart(
       () => complete,
       nextSignal,
       () => stopped,
@@ -164,7 +172,7 @@ describe("waitForFlameFrame", () => {
   it("enters phase 2 directly when the session was mid-convergence at commit (frame 0)", async () => {
     const { nextSignal, push } = makeSignals();
     let complete = false; // the pre-commit accumulation never finished.
-    const run = waitForFlameFrame(
+    const run = waitForFrameRestart(
       () => complete,
       nextSignal,
       () => false,
@@ -181,7 +189,7 @@ describe("waitForFlameFrame", () => {
     const { nextSignal, push, pending } = makeSignals();
     let stopped = false;
     const complete = true;
-    const run = waitForFlameFrame(
+    const run = waitForFrameRestart(
       () => complete,
       nextSignal,
       () => stopped,
@@ -197,7 +205,7 @@ describe("waitForFlameFrame", () => {
   it("survives an extra restart landing during phase 2 (a mid-frame OOM ratchet)", async () => {
     const { nextSignal, push } = makeSignals();
     let complete = false;
-    const run = waitForFlameFrame(
+    const run = waitForFrameRestart(
       () => complete,
       nextSignal,
       () => false,

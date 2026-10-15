@@ -14,6 +14,19 @@
  * encodes. Not the realtime capture (`recorder.ts`): its timing is whatever
  * the event loop delivered, and a motion clip's whole point is that each
  * frame is fully converged at its own pose.
+ *
+ * Per-frame convergence cost is the renderer's own, and the three supported
+ * modes span it: Surface re-traces a force frame, Flame re-accumulates, and
+ * a non-flat Solid pays the heaviest commit in the app — one FULL VOXEL
+ * REBUILD per frame (bounds re-pilot, grid reallocation, the whole iteration
+ * budget, pack + hierarchy), because the pose is baked into the density
+ * volume itself and no cheaper reuse exists: a 4D rotation's 3D projection
+ * is a deformation, not a rigid motion of the previous volume. That is the
+ * same per-frame re-render class the Flame tumble clip already ships, made
+ * legible by the progress row and button, and cancellable at every frame.
+ * A FLAT Solid's orbit clip is the opposite extreme: the volume is
+ * world-space and the camera is a raymarcher uniform, so a frame is one
+ * paint with no worker commit at all.
  */
 
 /** Frame rate of the motion clip — the offline export's own constant, so
@@ -65,19 +78,19 @@ export type MotionClipPlan =
 /**
  * Which motion the session in `mode` can record, and which refusal to
  * disclose when none. `nonFlat` is the active session's dimension (the
- * flame session's own `activeFlameNonFlat`, the surface session's 4D-ness).
+ * flame session's own `activeFlameNonFlat`, the solid session's
+ * `activeSolidNonFlat`, the surface session's 4D-ness).
  *
  * - Points refuses: the realtime recorder already records it honestly — a
  *   points frame converges instantly, so a live capture IS a converged
  *   clip; the frame-exact machinery would buy nothing.
- * - Solid refuses (for now): a 4D pose commit is a full voxel rebuild per
- *   frame — its own cost question — and a flat solid's live orbit is
- *   already honestly recordable by the realtime capture.
- * - Flame and Surface support both kinds: a 4D session records the tumble
- *   (rotor commits — flame re-accumulates at the new rotor, the surface
- *   compute spec re-reads `view4` per frame), a flat one records the
- *   auto-orbit turntable (flame through the `setProjection` camera restart,
- *   surface through the camera living in the force-frame spec).
+ * - Flame, Solid and Surface support both kinds: a 4D session records the
+ *   tumble (rotor commits — flame re-accumulates at the new rotor, the
+ *   solid worker rebuilds its whole volume, the surface compute spec
+ *   re-reads `view4` per frame), a flat one records the auto-orbit
+ *   turntable (flame through the `setProjection` camera restart, surface
+ *   and solid through the camera being live at paint time — the solid
+ *   volume is world-space, so its frame needs no commit at all).
  */
 export function resolveMotionClip(
   mode: "points" | "flame" | "solid" | "surface",
@@ -87,13 +100,7 @@ export function resolveMotionClip(
     return {
       ok: false,
       reason:
-        "Motion clips record a Flame or Surface render — enter one of those modes first",
-    };
-  }
-  if (mode === "solid") {
-    return {
-      ok: false,
-      reason: "Solid motion clips aren't supported yet",
+        "Motion clips record a Flame, Solid or Surface render — enter one of those modes first",
     };
   }
   return { ok: true, kind: nonFlat ? "tumble" : "orbit" };
@@ -112,21 +119,27 @@ export function motionClipFrameCount(
 }
 
 /**
- * Await one flame frame's completion across a `setFourDView`/`setProjection`
- * accumulation restart — the two-phase signal wait.
+ * Await one frame's completion across a `setFourDView`/`setProjection`
+ * accumulation restart — the two-phase signal wait, shared by the Flame and
+ * Solid arms (the surface arm's convergence is awaited inside its own trace
+ * instead).
  *
  * WHY TWO PHASES: at the moment the driver commits frame i's pose, frame
- * i−1 is always complete (`renderComplete.flame` true) — and the worker's
- * last pre-restart chunk can still be in flight, reporting budget-met for
- * the OLD accumulation AFTER the commit was posted but BEFORE its
- * `restarted` event lands. A single "wait until complete" would consume
- * that stale true. Phase 1 therefore waits for the restart to zero the flag
- * (a `restarted` event is emitted unconditionally by `startAccumulation`,
- * so a commit that changed anything always produces one); phase 2 then
- * waits for the NEW accumulation's budget-met. Frame 0 entering
- * mid-convergence is the safe special case: the flag starts false, phase 1
- * exits immediately, and the discarded pre-commit accumulation cannot reach
- * budget — the first `true` phase 2 sees is this frame's.
+ * i−1 is always complete (`renderComplete.flame`/`renderComplete.solid`
+ * true) — and the worker's last pre-restart chunk can still be in flight,
+ * reporting budget-met for the OLD accumulation AFTER the commit was posted
+ * but BEFORE its `restarted` event lands. A single "wait until complete"
+ * would consume that stale true. Phase 1 therefore waits for the restart to
+ * zero the flag (a `restarted` event is emitted unconditionally by both
+ * workers' `startAccumulation`, so a commit that changed anything always
+ * produces one); phase 2 then waits for the NEW accumulation's budget-met.
+ * The solid worker's `viewRevision` echo gives its stale events a second,
+ * independent guard — the main thread drops any event bearing a superseded
+ * revision — but the flag itself needs the same two phases either way.
+ * Frame 0 entering mid-convergence is the safe special case: the flag starts
+ * false, phase 1 exits immediately, and the discarded pre-commit
+ * accumulation cannot reach budget — the first `true` phase 2 sees is this
+ * frame's.
  *
  * `isStopped` is checked on every wake so a stop (Cancel, a resize, the
  * session exiting) can't hang on a flag that will never move again; the
@@ -134,7 +147,7 @@ export function motionClipFrameCount(
  * pattern it mirrors. Returns false when stopped, true when the frame is
  * complete.
  */
-export async function waitForFlameFrame(
+export async function waitForFrameRestart(
   isComplete: () => boolean,
   nextSignal: () => Promise<void>,
   isStopped: () => boolean,

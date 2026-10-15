@@ -2011,22 +2011,22 @@ bench:surface` (`--display=:0` for real-driver rows;
     faststart muxer (handles B-frame reordering). Render keyframes PARK the
     clock while the render converges, then dwell the step's hold on the
     converged still — authored clip length.
-  - `motion-export.ts` — the motion-clip export's pure plan: the render
-    session's automatic motion recorded frame-exactly (4D → tumble, flat →
-    orbit; Points/Solid refuse). The flame frame's completion is a
-    TWO-PHASE signal wait (`restarted` zeroes `renderComplete.flame`,
-    then the new budget met) — a stale budget-met chunk can still be in
-    flight when the pose commits. Flame 3D rides a new `setProjection`
-    worker command; `FourDView.step` is the tumble's UNconditional
-    composition; pose edits/mode switches/gestures/exports/resize stop
-    the run. Length and rate are session sliders; Capture size sizes the
-    clip via `scene.beginExportFrames` (the held export ratio);
-    `?motionfps=N` is the gate-only override that WINS over the rate
-    slider. The WebGL arm's clip frames are synchronous drains the tier
-    clock never sees, so the unwind re-invalidates — otherwise the
-    settled latch sticks false to the next gesture. Gate:
-    `scripts/motion-export.verify.mjs` (surface legs → `--mode=x11::0`;
-    `--surfacegl` = the fallback arm's leg alone).
+  - `motion-export.ts` — the motion-clip export's pure plan: the session's
+    automatic motion recorded frame-exactly (4D → tumble, flat → orbit;
+    Points refuses; Solid rides BOTH — flat orbit one paint (world-space
+    camera), tumble commit the settled-edit path and ONE FULL VOXEL REBUILD
+    per frame, the flame clip's cost class, waited off
+    `renderComplete.solid`'s revisions). The flame/solid frame waits TWO
+    PHASES (`restarted` zeroes `renderComplete`, then budget met). Flame 3D
+    rides a `setProjection` worker command; `FourDView.step` is the
+    tumble's UNconditional composition; pose edits/mode switches/gestures/
+    exports/resize stop it; offline frames freeze the solid turntable's
+    ambient advance. Length/rate are session sliders; Capture size rides
+    `scene.beginExportFrames`; `?motionfps=N` (gate-only) WINS over the
+    rate slider. The WebGL arm's clip frames are synchronous drains the
+    tier clock never sees; the unwind re-invalidates or the settled latch
+    sticks false. Gate: `scripts/motion-export.verify.mjs` (surface legs
+    need `--mode=x11::0`; `--surfacegl` = that arm alone).
   - `isolation-handoff.ts` — the session-only sessionStorage bridge
     carrying `renderMode` across the cross-origin-isolation reload
     (`register-sw.ts`'s `onBeforeIsolationReload`).
