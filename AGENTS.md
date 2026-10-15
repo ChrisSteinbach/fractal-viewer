@@ -382,10 +382,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     both FORWARD-ORBIT modes render plain — a filled solid's interior
     reaches the ball center, so its echo swallows the camera (the measured
     verdict for the escape folds; the Mandelbulb's own routing re-measured
-    it rather than inheriting it — DE(0) = 0 with 100% of a 0.1R
-    neighbourhood of the centre interior, union DE exactly 0 at the
-    session's own opening eye for R = 0.35 and 0.9 raw-ball radii, and a
-    flat featureless frame at every R) — and the estimator composed under
+    it rather than inheriting it — the figures are balloon-de.ts's module
+    doc's) — and the estimator composed under
     the union must be far-field SOUND (a true lower bound outside the
     ball; the escape heuristic's `|q|` is not).
     Balloon on/`R` persist in the scene document; `R` is authored NORMALIZED
@@ -1029,14 +1027,13 @@ bench:surface` (`--display=:0` for real-driver rows;
     the Böttcher `0.5·r·ln r/dr`. That does NOT reopen the sweep that
     refused the log form for the FOLD family — uniform-rescale equivariance
     cannot reach a map with `V(λy) = λ^d V(y)`.
-    THE PREDICTED STIFFNESS HAZARD DOES NOT REPRODUCE (the power-link
-    work's most useful result: the prediction's blank-frame figures are
-    the PROTOTYPE's CHAINING arm's, and cycling re-tethers the query after
-    every link).
-    SO NO AUTO-SCALE AND NO NEW SIGNAL — a hint computed from the
-    closed-form bound (`escapeLinkStiffnessLimit`, kept executable as the
-    refuted prediction's record) was written and then DELETED, because it
-    fires on every row of that table and every one of them renders.
+    THE PREDICTED STIFFNESS HAZARD DOES NOT REPRODUCE — the blank-frame
+    figures were the PROTOTYPE's CHAINING arm's, and cycling re-tethers
+    the query after every link (the story, the table and the figures:
+    docs/escape-time-family.md). SO NO AUTO-SCALE AND NO NEW SIGNAL: the
+    closed-form hint (`escapeLinkStiffnessLimit`) was written, measured
+    firing on every row, and DELETED — it stays executable as the refuted
+    prediction's record.
     TWO INSTRUMENT RULES. Ball fill is a seeded uniform sample against
     `escapeSetContains`, NEVER A GRID (a fold's structure sits on its own
     walls — the integers, at the classic `boxLimit` — so a grid's planes
@@ -1327,18 +1324,14 @@ bench:surface` (`--display=:0` for real-driver rows;
     (`SURFACE_STRIP_SYNC_TAX_MS`), so strips go out as individually FLUSHED
     draw groups (the watchdog's preemption boundaries) fenced only per
     ~`SURFACE_STRIP_FENCE_GROUP_MS` of predicted work; batch measurements
-    SUBTRACT the tax to price MARGINAL trace work. A FLAT subtraction was
-    NOT enough on its own: a single ms/px number absorbs whatever fixed
-    cost the constant under-states, which is a ONE-WAY RATCHET into a 1px
-    absorbing state. The planner now
-    carries the COMPUTE arm's two-term model instead
-    (`surface-compute.ts`'s `ShadeHitCost`, whose own one-workgroup-floor
-    comment describes this bug as its own pre-fix design):
+    SUBTRACT the tax to price MARGINAL trace work — and a FLAT subtraction
+    alone ratchets one-way into a 1px absorbing state (the doc carries the
+    measured collapse), which is why the planner carries the COMPUTE arm's
+    two-term model (`surface-compute.ts`'s `ShadeHitCost`):
     `interceptMs` + `px * marginalMsPerPx`, each measurement's
     surprise split BY WIDTH so a narrow batch charges the INTERCEPT,
-    sizing off the marginal alone, the marginal's RISE rate-limited (the
-    direction that shrinks strips — compute limits its FALL, for the
-    opposite reason, so the direction is reasoned and not copied), and a
+    sizing off the marginal alone, the marginal's RISE rate-limited
+    (deliberately the strip-shrinking direction), and a
     sane-unit floor `STRIP_MIN_PX` instead of one pixel. THE CLAMP ORDER
     IS SAFETY-CRITICAL: model, growth cap, floor, then
     `STRIP_WORST_CASE_CAP_MS` LAST — wherever floor and cap disagree the
@@ -1525,18 +1518,13 @@ bench:surface` (`--display=:0` for real-driver rows;
     DISPLAY name (index.html's `<option>` labels are the app's single source
     of those), so the caller injects a `paletteName` lookup keyed by which
     `<select>` picked it.
-  - `describe.ts` — the Share section's scene description as PROSE:
-    `describeScene`, a pure derivation (legend-spec's pattern) composing a
-    post-sized two-sentence description for the user to copy, edit and
-    post. Three enforced policies: conversational, not technical; the
-    COMPOSITION never the inventory (the map count is ONE clause,
-    variation types speak only as the mix's identity, mechanisms cap at
-    two); only what is authored (absent means unmentioned). The subject
-    precedence copies `scene-dimension.ts`'s and the transform family
-    comes from the SAME analyzers the renderers route through; blocks
-    dormant in a mode (Menger/glass/chain twist outside Surface) stay
-    silent there; the reroll re-words the same facts through an injected
-    rng (same seed, same text).
+  - `describe.ts` — the scene description as PROSE: `describeScene`, a
+    pure derivation composing a post-sized description to copy, edit and
+    post. The prose policies (conversational; the composition never the
+    inventory; only what is authored) and the mode-dormancy rule live in
+    the module doc; the subject precedence copies `scene-dimension.ts`'s
+    and the family comes from the SAME analyzers the renderers route
+    through.
   - `constants.ts` — shared UI/interaction magic numbers.
   - `interactions.ts` — pointer/touch/wheel handling (Three.js raycasting).
     Flame's frozen gate is action-specific: it refuses ordinary camera and
