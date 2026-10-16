@@ -2257,11 +2257,51 @@ export function condensationDeepBandRefusal(
 }
 
 /**
+ * Compaction of a supported B map list by EXACT composed-affine equality.
+ * Bit-equal maps carry the same inverse, the same sigma pricing and the
+ * same descendants, so dropping later duplicates preserves the B-word set
+ * word for word — and that is what widened the finite emitter-only prefix
+ * admission: five identity B maps are one word per level, not five, so the
+ * beam's four lanes see one branch where the authored count saw five.
+ * Mathematically-equal-but-bit-different duplicates stay: their descendants
+ * differ in rounding, and merging them would claim an equivalence the
+ * numeric record does not make. The converse is safe — bit-equality means
+ * the two maps apply identically at every site the engine runs.
+ */
+export function dedupeScheduleTransforms(
+  transforms: readonly Transform[],
+): Transform[] {
+  const affines = transforms.map(composeAffine);
+  const sameComposed = (a: Affine, b: Affine): boolean => {
+    for (let k = 0; k < a.m.length; k++) {
+      if (!Object.is(a.m[k], b.m[k])) return false;
+    }
+    for (let k = 0; k < a.t.length; k++) {
+      if (!Object.is(a.t[k], b.t[k])) return false;
+    }
+    return true;
+  };
+  return transforms.filter((_, i) => {
+    const a = affines[i];
+    for (let j = 0; j < i; j++) {
+      if (sameComposed(a, affines[j])) return false;
+    }
+    return true;
+  });
+}
+
+/**
  * Retain every unfinished finite B word before C0 is evaluated. The affine
  * frontier has four lanes; the final level may be wider because every
  * generated child's C0 term is folded before frontier selection. Dropping
  * an earlier in-ball B branch can turn an actual finite-union gap into a
  * bounding-ball hit. Ordinary recursive systems retain their existing gate.
+ *
+ * The count is the DISTINCT-map count, not the authored one: the supported
+ * list compacts through {@link dedupeScheduleTransforms} before it reaches
+ * the descent, so duplicate maps contribute one branch each and the
+ * remaining constraint is genuinely the frontier's distinct-word pressure
+ * at every level of the prefix.
  */
 export function emitterOnlySurfaceScheduleRefusal(
   transforms: readonly Transform[],
@@ -2270,8 +2310,10 @@ export function emitterOnlySurfaceScheduleRefusal(
   if (!surfaceSystemIsEmitterOnly(transforms)) return null;
   const prepared = prepareSchedule(schedule);
   if (!prepared || !schedule) return null;
-  const count = schedule.transforms.filter(
-    (t) => !prepared.weighted || (t.weight ?? 1) > 0,
+  const count = dedupeScheduleTransforms(
+    schedule.transforms.filter(
+      (t) => !prepared.weighted || (t.weight ?? 1) > 0,
+    ),
   ).length;
   return count ** (prepared.depth - 1) > 4
     ? "emitter-only Surface needs at most 4 unfinished schedule branches; reduce schedule depth or the number of active B maps"
@@ -2429,8 +2471,10 @@ export function analyzeSurfaceSystem(
   );
   if (scheduleRefusal) reasons.push(scheduleRefusal);
   if (preparedSchedule) {
-    const supported = schedule!.transforms.filter(
-      (t) => !preparedSchedule.weighted || (t.weight ?? 1) > 0,
+    const supported = dedupeScheduleTransforms(
+      schedule!.transforms.filter(
+        (t) => !preparedSchedule.weighted || (t.weight ?? 1) > 0,
+      ),
     );
     supported.forEach((t, i) => {
       const label = `schedule map ${i + 1}`;
@@ -2680,8 +2724,10 @@ export function buildSurfaceDE(
   let scheduleMaps: SurfaceDEMap[] | null = null;
   let scheduleTransforms: Transform[] | null = null;
   if (preparedSchedule && options.schedule) {
-    scheduleTransforms = options.schedule.transforms.filter(
-      (t) => !preparedSchedule.weighted || (t.weight ?? 1) > 0,
+    scheduleTransforms = dedupeScheduleTransforms(
+      options.schedule.transforms.filter(
+        (t) => !preparedSchedule.weighted || (t.weight ?? 1) > 0,
+      ),
     );
     scheduleMaps = scheduleTransforms.map((t, i) => {
       const affine = composeAffine(t);

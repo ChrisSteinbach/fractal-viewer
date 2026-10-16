@@ -5420,11 +5420,17 @@ describe("emitter-only finite unions", () => {
     const schedule = {
       depth: 2,
       transforms: Array.from({ length: 5 }, (_, id) =>
-        map({ id, position: [0, 0, 0], scale: [1, 1, 1] }),
+        map({
+          id,
+          // Distinct B maps: five genuinely different words per level, past
+          // what the four-lane frontier retains before C0 is evaluated.
+          position: [(id - 2) * 0.02, 0, 0],
+          scale: [1, 1, 1],
+        }),
       ),
     };
-    // This finite union is still the two spheres, but an unfinished fifth
-    // B word used to replace their exact +0.3 gap with a negative ball term.
+    // This finite union's nearest-word displacement beats an exact reading
+    // only when every unfinished word is retained; the beam cannot.
     for (const band of [undefined, { maxDepth: 0 }]) {
       const result = analyzeSurfaceSystem(
         [emitter],
@@ -5448,6 +5454,131 @@ describe("emitter-only finite unions", () => {
     expect(
       analyzeSurfaceSystem([emitter, map({ id: 1 })], null, schedule).status,
     ).not.toBe("ineligible");
+  });
+
+  it("compacts duplicate B maps to their one word set at every supported depth", () => {
+    const emitter = map({
+      position: [0, 0, 0],
+      scale: [1, 1, 1],
+      emitter: {
+        parts: [-0.4, 0.4].map((x) => ({
+          primitive: { kind: "sphere" as const, radius: 0.1 },
+          combine: "union" as const,
+          pose: { offset: [x, 0, 0] as [number, number, number] },
+        })),
+      },
+    });
+    // The former frontier-overflow adversary: five author-identical B maps.
+    // Their words compact to the identity word, the descent never holds
+    // more than one unfinished branch per level, and the two-sphere gap is
+    // exact at every depth — including depth 3, where the uncompacted
+    // descent's dropped duplicate used to fold a negative ball certificate
+    // over the true +0.3 clearance.
+    for (const depth of [2, 3]) {
+      const schedule = {
+        depth,
+        transforms: Array.from({ length: 5 }, (_, id) =>
+          map({ id, position: [0, 0, 0], scale: [1, 1, 1] }),
+        ),
+      };
+      const single = {
+        depth,
+        transforms: [map({ id: 0, position: [0, 0, 0], scale: [1, 1, 1] })],
+      };
+      for (const band of [undefined, { maxDepth: 0 }]) {
+        const de = buildSurfaceDE(
+          [emitter],
+          null,
+          { order: 1, plane: "xy" },
+          { schedule, condensationDepthBand: band },
+        );
+        const deduped = buildSurfaceDE(
+          [emitter],
+          null,
+          { order: 1, plane: "xy" },
+          { schedule: single, condensationDepthBand: band },
+        );
+        expect(estimateDistance(de, [0, 0, 0])).toBeCloseTo(0.27, 12);
+        expect(estimateDistanceRefined(de, [0, 0, 0])).toBeCloseTo(0.27, 12);
+        for (const [x, y, z] of [
+          [0.25, 0.05, 0],
+          [-0.25, 0, 0.05],
+          [0.39, 0, 0],
+          [0.41, 0, 0],
+          [0, 0, 0.2],
+          [0.1, 0.1, 0.1],
+        ] as const) {
+          expect(estimateDistance(de, [x, y, z])).toBeCloseTo(
+            estimateDistance(deduped, [x, y, z]),
+            10,
+          );
+          expect(estimateDistanceRefined(de, [x, y, z])).toBeCloseTo(
+            estimateDistanceRefined(deduped, [x, y, z]),
+            10,
+          );
+        }
+      }
+    }
+  });
+
+  it("admits multiplicity beyond the frontier when the word set stays small", () => {
+    const emitter = map({
+      position: [0, 0, 0],
+      scale: [1, 1, 1],
+      emitter: {
+        parts: [-0.4, 0.4].map((x) => ({
+          primitive: { kind: "sphere" as const, radius: 0.1 },
+          combine: "union" as const,
+          pose: { offset: [x, 0, 0] as [number, number, number] },
+        })),
+      },
+    });
+    // Four authored maps alternating two positions: the authored count
+    // would price 4^2 = 16 unfinished words at depth 3, but the word set is
+    // {X, Y}^3 over two distinct translations — two distinct words per
+    // level, inside the frontier. The two-map schedule spans the same set,
+    // so the gap matches it exactly.
+    const alternating = {
+      depth: 3,
+      transforms: [0, 1, 2, 3].map((id) =>
+        map({
+          id,
+          position: [id % 2 === 0 ? 0.005 : 0, 0, 0],
+          scale: [1, 1, 1],
+        }),
+      ),
+    };
+    const two = {
+      depth: 3,
+      transforms: [
+        map({ id: 0, position: [0.005, 0, 0], scale: [1, 1, 1] }),
+        map({ id: 1, position: [0, 0, 0], scale: [1, 1, 1] }),
+      ],
+    };
+    expect(analyzeSurfaceSystem([emitter], null, alternating).status).not.toBe(
+      "ineligible",
+    );
+    const de = buildSurfaceDE(
+      [emitter],
+      null,
+      { order: 1, plane: "xy" },
+      { schedule: alternating },
+    );
+    const twoDe = buildSurfaceDE(
+      [emitter],
+      null,
+      { order: 1, plane: "xy" },
+      { schedule: two },
+    );
+    // The word taking the +0.005 letter every step displaces the nearer
+    // sphere 0.015 inward.
+    const exact = SHAPE_MARCH_SAFETY * (0.3 - 0.015);
+    expect(estimateDistance(de, [0, 0, 0])).toBeCloseTo(exact, 12);
+    expect(estimateDistanceRefined(de, [0, 0, 0])).toBeCloseTo(exact, 12);
+    expect(estimateDistance(de, [0, 0, 0])).toBeCloseTo(
+      estimateDistance(twoDe, [0, 0, 0]),
+      10,
+    );
   });
 
   it("keeps exact finite gaps at each supported schedule-frontier boundary", () => {
@@ -5521,12 +5652,56 @@ describe("emitter-only finite unions", () => {
       analyzeSurfaceSystem([emitter], null, { depth: 5, transforms: maps })
         .status,
     ).not.toBe("ineligible");
-    const fallback = maps.map((t) => ({ ...t, weight: 0 }));
+    // The all-zero fallback selects every entry, so six genuinely distinct
+    // B maps overflow the frontier at depth 2.
+    const fallback = maps.map((t, id) => ({
+      ...t,
+      weight: 0,
+      position: [(id - 2.5) * 0.01, 0, 0] as [number, number, number],
+    }));
     expect(
       analyzeSurfaceSystem([emitter], null, { depth: 2, transforms: fallback })
         .reasons,
     ).toContain(
       "emitter-only Surface needs at most 4 unfinished schedule branches; reduce schedule depth or the number of active B maps",
+    );
+    // Six compounding duplicates under the all-zero fallback are one word
+    // per level; compaction makes them a single supported map, and the
+    // schedule with that one map authored agrees on the distance.
+    const duplicated = maps.map((t) => ({
+      ...t,
+      weight: 0,
+      position: [0.02, 0, 0] as [number, number, number],
+    }));
+    const singleEquivalent = {
+      depth: 3,
+      transforms: [map({ id: 0, position: [0.02, 0, 0] })],
+    };
+    expect(
+      analyzeSurfaceSystem([emitter], null, {
+        depth: 3,
+        transforms: duplicated,
+      }).status,
+    ).not.toBe("ineligible");
+    const dupDe = buildSurfaceDE(
+      [emitter],
+      null,
+      { order: 1, plane: "xy" },
+      { schedule: { depth: 3, transforms: duplicated } },
+    );
+    const singleDe = buildSurfaceDE(
+      [emitter],
+      null,
+      { order: 1, plane: "xy" },
+      { schedule: singleEquivalent },
+    );
+    expect(estimateDistance(dupDe, [0, 0, 0])).toBeCloseTo(
+      estimateDistance(singleDe, [0, 0, 0]),
+      10,
+    );
+    expect(estimateDistanceRefined(dupDe, [0, 0, 0])).toBeCloseTo(
+      estimateDistanceRefined(singleDe, [0, 0, 0]),
+      10,
     );
   });
 

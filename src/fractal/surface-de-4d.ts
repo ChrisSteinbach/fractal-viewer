@@ -65,6 +65,7 @@ import {
   chaosComponentIds,
   coverageProbeWindows,
   condensationDeepBandRefusal,
+  dedupeScheduleTransforms,
   emitterOnlySurfaceBandRefusal,
   emitterOnlySurfaceScheduleRefusal,
   surfaceChaosAllows,
@@ -1072,8 +1073,10 @@ export function analyzeSurfaceSystem4(
   );
   if (scheduleRefusal) reasons.push(scheduleRefusal);
   if (preparedSchedule) {
-    const supported = schedule!.transforms.filter(
-      (t) => !preparedSchedule.weighted || (t.weight ?? 1) > 0,
+    const supported = dedupeScheduleTransforms(
+      schedule!.transforms.filter(
+        (t) => !preparedSchedule.weighted || (t.weight ?? 1) > 0,
+      ),
     );
     supported.forEach((t, i) => {
       // B is affine-only and prepareSchedule strips its post stage.
@@ -1876,8 +1879,10 @@ export function buildSurfaceDE4(
   let scheduleMaps: SurfaceDE4Map[] | null = null;
   let scheduleTransforms: Transform[] | null = null;
   if (preparedSchedule && options.schedule) {
-    scheduleTransforms = options.schedule.transforms.filter(
-      (t) => !preparedSchedule.weighted || (t.weight ?? 1) > 0,
+    scheduleTransforms = dedupeScheduleTransforms(
+      options.schedule.transforms.filter(
+        (t) => !preparedSchedule.weighted || (t.weight ?? 1) > 0,
+      ),
     );
     scheduleMaps = scheduleTransforms.map((t, i) => {
       const liftedB = toTransform4(t);
