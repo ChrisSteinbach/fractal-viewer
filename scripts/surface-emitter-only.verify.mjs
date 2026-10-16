@@ -32,6 +32,11 @@
  * A separate five-identity-B frontier puts two radius-0.1 spheres at x = ±0.4:
  * All levels must equal Root only even when B candidates spill the beam. No
  * future recursive-A sphere certificate may fill the gap between the spheres.
+ * Since the finite-prefix admission compacts the supported B list to its
+ * distinct compositions, the depth-2 frontier leg authors five DISTINCT maps
+ * (genuinely five unfinished words per level, still refused) while a
+ * duplicate leg authors the same five author-identical maps at depth 2 —
+ * formerly refused, now entering and settling as their one identity word.
  *
  * The root-containing custom band drives live slider refusal, then Root only
  * drives select refusal. Both preserve the document and the completed frame.
@@ -265,9 +270,20 @@ function fixture(dimension, variant = "posed") {
     }));
     if (variant.startsWith("frontier")) {
       document.schedule = {
-        depth: variant === "frontier-overflow" ? 2 : 1,
-        transforms: Array.from({ length: 5 }, () => ({
-          position: [0, 0, 0],
+        depth:
+          variant === "frontier-overflow" || variant === "frontier-duplicates"
+            ? 2
+            : 1,
+        transforms: Array.from({ length: 5 }, (_, index) => ({
+          // Overflow prices five DISTINCT maps, which still overflow the
+          // frontier at depth 2. The duplicates variant owns five
+          // author-identical maps instead: their word set compacts to one
+          // identity word per level, the composition the widened admission
+          // qualified, and it must enter and settle.
+          position:
+            variant === "frontier-overflow"
+              ? [(index - 2) * 0.02, 0, 0]
+              : [0, 0, 0],
           rotation: [0, 0, 0],
           scale: [1, 1, 1],
         })),
@@ -972,6 +988,7 @@ async function main() {
           "xaos",
           "schedule",
           "frontier",
+          "frontier-duplicates",
           "palette",
           "palette-second",
           ...(args.only === "3d-webgl-classic" &&

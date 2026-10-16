@@ -197,12 +197,19 @@ function emitterOnlyCpu(
  * queries are mandatory: the centre gap cannot be skipped just because a
  * CPU frontier bug disagrees with the independently enumerated finite set.
  * The first material owns both central spheres, so their equal distances
- * do not create an ambiguous cross-material tie; slot 2 duplicates it. */
+ * do not create an ambiguous cross-material tie; slot 2 duplicates it.
+ * With `duplicates` the B maps are author-identical instead of spread:
+ * their word set compacts to the identity word, which is the widened
+ * emitter-only admission's qualification composition — five of them were
+ * refused outright before compaction, and at depth 3 the uncompacted
+ * descent's dropped duplicate folded a negative ball certificate over the
+ * true +0.3 gap. */
 function emitterOnlyBoundaryFixture(
   fourD: boolean,
   count: number,
   depth: number,
   tolerance: Tolerance,
+  duplicates = false,
 ): SurfaceEmitterOnlyFixture {
   const first: Transform = {
     id: 0,
@@ -236,7 +243,7 @@ function emitterOnlyBoundaryFixture(
     depth,
     transforms: Array.from({ length: count }, (_, id) => ({
       id,
-      position: [(id - (count - 1) / 2) * 0.01, 0, 0],
+      position: duplicates ? [0, 0, 0] : [(id - (count - 1) / 2) * 0.01, 0, 0],
       rotation: [0, 0, 0],
       scale: [1, 1, 1],
     })),
@@ -259,7 +266,7 @@ function emitterOnlyBoundaryFixture(
           { schedule },
         ),
       };
-  const name = `emitter-only-${fourD ? "4" : "3"}-boundary-${count}B-depth${depth}`;
+  const name = `emitter-only-${fourD ? "4" : "3"}-boundary-${count}B-depth${depth}${duplicates ? "-dup" : ""}`;
   const queries: Vec3[] = [
     [0, 0, 0],
     [0.03, 0, 0],
@@ -272,7 +279,8 @@ function emitterOnlyBoundaryFixture(
   ].map((q) => q.map(Math.fround) as Vec3);
   const expected = queries.map((q) => finiteEmitterHit(system, q));
   const cpu = queries.map((q) => emitterOnlyCpu(system, q, 0));
-  const exactGap = SHAPE_MARCH_SAFETY * (0.3 - 0.005 * (count - 1) * depth);
+  const exactGap =
+    (duplicates ? 0.3 : 0.3 - 0.005 * (count - 1) * depth) * SHAPE_MARCH_SAFETY;
   if (Math.abs(expected[0].distance - exactGap) > 1e-12)
     throw new Error(
       `${name}: finite oracle lost the explicit centre gap ${exactGap}`,
@@ -416,6 +424,12 @@ export function surfaceEmitterOnlyFixtures(
     fixtures.push(
       emitterOnlyBoundaryFixture(fourD, 2, 3, tolerance),
       emitterOnlyBoundaryFixture(fourD, 4, 2, tolerance),
+      // The recorded frontier-overflow adversary, qualified end to end:
+      // five author-identical B maps at depth 2 (refused before
+      // compaction) and depth 3 (where the uncompacted descent's dropped
+      // duplicate folded a negative ball certificate over the exact gap).
+      emitterOnlyBoundaryFixture(fourD, 5, 2, tolerance, true),
+      emitterOnlyBoundaryFixture(fourD, 5, 3, tolerance, true),
     );
   }
   return fixtures;
