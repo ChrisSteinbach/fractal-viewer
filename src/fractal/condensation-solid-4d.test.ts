@@ -9,7 +9,9 @@ import {
 import {
   buildCondensationSolid4,
   condensationSolidAdmission4,
+  condensationSolidCanonicalComposition4,
   condensationSolidContains4,
+  condensationSolid3OfCanonical4,
   condensationSolidPoseAdmission4,
   condensationSolidSignedDistance4,
 } from "./condensation-solid-4d";
@@ -158,6 +160,37 @@ describe("condensation solid (4D)", () => {
     }
   });
 
+  it("projects to the native 3D solid: the fast body's ball, ratios and sigmas are the restriction oracle's own", () => {
+    for (const [transforms, band] of [
+      [[...sierpinskiTetrahedron(), emitter(SPHERE)], { maxDepth: 2 }],
+      [[...stretchedCorners(), emitter(RING)], { minDepth: 1, maxDepth: 2 }],
+    ] as const) {
+      const solid4 = solid4Of([...transforms], band);
+      const solid3 = solid3Of([...transforms], band);
+      const projected = condensationSolid3OfCanonical4(solid4);
+      expect(projected).not.toBeNull();
+      expect(projected!.center).toEqual(solid3.center);
+      expect(projected!.radius).toBeCloseTo(solid3.radius, 12);
+      expect(projected!.mapRatio).toBeCloseTo(solid3.mapRatio, 12);
+      expect(projected!.emitterRatio).toBeCloseTo(solid3.emitterRatio, 12);
+      // The 4x4 lift's inverse rounds a hair off the 3x3's (affine4's own
+      // ULP seam — escape-de-4d's disclosed one), so the projected edges
+      // and their recomputed sigmas agree to ULPs, not to the bit.
+      for (const [projectedSigma, nativeSigma] of projected!.maps
+        .map((m) => m.sigmaMin)
+        .map((sigma, i) => [sigma, solid3.maps[i].sigmaMin] as const))
+        expect(projectedSigma).toBeCloseTo(nativeSigma, 12);
+      for (const [projectedMap, nativeMap] of projected!.maps.map(
+        (m, i) => [m, solid3.maps[i]] as const,
+      )) {
+        for (let k = 0; k < 9; k++)
+          expect(projectedMap.invM[k]).toBeCloseTo(nativeMap.invM[k], 12);
+        for (let k = 0; k < 3; k++)
+          expect(projectedMap.invT[k]).toBeCloseTo(nativeMap.invT[k], 12);
+      }
+    }
+  });
+
   it("sweeps the kaleidoscope copies exactly as the 3D solid does", () => {
     const transforms = [...stretchedCorners(), emitter(RING)];
     const symmetry = { order: 3, plane: "xy" as const };
@@ -223,6 +256,30 @@ describe("condensation solid (4D)", () => {
     expect(condensationSolidPoseAdmission4(solid, CANONICAL)).toEqual({
       ok: true,
     });
+  });
+
+  it("reports the composition's canonical capability: the fast body's emission gate", () => {
+    const canonical = solid4Of([...stretchedCorners(), emitter(SPHERE)], {
+      maxDepth: 2,
+    });
+    expect(condensationSolidCanonicalComposition4(canonical)).toBe(true);
+    // A map that mixes w into xyz can never sit in the canonical pose.
+    const mixer = solid4Of(
+      [
+        ...stretchedCorners().map((t, i): Transform =>
+          i === 0
+            ? {
+                ...t,
+                rotation: [0.3, 0.2, 0.1] as [number, number, number],
+                w: { rotation: { xw: 0.4 } },
+              }
+            : t,
+        ),
+        emitter(SPHERE),
+      ],
+      { maxDepth: 2 },
+    );
+    expect(condensationSolidCanonicalComposition4(mixer)).toBe(false);
   });
 
   it("refuses a slab, a w-turning rotor and a slice off the flats", () => {

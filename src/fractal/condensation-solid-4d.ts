@@ -47,12 +47,15 @@ import {
 } from "./condensation-de";
 import {
   CONDENSATION_SOLID_MAX_DEPTH,
+  condensationSolidBallAndRatios3,
   condensationSolidShapeRefusal,
+  type CondensationSolid3,
   type CondensationSolidAdmission,
+  type CondensationSolidMap3,
   type CondensationSolidOptions,
 } from "./condensation-solid";
 import { SHAPE_MARCH_SAFETY } from "./shapes";
-import { SURFACE_FOLD_NONE } from "./surface-de";
+import { SURFACE_FOLD_NONE, singularValues3 } from "./surface-de";
 import { inverse4, singularValues4, type SurfaceDE4 } from "./surface-de-4d";
 import type { Vec4 } from "./types";
 
@@ -88,9 +91,11 @@ export interface CondensationSolid4 {
 }
 
 /** A 4D session's pose at entry: the rotor (row-major 4x4), the world slice
- * position and the slab half-extent — `Surface4OpticsPose`'s fields. */
+ * position and the slab half-extent — `Surface4OpticsPose`'s fields, and
+ * `SurfaceGpu4View`'s (the kernel view's rotor is the same row-major
+ * matrix as an `ArrayLike`, which is all the admission reads). */
 export interface CondensationSolidPose4 {
-  rotor: readonly number[];
+  rotor: ArrayLike<number>;
   w0: number;
   sliceHalfW: number;
 }
@@ -162,7 +167,7 @@ export function condensationSolidPoseAdmission4(
   return { ok: true };
 }
 
-function wCoupling(m: readonly number[]): number {
+function wCoupling(m: ArrayLike<number>): number {
   return (
     Math.abs(m[3]) +
     Math.abs(m[7]) +
@@ -173,7 +178,7 @@ function wCoupling(m: readonly number[]): number {
   );
 }
 
-function rotorPreservesW(m: readonly number[]): boolean {
+function rotorPreservesW(m: ArrayLike<number>): boolean {
   return (
     m.length === 16 &&
     wCoupling(m) <= W_COUPLE_EPS &&
@@ -183,6 +188,92 @@ function rotorPreservesW(m: readonly number[]): boolean {
 
 function wUntouched(m: readonly number[]): boolean {
   return wCoupling(m) <= W_COUPLE_EPS && Math.abs(m[15]) > W_COUPLE_EPS;
+}
+
+/**
+ * Whether the COMPOSITION could ever sit in the canonical pose: every map
+ * and every emitter w-untouched (the pose admission's structural half —
+ * the w0-dependent halves are live state and read per pass). The 4D
+ * closed-solid kernel's canonical-pose fast body emits exactly when this
+ * holds; the per-pass gate is
+ * {@link condensationSolidPoseAdmission4} on the live pose.
+ */
+export function condensationSolidCanonicalComposition4(
+  solid: CondensationSolid4,
+): boolean {
+  for (const map of solid.maps) if (!wUntouched(map.invM)) return false;
+  for (const emitter of solid.condensation.emitters)
+    if (!wUntouched(emitter.invM)) return false;
+  return true;
+}
+
+/**
+ * The canonical composition's 3D RESTRICTION as a genuine
+ * {@link CondensationSolid3}: every composed edge's and emitter's 3x3
+ * block and xyz translation, the forward 3x3 singular values recomputed
+ * from the inverse block (`1/σ_max(inv)` and `1/σ_min(inv)`), and the
+ * invariant ball and prune ratios from the 3D oracle's OWN helper
+ * (`condensationSolidBallAndRatios3`) — the fast body's prune constants
+ * are the 3D oracle's, never a re-derivation, because the 4D wire's own
+ * ratios are strictly weaker (a w scale below the xyz sigma range lowers
+ * them, pruning less and never more — measured: the starters' 4D
+ * emitterRatio is 0.56 against the restriction's 1.0, which ate the fast
+ * body's whole win). Null when the composition is not w-untouched — no
+ * canonical pose exists to restrict to.
+ */
+export function condensationSolid3OfCanonical4(
+  solid: CondensationSolid4,
+): CondensationSolid3 | null {
+  if (!condensationSolidCanonicalComposition4(solid)) return null;
+  const project9 = (m: readonly number[]): number[] => [
+    m[0],
+    m[1],
+    m[2],
+    m[4],
+    m[5],
+    m[6],
+    m[8],
+    m[9],
+    m[10],
+  ];
+  const maps: CondensationSolidMap3[] = solid.maps.map((m) => {
+    const invM = project9(m.invM);
+    const s = singularValues3(invM);
+    return {
+      invM,
+      invT: [m.invT[0], m.invT[1], m.invT[2]],
+      // The inverse's singular values are the forward map's reciprocals
+      // (composedMaps' own rule).
+      sigmaMin: 1 / s.max,
+      sigmaMax: 1 / s.min,
+      baseIndex: m.baseIndex,
+    };
+  });
+  const emitters = solid.condensation.emitters.map((e) => ({
+    ...e,
+    invM: project9(e.invM),
+    invT: [e.invT[0], e.invT[1], e.invT[2]] as [number, number, number],
+    center: [e.center[0], e.center[1], e.center[2]] as [number, number, number],
+  }));
+  const center: [number, number, number] = [
+    solid.center[0],
+    solid.center[1],
+    solid.center[2],
+  ];
+  const { radius, mapRatio, emitterRatio } = condensationSolidBallAndRatios3(
+    maps,
+    emitters,
+    center,
+  );
+  return {
+    maps,
+    condensation: { emitters, depthBand: solid.band },
+    band: solid.band,
+    center,
+    radius,
+    mapRatio,
+    emitterRatio,
+  };
 }
 
 function isIdentityFinal4(final: {

@@ -61,7 +61,10 @@ import {
   CONDENSATION_SOLID_MAX_DEPTH,
   type CondensationSolid3,
 } from "./condensation-solid";
-import type { CondensationSolid4 } from "./condensation-solid-4d";
+import {
+  condensationSolid3OfCanonical4,
+  type CondensationSolid4,
+} from "./condensation-solid-4d";
 import { SHAPE_MARCH_SAFETY } from "./shapes";
 
 /** Relative pad on the kernel's invariant radius (module doc's f32
@@ -86,6 +89,23 @@ export interface CondensationSolidWire {
   radius: number;
   mapRatio: number;
   emitterRatio: number;
+  /** The canonical-pose fast body's TRUE 3D quantities — the projected
+   * restriction's own invariant ball and prune ratios
+   * (`condensation-solid-4d.ts`'s `condensationSolid3OfCanonical4`), and
+   * the per-edge projected forward σ_min the fast cases bake. The 4D
+   * wire's own ratios are strictly weaker (a w scale below the xyz sigma
+   * range lowers them, pruning less and never more — measured: the
+   * starters' emitterRatio is 0.56 against the restriction's 1.0, which
+   * ate the fast body's whole win), so the fast body bakes these instead.
+   * Null when the composition is not w-untouched — no canonical pose
+   * exists to restrict to, and the fast body never emits. */
+  canonical3?: {
+    sigmas: number[];
+    center: [number, number, number];
+    radius: number;
+    mapRatio: number;
+    emitterRatio: number;
+  } | null;
 }
 
 /** The kernel wire for a built solid (either dimension). */
@@ -93,6 +113,10 @@ export function condensationSolidWire(
   solid: CondensationSolid3 | CondensationSolid4,
 ): CondensationSolidWire {
   const dim = solid.center.length === 4 ? 4 : 3;
+  const restricted =
+    dim === 4
+      ? condensationSolid3OfCanonical4(solid as CondensationSolid4)
+      : null;
   return {
     dim,
     edges: solid.maps.map((m) => ({
@@ -104,6 +128,15 @@ export function condensationSolidWire(
     radius: solid.radius,
     mapRatio: solid.mapRatio,
     emitterRatio: solid.emitterRatio,
+    canonical3: restricted
+      ? {
+          sigmas: restricted.maps.map((m) => m.sigmaMin),
+          center: [...restricted.center] as [number, number, number],
+          radius: restricted.radius,
+          mapRatio: restricted.mapRatio,
+          emitterRatio: restricted.emitterRatio,
+        }
+      : null,
   };
 }
 
@@ -149,28 +182,66 @@ export function validateCondensationSolidWire(
  * 3D body reads the query point directly, as the root field does; the 4D
  * body lifts it through the live rotor/slice first, as the 4D root field
  * does, and scores each node with the transport's penalty term.
+ *
+ * THE CANONICAL-POSE FAST BODY (`canonicalFast`, 4D only): beside the
+ * general search the 4D emission also emits the 3D restriction's search —
+ * vec3 stack, the edges' 3x3 blocks, an emitter term without the w row or
+ * the `|local w|` penalty — and `transportSolidField` dispatches to it
+ * when `shade.transport.z` says the LIVE pose is canonical
+ * (`condensationSolidPoseAdmission4`'s answer, packed per pass). There the
+ * 4D field IS the 3D field of the restriction (pinned in
+ * `condensation-solid-4d.test.ts`), so the fast body renders the same
+ * solid at the 3D search's cost — measured 1.68x of the 3D session's
+ * transport, ~90% of the whole 4D glass session. The fast body reads the
+ * 4D wire's own ball radius, sigma and ratios, every one of which is
+ * weaker than its 3D twin (a smaller sigma and the full 4D ball prune
+ * less, never more), so its prune stays a certified lower bound; its
+ * values differ from the general body's by at most the pose admission's
+ * own `W_COUPLE_EPS` dust. Absent, the source is byte-identical.
  */
+export interface CondensationSolidWgslOptions {
+  /** 4D only: emit the canonical-pose fast body beside the general
+   * search. Absent/false is byte-identical. */
+  canonicalFast?: boolean;
+}
+
 export function condensationSolidWgslSource(
   wire: CondensationSolidWire,
+  opts: CondensationSolidWgslOptions = {},
 ): string {
   validateCondensationSolidWire(wire);
   const four = wire.dim === 4;
+  const canonicalFast = four && opts.canonicalFast === true;
+  if (canonicalFast && !wire.canonical3) {
+    throw new Error(
+      "condensation-solid-gpu: canonicalFast needs the wire's projected 3D restriction (canonical3) — the composition is not w-untouched",
+    );
+  }
   const vec = four ? "vec4f" : "vec3f";
   const comps = four ? ["x", "y", "z", "w"] : ["x", "y", "z"];
   const n = comps.length;
-  const cases = wire.edges
-    .map((e, i) => {
-      const rows = comps.map((_, r) => {
-        const terms = comps.map((c, k) => `${lit(e.invM[r * n + k])} * q.${c}`);
-        return `${terms.join(" + ")} + ${lit(e.invT[r])}`;
-      });
-      return `    case ${i}u: {
-      return CsChild(${vec}(
+  const edgeCases = (
+    child: string,
+    vecName: string,
+    dims: number,
+    sigmaOf: (i: number) => number,
+  ): string =>
+    wire.edges
+      .map((e, i) => {
+        const comps2 = ["x", "y", "z", "w"].slice(0, dims);
+        const rows = comps2.map((_, r) => {
+          const terms = comps2.map(
+            (c, k) => `${lit(e.invM[r * n + k])} * q.${c}`,
+          );
+          return `${terms.join(" + ")} + ${lit(e.invT[r])}`;
+        });
+        return `    case ${i}u: {
+      return ${child}(${vecName}(
         ${rows.join(",\n        ")},
-      ), ${lit(e.sigmaMin)});
+      ), ${lit(sigmaOf(i))});
     }`;
-    })
-    .join("\n");
+      })
+      .join("\n");
   const depthCap = CONDENSATION_SOLID_MAX_DEPTH + 1;
   const center = `${vec}(${wire.center.map(lit).join(", ")})`;
   const radius = lit(wire.radius * (1 + CONDENSATION_SOLID_GPU_BALL_PAD));
@@ -193,34 +264,54 @@ export function condensationSolidWgslSource(
     : `fn csTerm(q: vec3f) -> f32 {
   return condensationDistance(q).distance;
 }`;
-  return `// The general curved solid (condensation-solid${four ? "-4d" : ""}.ts): the
-// closed-solid field over the depth band's word tree, branch-and-bounded
-// against the invariant ball (condensation-solid-gpu.ts's module doc).
-struct CsChild {
-  q: ${vec},
+  /** One search body: the struct, the baked edge switch and the
+   * branch-and-bounded walk. `suffix` names every identifier; `mid`
+   * (the term definition) lands between the child fn and the field fn,
+   * which WGSL's declaration-before-use order needs. The default call
+   * reproduces the shipped text byte for byte. */
+  const searchBody = (cfg: {
+    suffix: string;
+    vec: string;
+    dims: number;
+    term: string;
+    center: string;
+    root: string;
+    sigmaOf: (i: number) => number;
+    radius: string;
+    mapRatio: number;
+    emitterRatio: number;
+    mid?: string;
+    gate?: string;
+  }): string => {
+    const bodyCases = edgeCases(
+      `CsChild${cfg.suffix}`,
+      cfg.vec,
+      cfg.dims,
+      cfg.sigmaOf,
+    );
+    return `struct CsChild${cfg.suffix} {
+  q: ${cfg.vec},
   sigma: f32,
 }
 
-fn csChild(e: u32, q: ${vec}) -> CsChild {
+fn csChild${cfg.suffix}(e: u32, q: ${cfg.vec}) -> CsChild${cfg.suffix} {
   switch e {
-${cases}
+${bodyCases}
     default: {
-      return CsChild(${vec}(0.0), 0.0);
+      return CsChild${cfg.suffix}(${cfg.vec}(0.0), 0.0);
     }
   }
 }
-
-${term}
-
-fn transportSolidField(p: vec3f) -> f32 {
-  let root = ${four ? "rotorInvApply4(vec4f(p, params.w0))" : "p"};
+${cfg.mid ?? ""}
+fn transportSolidField${cfg.suffix}(p: vec3f) -> f32 {
+${cfg.gate ?? ""}  let root = ${cfg.root};
   let minDepth = params.condDepthMin;
   let maxDepth = min(params.condDepthMax, ${CONDENSATION_SOLID_MAX_DEPTH}u);
   var best = 1e30;
   if (minDepth == 0u) {
-    best = ${lit(SHAPE_MARCH_SAFETY)} * csTerm(root);
+    best = ${lit(SHAPE_MARCH_SAFETY)} * ${cfg.term}(root);
   }
-  var stackQ: array<${vec}, ${depthCap}>;
+  var stackQ: array<${cfg.vec}, ${depthCap}>;
   var stackS: array<f32, ${depthCap}>;
   var stackE: array<u32, ${depthCap}>;
   stackQ[0] = root;
@@ -237,12 +328,12 @@ fn transportSolidField(p: vec3f) -> f32 {
     }
     let e = stackE[top];
     stackE[top] = e + 1u;
-    let child = csChild(e, stackQ[top]);
+    let child = csChild${cfg.suffix}(e, stackQ[top]);
     let cs = stackS[top] * child.sigma;
-    let delta = length(child.q - ${center}) - ${radius};
+    let delta = length(child.q - ${cfg.center}) - ${cfg.radius};
     if (delta > 0.0) {
       let below = f32(maxDepth - (top + 1u));
-      let bound = ${lit(SHAPE_MARCH_SAFETY)} * cs * delta * pow(${lit(wire.mapRatio)}, below) * ${lit(wire.emitterRatio)};
+      let bound = ${lit(SHAPE_MARCH_SAFETY)} * cs * delta * pow(${lit(cfg.mapRatio)}, below) * ${lit(cfg.emitterRatio)};
       if (bound * ${lit(1 - CONDENSATION_SOLID_GPU_PRUNE_SLACK)} >= best) {
         continue;
       }
@@ -252,14 +343,71 @@ fn transportSolidField(p: vec3f) -> f32 {
     stackS[top] = cs;
     stackE[top] = 0u;
     if (top >= minDepth) {
-      let t = cs * ${lit(SHAPE_MARCH_SAFETY)} * csTerm(child.q);
+      let t = cs * ${lit(SHAPE_MARCH_SAFETY)} * ${cfg.term}(child.q);
       if (t < best) {
         best = t;
       }
     }
   }
   return best;
+}`;
+  };
+  const fastGate = `  if (shade.transport.z != 0.0) {
+    return transportSolidFieldFast(p);
+  }
+`;
+  const general = searchBody({
+    suffix: "",
+    vec,
+    dims: n,
+    term: "csTerm",
+    center,
+    root: four ? "rotorInvApply4(vec4f(p, params.w0))" : "p",
+    sigmaOf: (i) => wire.edges[i].sigmaMin,
+    radius,
+    mapRatio: wire.mapRatio,
+    emitterRatio: wire.emitterRatio,
+    mid: `\n${term}\n`,
+    gate: four && opts.canonicalFast ? fastGate : "",
+  });
+  let fast = "";
+  if (canonicalFast && wire.canonical3) {
+    const c3 = wire.canonical3;
+    fast = `fn csTermFast(q: vec3f) -> f32 {
+  // The canonical pose's emitter term: the penalty's |local w| vanishes on
+  // the slice (the pose admission's own check), so the term is the
+  // emitter scale over the shape SDF of the 3x3-restricted local point.
+  var best = 1e30;
+  for (var e = 0u; e < params.condEmitterCount; e++) {
+    let m = maps[params.mapCount + e];
+    let local = vec3f(dot(m.r0.xyz, q), dot(m.r1.xyz, q), dot(m.r2.xyz, q)) +
+      m.t.xyz;
+    let sd = condensationShapeSdf(u32(m.p0.z), local);
+    let d = m.p0.x * sd;
+    if (d < best) {
+      best = d;
+    }
+  }
+  return best;
 }
+
+${searchBody({
+  suffix: "Fast",
+  vec: "vec3f",
+  dims: 3,
+  term: "csTermFast",
+  center: `vec3f(${c3.center.map(lit).join(", ")})`,
+  root: "rotorInvApply4(vec4f(p, params.w0)).xyz",
+  sigmaOf: (i) => c3.sigmas[i],
+  radius: lit(c3.radius * (1 + CONDENSATION_SOLID_GPU_BALL_PAD)),
+  mapRatio: c3.mapRatio,
+  emitterRatio: c3.emitterRatio,
+})}`;
+  }
+  return `// The general curved solid (condensation-solid${four ? "-4d" : ""}.ts): the
+// closed-solid field over the depth band's word tree, branch-and-bounded
+// against the invariant ball (condensation-solid-gpu.ts's module doc).
+${fast}${general}
 
 // Membership is the field's sign, EXACT on the CPU (every admitted shape
 // SDF's sign is exact under the union fold).

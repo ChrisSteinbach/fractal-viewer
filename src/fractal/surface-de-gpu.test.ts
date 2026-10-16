@@ -4828,6 +4828,33 @@ describe("surfaceDeKernelWgsl optical transport gate (optics)", () => {
     ).toThrow();
   });
 
+  it("packSurfaceGpuShade: the canonical-pose word packs into the transport member's first reserved slot, default 0", () => {
+    const off = new DataView(
+      packSurfaceGpuShade(shadeParams({ transport: [1, 6] })),
+    );
+    expect(off.getFloat32(232, true)).toBe(0);
+    const on = new DataView(
+      packSurfaceGpuShade(
+        shadeParams({ transport: [1, 6], transportCanonical: true }),
+      ),
+    );
+    expect(on.getFloat32(224, true)).toBe(1);
+    expect(on.getFloat32(228, true)).toBe(6);
+    expect(on.getFloat32(232, true)).toBe(1);
+    expect(on.getFloat32(236, true)).toBe(0);
+    // Under pattern the member moves past the calibration quartet.
+    const patterned = new DataView(
+      packSurfaceGpuShade(
+        shadeParams({
+          patternCalibration: [1, 2, 3, 4],
+          transport: [0, 6],
+          transportCanonical: true,
+        }),
+      ),
+    );
+    expect(patterned.getFloat32(248, true)).toBe(1);
+  });
+
   it("surfaceComputeSeedWgsl: optics zeroes both record words per ray; absent stays byte-identical", () => {
     const off = surfaceComputeSeedWgsl({ lighting: false });
     const on = surfaceComputeSeedWgsl({ lighting: false, optics: true });

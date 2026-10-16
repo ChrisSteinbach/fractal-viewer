@@ -67,7 +67,12 @@ export function traceFrames(lines) {
       current.exhausted = Number(done[4]);
       current.active = Number(done[5]);
       current.plane = Number(done[6]);
-      current.wallMs = Number(/^\[(\d+)ms\]/.exec(line)?.[1]);
+      // The wall prefix sits at the line's head — the ring buffer's raw
+      // line — or behind the console.debug feed's `[surfacetrace] `
+      // wrapper (main.ts prefixes the same line the buffer stores raw).
+      current.wallMs = Number(
+        /^\[(\d+)ms\]/.exec(line.replace(/^\[surfacetrace\] /, ""))?.[1],
+      );
     }
   }
   return frames;

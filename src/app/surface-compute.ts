@@ -80,7 +80,12 @@ import {
 } from "../fractal/background-shape";
 import type { BulbDE } from "../fractal/bulb-de";
 import { buildCondensationSolid3 } from "../fractal/condensation-solid";
-import { buildCondensationSolid4 } from "../fractal/condensation-solid-4d";
+import {
+  buildCondensationSolid4,
+  condensationSolidCanonicalComposition4,
+  condensationSolidPoseAdmission4,
+  type CondensationSolid4,
+} from "../fractal/condensation-solid-4d";
 import {
   condensationSolidWire,
   type CondensationSolidWire,
@@ -839,18 +844,31 @@ export class SurfaceComputeFrameSizeError extends Error {}
  */
 /** The general curved solid's kernel wire for an IFS target with recursive
  * maps beside its emitters, or null (emitter-only C0 keeps the root field;
- * every other kind has no condensation solid). */
-function condensationSolidWireFor(
-  target: SurfaceComputeAnyTarget,
-): CondensationSolidWire | null {
+ * every other kind has no condensation solid). The 4D branch keeps the
+ * built solid itself: the canonical-pose fast body's per-pass gate is
+ * `condensationSolidPoseAdmission4` on the LIVE pose, and the emission
+ * gate is the composition's own w-untouched verdict. */
+function condensationSolidFor(target: SurfaceComputeAnyTarget): {
+  wire: CondensationSolidWire;
+  solid4: CondensationSolid4 | null;
+  fast: boolean;
+} | null {
   if (target.kind !== "ifs" && target.kind !== "ifs4") return null;
   const de = target.de;
   if (de.maps.length === 0 || !de.condensation) return null;
-  return condensationSolidWire(
-    target.kind === "ifs4"
-      ? buildCondensationSolid4(de as SurfaceDE4)
-      : buildCondensationSolid3(de as SurfaceDE),
-  );
+  if (target.kind === "ifs4") {
+    const solid4 = buildCondensationSolid4(de as SurfaceDE4);
+    return {
+      wire: condensationSolidWire(solid4),
+      solid4,
+      fast: condensationSolidCanonicalComposition4(solid4),
+    };
+  }
+  return {
+    wire: condensationSolidWire(buildCondensationSolid3(de as SurfaceDE)),
+    solid4: null,
+    fast: false,
+  };
 }
 
 /** A finite target's marching/visible ball: the general word tree's own
@@ -3414,6 +3432,12 @@ export interface SurfaceComputeRendererInit {
    * pair. */
   transportPipeline: GPUComputePipeline | null;
   transportPipelineNoSlab: GPUComputePipeline | null;
+  /** The 4D closed-solid glass session's built solid (`condensationSolidFor`
+   * kept past the wire): the canonical-pose fast body's per-pass gate is
+   * `condensationSolidPoseAdmission4` on the LIVE pose, which needs the
+   * maps and emitters the wire alone does not carry. Null for every other
+   * session. */
+  condensationSolid4?: CondensationSolid4 | null;
   /** Finite optics only: processed paths per continuation submission.
    * Zero preserves the uninterrupted diagnostic pipeline. */
   finiteTransportChunkPaths?: number;
@@ -3839,6 +3863,17 @@ export class SurfaceComputeRenderer {
     // The inside-miss replay dump: finite optics sessions only (the WGSL
     // gate re-checks the backend), shade mode only.
     const transportDumpOn = transportDump && materials?.optics === true;
+    // THE GENERAL CURVED SOLID: a closed-solid glass session whose
+    // document carries recursive maps (routing admitted it through
+    // surfaceCondensationSolidAdmitted) traces the depth band's word tree
+    // instead of the root term. The wire is derived here from the
+    // session's frozen DE, so the routing never carries it; the 4D
+    // branch's built solid rides the session for the canonical-pose
+    // fast body's per-pass gate.
+    const condensationSolidParts =
+      materials?.optics === true && opticsBackend === "closedSolid"
+        ? condensationSolidFor(target)
+        : null;
 
     // TWO pipelines (the measured v2 split — see the module doc): the
     // march kernel is the bench's proven register-light shape with only
@@ -4111,14 +4146,18 @@ export class SurfaceComputeRenderer {
           // THE GENERAL CURVED SOLID: a closed-solid glass session whose
           // document carries recursive maps (routing admitted it through
           // surfaceCondensationSolidAdmitted) traces the depth band's word
-          // tree instead of the root term. The wire is derived here from
-          // the session's frozen DE, so the routing never carries it.
+          // tree instead of the root term; the shade kernel alone carries
+          // it, and the 4D shade kernel with a w-untouched composition
+          // also carries the canonical-pose fast body (`transport.z`'s
+          // per-pass gate decides which body a pass runs).
           condensationSolid:
-            mode === "shade" &&
-            materials?.optics === true &&
-            opticsBackend === "closedSolid"
-              ? condensationSolidWireFor(target)
+            mode === "shade" && condensationSolidParts !== null
+              ? condensationSolidParts.wire
               : null,
+          condensationSolidFast:
+            mode === "shade" && condensationSolidParts !== null
+              ? condensationSolidParts.fast
+              : false,
         }),
       });
       const info = await module.getCompilationInfo();
@@ -4755,6 +4794,7 @@ export class SurfaceComputeRenderer {
       shadePipelineNoSlab,
       transportPipeline,
       transportPipelineNoSlab,
+      condensationSolid4: condensationSolidParts?.solid4 ?? null,
       finiteTransportChunkPaths: finiteChunkPaths,
       sphereInversionTransportChunkPaths: siChunkPaths,
       sphereInversionAdaptiveSchedule: siAdaptiveSchedule,
@@ -4986,6 +5026,10 @@ export class SurfaceComputeRenderer {
   readonly software: boolean;
   /** The inside-miss replay dump's gate (init.transportDump). */
   private readonly transportDump: boolean;
+  /** The 4D closed-solid session's built solid (init.condensationSolid4):
+   * the canonical-pose fast body's per-pass gate reads the LIVE pose
+   * against it every spec assembly. Null elsewhere. */
+  private readonly condensationSolid4: CondensationSolid4 | null;
 
   /** Public over a NAMED init object rather than private over sixteen
    * positional GPU resources — see {@link SurfaceComputeRendererInit} for
@@ -5003,6 +5047,7 @@ export class SurfaceComputeRenderer {
     this.shadePipelineNoSlab = init.shadePipelineNoSlab;
     this.transportPipeline = init.transportPipeline;
     this.transportPipelineNoSlab = init.transportPipelineNoSlab;
+    this.condensationSolid4 = init.condensationSolid4 ?? null;
     this.opticsMapsBuf = init.opticsMapsBuf;
     this.optics = init.transportPipeline !== null;
     this.transportDump = init.transportDump === true;
@@ -6220,6 +6265,17 @@ export class SurfaceComputeRenderer {
     // replay lane can re-pack the SAME uniform with a new replay-pass word
     // per pass — the transport word is the one per-pass quantity, and the
     // write is 240/256 B against the dispatch it schedules.
+    // THE CURVED SOLID'S CANONICAL-POSE WORD rides the same member's first
+    // reserved slot: the 4D session's fast body dispatches exactly when
+    // the LIVE pose passes `condensationSolidPoseAdmission4` (zero slab,
+    // a w-preserving rotor, every map and emitter w-untouched and fixing
+    // w0) — recomputed per frame like every other view4 quantity, so a
+    // scrub off the canonical pose falls back to the general body
+    // mid-session and back.
+    const condensationCanonical =
+      this.condensationSolid4 !== null &&
+      spec.view4 !== undefined &&
+      condensationSolidPoseAdmission4(this.condensationSolid4, spec.view4).ok;
     const shadeParamsBase: SurfaceGpuShadeParams = {
       invProjView: spec.invProjView,
       lightDir: spec.lightDir,
@@ -6285,6 +6341,7 @@ export class SurfaceComputeRenderer {
           ? {
               ...shadeParamsBase,
               transport: [0, DIELECTRIC_REPLAY_PASSES] as [number, number],
+              transportCanonical: condensationCanonical,
             }
           : shadeParamsBase,
       ),
@@ -8512,6 +8569,7 @@ export class SurfaceComputeRenderer {
           packSurfaceGpuShade({
             ...shadeParamsBase,
             transport: [transportPass, DIELECTRIC_REPLAY_PASSES],
+            transportCanonical: condensationCanonical,
           }),
         );
         const nextPending: number[] = [];
