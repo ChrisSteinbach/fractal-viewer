@@ -284,19 +284,30 @@ function transpose3(m: readonly number[]): number[] {
   return [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]];
 }
 
-/** The solid for an admitted surface DE; throws on a refused one. */
-export function buildCondensationSolid3(
-  de: SurfaceDE,
-  options: CondensationSolidOptions = {},
-): CondensationSolid3 {
-  const admission = condensationSolidAdmission3(de, options);
-  if (!admission.ok)
-    throw new Error(`condensation solid refused: ${admission.reason}`);
-  const condensation = de.condensation!;
-  const maps = composedMaps(de);
-  const center: Vec3 = [...de.boundCenter];
+/**
+ * The invariant ball and prune ratios over ALREADY-COMPOSED maps and
+ * emitters, about `center` — {@link buildCondensationSolid3}'s tail, and
+ * the ONE definition of those quantities: the 4D canonical projection
+ * (`condensation-solid-4d.ts`'s `condensationSolid3OfCanonical4`) calls
+ * this same helper on its projected pieces, so the fast body's prune
+ * constants are the 3D oracle's own, never a re-derivation.
+ */
+export function condensationSolidBallAndRatios3(
+  maps: readonly {
+    invM: readonly number[];
+    invT: readonly number[];
+    sigmaMax: number;
+    sigmaMin: number;
+  }[],
+  emitters: readonly {
+    center: readonly number[];
+    invM: readonly number[];
+    radius: number;
+  }[],
+  center: readonly number[],
+): { radius: number; mapRatio: number; emitterRatio: number } {
   let radius = 0;
-  for (const emitter of condensation.emitters)
+  for (const emitter of emitters)
     radius = Math.max(
       radius,
       Math.hypot(
@@ -332,11 +343,30 @@ export function buildCondensationSolid3(
   for (const map of maps)
     mapRatio = Math.min(mapRatio, map.sigmaMin / map.sigmaMax);
   let emitterRatio = 1;
-  for (const emitter of condensation.emitters) {
-    const s = singularValues3(emitter.invM);
+  for (const emitter of emitters) {
+    const s = singularValues3(emitter.invM as number[]);
     // Forward σ_min/σ_max equals the inverse's σ_min/σ_max.
     emitterRatio = Math.min(emitterRatio, s.min / s.max);
   }
+  return { radius, mapRatio, emitterRatio };
+}
+
+/** The solid for an admitted surface DE; throws on a refused one. */
+export function buildCondensationSolid3(
+  de: SurfaceDE,
+  options: CondensationSolidOptions = {},
+): CondensationSolid3 {
+  const admission = condensationSolidAdmission3(de, options);
+  if (!admission.ok)
+    throw new Error(`condensation solid refused: ${admission.reason}`);
+  const condensation = de.condensation!;
+  const maps = composedMaps(de);
+  const center: Vec3 = [...de.boundCenter];
+  const { radius, mapRatio, emitterRatio } = condensationSolidBallAndRatios3(
+    maps,
+    condensation.emitters,
+    center,
+  );
   return {
     maps,
     condensation,

@@ -2381,6 +2381,15 @@ export interface SurfaceGpuKernelOptions {
    * recursive maps (emitter-only C0 keeps the root field), and the wire's
    * dimension must match the core's. Absent/null is byte-identical. */
   condensationSolid?: CondensationSolidWire | null;
+  /** Emit the 4D closed-solid field's CANONICAL-POSE FAST BODY beside the
+   * general search (`condensation-solid-gpu.ts`'s `canonicalFast`): the
+   * 3D restriction's search, dispatched by the live
+   * `shade.transport.z` word whenever the pose admission passes. The
+   * caller must gate the packed word on the SAME admission the emission
+   * assumes — the fast body is the canonical pose's field and nothing
+   * else. Requires `condensationSolid` on a 4D core; absent/false is
+   * byte-identical. */
+  condensationSolidFast?: boolean;
   /** The sphere-inversion glass backend's EXACT MÖBIUS NORMAL, OPT-IN and
    * not the shipped default: every transport normal (the boundary query's
    * landing and reported normals, the floor shadow's crossings) comes from
@@ -5366,6 +5375,17 @@ export interface SurfaceGpuShadeParams {
    */
   transport?: [number, number];
   /**
+   * The curved solid's canonical-pose word, packed into the transport
+   * member's first reserved slot (`transport.z`) — `shade.transport.z` is
+   * exactly what the 4D closed-solid field's fast gate reads, so the flag
+   * is live per pass with the replay-pass word it rides. Present ONLY
+   * with `transport` (the member is the flag's only carrier); a 4D
+   * closed-solid kernel emitted without the fast body never reads the
+   * word, so packing it there is harmless and 0 is the byte-identical
+   * default.
+   */
+  transportCanonical?: boolean;
+  /**
    * The pentagrid floor's 32-float wire (`packFloorPentagridUniforms`'s
    * output, the spec's once-per-build `pentagridWire`), packed as the
    * shade struct's `floorPentagrid` tail — EIGHT vec4f appended LAST in
@@ -5464,7 +5484,11 @@ export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
     const transportOffset = 224 + (calibration ? 16 : 0);
     view.setFloat32(transportOffset, transport[0], true);
     view.setFloat32(transportOffset + 4, transport[1], true);
-    view.setFloat32(transportOffset + 8, 0, true);
+    view.setFloat32(
+      transportOffset + 8,
+      shade.transportCanonical ? 1 : 0,
+      true,
+    );
     view.setFloat32(transportOffset + 12, 0, true);
   }
   if (shade.lighting) {
@@ -6753,6 +6777,12 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
       ? condensationMeshDeclaredStrideCap(opts.condensation.emitters)
       : null;
   const condensationSolid = opts.condensationSolid ?? null;
+  const condensationSolidFast = opts.condensationSolidFast === true;
+  if (condensationSolidFast && condensationSolid?.dim !== 4) {
+    throw new Error(
+      "surface-de-gpu: condensationSolidFast needs a 4D condensationSolid wire",
+    );
+  }
   if (condensationSolid) {
     if (opticsBackend !== "closedSolid") {
       throw new Error(
@@ -11348,7 +11378,9 @@ fn transportSolidContains(p: vec3f) -> bool {
   return siEstimate(${siLift}).clear >= 0.0;
 }${siExactNormal ? siExactNormalWgsl(core4) : ""}`
       : core4 && condensationSolid
-        ? condensationSolidWgslSource(condensationSolid)
+        ? condensationSolidWgslSource(condensationSolid, {
+            canonicalFast: condensationSolidFast === true,
+          })
         : core4
           ? `// The closed-solid field (opticsBackend "closedSolid"), 4D form —
 // condensation-de.ts's condensationSignedDistance4 mirrored. The hypot

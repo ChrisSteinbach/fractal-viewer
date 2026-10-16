@@ -83,8 +83,44 @@ describe("condensationSolidWire", () => {
     );
     expect(wire.center).toEqual(solid.center);
     expect(wire.radius).toBe(solid.radius);
+    // The 3D wire carries no canonical restriction (it IS one).
+    expect(wire.canonical3).toBeNull();
     expect(wire4().dim).toBe(4);
     expect(wire4().edges[0].invM).toHaveLength(16);
+    // The 4D wire projects the restriction's own ball and ratios: a w
+    // scale off the emitter's xyz range lowers the 4D emitter ratio
+    // (σ_max picks the larger) while the restriction's is 1.0 — the fast
+    // body bakes the latter.
+    const mismatch = condensationSolidWire(
+      buildCondensationSolid4(
+        buildSurfaceDE4(
+          [
+            ...sierpinskiTetrahedron().map((t) => ({
+              ...t,
+              w: { scale: 0.5 },
+            })),
+            {
+              id: 4,
+              position: [0.05, 0.1, -0.05],
+              rotation: [0.3, 0.2, 0.1],
+              scale: [0.5, 0.5, 0.5],
+              weight: 1.4,
+              emitter: SPHERE,
+              w: { scale: 0.25 },
+            },
+          ],
+          null,
+          undefined,
+          band,
+        ),
+      ),
+    );
+    expect(mismatch.emitterRatio).toBeLessThan(
+      mismatch.canonical3!.emitterRatio,
+    );
+    expect(mismatch.canonical3!.emitterRatio).toBeCloseTo(1, 12);
+    expect(mismatch.canonical3!.sigmas).toHaveLength(mismatch.edges.length);
+    expect(mismatch.canonical3!.center).toEqual(mismatch.center.slice(0, 3));
   });
 });
 
@@ -124,6 +160,51 @@ describe("condensationSolidWgslSource", () => {
         ),
       }),
     ).toThrow(/edge kernel ceiling/);
+  });
+
+  it("stays byte-identical without the canonicalFast option", () => {
+    const w4 = wire4();
+    expect(condensationSolidWgslSource(w4)).toBe(
+      condensationSolidWgslSource(w4, {}),
+    );
+    expect(condensationSolidWgslSource(w4)).toBe(
+      condensationSolidWgslSource(w4, { canonicalFast: false }),
+    );
+  });
+
+  it("emits the canonical-pose fast body beside the 4D search", () => {
+    const src = condensationSolidWgslSource(wire4(), { canonicalFast: true });
+    // The fast search: the 3D restriction's shape, its own identifier set.
+    expect(src).toContain("struct CsChildFast {\n  q: vec3f,");
+    expect(src).toContain("fn csChildFast(e: u32, q: vec3f)");
+    expect(src).toContain("fn transportSolidFieldFast(p: vec3f) -> f32 {");
+    expect(src).toContain("var stackQ: array<vec3f, 7>;");
+    // The fast emitter term: no w row, no |local w| penalty.
+    expect(src).toContain("fn csTermFast(q: vec3f) -> f32 {");
+    expect(src).toContain("dot(m.r0.xyz, q)");
+    expect(src).toContain("let d = m.p0.x * sd;\n");
+    // The fast cases are the 4x4 edges' 3x3 blocks and translations.
+    const edge = wire4().edges[0];
+    const l = (x: number): string => {
+      const s = String(Math.fround(x));
+      return /[.e]/.test(s) ? s : `${s}.0`;
+    };
+    expect(src).toContain(
+      `${l(edge.invM[0])} * q.x + ${l(edge.invM[1])} * q.y + ${l(edge.invM[2])} * q.z + ${l(edge.invT[0])}`,
+    );
+    // The gate dispatches on the transport word's reserved slot.
+    expect(src).toContain("if (shade.transport.z != 0.0) {");
+    expect(src).toContain("return transportSolidFieldFast(p);");
+    // The fast body rides the same 4D ball radius (prunes less, never more).
+    expect(src).toContain(
+      `- ${String(Math.fround(wire4().radius * (1 + CONDENSATION_SOLID_GPU_BALL_PAD)))};`,
+    );
+  });
+
+  it("leaves the 3D source byte-identical under the option (it is its own fast body)", () => {
+    expect(condensationSolidWgslSource(wire3(), { canonicalFast: true })).toBe(
+      condensationSolidWgslSource(wire3()),
+    );
   });
 });
 
@@ -208,5 +289,31 @@ describe("the closed-solid kernel's condensationSolid option", () => {
     expect(() =>
       surfaceDeKernelWgsl(solidOpts({ condensationSolid: wire4() })),
     ).toThrow(/dimension must match/);
+    // The fast body's guard: it needs the 4D wire (the 3D source IS its
+    // own fast body and takes no option).
+    expect(() =>
+      surfaceDeKernelWgsl(
+        solidOpts({ condensationSolid: wire3(), condensationSolidFast: true }),
+      ),
+    ).toThrow(/condensationSolidFast needs a 4D condensationSolid wire/);
+    expect(() =>
+      surfaceDeKernelWgsl(solidOpts({ condensationSolidFast: true })),
+    ).toThrow(/condensationSolidFast needs a 4D condensationSolid wire/);
+    // And the 4D shade kernel with the option compiles the fast body in.
+    const kernel = surfaceDeKernelWgsl(
+      solidOpts({
+        core: "affine4",
+        condensationSolid: wire4(),
+        condensationSolidFast: true,
+      }),
+    );
+    expect(kernel).toContain("fn transportSolidFieldFast(p: vec3f)");
+    expect(kernel).toContain("if (shade.transport.z != 0.0) {");
+    // Absent, the fast body stays out of the kernel entirely.
+    const plain = surfaceDeKernelWgsl(
+      solidOpts({ core: "affine4", condensationSolid: wire4() }),
+    );
+    expect(plain).not.toContain("transportSolidFieldFast");
+    expect(plain).not.toContain("shade.transport.z");
   });
 });

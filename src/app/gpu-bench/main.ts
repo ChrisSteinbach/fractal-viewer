@@ -300,6 +300,7 @@ import {
   SURFACE_GPU_RAY_MISS,
   SURFACE_GPU_RAY_PLANE,
   SURFACE_GPU_SHADE_BYTES,
+  SURFACE_GPU_SHADE_OPTICS_BYTES,
   SURFACE_GPU_TRANSPORT_CHAIN_CAP,
   SURFACE_GPU_TRANSPORT_CHAIN_RECORD_VECS,
   SURFACE_GPU_TRANSPORT_COMPLETE,
@@ -346,6 +347,7 @@ import {
   DIELECTRIC_ENVIRONMENT_BOUND,
   DIELECTRIC_IOR,
   DIELECTRIC_INITIAL_BRANCH_THETA,
+  DIELECTRIC_REPLAY_PASSES,
   dielectricBeerThroughput,
   dielectricBranchBound,
   dielectricFresnel,
@@ -10739,6 +10741,7 @@ async function runSurfaceTransportAgreementLegs(
   const pushCondensationSolidLeg = (
     fourD: boolean,
     variant: "beads" | "rings" | "kaleido",
+    fast = false,
   ): void => {
     const shape: ShapeSpec =
       variant === "rings"
@@ -10784,7 +10787,7 @@ async function runSurfaceTransportAgreementLegs(
     const wire = condensationSolidWire((solid4 ?? solid3)!);
     legs.push({
       core: fourD ? "affine4" : "affine",
-      systemName: `condensationSolid${variant[0].toUpperCase()}${variant.slice(1)}${fourD ? "4" : "3"}`,
+      systemName: `condensationSolid${variant[0].toUpperCase()}${variant.slice(1)}${fourD ? "4" : "3"}${fast ? "Fast" : ""}`,
       backend: "closedSolid",
       options: {
         mode: "shade",
@@ -10798,6 +10801,12 @@ async function runSurfaceTransportAgreementLegs(
         transportMaxPaths: SURFACE_TRANSPORT_LEG_MAX_PATHS,
         condensation: surfaceCondensationKernelSpec(de),
         condensationSolid: wire,
+        // The canonical-pose FAST body: the leg's every control dispatch
+        // stages the canonical word (identity rotor, w0 = 0, zero slab —
+        // `canonicalView4` is exactly that pose), so the whole leg pins
+        // the fast search against the same f64 oracle the general leg
+        // does. 4D only; the 3D source IS its own fast body.
+        ...(fast ? { condensationSolidFast: true } : {}),
       },
       packParams: (n) =>
         de4
@@ -10844,6 +10853,9 @@ async function runSurfaceTransportAgreementLegs(
   pushCondensationSolidLeg(false, "rings");
   pushCondensationSolidLeg(true, "rings");
   pushCondensationSolidLeg(false, "kaleido");
+  // The canonical-pose FAST body's agreement leg: the beads4 system
+  // through the fast search, against the same f64 oracle.
+  pushCondensationSolidLeg(true, "beads", true);
 
   // The sphere-inversion GLASS backend's legs (both dimensions): the
   // family's signed field under the closed-solid query, with the exact
@@ -12635,6 +12647,44 @@ async function runSurfaceTransportAgreementLegs(
         ),
       );
     }
+    // The canonical-pose fast leg's SHADE binding (4): the fast gate reads
+    // `shade.transport.z`, so the control module transitively uses the
+    // shade uniform and the auto layout requires the entry. One
+    // canonical-staged buffer for the leg's every dispatch — the leg's
+    // pose IS the canonical one (`canonicalView4` packed params).
+    let legControlShade: GPUBuffer | null = null;
+    if (leg.options.condensationSolidFast === true) {
+      legControlShade = await createSurfaceBuffer(
+        device,
+        `surface-de transport control shade ${leg.core}`,
+        SURFACE_GPU_SHADE_OPTICS_BYTES,
+        GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      );
+      device.queue.writeBuffer(
+        legControlShade,
+        0,
+        packSurfaceGpuShade({
+          invProjView: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+          lightDir: [0, 1, 0],
+          ambient: 0,
+          bgTop: [0, 0, 0],
+          bgBottom: [0, 0, 0],
+          colorSpeed: 0.5,
+          tracePixelEps: SURFACE_PIXEL_EPS,
+          colorSource: 0,
+          shadowSteps: 0,
+          aoTaps: 0,
+          dither: false,
+          bgOffset: [0, 0],
+          bgExtent: [1, 1],
+          bgCenter: [0.5, 0.5],
+          bgScale: [1, 1],
+          bgShape: 0,
+          transport: [0, DIELECTRIC_REPLAY_PASSES],
+          transportCanonical: true,
+        }),
+      );
+    }
     // One dispatch per query list (boundary first, then trace) so a fault
     // names its half; layout "auto" — the bind group derives from the
     // control entry's own transitively-used bindings — never the
@@ -12713,6 +12763,9 @@ async function runSurfaceTransportAgreementLegs(
         entries: [
           { binding: 0, resource: { buffer: paramsBuf } },
           ...(maps ? [{ binding: 1, resource: { buffer: maps } }] : []),
+          ...(legControlShade
+            ? [{ binding: 4, resource: { buffer: legControlShade } }]
+            : []),
           ...(legOpticsMaps
             ? [{ binding: 13, resource: { buffer: legOpticsMaps } }]
             : []),
