@@ -451,10 +451,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     and keep `prevBase` across dispatches, so xaos never forces CPU; the
     fern|sponge preset pair is the reachability proof. `Transform.emitter`
     resets to a shape with exactly one primary draw in every point consumer.
-    Surface admits emitter-only C0 in 3D/4D with root depth 0 and B prefixes
-    within the affine frontier; empty bands refuse. Proof:
-    `docs/emitter-only-surface.md`. `HybridSchedule` (the
-    scheduled-hybrid post-word): scene-level `{transforms, depth}`, B
+    Surface admits emitter-only C0 in 3D/4D with root depth 0 and B
+    prefixes over DISTINCT maps (`dedupeScheduleTransforms`); empty bands
+    refuse. Proof:
+    `docs/emitter-only-surface.md`. `HybridSchedule`:
+    scene-level `{transforms, depth}`, B
     AFFINE-ONLY and stripped at every producer, applied at PLOT time —
     post-word THEN lens, `depth` primary-stream draws exactly when live,
     never fed back — in all four inlined mirrors AND both flame WGSL

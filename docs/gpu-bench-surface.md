@@ -52,8 +52,10 @@ agreement failure fails the section.
 The mandatory `condensation-emitter-only.ts` leg separately pins finite
 emitter unions in 3D and 4D through eval, hit-info and the production shade
 entry. Its rows cover zero requested depth, scheduled B, xaos, symmetry,
-a five-way final B expansion and both branching-prefix capacity boundaries.
-Independent posed-shape distances, authored material colors and distinct
+a five-way final B expansion, both branching-prefix capacity boundaries and
+the compacted-frontier adversary — five author-identical B maps at depths 2
+and 3, whose emitted schedule carries one map yet whose document carries
+five. Independent posed-shape distances, authored material colors and distinct
 palette coordinates are the references; shader agreement alone cannot
 certify the newly admitted CPU path. See the
 [emitter-only qualification](emitter-only-surface.md).

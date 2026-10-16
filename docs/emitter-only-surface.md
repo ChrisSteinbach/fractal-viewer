@@ -33,14 +33,30 @@ final lens. The condensation band measures A depth, so a B prefix does not
 create shapes at A depth 1. A positive minimum depth therefore describes an
 empty set even when B is present.
 
-An emitter-only schedule additionally requires `n^(k-1) <= 4`, where n is
-the number of active supported B maps and k its depth. Every unfinished B
-prefix then fits the affine frontier; the last expansion evaluates each C0
-term before pruning. This admits any record-bounded depth-1 schedule,
-single-map words through the supported depth 5, two maps through depth 3
-and four maps at depth 2. Wider/deeper prefixes are refused with an
-actionable reason rather than showing their unresolved enclosing balls.
-Inactive schedules and recursive IFS scenes keep their existing rules.
+An emitter-only schedule requires `n^(k-1) <= 4`, where n is the number of
+DISTINCT supported B maps and k the schedule depth. The supported list
+compacts before anything counts or walks it:
+`dedupeScheduleTransforms` (defined once beside the refusal, imported by
+both builders and by eligibility's record-cap pricing) drops every map
+whose composed affine is BIT-EQUAL to an earlier one — same inverse, same
+sigma pricing, same descendants — so the B-word set survives word for word
+while the frontier pressure falls from the authored count to the distinct
+count. Mathematically-equal but bit-different duplicates are deliberately
+kept: their descendants differ in rounding, and merging them would claim
+an equivalence the numeric record does not make. The frontier argument is
+then unchanged for the compacted list: distinct words per level number at
+most `n^L <= n^(k-1) <= 4`, so no in-ball branch is evicted before its C0
+is folded, and the last expansion evaluates each C0 term before frontier
+selection. This admits any record-bounded depth-1 schedule, single-map
+words through the supported depth 5, two distinct maps through depth 3 and
+four at depth 2 — and every multiplicity of these: five author-identical
+B maps at any supported depth, four maps alternating two compositions,
+six all-zero duplicates under the weighted-table fallback. Wider and
+deeper prefixes — five distinct maps at depth 2, a distinct pair at
+depth 4 — are refused with an actionable reason rather than showing their
+unresolved enclosing balls. Inactive schedules and recursive IFS scenes
+keep their existing rules; the plot-side chaos game still draws the
+authored multiplicities, whose support set is exactly the compacted one.
 
 Xaos cannot remove a root emitter: the root has no predecessor state, and
 the scheduled prefix also carries that wildcard. Disconnected rows,
@@ -98,14 +114,33 @@ retaining the empty-scene and combined-record refusals.
 
 The established beam approximation for a deeper branching B prefix is not
 an adequate admission argument for this finite case. With the same two
-spheres and five identity B maps at depth 2, both All levels and Root only
-retain a negative unresolved-B certificate at the gap. Agreement between
-those two bands alone would hide the error. The new finite-prefix admission
-bound excludes this composition; widening it needs a separately qualified
-suffix evaluator or representation. Ordinary recursive IFS estimation is
-unchanged. Distances can still be conservative rather than exact outside
-the relevant enclosing balls; no claim of exact global SDF evaluation is
-made.
+spheres and five identity B maps, both All levels and Root only retain a
+negative unresolved-B certificate at the gap whenever the beam holds more
+unfinished words than lanes: at depth 2 the eviction is expansion-covered
+(one level short of the C0 leaf, `expandPreBandStamps` folds the evicted
+branch's real leaf terms) and measures exact, while at depth 3 the
+uncovered eviction folds the bare ball terminal the defect list describes.
+Agreement between the two bands alone would hide the error, which is why
+the qualification rows pin the independently enumerated finite gap. The
+admission that SHIPPED is duplicate-word compaction at the alphabet: the
+five identity maps compact to one supported map, every word collapses
+independently of beam pressure, and the composition admits at every
+supported depth with the exact damped +0.27 gap in both dimensions. Two
+wider levers were investigated and stay refused. Relaxing the LAST
+frontier level (five or more distinct maps at depth 2, whose uncovered
+evictions are expansion-covered) is sound — the machinery is the stamp
+expansion the depth-2 adversary already exercises — but prices
+`n^(k-1)` extra shape evaluations per query per emitter exactly at the
+gap queries a marcher cannot skip, with no measured budget line yet.
+Word-level compaction for collisions between distinct maps (an
+involution pair's `AA = BB`) needs the descent's chains to carry their
+composed inverses — per-chain matrix state through the CPU descent
+bodies, the WGSL affine/affine4 ladders and both GLSL tracers — to admit
+a class authored documents reach only by accident. Ordinary recursive IFS
+estimation is unchanged (the compaction lives in the schedule-support
+resolution). Distances can still be conservative rather than exact
+outside the relevant enclosing balls; no claim of exact global SDF
+evaluation is made.
 
 ## Authoring and recovery
 
