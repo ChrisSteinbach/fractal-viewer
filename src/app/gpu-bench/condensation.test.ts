@@ -50,9 +50,9 @@ describe("emitter-only surface agreement fixtures", () => {
       ),
     );
 
-  it("requires finite-oracle agreement and two stable materials in all sixteen rows", () => {
+  it("requires finite-oracle agreement and two stable materials in all twenty rows", () => {
     const rows = fixtures();
-    expect(rows).toHaveLength(16);
+    expect(rows).toHaveLength(20);
     for (const row of rows) {
       expect(row.de.maps, row.name).toHaveLength(0);
       expect(row.queries, row.name).toHaveLength(8);
