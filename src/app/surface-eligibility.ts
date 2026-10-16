@@ -44,6 +44,7 @@ import type { TwistAuthored, TwistConstruction } from "../fractal/twist";
 import { systemHasActiveQSquare } from "../fractal/qjulia-de";
 import {
   analyzeSurfaceSystem,
+  dedupeScheduleTransforms,
   emitterOnlySurfaceBandRefusal,
   transformStageSigmas,
 } from "../fractal/surface-de";
@@ -1138,19 +1139,25 @@ function hasActiveEmitter(transforms: Transform[]): boolean {
  * `weight > 0` as a second selection definition: when B's weighted table is
  * disabled (unit weights, or the all-zero fallback) every entry is selected
  * uniformly; otherwise only a positive-width cumulative interval contributes
- * support geometry.
+ * support geometry. Duplicate compositions compact exactly as the
+ * estimator's own B list does — {@link dedupeScheduleTransforms} — so this
+ * count and the wire's record count cannot disagree about a duplicated B.
  */
 function scheduleRecordCount(schedule: HybridSchedule | null): number {
   if (resolveScheduleDepth(schedule) === 0 || schedule === null) return 0;
   const table = buildScheduleTable(schedule.transforms);
-  if (!table.weighted) return table.count;
-  let count = 0;
-  let previous = 0;
-  for (const cumulative of table.cumulative) {
-    if (cumulative > previous) count++;
-    previous = cumulative;
+  const supported: Transform[] = [];
+  if (!table.weighted) {
+    supported.push(...schedule.transforms);
+  } else {
+    let previous = 0;
+    schedule.transforms.forEach((t, i) => {
+      const cumulative = table.cumulative[i];
+      if (cumulative > previous) supported.push(t);
+      previous = cumulative;
+    });
   }
-  return count;
+  return dedupeScheduleTransforms(supported).length;
 }
 
 /**

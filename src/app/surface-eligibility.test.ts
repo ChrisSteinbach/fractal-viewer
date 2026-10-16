@@ -1233,9 +1233,16 @@ describe("deriveSurfaceEligibility and the scheduled-hybrid block", () => {
 
   it("prices B records in the shared record cap", () => {
     const base = sierpinskiTetrahedron();
+    // Distinct B compositions: compaction admits only the word set the
+    // beam actually carries, so the cap prices genuine records.
     const scheduleTransforms = Array.from({ length: 45 }, (_, id) => ({
       ...pairB[id % pairB.length],
       id,
+      position: [pairB[id % pairB.length].position[0] + id * 0.001, 0, 0] as [
+        number,
+        number,
+        number,
+      ],
     }));
     // 4 A maps + 45 B records = 49: past the compute cap, refused — B's
     // records price against the same cap the A maps do.
@@ -1288,6 +1295,11 @@ describe("deriveSurfaceEligibility and the scheduled-hybrid block", () => {
     const many = Array.from({ length: 45 }, (_, id): Transform => ({
       ...pairB[id % pairB.length],
       id,
+      position: [pairB[id % pairB.length].position[0] + id * 0.001, 0, 0] as [
+        number,
+        number,
+        number,
+      ],
       weight: 0,
     }));
     // Every weight zero: the table falls back to uniform support, so ALL
