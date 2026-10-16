@@ -217,6 +217,23 @@ reproduced it, and rebinding the inactive samplers removed the GPU errors
 without changing its final geometry; the separate evidence is in
 [Surface strip pipeline](surface-strip-pipeline.md#seeding-an-unfinished-frame).
 
+The compacted-frontier re-qualification on 2026-10-16 used the same AMD
+RX 7900 XTX, quiet=YES, surface-only sweep. The mandatory emitter-only leg
+now carries 20 rows — the six variants, both capacity boundaries and the
+four duplicate-adversary rows (five author-identical B maps at depth 2 and
+depth 3, whose emitted schedule carries one map while the document carries
+five) — maximum scalar error 1.06e-7 across eval, hit-info and production
+shade in both dimensions, zero material-slot mismatches and zero
+shade-byte error; both depth-3 adversary rows measured 1.774e-8. The
+production browser gate passed 76 rows on the real driver — including the
+new frontier-duplicates legs drawing the formerly refused composition in
+both engines and both dimensions — with the five-DISTINCT overflow fixture
+still refusing the unchanged string, zero page errors and zero
+GPU-process errors. That gate run also exposed, and this record ships the
+fix for, a pre-existing 4D GLSL defect: the slab half-thickness's uniform
+declaration sat after the SURFACE_CHAOS ball helpers that read it, so
+every 4D chaos WebGL session failed to link.
+
 The final tree also passed all 7,356 unit tests in 181 files, `npm run lint`
 (all three TypeScript programs, ESLint, Stylelint and formatting) and the
 production build.
