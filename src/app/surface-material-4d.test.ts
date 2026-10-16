@@ -77,37 +77,42 @@ const BALLOON_PALETTE_SOURCE_HASHES: Record<
   },
 };
 
-/** Intentional whole-tracer source advance for signed-CoC metadata. */
+/** Whole-tracer source re-record for the slab half-thickness declaration move
+ * (GLSL use before declaration) atop the signed-CoC advance. */
 const DEPTH_OF_FIELD_SOURCE_HASHES: Record<
   string,
   { resolved: string; emitted: string }
 > = {
+  // Whole-tracer re-record for the slab half-thickness's declaration move:
+  // uSliceHalfW must precede the SURFACE_CHAOS ball helpers (GLSL has no
+  // use before declaration), which re-orders its uniform bytes in every
+  // arm. The 4d-xaos GLSL leg was the first recorder of the break.
   "4D base finish0": {
-    resolved: "03f1ff298d0b36c7" /* optics lane pair appended to the block */,
-    emitted: "b3cc730fc3ae3d6c" /* optics lane pair appended to the block */,
+    resolved: "026aaaaf61643014" /* optics lane pair appended to the block */,
+    emitted: "544e149f66e7a6b6" /* optics lane pair appended to the block */,
   },
   "4D balloon finish0": {
-    resolved: "1064b1c7f55dac1b",
-    emitted: "ed60e94146157569",
+    resolved: "cec8b23ba688e364",
+    emitted: "415834dff080459e",
   },
   // Plane rows re-recorded for the pentagrid floor: its body (~6KB
   // resolved) splices beside the checker under the same define; the
   // finish rows carry the acceptEps parameter's bytes.
   "4D plane finish0": {
-    resolved: "ddf18b287fef2947",
-    emitted: "7812688dc5cfb06d",
+    resolved: "087917702f5d7e34",
+    emitted: "a97d316495971a5f",
   },
   "4D base finish1": {
-    resolved: "2c7026f0c3b235a7",
-    emitted: "91b5c0da97b03f2f",
+    resolved: "296ab7cd734412e6",
+    emitted: "b9ecd25ee395659b",
   },
   "4D balloon finish1": {
-    resolved: "3a575d6a15c9879a",
-    emitted: "8ef73e9ea21de7d4",
+    resolved: "8b8318c7a4fc422e",
+    emitted: "fd45640a2f1af690",
   },
   "4D plane finish1": {
-    resolved: "6a7b656d6e81e33d",
-    emitted: "11907b8f14408afb",
+    resolved: "264d08d8469aa03d",
+    emitted: "4100db0b2f32d2be",
   },
 };
 
@@ -1312,10 +1317,10 @@ describe("compile-gated finite tiling in the 4D GLSL tracer", () => {
 
   it("keeps the pre-lattice finite source bytes frozen", () => {
     expect(sha256(sourceFor(f4))).toBe(
-      "40f776880bfcfd77ce5743846195b70112b6c3e3442c7de53711cefba89765c3" /* optics lane pair appended to the block */,
+      "728cfee95ce9c67230743680e615276d8338c1df5079ae33c6f62c105ed8589a" /* optics lane pair appended to the block; uSliceHalfW declared ahead of the SURFACE_CHAOS helpers (4d-xaos GLSL compile fix) */,
     );
     expect(sha256(surface4FragmentFor(0, 0, 0, 0, null, 0, 0, f4))).toBe(
-      "2cb4bd6db093e308afaf4e102a848b9e4cb64f8a99bf48bd4e62237a3f94d04f" /* optics lane pair appended to the block */,
+      "6e9288359805e1718cb82f7ffbe8e7e34d8f8d62486f3c3e41a19ee856e4eeb7" /* optics lane pair appended to the block; uSliceHalfW declared ahead of the SURFACE_CHAOS helpers (4d-xaos GLSL compile fix) */,
     );
   });
 

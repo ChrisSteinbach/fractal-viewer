@@ -462,6 +462,22 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   /** Bounding-hypersphere radius R of the RAW attractor (pre final
    * transform), in 4D. */
   uniform float uBoundingRadius;
+  /** HALF-THICKNESS of the marched SLAB, a literal world w in the view
+   * frame — the same units and the same frame as uW0. 0 is the
+   * zero-thickness hyperplane this tracer shipped with, and every term
+   * below collapses to that path's arithmetic bit for bit (see
+   * segmentRadius); above 0 each query becomes the SEGMENT the slab |w -
+   * uW0| less than or equal to uSliceHalfW cuts over the queried 3D point,
+   * so the render shows the slab's whole shadow rather than one
+   * cross-section. The validity argument — affine maps take segments to
+   * segments, so every chain carries one extra vec4 and every ball
+   * certificate reads a segment radius — is the SLAB QUERIES section of
+   * surface-de-4d.ts's module doc, which this shader mirrors.
+   * DECLARED AHEAD of the per-state ball helpers: the SURFACE_CHAOS
+   * branch below reads it, and GLSL has no use before declaration — the
+   * declared-later placement broke every 4D chaos WebGL session's compile
+   * (the emitter-only gate's 4d-xaos leg was the first recorder). */
+  uniform float uSliceHalfW;
   // Per-state local frame; slot == state under SURFACE_CHAOS, global ball
   // packed into every slot when no per-component bounds exist.
 #if SURFACE_CHAOS
@@ -523,18 +539,6 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * through wSupport on the way here. Backticks would end
    * this template literal, so this whole GLSL source names code plainly. */
   uniform float uW0;
-  /** HALF-THICKNESS of the marched SLAB, a literal world w in the view
-   * frame — the same units and the same frame as uW0. 0 is the
-   * zero-thickness hyperplane this tracer shipped with, and every term
-   * below collapses to that path's arithmetic bit for bit (see
-   * segmentRadius); above 0 each query becomes the SEGMENT the slab |w -
-   * uW0| less than or equal to uSliceHalfW cuts over the queried 3D point,
-   * so the render shows the slab's whole shadow rather than one
-   * cross-section. The validity argument — affine maps take segments to
-   * segments, so every chain carries one extra vec4 and every ball
-   * certificate reads a segment radius — is the SLAB QUERIES section of
-   * surface-de-4d.ts's module doc, which this shader mirrors. */
-  uniform float uSliceHalfW;
   /** Base-color source: 0 = by-transform (uMapColorSigma.xyz), 1 = orbit-trap
    * palette, 2 = height ramp, 3 = radius ramp, 4 = orbit rings, 5 = orbit
    * sheets. Sources 1-5 sample uColorLUT. */
