@@ -109,7 +109,7 @@ export interface FourDPose {
    * document resolves to a different world w0 in every session — measured as
    * a 4D share link that reloaded close to, but never exactly, the sender's
    * frame. A pose must name the hyperplane, not a fraction of a random
-   * cloud. AGENTS.md already intends one slider position to be one
+   * cloud. The 4D tracer's module record already intends one slider position to be one
    * hyperplane across every mode; this is that intent made reproducible.
    *
    * Optional, and ABSENT MEANS TODAY: a document written before this field

@@ -32,13 +32,13 @@ jobs:
       # AGENTS.md is the canonical project-rules file. CLAUDE.md imports it,
       # and an import costs the same launch context as inline text, so moving
       # bytes between the two buys no room. Keep their combined payload below
-      # the project's 145k adherence/context budget; evidence belongs in docs/
+      # the project's 30k context budget; evidence belongs in docs/
       # or its reproducing harness.
       - name: Agent instruction size guard
         run: |
           size=$(cat AGENTS.md CLAUDE.md | wc -c)
           echo "AGENTS.md + CLAUDE.md is $size bytes"
-          test "$size" -le 145000
+          test "$size" -le 30000
 
       - name: Lint (type-check x3, ESLint, Stylelint, Prettier)
         run: npm run lint
