@@ -1,8 +1,9 @@
 # Surface strip pipeline
 
 Full evidence record for `src/app/strip-planner.ts` — the adaptive
-scissor-strip sizer behind every WebGL surface trace. `AGENTS.md`'s
-`strip-planner.ts` bullet is the condensed rules-and-invariants version;
+scissor-strip sizer behind every WebGL surface trace. The
+`strip-planner.ts` entry in `docs/modules/app-surface-webgl.md` is the
+condensed rules-and-invariants version;
 this document is where the measured numbers, the reverted attempts and the
 historical narrative live.
 
