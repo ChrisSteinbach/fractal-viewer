@@ -209,7 +209,7 @@ jobs:
     timeout-minutes: 10
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment-retry.outputs.page_url || steps.deployment.outputs.page_url }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -238,8 +238,39 @@ jobs:
           path: dist/app
           name: github-pages-${{ github.run_attempt }}
 
+      # deploy-pages turns the artifact's name into an id with ONE listing
+      # call and no retry, and GitHub's artifact service can leave a freshly
+      # finalized upload out of that listing (actions/deploy-pages#451). Both
+      # attempts of one run failed so on 2026-11-26/27, each looking under
+      # 0.6s after finalize: "No artifacts named ... were found". Its "Found
+      # N artifact(s)" line counts BEFORE the name filter, so a rerun's
+      # "Found 1" was the earlier attempt's artifact. Upstream reports put the
+      # lag mostly within seconds, with a tail near 46s: the short wait here
+      # covers the common case, the 60s retry below covers the tail without
+      # charging every deploy for it. Drop both once the pinned action
+      # retries the lookup itself.
+      - name: Wait for the artifact listing
+        run: sleep 15
+
+      # continue-on-error hands the job's verdict to the retry below: it runs
+      # only after a failure here, and its own failure fails the job.
       - name: Deploy to GitHub Pages
         id: deployment
+        continue-on-error: true
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}
+
+      # A step cannot read why a `uses:` step failed, so this retries ANY
+      # failure, once. Same job and same upload: re-uploading would only
+      # restart the lag.
+      - name: Wait before retrying the deployment
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 60
+
+      - name: Retry the deployment
+        id: deployment-retry
+        if: steps.deployment.outcome == 'failure'
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
         with:
           artifact_name: github-pages-${{ github.run_attempt }}
