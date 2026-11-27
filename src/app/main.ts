@@ -23,6 +23,7 @@ import {
 import { buildSphereInversionDE } from "../fractal/sphere-inversion-de";
 import { buildSphereInversionDE4 } from "../fractal/sphere-inversion-de-4d";
 import { wSupport } from "./rotor4";
+import { installColorPickerAnchor } from "./color-picker-anchor";
 import { FourDTween, FourDView, viewTransition } from "./four-d-view";
 import type { FourDPose } from "./four-d-view";
 import {
@@ -896,6 +897,7 @@ async function main(): Promise<void> {
   setPinnedCustomMeshAssets(sceneCustomMeshIds(toSnapshot(state)));
   const orbit = new OrbitCamera(BOOT_CAMERA_POSITION);
   const ui = new Ui(document);
+  installColorPickerAnchor(document);
   // Editing-workspace chrome, not document state: switching it never enters
   // undo, share links, scene files, or point generation. The preference stays
   // dormant through other renderers and resumes on return to Points.

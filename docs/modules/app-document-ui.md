@@ -161,6 +161,13 @@ they say more.
   prose policies and mode dormancy; the subject precedence copies
   `scene-dimension.ts`'s and the family comes from the SAME analyzers
   the renderers route through.
+- `color-picker-anchor.ts` — keeps Chrome's native color popup in the
+  window (tested). The popup hangs from the input's bottom-left corner and
+  only that anchor can be moved: a swatch too near the right or bottom edge
+  opens through an invisible stand-in's `showPicker()`, which relays
+  `input`/`change` to the real swatch. One delegated capture listener, so
+  inputs created at runtime are covered. jsdom cannot show the popup's
+  placement.
 - `constants.ts` — shared UI/interaction magic numbers.
 - `interactions.ts` — pointer/touch/wheel handling (Three.js raycasting).
   Flame's frozen gate is action-specific: it refuses ordinary camera and
