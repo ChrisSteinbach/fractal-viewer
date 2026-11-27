@@ -310,7 +310,7 @@ Read the named file's entry before changing a module.
   `viewer-prefs`, `history`, `edit-session`, `collection`, `timeline`,
   `timeline-player`, `scene-file`, `flame-file`, `ui`, `control-spec`,
   `range-number-control`, `legend-spec`, `describe`/`shorten-url`,
-  `constants`, `interactions`, `slider-scroll-guard`.
+  `constants`, `interactions`, `slider-scroll-guard`, `color-picker-anchor`.
 - `docs/modules/app-runtime.md` — `scene`, `orbit`, `camera-tween`,
   `framing-bounds`, `morph-tween`, `morph-budget`, `mutation-thumbs`,
   `drift`, `drift-policy`, `build-replay`, `exposure`,
